@@ -211,18 +211,18 @@ Theta is of interest because it goes beyond the observed data and allows us to p
 <p>For each of these exercises, I’ll first generate the data, then setup the model, then add the code necessary to do proper quality checks of the model: prior predictive checks, posterior predictive checks, prior/posterior update checks.</p>
 <p>First we want to generate the data. Note that usually we would want to set a fixed theta, then generate the predicted k successes given n trials, since that’d allow to see how well the model recovers the underlying theta.
 But for now we follow the book.</p>
-<div class="sourceCode" id="cb33"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb33-1"><a href="practical-exercise-3---getting-into-stan.html#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># underlying rate</span></span>
-<span id="cb33-2"><a href="practical-exercise-3---getting-into-stan.html#cb33-2" aria-hidden="true" tabindex="-1"></a>theta <span class="ot">&lt;-</span> <span class="fl">0.6</span></span>
-<span id="cb33-3"><a href="practical-exercise-3---getting-into-stan.html#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="co"># amount of trials</span></span>
-<span id="cb33-4"><a href="practical-exercise-3---getting-into-stan.html#cb33-4" aria-hidden="true" tabindex="-1"></a>n <span class="ot">&lt;-</span> <span class="dv">10</span></span>
-<span id="cb33-5"><a href="practical-exercise-3---getting-into-stan.html#cb33-5" aria-hidden="true" tabindex="-1"></a><span class="co"># generating successes (nb the book would say 7)</span></span>
-<span id="cb33-6"><a href="practical-exercise-3---getting-into-stan.html#cb33-6" aria-hidden="true" tabindex="-1"></a>k <span class="ot">&lt;-</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="at">size =</span> n, <span class="at">prob =</span> theta)</span>
-<span id="cb33-7"><a href="practical-exercise-3---getting-into-stan.html#cb33-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb33-8"><a href="practical-exercise-3---getting-into-stan.html#cb33-8" aria-hidden="true" tabindex="-1"></a><span class="do">## Create the data</span></span>
-<span id="cb33-9"><a href="practical-exercise-3---getting-into-stan.html#cb33-9" aria-hidden="true" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb33-10"><a href="practical-exercise-3---getting-into-stan.html#cb33-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">n =</span> n,</span>
-<span id="cb33-11"><a href="practical-exercise-3---getting-into-stan.html#cb33-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">k =</span> k</span>
-<span id="cb33-12"><a href="practical-exercise-3---getting-into-stan.html#cb33-12" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb35-1"><a href="practical-exercise-3---getting-into-stan.html#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># underlying rate</span></span>
+<span id="cb35-2"><a href="practical-exercise-3---getting-into-stan.html#cb35-2" aria-hidden="true" tabindex="-1"></a>theta <span class="ot">&lt;-</span> <span class="fl">0.6</span></span>
+<span id="cb35-3"><a href="practical-exercise-3---getting-into-stan.html#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="co"># amount of trials</span></span>
+<span id="cb35-4"><a href="practical-exercise-3---getting-into-stan.html#cb35-4" aria-hidden="true" tabindex="-1"></a>n <span class="ot">&lt;-</span> <span class="dv">10</span></span>
+<span id="cb35-5"><a href="practical-exercise-3---getting-into-stan.html#cb35-5" aria-hidden="true" tabindex="-1"></a><span class="co"># generating successes (nb the book would say 7)</span></span>
+<span id="cb35-6"><a href="practical-exercise-3---getting-into-stan.html#cb35-6" aria-hidden="true" tabindex="-1"></a>k <span class="ot">&lt;-</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="at">size =</span> n, <span class="at">prob =</span> theta)</span>
+<span id="cb35-7"><a href="practical-exercise-3---getting-into-stan.html#cb35-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-8"><a href="practical-exercise-3---getting-into-stan.html#cb35-8" aria-hidden="true" tabindex="-1"></a><span class="do">## Create the data</span></span>
+<span id="cb35-9"><a href="practical-exercise-3---getting-into-stan.html#cb35-9" aria-hidden="true" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb35-10"><a href="practical-exercise-3---getting-into-stan.html#cb35-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">n =</span> n,</span>
+<span id="cb35-11"><a href="practical-exercise-3---getting-into-stan.html#cb35-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">k =</span> k</span>
+<span id="cb35-12"><a href="practical-exercise-3---getting-into-stan.html#cb35-12" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 <p>Second we want to define a basic rate inferring model.
 A stan program is composed (in its minimal form) by 3 blocks: data, parameters and model.</p>
 <p><strong>data</strong> identifies the variables that are passed to the model and defines their type (e.g. whether they are real or integer numbers) and whether they are bounded (e.g. cannot be below 0). Here it’s easy, we have 2 variables that we are observing: the number of trials (n) and the number of success (k). Both are integers, we need to observe at least 1 trial, or there’s no data (n&gt;0) and there cannot be a negative number of successes (k&gt;=0).</p>
@@ -230,52 +230,55 @@ A stan program is composed (in its minimal form) by 3 blocks: data, parameters a
 <p><strong>model</strong> includes two parts: the priors for each of the parameters and the likelihood formula(s).
 Here, again, we have the prior for our one parameter theta and the likelihood stating that k is
 generated according to a binomial distribution with a number of trial n and a rate theta.</p>
-<div class="sourceCode" id="cb34"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb34-1"><a href="practical-exercise-3---getting-into-stan.html#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(cmdstanr)</span>
-<span id="cb34-2"><a href="practical-exercise-3---getting-into-stan.html#cb34-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb34-3"><a href="practical-exercise-3---getting-into-stan.html#cb34-3" aria-hidden="true" tabindex="-1"></a>stan_file <span class="ot">&lt;-</span> <span class="fu">write_stan_file</span>(<span class="st">&quot;</span></span>
-<span id="cb34-4"><a href="practical-exercise-3---getting-into-stan.html#cb34-4" aria-hidden="true" tabindex="-1"></a><span class="st">// This Stan model infers a rate (theta) from a number of trials (n) and successes (k)</span></span>
-<span id="cb34-5"><a href="practical-exercise-3---getting-into-stan.html#cb34-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb34-6"><a href="practical-exercise-3---getting-into-stan.html#cb34-6" aria-hidden="true" tabindex="-1"></a><span class="st">// The input data is two integer numbers: n and k.</span></span>
-<span id="cb34-7"><a href="practical-exercise-3---getting-into-stan.html#cb34-7" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb34-8"><a href="practical-exercise-3---getting-into-stan.html#cb34-8" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n; // n of trials (there has to be at least 1 to have observable data) </span></span>
-<span id="cb34-9"><a href="practical-exercise-3---getting-into-stan.html#cb34-9" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0&gt; k;  // n of successes (lowest n is no successes)</span></span>
-<span id="cb34-10"><a href="practical-exercise-3---getting-into-stan.html#cb34-10" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb34-11"><a href="practical-exercise-3---getting-into-stan.html#cb34-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb34-12"><a href="practical-exercise-3---getting-into-stan.html#cb34-12" aria-hidden="true" tabindex="-1"></a><span class="st">// The parameters accepted by the model. Our model accepts only theta, the rate, </span></span>
-<span id="cb34-13"><a href="practical-exercise-3---getting-into-stan.html#cb34-13" aria-hidden="true" tabindex="-1"></a><span class="st">// which is bound at 0 (no chances of success) and 1 (always success)</span></span>
-<span id="cb34-14"><a href="practical-exercise-3---getting-into-stan.html#cb34-14" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb34-15"><a href="practical-exercise-3---getting-into-stan.html#cb34-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta;</span></span>
-<span id="cb34-16"><a href="practical-exercise-3---getting-into-stan.html#cb34-16" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb34-17"><a href="practical-exercise-3---getting-into-stan.html#cb34-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb34-18"><a href="practical-exercise-3---getting-into-stan.html#cb34-18" aria-hidden="true" tabindex="-1"></a><span class="st">// The model to be estimated; prior and likelihood</span></span>
-<span id="cb34-19"><a href="practical-exercise-3---getting-into-stan.html#cb34-19" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb34-20"><a href="practical-exercise-3---getting-into-stan.html#cb34-20" aria-hidden="true" tabindex="-1"></a><span class="st">  // The prior for theta is a uniform distribution between 0 and 1</span></span>
-<span id="cb34-21"><a href="practical-exercise-3---getting-into-stan.html#cb34-21" aria-hidden="true" tabindex="-1"></a><span class="st">  theta ~ beta(1, 1);</span></span>
-<span id="cb34-22"><a href="practical-exercise-3---getting-into-stan.html#cb34-22" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb34-23"><a href="practical-exercise-3---getting-into-stan.html#cb34-23" aria-hidden="true" tabindex="-1"></a><span class="st">  // The model consists in a binomial distribution with a rate theta, </span></span>
-<span id="cb34-24"><a href="practical-exercise-3---getting-into-stan.html#cb34-24" aria-hidden="true" tabindex="-1"></a><span class="st">  // and a number of trials n generating k successes</span></span>
-<span id="cb34-25"><a href="practical-exercise-3---getting-into-stan.html#cb34-25" aria-hidden="true" tabindex="-1"></a><span class="st">  k ~ binomial(n, theta);</span></span>
-<span id="cb34-26"><a href="practical-exercise-3---getting-into-stan.html#cb34-26" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb34-27"><a href="practical-exercise-3---getting-into-stan.html#cb34-27" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb34-28"><a href="practical-exercise-3---getting-into-stan.html#cb34-28" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb36-1"><a href="practical-exercise-3---getting-into-stan.html#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(cmdstanr)</span></code></pre></div>
+<pre><code>## This is cmdstanr version 0.5.3</code></pre>
+<pre><code>## - CmdStanR documentation and vignettes: mc-stan.org/cmdstanr</code></pre>
+<pre><code>## - CmdStan path: /Users/au209589/.cmdstan/cmdstan-2.31.0</code></pre>
+<pre><code>## - CmdStan version: 2.31.0</code></pre>
+<div class="sourceCode" id="cb41"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb41-1"><a href="practical-exercise-3---getting-into-stan.html#cb41-1" aria-hidden="true" tabindex="-1"></a>stan_file <span class="ot">&lt;-</span> <span class="fu">write_stan_file</span>(<span class="st">&quot;</span></span>
+<span id="cb41-2"><a href="practical-exercise-3---getting-into-stan.html#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="st">// This Stan model infers a rate (theta) from a number of trials (n) and successes (k)</span></span>
+<span id="cb41-3"><a href="practical-exercise-3---getting-into-stan.html#cb41-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-4"><a href="practical-exercise-3---getting-into-stan.html#cb41-4" aria-hidden="true" tabindex="-1"></a><span class="st">// The input data is two integer numbers: n and k.</span></span>
+<span id="cb41-5"><a href="practical-exercise-3---getting-into-stan.html#cb41-5" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb41-6"><a href="practical-exercise-3---getting-into-stan.html#cb41-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n; // n of trials (there has to be at least 1 to have observable data) </span></span>
+<span id="cb41-7"><a href="practical-exercise-3---getting-into-stan.html#cb41-7" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0&gt; k;  // n of successes (lowest n is no successes)</span></span>
+<span id="cb41-8"><a href="practical-exercise-3---getting-into-stan.html#cb41-8" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb41-9"><a href="practical-exercise-3---getting-into-stan.html#cb41-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-10"><a href="practical-exercise-3---getting-into-stan.html#cb41-10" aria-hidden="true" tabindex="-1"></a><span class="st">// The parameters accepted by the model. Our model accepts only theta, the rate, </span></span>
+<span id="cb41-11"><a href="practical-exercise-3---getting-into-stan.html#cb41-11" aria-hidden="true" tabindex="-1"></a><span class="st">// which is bound at 0 (no chances of success) and 1 (always success)</span></span>
+<span id="cb41-12"><a href="practical-exercise-3---getting-into-stan.html#cb41-12" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb41-13"><a href="practical-exercise-3---getting-into-stan.html#cb41-13" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta;</span></span>
+<span id="cb41-14"><a href="practical-exercise-3---getting-into-stan.html#cb41-14" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb41-15"><a href="practical-exercise-3---getting-into-stan.html#cb41-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-16"><a href="practical-exercise-3---getting-into-stan.html#cb41-16" aria-hidden="true" tabindex="-1"></a><span class="st">// The model to be estimated; prior and likelihood</span></span>
+<span id="cb41-17"><a href="practical-exercise-3---getting-into-stan.html#cb41-17" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb41-18"><a href="practical-exercise-3---getting-into-stan.html#cb41-18" aria-hidden="true" tabindex="-1"></a><span class="st">  // The prior for theta is a uniform distribution between 0 and 1</span></span>
+<span id="cb41-19"><a href="practical-exercise-3---getting-into-stan.html#cb41-19" aria-hidden="true" tabindex="-1"></a><span class="st">  theta ~ beta(1, 1);</span></span>
+<span id="cb41-20"><a href="practical-exercise-3---getting-into-stan.html#cb41-20" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb41-21"><a href="practical-exercise-3---getting-into-stan.html#cb41-21" aria-hidden="true" tabindex="-1"></a><span class="st">  // The model consists in a binomial distribution with a rate theta, </span></span>
+<span id="cb41-22"><a href="practical-exercise-3---getting-into-stan.html#cb41-22" aria-hidden="true" tabindex="-1"></a><span class="st">  // and a number of trials n generating k successes</span></span>
+<span id="cb41-23"><a href="practical-exercise-3---getting-into-stan.html#cb41-23" aria-hidden="true" tabindex="-1"></a><span class="st">  k ~ binomial(n, theta);</span></span>
+<span id="cb41-24"><a href="practical-exercise-3---getting-into-stan.html#cb41-24" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb41-25"><a href="practical-exercise-3---getting-into-stan.html#cb41-25" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb41-26"><a href="practical-exercise-3---getting-into-stan.html#cb41-26" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span>)</span></code></pre></div>
 <p>Then we fit the model and assess the estimates: do they capture the simulated values?</p>
-<div class="sourceCode" id="cb35"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb35-1"><a href="practical-exercise-3---getting-into-stan.html#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co">#mod &lt;- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE), pedantic = TRUE)</span></span>
-<span id="cb35-2"><a href="practical-exercise-3---getting-into-stan.html#cb35-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb35-3"><a href="practical-exercise-3---getting-into-stan.html#cb35-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb35-4"><a href="practical-exercise-3---getting-into-stan.html#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="co"># samples &lt;- mod$sample(</span></span>
-<span id="cb35-5"><a href="practical-exercise-3---getting-into-stan.html#cb35-5" aria-hidden="true" tabindex="-1"></a><span class="co">#   data = data,</span></span>
-<span id="cb35-6"><a href="practical-exercise-3---getting-into-stan.html#cb35-6" aria-hidden="true" tabindex="-1"></a><span class="co">#   seed = 123,</span></span>
-<span id="cb35-7"><a href="practical-exercise-3---getting-into-stan.html#cb35-7" aria-hidden="true" tabindex="-1"></a><span class="co">#   chains = 2,</span></span>
-<span id="cb35-8"><a href="practical-exercise-3---getting-into-stan.html#cb35-8" aria-hidden="true" tabindex="-1"></a><span class="co">#   parallel_chains = 2,</span></span>
-<span id="cb35-9"><a href="practical-exercise-3---getting-into-stan.html#cb35-9" aria-hidden="true" tabindex="-1"></a><span class="co">#   threads_per_chain = 2,</span></span>
-<span id="cb35-10"><a href="practical-exercise-3---getting-into-stan.html#cb35-10" aria-hidden="true" tabindex="-1"></a><span class="co">#   iter_warmup = 2000,</span></span>
-<span id="cb35-11"><a href="practical-exercise-3---getting-into-stan.html#cb35-11" aria-hidden="true" tabindex="-1"></a><span class="co">#   iter_sampling = 2000,</span></span>
-<span id="cb35-12"><a href="practical-exercise-3---getting-into-stan.html#cb35-12" aria-hidden="true" tabindex="-1"></a><span class="co">#   refresh = 500,</span></span>
-<span id="cb35-13"><a href="practical-exercise-3---getting-into-stan.html#cb35-13" aria-hidden="true" tabindex="-1"></a><span class="co">#   max_treedepth = 20,</span></span>
-<span id="cb35-14"><a href="practical-exercise-3---getting-into-stan.html#cb35-14" aria-hidden="true" tabindex="-1"></a><span class="co">#   adapt_delta = 0.99,</span></span>
-<span id="cb35-15"><a href="practical-exercise-3---getting-into-stan.html#cb35-15" aria-hidden="true" tabindex="-1"></a><span class="co"># )</span></span>
-<span id="cb35-16"><a href="practical-exercise-3---getting-into-stan.html#cb35-16" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb35-17"><a href="practical-exercise-3---getting-into-stan.html#cb35-17" aria-hidden="true" tabindex="-1"></a><span class="co">#samples</span></span></code></pre></div>
+<div class="sourceCode" id="cb42"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb42-1"><a href="practical-exercise-3---getting-into-stan.html#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="co">#mod &lt;- cmdstan_model(stan_file, cpp_options = list(stan_threads = TRUE), pedantic = TRUE)</span></span>
+<span id="cb42-2"><a href="practical-exercise-3---getting-into-stan.html#cb42-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-3"><a href="practical-exercise-3---getting-into-stan.html#cb42-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-4"><a href="practical-exercise-3---getting-into-stan.html#cb42-4" aria-hidden="true" tabindex="-1"></a><span class="co"># samples &lt;- mod$sample(</span></span>
+<span id="cb42-5"><a href="practical-exercise-3---getting-into-stan.html#cb42-5" aria-hidden="true" tabindex="-1"></a><span class="co">#   data = data,</span></span>
+<span id="cb42-6"><a href="practical-exercise-3---getting-into-stan.html#cb42-6" aria-hidden="true" tabindex="-1"></a><span class="co">#   seed = 123,</span></span>
+<span id="cb42-7"><a href="practical-exercise-3---getting-into-stan.html#cb42-7" aria-hidden="true" tabindex="-1"></a><span class="co">#   chains = 2,</span></span>
+<span id="cb42-8"><a href="practical-exercise-3---getting-into-stan.html#cb42-8" aria-hidden="true" tabindex="-1"></a><span class="co">#   parallel_chains = 2,</span></span>
+<span id="cb42-9"><a href="practical-exercise-3---getting-into-stan.html#cb42-9" aria-hidden="true" tabindex="-1"></a><span class="co">#   threads_per_chain = 2,</span></span>
+<span id="cb42-10"><a href="practical-exercise-3---getting-into-stan.html#cb42-10" aria-hidden="true" tabindex="-1"></a><span class="co">#   iter_warmup = 2000,</span></span>
+<span id="cb42-11"><a href="practical-exercise-3---getting-into-stan.html#cb42-11" aria-hidden="true" tabindex="-1"></a><span class="co">#   iter_sampling = 2000,</span></span>
+<span id="cb42-12"><a href="practical-exercise-3---getting-into-stan.html#cb42-12" aria-hidden="true" tabindex="-1"></a><span class="co">#   refresh = 500,</span></span>
+<span id="cb42-13"><a href="practical-exercise-3---getting-into-stan.html#cb42-13" aria-hidden="true" tabindex="-1"></a><span class="co">#   max_treedepth = 20,</span></span>
+<span id="cb42-14"><a href="practical-exercise-3---getting-into-stan.html#cb42-14" aria-hidden="true" tabindex="-1"></a><span class="co">#   adapt_delta = 0.99,</span></span>
+<span id="cb42-15"><a href="practical-exercise-3---getting-into-stan.html#cb42-15" aria-hidden="true" tabindex="-1"></a><span class="co"># )</span></span>
+<span id="cb42-16"><a href="practical-exercise-3---getting-into-stan.html#cb42-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-17"><a href="practical-exercise-3---getting-into-stan.html#cb42-17" aria-hidden="true" tabindex="-1"></a><span class="co">#samples</span></span></code></pre></div>
 <p>As you know from the Bayesian workflow discussion [MISSING], there is a lot of model checking that we should do.
 We haven’t assessed our priors, nor the model posteriors against priors and against data, nor the quality of the model fitting process.</p>
 <p>Here is a reminder of what we need to do:
@@ -285,14 +288,14 @@ We haven’t assessed our priors, nor the model posteriors against priors and ag
 * plot our posteriors overlayed on the priors</p>
 <p>Some of this, in particular, point 1, could/should be run before fitting the model. However, it’s very practical to get the model to do it all: sample from the priors and save those samples, while also fitting the model.</p>
 <p>Let’s test things by hand, first. We first sample from the prior and visualize it</p>
-<div class="sourceCode" id="cb36"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb36-1"><a href="practical-exercise-3---getting-into-stan.html#cb36-1" aria-hidden="true" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(tidyverse)</span>
-<span id="cb36-2"><a href="practical-exercise-3---getting-into-stan.html#cb36-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb36-3"><a href="practical-exercise-3---getting-into-stan.html#cb36-3" aria-hidden="true" tabindex="-1"></a>prior <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">prior =</span> <span class="fu">rbeta</span>(<span class="fl">1e4</span>, <span class="dv">1</span>, <span class="dv">1</span>))</span>
-<span id="cb36-4"><a href="practical-exercise-3---getting-into-stan.html#cb36-4" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(prior, <span class="fu">aes</span>(prior)) <span class="sc">+</span> <span class="fu">geom_density</span>() <span class="sc">+</span> <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb43"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb43-1"><a href="practical-exercise-3---getting-into-stan.html#cb43-1" aria-hidden="true" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(tidyverse)</span>
+<span id="cb43-2"><a href="practical-exercise-3---getting-into-stan.html#cb43-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-3"><a href="practical-exercise-3---getting-into-stan.html#cb43-3" aria-hidden="true" tabindex="-1"></a>prior <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">prior =</span> <span class="fu">rbeta</span>(<span class="fl">1e4</span>, <span class="dv">1</span>, <span class="dv">1</span>))</span>
+<span id="cb43-4"><a href="practical-exercise-3---getting-into-stan.html#cb43-4" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(prior, <span class="fu">aes</span>(prior)) <span class="sc">+</span> <span class="fu">geom_density</span>() <span class="sc">+</span> <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/unnamed-chunk-7-1.png" width="672" /></p>
 <p>Then we use the sampled prior to generate plausible outcomes.</p>
-<div class="sourceCode" id="cb37"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb37-1"><a href="practical-exercise-3---getting-into-stan.html#cb37-1" aria-hidden="true" tabindex="-1"></a>pred_outcomes <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">pred_outcomes =</span> <span class="fu">rbinom</span>(<span class="fl">1e4</span>, <span class="dv">10</span>, prior<span class="sc">$</span>prior))</span>
-<span id="cb37-2"><a href="practical-exercise-3---getting-into-stan.html#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(pred_outcomes, <span class="fu">aes</span>(pred_outcomes)) <span class="sc">+</span> <span class="fu">geom_density</span>() <span class="sc">+</span> <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb44"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb44-1"><a href="practical-exercise-3---getting-into-stan.html#cb44-1" aria-hidden="true" tabindex="-1"></a>pred_outcomes <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">pred_outcomes =</span> <span class="fu">rbinom</span>(<span class="fl">1e4</span>, <span class="dv">10</span>, prior<span class="sc">$</span>prior))</span>
+<span id="cb44-2"><a href="practical-exercise-3---getting-into-stan.html#cb44-2" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(pred_outcomes, <span class="fu">aes</span>(pred_outcomes)) <span class="sc">+</span> <span class="fu">geom_density</span>() <span class="sc">+</span> <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/unnamed-chunk-8-1.png" width="672" /></p>
 <p>So these roughly tell us that we have no ideas as to the plausible rate (all values between 0 and 1 are equally plausible), and that gives us</p>
 
@@ -334,7 +337,7 @@ gitbook.start({
 "size": 2
 },
 "edit": {
-"link": "https://github.com/fusaroli/AdvancedCognitiveModeling/edit/master/03-InferringRates.Rmd",
+"link": "https://github.com/fusaroli/AdvancedCognitiveModeling/edit/master/Draft_03.Rmd",
 "text": "Edit"
 },
 "history": {
