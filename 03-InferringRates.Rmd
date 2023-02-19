@@ -1,1 +1,385 @@
+
+
 # Practical exercise 3 - Getting into Stan
+
+## Overview
+The goal of the practical exercise is to build on the simulated data from Practical Exercise 2 to construct our Stan models of the generative processes of the data. Here we know the truth: we simulated the data ourselves, so we can assess how accurate the model is in reconstructing, e.g. the bias of the agents.
+
+## Simulating data
+
+Here we build a new simulation of random agents with bias and noise. The code and visualization is really nothing different from  last week's exercise.
+
+
+```{r}
+pacman::p_load(tidyverse,
+        here,
+        posterior,
+        cmdstanr,
+        brms, tidybayes)
+
+trials <- 120
+
+RandomAgentNoise_f <- function(rate, noise) {
+
+  choice <- rbinom(1, 1, rate) # generating noiseless choices
+  
+  if (rbinom(1, 1, noise) == 1) {
+    choice = rbinom(1, 1, 0.5) # introducing noise
+  }
+  
+  return(choice)
+}
+
+d <- NULL
+for (noise in seq(0, 0.5, 0.1)) { # looping through noise levels
+
+  for (rate in seq(0, 1, 0.1)) { # looping through rate levels
+    randomChoice <- rep(NA, trials)
+    
+    for (t in seq(trials)) { # looping through trials (to make it homologous to more reactive models)
+      randomChoice[t] <- RandomAgentNoise_f(rate, noise)
+    }
+    temp <- tibble(trial = seq(trials), choice = randomChoice, rate, noise)
+    temp$cumulativerate <- cumsum(temp$choice) / seq_along(temp$choice)
+
+    if (exists("d")) {
+      d <- rbind(d, temp)
+    } else{
+      d <- temp
+    }
+  }
+}
+
+write_csv(d, "simdata/W3_randomnoise.csv")
+
+# Now we visualize it 
+p1 <- ggplot(d, aes(trial, cumulativerate, group = rate, color = rate)) + 
+  geom_line() + 
+  geom_hline(yintercept = 0.5, linetype = "dashed") + 
+  ylim(0,1) + 
+  facet_wrap(.~noise) + 
+  theme_classic()
+p1
+```
+
+## Building our basic model in Stan
+
+N.B. Refer to the video and slides for the step by step build-up of the Stan code.
+
+Now we subset to a simple case, no noise and rate of 0.8, to focus on the Stan model.
+We make it into the right format for Stan, build the Stan model, and fit it.
+
+[MISSING: more step by step explanation and predictive checks]
+
+```{r}
+d1 <- d %>% subset(noise == 0 & rate == 0.8)
+
+## Create the data
+data <- list(
+  n = 120,
+  h = d1$choice
+)
+
+## Specify where the model is
+file <- file.path("stan/W3_SimpleBernoulli.stan")
+mod <- cmdstan_model(file, 
+                     cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+# The following command calls Stan with specific options.
+samples <- mod$sample(
+  data = data,
+  seed = 123,
+  chains = 2,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1000,
+  iter_sampling = 2000,
+  refresh = 500,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+
+samples$summary() 
+
+# Extract posterior samples and include sampling of the prior:
+draws_df <- as_draws_df(samples$draws())
+
+# Checking the model's chains
+ggplot(draws_df, aes(.iteration, theta, group = .chain, color = .chain)) +
+  geom_line() +
+  theme_classic()
+
+# add a prior for theta (ugly, but we'll do better soon)
+draws_df <- draws_df %>% mutate(
+  theta_prior = rbeta(nrow(draws_df), 1, 1)
+)
+
+# Now let's plot the density for theta (prior and posterior)
+ggplot(draws_df) +
+  geom_density(aes(theta), fill = "blue", alpha = 0.3) +
+  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
+  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
+  xlab("Rate") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+```
+
+
+As we can see from the posterior estimates and the prior posterior update check, our model is doing a decent job. It doesn't exactly reconstruct the rate of 0.8, but 0.755 is pretty close and 0.8 is included within the credible interval.
+
+Now we build the same model, but using the log odds scale for the theta parameter, which will become useful later when we condition theta on variables and build multilevel models (as we can do what we want in a log odds space and it will always be bound between 0 and 1).
+
+```{r}
+## With the logit format
+## Specify where the model is
+file <- file.path("stan/W3_SimpleBernoulli_logodds.stan")
+mod <- cmdstan_model(file, 
+                     cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+# The following command calls Stan with specific options.
+samples <- mod$sample(
+  data = data,
+  seed = 123,
+  chains = 2,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1000,
+  iter_sampling = 2000,
+  refresh = 500,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+
+
+samples
+# Diagnostics
+samples$cmdstan_diagnose()
+
+# Extract posterior samples and include sampling of the prior:
+draws_df <- as_draws_df(samples$draws()) 
+
+ggplot(draws_df, aes(.iteration, theta, group = .chain, color = .chain)) +
+  geom_line() +
+  theme_classic()
+
+samples$summary() 
+
+# Prior predictions
+ggplot(draws_df) +
+  geom_histogram(aes(prior_preds), color = "darkblue", fill = "blue", alpha = 0.3) +
+  xlab("Predicted heads out of 120 trials") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+# Now let's plot the density for theta (prior and posterior)
+ggplot(draws_df) +
+  geom_density(aes(theta_posterior), fill = "blue", alpha = 0.3) +
+  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
+  xlab("Rate") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+ggplot(draws_df) +
+  geom_histogram(aes(posterior_preds), color = "darkblue", fill = "blue", alpha = 0.3, bins = 90) +
+  geom_point(x = sum(data$h), y = 0, color = "red", shape = 17, size = 5) +
+  xlab("Predicted heads out of 120 trials") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+
+ggplot(draws_df) +
+  geom_histogram(aes(prior_preds), color = "lightblue", fill = "blue", alpha = 0.3, bins = 90) +
+  geom_histogram(aes(posterior_preds), color = "darkblue", fill = "blue", alpha = 0.3, bins = 90) +
+  geom_point(x = sum(data$h), y = 0, color = "red", shape = 17, size = 5) +
+  xlab("Predicted heads out of 120 trials") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+
+ggplot(draws_df) +
+  geom_density(aes(theta_posterior), fill = "blue", alpha = 0.3) +
+  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
+  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
+  xlab("Rate") +
+  ylab("Posterior Density") +
+  theme_classic()
+```
+
+We can see that the results are virtually identical, except for a slight shrinkage of the estimate from 0.755 to 0.75 (due to the prior being more conservative closer to 0 and 1).
+
+## Parameter recovery
+
+Now that we see that the model works in one case, we can run it throughout all possible rate and noise levels in the simulation.
+
+```{r}
+
+
+# Now we need to scale it up to all possible rates and noises
+recovery_df <- NULL
+
+for (noiseLvl in unique(d$noise)) {
+  
+  for (rateLvl in unique(d$rate)) {
+    
+    dd <- d %>% subset(
+      noise == noiseLvl  & rate == rateLvl
+    )
+    
+    data <- list(
+      n = 120,
+      h = dd$choice
+    )
+    
+    samples <- mod$sample(
+      data = data,
+      seed = 123,
+      chains = 1,
+      parallel_chains = 1,
+      threads_per_chain = 1,
+      iter_warmup = 1000,
+      iter_sampling = 2000,
+      refresh = 500,
+      max_treedepth = 20,
+      adapt_delta = 0.99,
+    )
+    
+    draws_df <- as_draws_df(samples$draws()) 
+    temp <- tibble(biasEst = draws_df$theta_posterior, biasTrue = rateLvl, noise = noiseLvl)
+    
+    
+    if (exists("recovery_df")) {recovery_df <- rbind(recovery_df, temp)} else {recovery_df <- temp}
+    
+  }
+  
+}
+
+write_csv(recovery_df, "simdata/W3_recoverydf_simple.csv")
+
+ggplot(recovery_df, aes(biasTrue, biasEst)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  facet_wrap(.~noise) +
+  theme_classic()
+```
+
+There's much to be said about the final plot, but for now let's just say that it looks good. We can reconstruct in a nice ordered way true rate values. However, our ability to do so decreases with the increase in noise. So far no surprises. Wait, you say, shouldn't we actually model the generative process, that is, include noise in the Stan model? Gold star, there! But let's wait a bit before we get there, we'll need mixture models. 
+
+One final note before moving to the memory model: what if we parallelized the parameter recovery, so that different models / datasets run on different cores? This was not necessary above (it ran in a few minutes anyway), but will become crucial with more complex models.
+
+To parallelize, we rely on furrr, a neat R package that distributes parallel operations across cores.
+First we need to define the function that will define the operations to be run on each core separately, here we simulate the data according to a seed, a n of trials, a rate and a noise, and then we fit the model to them.
+Second, we need to create a tibble of the seeds, n of trials, rate and noise values that should be simulated.
+Third, we use future_pmap_dfr to run the function on each row of the tibble above separately on a different core. Note that I set the system to split across 4 parallel cores (to work on my computer without clogging it). Do change it according to the system you are using. Note that if you have 40 "jobs" (rows of the tibble, sets of parameter values to run), using e.g. 32 cores will not speed things more than using 20.
+
+
+
+```{r}
+
+pacman::p_load(future, purrr, furrr)
+plan(multisession, workers = 4)
+
+sim_d_and_fit <- function(seed, trials, rateLvl, noiseLvl) {
+  
+    for (t in seq(trials)) { # looping through trials (to make it homologous to more reactive models)
+      randomChoice[t] <- RandomAgentNoise_f(rateLvl, noiseLvl)
+    }
+    temp <- tibble(trial = seq(trials), choice = randomChoice, rate, noise)
+    
+    data <- list(
+      n = 120,
+      h = temp$choice
+    )
+    
+    samples <- mod$sample(
+      data = data,
+      seed = 1000,
+      chains = 1,
+      parallel_chains = 1,
+      threads_per_chain = 1,
+      iter_warmup = 1000,
+      iter_sampling = 2000,
+      refresh = 500,
+      max_treedepth = 20,
+      adapt_delta = 0.99,
+    )
+    
+    draws_df <- as_draws_df(samples$draws()) 
+    temp <- tibble(biasEst = draws_df$theta_posterior, biasTrue = rateLvl, noise = noiseLvl)
+    
+    return(temp)
+  
+}
+
+temp <- tibble(unique(d[,c("rate", "noise")])) %>% 
+  mutate(seed = 1000, trials = 120) %>%
+  rename(rateLvl = rate, noiseLvl = noise)
+
+recovery_df <- future_pmap_dfr(temp, sim_d_and_fit, .options = furrr_options(seed = TRUE))
+
+ggplot(recovery_df, aes(biasTrue, biasEst)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  facet_wrap(.~noise) +
+  theme_classic()
+
+```
+
+
+## The memory model: conditioning theta
+
+```{r}
+### Now onto the memory model
+
+d1 <- d %>% subset(noise == 0 & rate == 0.8)
+
+## Create the data
+data <- list(
+  n = 120,
+  h = d1$choice,
+  memory = d1$cumulativerate
+)
+
+## Specify where the model is
+file <- file.path("stan/W3_MemoryBernoulli.stan")
+mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE))
+
+# The following command calls Stan with specific options.
+samples <- mod$sample(
+  data = data,
+  seed = 123,
+  chains = 1,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  refresh = 500,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+
+
+samples$summary() 
+
+# Extract posterior samples and include sampling of the prior:
+draws_df <- as_draws_df(samples$draws())
+
+
+# Now let's plot the density for theta (prior and posterior)
+ggplot(draws_df) +
+  geom_density(aes(alpha), fill = "blue", alpha = 0.3) +
+  geom_density(aes(alpha_prior), fill = "red", alpha = 0.3) +
+  xlab("Rate") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+ggplot(draws_df) +
+  geom_density(aes(beta), fill = "blue", alpha = 0.3) +
+  geom_density(aes(beta_prior), fill = "red", alpha = 0.3) +
+  xlab("Rate") +
+  ylab("Posterior Density") +
+  theme_classic()
+```
+
