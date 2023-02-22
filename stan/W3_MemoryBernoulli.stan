@@ -1,8 +1,5 @@
-//
-// This STAN model infers a random bias from a sequences of 1s and 0s (heads and tails)
-//
 
-// The input (data) for the model. n of trials and h of heads
+// The input (data) for the model. n of trials and h for (right and left) hand
 data {
  int<lower=1> n;
  array[n] int h;
@@ -28,12 +25,14 @@ model {
 }
 
 generated quantities{
-  array[n] int preds;
+  array[n] int prior_preds;
+  array[n] int post_preds;
   real alpha_prior;
   real beta_prior;
 
   alpha_prior = normal_rng(0, 1);
   beta_prior = normal_rng(0, 0.3);
-  preds = binomial_rng(n, inv_logit(alpha + beta * memory));
+  post_preds = binomial_rng(n, inv_logit(alpha_prior + beta_prior * memory));
+  post_preds = binomial_rng(n, inv_logit(alpha + beta * memory));
 }
 
