@@ -24,15 +24,3 @@ model {
   
 }
 
-generated quantities{
-  real<lower=0, upper=1> theta_prior;  // theta prior parameter, on a prob scale (0-1)
-  real<lower=0, upper=1> theta_posterior; // theta posterior parameter, on a prob scale (0-1)
-  int<lower=0, upper=n> prior_preds;
-  int<lower=0, upper=n> posterior_preds;
-  
-  theta_prior = inv_logit(normal_rng(0,1)); // generating the prior on a log odds scale and converting
-  theta_posterior = inv_logit(theta);  // converting the posterior estimate from log odds to prob.
-  prior_preds = binomial_rng(n, theta_prior);
-  posterior_preds = binomial_rng(n, inv_logit(theta));
-}
-

@@ -10,7 +10,7 @@ The goal of the practical exercise is to build on the simulated data from Practi
 Here we build a new simulation of random agents with bias and noise. The code and visualization is really nothing different from  last week's exercise.
 
 
-```{r}
+```{r message = FALSE}
 pacman::p_load(tidyverse,
         here,
         posterior,
@@ -69,13 +69,11 @@ N.B. Refer to the video and slides for the step by step build-up of the Stan cod
 Now we subset to a simple case, no noise and rate of 0.8, to focus on the Stan model.
 We make it into the right format for Stan, build the Stan model, and fit it.
 
-[MISSING: more step by step explanation and predictive checks]
-
 ### Data
 
 Here we define the data and format it for Stan. Stan likes data as a list. Why a list? Well, dataframes (now tibbles) are amazing. But they have a big drawback: they require each variable to have the same length. Lists do not have that limitation, they are more flexible. So, lists. We'll have to learn how to live with them. 
 
-```{r}
+```{r message = FALSE}
 d1 <- d %>% subset(noise == 0 & rate == 0.8)
 
 ## Create the data. N.B. note the two variables have different lengths: 1 for n, n for h.
@@ -93,7 +91,7 @@ We write the stan code within the R code (so I can show it to you more easily), 
 
 Remember that the minimal Stan model requires 3 chunks, one specifying the data it will need as input; one specifying the parameters to be estimated; one specifying the model within which the parameters appear, and the priors for those parameters.
 
-```{r}
+```{r message = FALSE}
 stan_model <- "
 // This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)
 
@@ -127,7 +125,7 @@ write_stan_file(
 
 ### Compiling and fitting the model
 
-```{r}
+```{r message = FALSE}
 ## Specify where the model is
 file <- file.path("stan/W3_SimpleBernoulli.stan")
 mod <- cmdstan_model(file, 
@@ -154,7 +152,7 @@ samples <- mod$sample(
 
 Now the model is ready to be assessed. First we simply generate a summary of the estimates to have a first idea.
 
-```{r}
+```{r message = FALSE}
 samples$summary() # summarize the model
 
 ```
@@ -163,7 +161,7 @@ Then we need to look more in the details at the quality of the estimation:
 * the markov chains
 * how the prior and the posterior estimates relate to each other (whether the prior is constraining the posterior estimate)
 
-```{r}
+```{r message = FALSE}
 
 # Extract posterior samples and include sampling of the prior:
 draws_df <- as_draws_df(samples$draws())
@@ -197,7 +195,7 @@ Note that we add a new chunk now: generated quantities. Given that theta is now 
 
 While we are at it, we can also generate some predictive checks: how many right choices out of 120 trials does the model expect before seeing the data (from priors only)? How many does the fitted model expect (after seeing the data)?
 
-```{r}
+```{r message = FALSE}
 
 stan_model <- "
 // This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)
@@ -223,18 +221,6 @@ model {
   // note we specify it uses a logit link (theta is in logodds)
   target += bernoulli_logit_lpmf(h | theta);
   
-}
-
-generated quantities{
-  real<lower=0, upper=1> theta_prior;  // theta prior parameter, on a prob scale (0-1)
-  real<lower=0, upper=1> theta_posterior; // theta posterior parameter, on a prob scale (0-1)
-  int<lower=0, upper=n> prior_preds;
-  int<lower=0, upper=n> posterior_preds;
-  
-  theta_prior = inv_logit(normal_rng(0,1)); // generating the prior on a log odds scale and converting
-  theta_posterior = inv_logit(theta);  // converting the posterior estimate from log odds to prob.
-  prior_preds = binomial_rng(n, theta_prior);
-  posterior_preds = binomial_rng(n, inv_logit(theta));
 }
 "
 write_stan_file(
@@ -277,45 +263,7 @@ ggplot(draws_df, aes(.iteration, theta, group = .chain, color = .chain)) +
 
 samples$summary() 
 
-# Prior predictions
-ggplot(draws_df) +
-  geom_histogram(aes(prior_preds), color = "darkblue", fill = "blue", alpha = 0.3) +
-  xlab("Predicted heads out of 120 trials") +
-  ylab("Posterior Density") +
-  theme_classic()
 
-# Now let's plot the density for theta (prior and posterior)
-ggplot(draws_df) +
-  geom_density(aes(theta_posterior), fill = "blue", alpha = 0.3) +
-  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
-  xlab("Rate") +
-  ylab("Posterior Density") +
-  theme_classic()
-
-ggplot(draws_df) +
-  geom_histogram(aes(posterior_preds), color = "darkblue", fill = "blue", alpha = 0.3, bins = 90) +
-  geom_point(x = sum(data$h), y = 0, color = "red", shape = 17, size = 5) +
-  xlab("Predicted heads out of 120 trials") +
-  ylab("Posterior Density") +
-  theme_classic()
-
-
-ggplot(draws_df) +
-  geom_histogram(aes(prior_preds), color = "lightblue", fill = "blue", alpha = 0.3, bins = 90) +
-  geom_histogram(aes(posterior_preds), color = "darkblue", fill = "blue", alpha = 0.3, bins = 90) +
-  geom_point(x = sum(data$h), y = 0, color = "red", shape = 17, size = 5) +
-  xlab("Predicted heads out of 120 trials") +
-  ylab("Posterior Density") +
-  theme_classic()
-
-
-ggplot(draws_df) +
-  geom_density(aes(theta_posterior), fill = "blue", alpha = 0.3) +
-  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
-  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
-  xlab("Rate") +
-  ylab("Posterior Density") +
-  theme_classic()
 ```
 
 We can see that the results are virtually identical, except for a slight shrinkage of the estimate from 0.755 to 0.75 (due to the prior being more conservative closer to 0 and 1).
@@ -357,7 +305,8 @@ for (noiseLvl in unique(d$noise)) {
     )
     
     draws_df <- as_draws_df(samples$draws()) 
-    temp <- tibble(biasEst = draws_df$theta_posterior, biasTrue = rateLvl, noise = noiseLvl)
+    temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
+                   biasTrue = rateLvl, noise = noiseLvl)
     
     
     if (exists("recovery_df")) {recovery_df <- rbind(recovery_df, temp)} else {recovery_df <- temp}
@@ -382,7 +331,7 @@ One final note before moving to the memory model: what if we parallelized the pa
 To parallelize, we rely on furrr, a neat R package that distributes parallel operations across cores.
 First we need to define the function that will define the operations to be run on each core separately, here we simulate the data according to a seed, a n of trials, a rate and a noise, and then we fit the model to them.
 Second, we need to create a tibble of the seeds, n of trials, rate and noise values that should be simulated.
-Third, we use future_pmap_dfr to run the function on each row of the tibble above separately on a different core. Note that I set the system to split across 4 parallel cores (to work on my computer without clogging it). Do change it according to the system you are using. Note that if you have 40 "jobs" (rows of the tibble, sets of parameter values to run), using e.g. 32 cores will not speed things more than using 20.
+Third, we use future_pmap_dfr to run the function on each row of the tibble above separately on a different core. Note that I set the system to split across 4 parallel cores (to work on my computer without clogging it). Do change it according to the system you are using. Note that if you have 40 "jobs" (rows of the tibble, sets of parameter values to run), using e.g. 32 cores will not substantially speed things more than using 20.
 
 
 
@@ -417,7 +366,8 @@ sim_d_and_fit <- function(seed, trials, rateLvl, noiseLvl) {
     )
     
     draws_df <- as_draws_df(samples$draws()) 
-    temp <- tibble(biasEst = draws_df$theta_posterior, biasTrue = rateLvl, noise = noiseLvl)
+    temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
+                   biasTrue = rateLvl, noise = noiseLvl)
     
     return(temp)
   
@@ -441,18 +391,18 @@ ggplot(recovery_df, aes(biasTrue, biasEst)) +
 
 ## The memory model: conditioning theta
 
-Now that we fitted the base model, we can move onto more complex models. For instance a memory model (including all previosu trials)
+Now that we fitted the base model, we can move onto more complex models. For instance a memory model (including all previous trials). Here we rely on a generalized linear model kind of thinking: the theta is the expression of a linear model (bias + b1 * PreviousRate), which is bound to a probability 0-1 space via a logit link/transformation.
 
-```{r}
-### Now onto the memory model
+```{r message = FALSE}
 
+# We subset to only include no noise and a specific rate
 d1 <- d %>% subset(noise == 0 & rate == 0.8)
 
 ## Create the data
 data <- list(
   n = 120,
   h = d1$choice,
-  memory = d1$cumulativerate
+  memory = d1$cumulativerate # this creates the new parameter: the rate of right hands so far
 )
 
 stan_model <- "
@@ -460,13 +410,13 @@ stan_model <- "
 data {
  int<lower=1> n;
  array[n] int h;
- vector<lower=0, upper=1>[n] memory;
+ vector<lower=0, upper=1>[n] memory; // here we add the new parameter
 }
 
 // The parameters accepted by the model. 
 parameters {
-  real alpha;
-  real beta;
+  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?
+  real beta; // how strongly is previous rate impacting the decision?
 }
 
 
@@ -474,24 +424,13 @@ parameters {
 // The model to be estimated. 
 model {
   // The prior for theta is a uniform distribution between 0 and 1
-  target += normal_lpdf(alpha | 0, 1);
+  target += normal_lpdf(bias | 0, 1);
   target += normal_lpdf(beta | 0, .3);
   
   // The model consists of a binomial distributions with a rate theta
-  target += bernoulli_logit_lpmf(h | alpha + beta * memory);
+  target += bernoulli_logit_lpmf(h | bias + beta * memory);
 }
 
-generated quantities{
-  array[n] int prior_preds;
-  array[n] int post_preds;
-  real alpha_prior;
-  real beta_prior;
-
-  alpha_prior = normal_rng(0, 1);
-  beta_prior = normal_rng(0, 0.3);
-  post_preds = binomial_rng(n, inv_logit(alpha_prior + beta_prior * memory));
-  post_preds = binomial_rng(n, inv_logit(alpha + beta * memory));
-}
 "
 write_stan_file(
   stan_model,
@@ -520,332 +459,9 @@ samples <- mod$sample(
 
 samples$summary() 
 
-# Extract posterior samples and include sampling of the prior:
-draws_df <- as_draws_df(samples$draws())
-
-
-# Now let's plot the density for theta (prior and posterior)
-ggplot(draws_df) +
-  geom_density(aes(alpha), fill = "blue", alpha = 0.3) +
-  geom_density(aes(alpha_prior), fill = "red", alpha = 0.3) +
-  xlab("Rate") +
-  ylab("Posterior Density") +
-  theme_classic()
-
-ggplot(draws_df) +
-  geom_density(aes(beta), fill = "blue", alpha = 0.3) +
-  geom_density(aes(beta_prior), fill = "red", alpha = 0.3) +
-  xlab("Rate") +
-  ylab("Posterior Density") +
-  theme_classic()
 ```
 
-## BONUS CONTENT - Including noise in the generative model
-
-N.B. This should all be parallelized.
-
-### First with brms as a sanity check
-
-```{r}
-## Mixture in brms
-dd <- d %>% subset(rate == 0.8 & noise == 0.1)
-
-formula <- bf(choice ~ 1)
-
-mix <- mixture(bernoulli, bernoulli)
-
-get_prior(formula, family = mix, dd)
-
-prior <- c(
-  prior(normal(0, .1), class = "Intercept", dpar = mu1),
-  prior(normal(0, 1), class = "Intercept", dpar = mu2)
-)
-
-m <- brm(formula, 
-         family = mix, 
-         prior = prior, 
-         data = dd,
-         backend = "cmdstanr", 
-         chains = 2, 
-         cores = 2, 
-         control = list(adapt_delta = 0.99),
-         stan_model_args = list(stanc_options = list("O1")))
-
-## Now we need to scale it up to all possible rates and noises
-recovery_df <- NULL
-
-for (noiseLvl in unique(d$noise)) {
-  
-  for (rateLvl in unique(d$rate)) {
-    
-    dd <- d %>% subset(
-      noise == noiseLvl  & rate == rateLvl
-    )
-    m <- brm(
-        formula,
-        family = mix,
-        prior = prior,
-        data = dd,
-        backend = "cmdstanr",
-        chains = 2,
-        cores = 2,
-        control = list(adapt_delta = 0.99),
-        refresh = 1000,
-        stan_model_args = list(stanc_options = list("O1")))
-    
-    post_preds <- spread_draws(m, b_mu2_Intercept, theta1)
-    
-    temp <- tibble(biasEst = post_preds$b_mu2_Intercept, 
-                   biasTrue = rateLvl, 
-                   noiseEst = post_preds$theta1, 
-                   noiseTrue = noiseLvl, 
-                   Randomness = post_preds$b_mu2_Intercept,
-                   Bias_p = post_preds$theta2)
-    
-    if (exists("recovery_df")) {
-      recovery_df <- rbind(recovery_df, temp)
-      } else {recovery_df <- temp}
-    
-  }}
-
-ggplot(recovery_df, aes(biasTrue, biasEst)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  facet_wrap(.~noiseTrue) +
-  theme_classic()
-
-```
-
-### Then coding it directly in Stan
-
-```{r}
-dd <- d %>% subset(rate == 0.8 & noise == 0.1)
-data <- list(
-  n = 120,
-  h = dd$choice
-)
-file <- file.path("stan/W3_mixture.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 1500,
-  iter_sampling = 3000,
-  refresh = 500,
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
-
-## Now we need to scale it up to all possible rates and noises
-recovery_Standf <- NULL
-
-for (noiseLvl in unique(d$noise)) {
-  
-  for (rateLvl in unique(d$rate)) {
-    
-    dd <- d %>% subset(
-      noise == noiseLvl  & rate == rateLvl
-    )
-    
-    data <- list(
-      n = nrow(dd),
-      h = dd$choice
-    )
-    
-    samples <- mod$sample(
-      data = data,
-      seed = 123,
-      chains = 1,
-      parallel_chains = 1,
-      threads_per_chain = 1,
-      iter_warmup = 2000,
-      iter_sampling = 4000,
-      refresh = 1000,
-      max_treedepth = 20,
-      adapt_delta = 0.99,
-    )
-    
-    draws_df <- as_draws_df(samples$draws()) 
-    temp <- tibble(biasEst = draws_df$bias_p, 
-                   biasTrue = rateLvl, 
-                   noiseEst = draws_df$noise_p, 
-                   noiseTrue = noiseLvl)
-    
-    
-    if (exists("recovery_Standf")) {
-      recovery_Standf <- rbind(recovery_Standf, temp)
-      } else {recovery_Standf <- temp}
-    
-  }
-  
-}
+We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.8 which in log odds is 1.39), and the beta coefficient for memory (roughly 0). More on quality checks of the models in the next chapter.
 
 
-ggplot(recovery_Standf, aes(biasTrue, biasEst)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  facet_wrap(.~noiseTrue) +
-  ylim(0,1) +
-  theme_classic()
-
-ggplot(recovery_Standf, aes(noiseTrue, noiseEst)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  facet_wrap(.~biasTrue) +
-  ylim(0,1) +
-  theme_classic()
-```
-
-### Now we add different priors for noise
-
-```{r}
-## Now we adding different priors for noise
-NoiseMean <- seq(-3,0, .5)
-NoiseStD <- seq(0.1, 1, 0.1)
-noisePriors <-  expand.grid(NoiseMean = NoiseMean, NoiseStD = NoiseStD)
-
-file <- file.path("stan/W3_mixture_v2.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
-
-
-recovery_Standf3 <- NULL
-
-for (p in seq(nrow(noisePriors))) {
-
-for (noiseLvl in unique(d$noise)) {
-  
-  for (rateLvl in unique(d$rate)) {
-    
-    dd <- d %>% subset(
-      noise == noiseLvl  & rate == rateLvl
-    )
-    
-    data <- list(
-      n = nrow(dd),
-      h = dd$choice,
-      noiseM = noisePriors$NoiseMean[p],
-      noiseSd = noisePriors$NoiseStD[p]
-    )
-    
-    samples <- mod$sample(
-      data = data,
-      seed = 123,
-      chains = 1,
-      parallel_chains = 1,
-      threads_per_chain = 1,
-      iter_warmup = 2000,
-      iter_sampling = 4000,
-      refresh = 1000,
-      max_treedepth = 20,
-      adapt_delta = 0.99,
-    )
-    
-    draws_df <- as_draws_df(samples$draws()) 
-    temp <- tibble(biasEst = draws_df$bias_p, 
-                   biasTrue = rateLvl, 
-                   noiseEst = draws_df$noise_p, 
-                   noiseTrue = noiseLvl,
-                   noiseM = noisePriors$NoiseMean[p],
-                   noiseSd = noisePriors$NoiseStD[p])
-    
-    
-    if (exists("recovery_Standf3")) {
-      recovery_Standf3 <- rbind(recovery_Standf3, temp)
-    } else {
-        recovery_Standf3 <- temp}
-    
-  }
-  
-}
-}
-```
-
-### Now also playing with priors for theta
-
-```{r}
-## Now we adding different priors for theta
-prior_mean <- seq(-3, 3, .5)
-prior_sd <- seq(0.1, 1, 0.1)
-priors <-  expand.grid(prior_mean, prior_sd)
-priors <- tibble(prior_mean = priors$Var1, prior_sd = priors$Var2)
-
-file <- file.path("stan/W3_mixture_v3.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
-
-dd <- d %>% subset(noise == 0.1 & rate == 0.8)
-
-sensitivity_df <- NULL
-
-for (p in seq(nrow(priors))) {
-  
-      data <- list(
-        n = nrow(dd),
-        h = dd$choice,
-        prior_mean = priors$prior_mean[p],
-        prior_sd = priors$prior_sd[p]
-      )
-      
-      samples <- mod$sample(
-        data = data,
-        seed = 123,
-        chains = 1,
-        parallel_chains = 1,
-        threads_per_chain = 1,
-        iter_warmup = 1000,
-        iter_sampling = 1000,
-        refresh = 1000,
-        max_treedepth = 20,
-        adapt_delta = 0.99,
-      )
-      
-      draws_df <- as_draws_df(samples$draws()) 
-      temp <- tibble(theta_prior = draws_df$theta_prior, 
-                     theta_posterior = draws_df$theta_posterior, 
-                     prior_preds = draws_df$prior_preds, 
-                     posterior_preds = draws_df$posterior_preds, 
-                     prior_mean = priors$prior_mean[p],
-                     prior_sd = priors$prior_sd[p])
-      
-      
-      if (exists("sensitivity_df")) {
-        sensitivity_df <- rbind(sensitivity_df, temp)
-      } else {
-          sensitivity_df <- temp}
-      
-}
-
-ggplot(sensitivity_df, aes(prior_mean, theta_posterior)) +
-  geom_point(alpha = 0.01) +
-  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red") +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "blue") +
-  facet_wrap(.~prior_sd) +
-  theme_bw()
-
-ggplot(sensitivity_df, aes(prior_sd, theta_posterior)) +
-  geom_point(alpha = 0.01) +
-  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red") +
-  geom_vline(xintercept = 1, linetype = "dashed", color = "blue") +
-  facet_wrap(.~prior_mean) +
-  theme_bw()
-
-ggplot(sensitivity_df, aes(prior_mean, posterior_preds)) +
-  geom_point(alpha = 0.01) +
-  geom_hline(yintercept = 96, linetype = "dashed", color = "red") +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "blue") +
-  facet_wrap(.~prior_sd) +
-  theme_bw()
-
-ggplot(sensitivity_df, aes(prior_sd, posterior_preds)) +
-  geom_point(alpha = 0.01) +
-  geom_hline(yintercept = 96, linetype = "dashed", color = "red") +
-  geom_vline(xintercept = 1, linetype = "dashed", color = "blue") +
-  facet_wrap(.~prior_mean) +
-  theme_bw()
-```
 
