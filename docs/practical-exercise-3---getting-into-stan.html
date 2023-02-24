@@ -31,7 +31,7 @@
   
   
 <link rel="prev" href="practical-exercise-2---from-verbal-to-formal-models.html"/>
-<link rel="next" href="model-quality-check.html"/>
+<link rel="next" href="practical-exercise-4---model-quality-checks.html"/>
 <script src="libs/jquery-3.6.0/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.4.6/dist/fuse.min.js"></script>
 <link href="libs/gitbook-2.6.7/css/style.css" rel="stylesheet" />
@@ -190,9 +190,11 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <li class="chapter" data-level="4.4" data-path="practical-exercise-3---getting-into-stan.html"><a href="practical-exercise-3---getting-into-stan.html#parameter-recovery"><i class="fa fa-check"></i><b>4.4</b> Parameter recovery</a></li>
 <li class="chapter" data-level="4.5" data-path="practical-exercise-3---getting-into-stan.html"><a href="practical-exercise-3---getting-into-stan.html#the-memory-model-conditioning-theta"><i class="fa fa-check"></i><b>4.5</b> The memory model: conditioning theta</a></li>
 </ul></li>
-<li class="chapter" data-level="5" data-path="model-quality-check.html"><a href="model-quality-check.html"><i class="fa fa-check"></i><b>5</b> Model quality check</a>
+<li class="chapter" data-level="5" data-path="practical-exercise-4---model-quality-checks.html"><a href="practical-exercise-4---model-quality-checks.html"><i class="fa fa-check"></i><b>5</b> Practical exercise 4 - Model quality checks</a>
 <ul>
-<li class="chapter" data-level="5.1" data-path="model-quality-check.html"><a href="model-quality-check.html#including-plots"><i class="fa fa-check"></i><b>5.1</b> Including Plots</a></li>
+<li class="chapter" data-level="5.1" data-path="practical-exercise-4---model-quality-checks.html"><a href="practical-exercise-4---model-quality-checks.html#generating-and-plotting-additional-variables"><i class="fa fa-check"></i><b>5.1</b> Generating and plotting additional variables</a></li>
+<li class="chapter" data-level="5.2" data-path="practical-exercise-4---model-quality-checks.html"><a href="practical-exercise-4---model-quality-checks.html#now-we-can-better-assess-the-prior"><i class="fa fa-check"></i><b>5.2</b> Now we can better assess the prior</a></li>
+<li class="chapter" data-level="5.3" data-path="practical-exercise-4---model-quality-checks.html"><a href="practical-exercise-4---model-quality-checks.html#as-well-as-how-the-model-was-predicting-the-outcome-to-be-before-and-after-seeing-the-data."><i class="fa fa-check"></i><b>5.3</b> as well as how the model was predicting the outcome to be before and after seeing the data.</a></li>
 </ul></li>
 <li class="divider"></li>
 <li><a href="https://bookdown.org" target="blank">Published with bookdown</a></li>
@@ -359,8 +361,8 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 <pre><code>## # A tibble: 2 × 10
 ##   variable    mean  median     sd    mad      q5     q95  rhat ess_bulk ess_tail
 ##   &lt;chr&gt;      &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -59.6   -59.3   0.710  0.342  -61.1   -59.1    1.00    1165.     928.
-## 2 theta      0.813   0.814 0.0356 0.0361   0.754   0.871  1.00     865.     677.</code></pre>
+## 1 lp__     -65.0   -64.7   0.646  0.327  -66.3   -64.5    1.00    1105.    1155.
+## 2 theta      0.780   0.781 0.0368 0.0383   0.717   0.837  1.00    1050.     995.</code></pre>
 <p>Then we need to look more in the details at the quality of the estimation:
 * the markov chains
 * how the prior and the posterior estimates relate to each other (whether the prior is constraining the posterior estimate)</p>
@@ -388,8 +390,6 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 <p><img src="series_files/figure-html/unnamed-chunk-9-2.png" width="672" /></p>
 <p>As we can see from the posterior estimates and the prior posterior update check, our model is doing a decent job. It doesn’t exactly reconstruct the rate of 0.8, but 0.755 is pretty close and 0.8 is included within the credible interval.</p>
 <p>Now we build the same model, but using the log odds scale for the theta parameter, which will become useful later when we condition theta on variables and build multilevel models (as we can do what we want in a log odds space and it will always be bound between 0 and 1).</p>
-<p>Note that we add a new chunk now: generated quantities. Given that theta is now on a log odds scale and nobody likes log odds, we tell stan to create a version of both prior and posterior estimates on a probability scale.</p>
-<p>While we are at it, we can also generate some predictive checks: how many right choices out of 120 trials does the model expect before seeing the data (from priors only)? How many does the fitted model expect (after seeing the data)?</p>
 <div class="sourceCode" id="cb39"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb39-1"><a href="practical-exercise-3---getting-into-stan.html#cb39-1" aria-hidden="true" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
 <span id="cb39-2"><a href="practical-exercise-3---getting-into-stan.html#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="st">// This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)</span></span>
 <span id="cb39-3"><a href="practical-exercise-3---getting-into-stan.html#cb39-3" aria-hidden="true" tabindex="-1"></a></span>
@@ -444,18 +444,18 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 <pre><code>## Running MCMC with 2 parallel chains, with 2 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
-## Chain 2 finished in 0.0 seconds.
+## Chain 2 finished in 0.1 seconds.
 ## 
 ## Both chains finished successfully.
 ## Mean chain execution time: 0.1 seconds.
 ## Total execution time: 0.1 seconds.</code></pre>
 <div class="sourceCode" id="cb43"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb43-1"><a href="practical-exercise-3---getting-into-stan.html#cb43-1" aria-hidden="true" tabindex="-1"></a>samples</span></code></pre></div>
 <pre><code>##  variable   mean median   sd  mad     q5    q95 rhat ess_bulk ess_tail
-##     lp__  -59.64 -59.38 0.67 0.32 -60.98 -59.15 1.00     1458     1340
-##     theta   1.43   1.43 0.22 0.23   1.09   1.82 1.00      809      849</code></pre>
+##     lp__  -64.95 -64.64 0.80 0.30 -66.60 -64.43 1.00      926      718
+##     theta   1.25   1.25 0.22 0.21   0.90   1.62 1.00     1112      785</code></pre>
 <div class="sourceCode" id="cb45"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb45-1"><a href="practical-exercise-3---getting-into-stan.html#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Diagnostics</span></span>
 <span id="cb45-2"><a href="practical-exercise-3---getting-into-stan.html#cb45-2" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">cmdstan_diagnose</span>()</span></code></pre></div>
-<pre><code>## Processing csv files: /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/Rtmp8JCHSW/W3_SimpleBernoulli_logodds-202302221550-1-2720f6.csv, /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/Rtmp8JCHSW/W3_SimpleBernoulli_logodds-202302221550-2-2720f6.csv
+<pre><code>## Processing csv files: /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/RtmpCa0Wqb/W3_SimpleBernoulli_logodds-202302241444-1-648c0d.csv, /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/RtmpCa0Wqb/W3_SimpleBernoulli_logodds-202302241444-2-648c0d.csv
 ## 
 ## Checking sampler transitions treedepth.
 ## Treedepth satisfactory for all transitions.
@@ -480,10 +480,10 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 <p><img src="series_files/figure-html/unnamed-chunk-10-1.png" width="672" /></p>
 <div class="sourceCode" id="cb48"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb48-1"><a href="practical-exercise-3---getting-into-stan.html#cb48-1" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 2 × 10
-##   variable   mean median    sd   mad     q5    q95  rhat ess_bulk ess_tail
-##   &lt;chr&gt;     &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -59.6  -59.4  0.667 0.320 -61.0  -59.1   1.00    1459.    1341.
-## 2 theta      1.43   1.43 0.224 0.227   1.09   1.82  1.00     809.     849.</code></pre>
+##   variable   mean median    sd   mad      q5    q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;     &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__     -65.0  -64.6  0.797 0.298 -66.6   -64.4   1.00     927.     718.
+## 2 theta      1.25   1.25 0.220 0.209   0.903   1.62  1.00    1112.     785.</code></pre>
 <p>We can see that the results are virtually identical, except for a slight shrinkage of the estimate from 0.755 to 0.75 (due to the prior being more conservative closer to 0 and 1).</p>
 </div>
 </div>
@@ -534,9 +534,6 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
@@ -555,33 +552,6 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
@@ -594,10 +564,28 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.1 seconds.
+## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
@@ -621,34 +609,7 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
 ## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
@@ -678,7 +639,13 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
 ## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
@@ -687,13 +654,19 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.1 seconds.
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
@@ -720,13 +693,40 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.1 seconds.
+## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.1 seconds.</code></pre>
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.</code></pre>
 <div class="sourceCode" id="cb52"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb52-1"><a href="practical-exercise-3---getting-into-stan.html#cb52-1" aria-hidden="true" tabindex="-1"></a><span class="fu">write_csv</span>(recovery_df, <span class="st">&quot;simdata/W3_recoverydf_simple.csv&quot;</span>)</span>
 <span id="cb52-2"><a href="practical-exercise-3---getting-into-stan.html#cb52-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb52-3"><a href="practical-exercise-3---getting-into-stan.html#cb52-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(recovery_df, <span class="fu">aes</span>(biasTrue, biasEst)) <span class="sc">+</span></span>
@@ -800,6 +800,15 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
@@ -807,6 +816,102 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.1 seconds.
+## Running MCMC with 1 chain, with 1 thread(s) per chain...
+## 
+## Chain 1 finished in 0.0 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
@@ -863,49 +968,7 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
 ## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.0 seconds.
@@ -915,69 +978,6 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.0 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
-## Running MCMC with 1 chain, with 1 thread(s) per chain...
-## 
-## Chain 1 finished in 0.1 seconds.
 ## Running MCMC with 1 chain, with 1 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.</code></pre>
@@ -1036,92 +1036,31 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 <div class="sourceCode" id="cb58"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb58-1"><a href="practical-exercise-3---getting-into-stan.html#cb58-1" aria-hidden="true" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
 <span id="cb58-2"><a href="practical-exercise-3---getting-into-stan.html#cb58-2" aria-hidden="true" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W3_MemoryBernoulli.stan&quot;</span>)</span>
 <span id="cb58-3"><a href="practical-exercise-3---getting-into-stan.html#cb58-3" aria-hidden="true" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb58-4"><a href="practical-exercise-3---getting-into-stan.html#cb58-4" aria-hidden="true" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span></code></pre></div>
-<pre><code>## 
--
-
-\
-
-|
-
-/
-
--
-
-\
-
-|
-
-/
-
--
-
-\
-
-|
-
-/
-
--
-
-\
-
-|
-
-/
-
--
-
-\
-
-|
-
-/
-
--
-
-\
-
-|
-
-/
-
--
-
-\
-
-|
-
-/
-
--
-
-\
-
- </code></pre>
-<div class="sourceCode" id="cb60"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb60-1"><a href="practical-exercise-3---getting-into-stan.html#cb60-1" aria-hidden="true" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
-<span id="cb60-2"><a href="practical-exercise-3---getting-into-stan.html#cb60-2" aria-hidden="true" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
-<span id="cb60-3"><a href="practical-exercise-3---getting-into-stan.html#cb60-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
-<span id="cb60-4"><a href="practical-exercise-3---getting-into-stan.html#cb60-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
-<span id="cb60-5"><a href="practical-exercise-3---getting-into-stan.html#cb60-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>,</span>
-<span id="cb60-6"><a href="practical-exercise-3---getting-into-stan.html#cb60-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
-<span id="cb60-7"><a href="practical-exercise-3---getting-into-stan.html#cb60-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
-<span id="cb60-8"><a href="practical-exercise-3---getting-into-stan.html#cb60-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
-<span id="cb60-9"><a href="practical-exercise-3---getting-into-stan.html#cb60-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">1000</span>,</span>
-<span id="cb60-10"><a href="practical-exercise-3---getting-into-stan.html#cb60-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
-<span id="cb60-11"><a href="practical-exercise-3---getting-into-stan.html#cb60-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
-<span id="cb60-12"><a href="practical-exercise-3---getting-into-stan.html#cb60-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
-<span id="cb60-13"><a href="practical-exercise-3---getting-into-stan.html#cb60-13" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<span id="cb58-4"><a href="practical-exercise-3---getting-into-stan.html#cb58-4" aria-hidden="true" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb58-5"><a href="practical-exercise-3---getting-into-stan.html#cb58-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-6"><a href="practical-exercise-3---getting-into-stan.html#cb58-6" aria-hidden="true" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
+<span id="cb58-7"><a href="practical-exercise-3---getting-into-stan.html#cb58-7" aria-hidden="true" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb58-8"><a href="practical-exercise-3---getting-into-stan.html#cb58-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb58-9"><a href="practical-exercise-3---getting-into-stan.html#cb58-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb58-10"><a href="practical-exercise-3---getting-into-stan.html#cb58-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>,</span>
+<span id="cb58-11"><a href="practical-exercise-3---getting-into-stan.html#cb58-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb58-12"><a href="practical-exercise-3---getting-into-stan.html#cb58-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb58-13"><a href="practical-exercise-3---getting-into-stan.html#cb58-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
+<span id="cb58-14"><a href="practical-exercise-3---getting-into-stan.html#cb58-14" aria-hidden="true" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">1000</span>,</span>
+<span id="cb58-15"><a href="practical-exercise-3---getting-into-stan.html#cb58-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
+<span id="cb58-16"><a href="practical-exercise-3---getting-into-stan.html#cb58-16" aria-hidden="true" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb58-17"><a href="practical-exercise-3---getting-into-stan.html#cb58-17" aria-hidden="true" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb58-18"><a href="practical-exercise-3---getting-into-stan.html#cb58-18" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 <pre><code>## Running MCMC with 1 chain, with 2 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.</code></pre>
-<div class="sourceCode" id="cb62"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb62-1"><a href="practical-exercise-3---getting-into-stan.html#cb62-1" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
+<div class="sourceCode" id="cb60"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb60-1"><a href="practical-exercise-3---getting-into-stan.html#cb60-1" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 3 × 10
 ##   variable    mean  median    sd   mad      q5     q95  rhat ess_bulk ess_tail
 ##   &lt;chr&gt;      &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -59.8   -59.4   1.20  0.688 -62.0   -58.8    1.00     349.     366.
-## 2 bias       1.33    1.33  0.336 0.329   0.776   1.87   1.00     253.     344.
-## 3 beta       0.134   0.143 0.305 0.300  -0.373   0.611  1.00     250.     252.</code></pre>
+## 1 lp__     -65.1   -64.8   0.984 0.762 -67.0   -64.1   0.999     388.     371.
+## 2 bias       1.12    1.13  0.306 0.318   0.631   1.63  1.00      268.     501.
+## 3 beta       0.141   0.128 0.291 0.287  -0.333   0.625 1.00      225.     182.</code></pre>
 <p>We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.8 which in log odds is 1.39), and the beta coefficient for memory (roughly 0). More on quality checks of the models in the next chapter.</p>
 
 </div>
@@ -1132,7 +1071,7 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
         </div>
       </div>
 <a href="practical-exercise-2---from-verbal-to-formal-models.html" class="navigation navigation-prev " aria-label="Previous page"><i class="fa fa-angle-left"></i></a>
-<a href="model-quality-check.html" class="navigation navigation-next " aria-label="Next page"><i class="fa fa-angle-right"></i></a>
+<a href="practical-exercise-4---model-quality-checks.html" class="navigation navigation-next " aria-label="Next page"><i class="fa fa-angle-right"></i></a>
     </div>
   </div>
 <script src="libs/gitbook-2.6.7/js/app.min.js"></script>
