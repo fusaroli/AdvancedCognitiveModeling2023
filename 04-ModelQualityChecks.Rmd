@@ -295,25 +295,27 @@ d1 <- d %>%
   rename(Other = choice) %>% 
   mutate(cumulativerate = logit_scaled(lag(cumulativerate, 1)))
 
+d1$cumulativerate[1] <- 0 # no prior info at first trial
+
 # Now we create the memory agent with a coefficient of 0.9
-MemoryAgent_f <- function(cumulativerate){
-    choice = rbinom(1, 1, inv_logit_scaled(0.9 * cumulativerate))
+bias = 0
+beta = 0.9
+
+MemoryAgent_f <- function(bias, beta, cumulativerate){
+    choice = rbinom(1, 1, inv_logit_scaled(bias + beta * cumulativerate))
   return(choice)
 }
 
-d1$Self[1] <- RandomAgent_f(1, 0.5)
-
-for (i in 2:trials) {
-  d1$Self[i] <- MemoryAgent_f(d1$cumulativerate[i])
+for (i in 1:trials) {
+  d1$Self[i] <- MemoryAgent_f(bias, beta, d1$cumulativerate[i])
 }
 
-d1$cumulativerate[1] <- 0 # no prior info at first trial
 
 ## Create the data. 
 data <- list(
   n = 120,
   h = d1$Self,
-  memory = d1$cumulativerate # this creates the new parameter: the rate of right hands so far
+  other = d1$Other
 )
 
 stan_model <- "
@@ -321,6 +323,7 @@ stan_model <- "
 data {
  int<lower=1> n;
  array[n] int h;
+ array[n] int other;
 }
 
 // The parameters accepted by the model. 
@@ -337,7 +340,7 @@ transformed parameters{
     memory[trial] = 0.5;
   } 
   if (trial < n){
-      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);
     }
   }
 }
@@ -467,6 +470,7 @@ stan_model <- "
 data {
   int<lower=1> n;
   array[n] int h;
+  array[n] int other;
   real prior_mean_bias;
   real<lower=0> prior_sd_bias;
   real prior_mean_beta;
@@ -487,7 +491,7 @@ transformed parameters{
     memory[trial] = 0.5;
   } 
   if (trial < n){
-      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);
     }
   }
 }

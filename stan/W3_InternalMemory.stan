@@ -3,6 +3,7 @@
 data {
  int<lower=1> n;
  array[n] int h;
+ array[n] int other;
 }
 
 // The parameters accepted by the model. 
@@ -19,7 +20,7 @@ transformed parameters{
     memory[trial] = 0.5;
   } 
   if (trial < n){
-      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);
     }
   }
 }
