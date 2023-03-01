@@ -3,7 +3,6 @@
 data {
  int<lower=1> n;
  array[n] int h;
- vector<lower=0, upper=1>[n] memory; // here we add the new parameter
 }
 
 // The parameters accepted by the model. 
@@ -12,14 +11,29 @@ parameters {
   real beta; // how strongly is previous rate impacting the decision?
 }
 
+transformed parameters{
+  vector[n] memory;
+
+  for (trial in 1:n){
+  if (trial == 1) {
+    memory[trial] = 0.5;
+  } 
+  if (trial < n){
+      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+    }
+  }
+}
+
 // The model to be estimated. 
 model {
-  // The prior for theta is a uniform distribution between 0 and 1
-  target += normal_lpdf(bias | 0, 1);
+  // Priors
+  target += normal_lpdf(bias | 0, .3);
   target += normal_lpdf(beta | 0, .5);
   
-  // The model consists of a binomial distributions with a rate theta
-  target += bernoulli_logit_lpmf(h | bias + beta * memory);
+  // Model, looping to keep track of memory
+  for (trial in 1:n) {
+    target += bernoulli_logit_lpmf(h[trial] | bias + beta * inv_logit(memory[trial]));
+  }
 }
 
 generated quantities{

@@ -1,5 +1,5 @@
 
-  // The input (data) for the model
+// The input (data) for the model
 data {
   int<lower=1> n;
   array[n] int h;
@@ -14,10 +14,10 @@ parameters {
 
 // The model to be estimated. 
 model {
-  // The prior for theta is a uniform distribution between 0 and 1
+  // Prior
   target += normal_lpdf(theta | prior_mean, prior_sd);
   
-  // The model consists of a binomial distributions with a rate theta
+  // Model
   target += bernoulli_logit_lpmf(h | theta);
 }
 

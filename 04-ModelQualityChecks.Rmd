@@ -4,7 +4,7 @@ output: html_document
 date: "2023-02-22"
 ---
 
-```{r setup, include=FALSE}
+```{r setup}
 knitr::opts_chunk$set(echo = TRUE)
 
 pacman::p_load(tidyverse,
@@ -38,7 +38,7 @@ As we use complex models, the relation between prior/posterior estimates and pre
 
 
 
-```{r adding priors}
+```{r adding priors, warning = F, message = F}
 stan_model <- "
 // This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)
 
@@ -121,7 +121,7 @@ draws_df <- as_draws_df(samples$draws())
 
 ## Assessing priors
 
-```{r}
+```{r assessing priors, warning = F, message = F}
 
 # Now let's plot the density for theta (prior and posterior)
 ggplot(draws_df) +
@@ -137,7 +137,7 @@ ggplot(draws_df) +
 
 ## Assessing prior and posterior predictions
 
-```{r}
+```{r, predictive checks, warning = F, message = F}
 ggplot(draws_df) +
   geom_histogram(aes(prior_preds), color = "darkblue", fill = "blue", alpha = 0.3) +
   xlab("Predicted heads out of 120 trials") +
@@ -165,7 +165,7 @@ ggplot(draws_df) +
 
 ## Prior sensitivity analysis
 
-```{r, warning = FALSE, message = FALSE}
+```{r prior sensitivity analysis, warning = FALSE, message = FALSE, eval = FALSE}
 ## Now we adding different priors for theta
 prior_mean <- seq(-3, 3, .5)
 prior_sd <- seq(0.1, 1, 0.1)
@@ -188,10 +188,10 @@ parameters {
 
 // The model to be estimated. 
 model {
-  // The prior for theta is a uniform distribution between 0 and 1
+  // Prior
   target += normal_lpdf(theta | prior_mean, prior_sd);
   
-  // The model consists of a binomial distributions with a rate theta
+  // Model
   target += bernoulli_logit_lpmf(h | theta);
 }
 
@@ -261,13 +261,20 @@ sim_d_and_fit <- function(prior_mean, prior_sd) {
 
 recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
 
+write_csv(recovery_df, "simdata/W4_priorSensitivityRecovery.csv")
+
+```
+
+Now we load the data and plot it
+```{r}
+recovery_df <- read_csv("simdata/W4_priorSensitivityRecovery.csv")
+
 ggplot(recovery_df, aes(prior_mean, theta_posterior)) +
   geom_point(alpha = 0.1) +
   geom_hline(yintercept = 0.8, color = "red") +
   geom_smooth() +
   facet_wrap(.~prior_sd) +
   theme_classic()
-
 
 
 ```
@@ -280,17 +287,17 @@ We can do the same for the memory model: generate prior distributions to overlay
 N.B. prior and posterior predictions now depend on the value on memory. I identified 3 meaningful values for the memory value (e.g. 0.5, 0.7, 0.9) and used those to generate 3 prior and posterior predictive checks.
 
 
-```{r, warning = FALSE, message = FALSE}
+```{r memory model, warning = FALSE, message = FALSE}
 
 # We subset to only include no noise and a specific rate
 d1 <- d %>% 
   subset(noise == 0 & rate == 0.8) %>% 
   rename(Other = choice) %>% 
-  mutate(cumulativerate = lag(cumulativerate, 1))
+  mutate(cumulativerate = logit_scaled(lag(cumulativerate, 1)))
 
 # Now we create the memory agent with a coefficient of 0.9
 MemoryAgent_f <- function(cumulativerate){
-    choice = rbinom(1, 1, inv_logit_scaled(0.9 * logit_scaled(cumulativerate)))
+    choice = rbinom(1, 1, inv_logit_scaled(0.9 * cumulativerate))
   return(choice)
 }
 
@@ -300,7 +307,7 @@ for (i in 2:trials) {
   d1$Self[i] <- MemoryAgent_f(d1$cumulativerate[i])
 }
 
-d1$cumulativerate[1] <- 0.5 # no prior info at first trial
+d1$cumulativerate[1] <- 0 # no prior info at first trial
 
 ## Create the data. 
 data <- list(
@@ -314,7 +321,6 @@ stan_model <- "
 data {
  int<lower=1> n;
  array[n] int h;
- vector<lower=0, upper=1>[n] memory; // here we add the new parameter
 }
 
 // The parameters accepted by the model. 
@@ -323,14 +329,29 @@ parameters {
   real beta; // how strongly is previous rate impacting the decision?
 }
 
+transformed parameters{
+  vector[n] memory;
+
+  for (trial in 1:n){
+  if (trial == 1) {
+    memory[trial] = 0.5;
+  } 
+  if (trial < n){
+      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+    }
+  }
+}
+
 // The model to be estimated. 
 model {
-  // The prior for theta is a uniform distribution between 0 and 1
-  target += normal_lpdf(bias | 0, 1);
+  // Priors
+  target += normal_lpdf(bias | 0, .3);
   target += normal_lpdf(beta | 0, .5);
   
-  // The model consists of a binomial distributions with a rate theta
-  target += bernoulli_logit_lpmf(h | bias + beta * memory);
+  // Model, looping to keep track of memory
+  for (trial in 1:n) {
+    target += bernoulli_logit_lpmf(h[trial] | bias + beta * inv_logit(memory[trial]));
+  }
 }
 
 generated quantities{
@@ -433,7 +454,7 @@ ggplot(draws_df) +
 
 ## Prior sensitivity check for the memory model
 
-```{r, warning = FALSE, message = FALSE}
+```{r prior sensitivity check for memory, warning = FALSE, message = FALSE, eval = FALSE}
 ## Now we adding different priors for theta
 prior_mean_bias <- 0
 prior_sd_bias <- seq(0.1, 0.5, 0.1)
@@ -450,13 +471,25 @@ data {
   real<lower=0> prior_sd_bias;
   real prior_mean_beta;
   real<lower=0> prior_sd_beta;
-  vector<lower=0, upper=1>[n] memory; // here we add the new parameter
 }
 
 // The parameters accepted by the model. 
 parameters {
   real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?
   real beta; // how strongly is previous rate impacting the decision?
+}
+
+transformed parameters{
+  vector[n] memory;
+
+  for (trial in 1:n){
+  if (trial == 1) {
+    memory[trial] = 0.5;
+  } 
+  if (trial < n){
+      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+    }
+  }
 }
 
 // The model to be estimated. 
@@ -537,8 +570,12 @@ sim_d_and_fit <- function(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior
                      beta_prior = draws_df$beta_prior, 
                      bias_posterior = draws_df$bias, 
                      beta_posterior = draws_df$beta, 
-                     prior_preds = draws_df$prior_preds, 
-                     posterior_preds = draws_df$posterior_preds, 
+                     prior_preds5 = draws_df$prior_preds5, 
+                     prior_preds7 = draws_df$prior_preds7, 
+                     prior_preds9 = draws_df$prior_preds9, 
+                     posterior_preds5 = draws_df$post_preds5,
+                     posterior_preds7 = draws_df$post_preds7,
+                     posterior_preds9 = draws_df$post_preds9, 
                      prior_mean_bias = prior_mean_bias,
                      prior_sd_bias = prior_sd_bias, 
                      prior_mean_beta = prior_mean_beta,
@@ -553,6 +590,14 @@ sim_d_and_fit <- function(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior
 
 recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
 
+write_csv(recovery_df, "simdata/W4_MemoryPriorSensitivity.csv")
+
+```
+
+
+```{r}
+recovery_df <- read_csv("simdata/W4_MemoryPriorSensitivity.csv")
+
 ggplot(recovery_df, aes(prior_sd_beta, beta_posterior)) +
   geom_point(alpha = 0.1) +
   geom_hline(yintercept = 0.8, color = "red") +
@@ -560,7 +605,5 @@ ggplot(recovery_df, aes(prior_sd_beta, beta_posterior)) +
   facet_wrap(.~prior_sd_bias) +
   theme_classic()
 ```
-
-
 
 

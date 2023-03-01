@@ -269,9 +269,7 @@ We can see that the results are virtually identical, except for a slight shrinka
 
 Now that we see that the model works in one case, we can run it throughout all possible rate and noise levels in the simulation. N.B. here is using loops, parallelized version in the next code chunk.
 
-```{r message = FALSE}
-
-
+```{r message = FALSE, eval = FALSE}
 # Now we need to scale it up to all possible rates and noises
 recovery_df <- NULL
 
@@ -314,12 +312,20 @@ for (noiseLvl in unique(d$noise)) {
 
 write_csv(recovery_df, "simdata/W3_recoverydf_simple.csv")
 
+```
+
+Now we can look at the relation between the "true" bias value we inputted in the simulation and the inferred bias value - the posterior estimates of bias.
+
+```{r}
+recovery_df <- read_csv("simdata/W3_recoverydf_simple.csv")
+
 ggplot(recovery_df, aes(biasTrue, biasEst)) +
   geom_point(alpha = 0.1) +
   geom_smooth() +
   facet_wrap(.~noise) +
   theme_classic()
 ```
+
 
 There's much to be said about the final plot, but for now let's just say that it looks good. We can reconstruct in a nice ordered way true rate values. However, our ability to do so decreases with the increase in noise. So far no surprises. Wait, you say, shouldn't we actually model the generative process, that is, include noise in the Stan model? Gold star, there! But let's wait a bit before we get there, we'll need mixture models. 
 
@@ -332,7 +338,7 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 
 
 
-```{r message = FALSE, warning = FALSE}
+```{r message = FALSE, warning = FALSE, eval = F}
 
 pacman::p_load(future, purrr, furrr)
 plan(multisession, workers = 4)
@@ -377,29 +383,56 @@ temp <- tibble(unique(d[,c("rate", "noise")])) %>%
 
 recovery_df <- future_pmap_dfr(temp, sim_d_and_fit, .options = furrr_options(seed = TRUE))
 
+write_csv(recovery_df, "simdata/W3_recoverydf_parallel.csv")
+
+```
+
+And now we load the data and visualize it as before.
+
+```{r}
+recovery_df <- read_csv("simdata/W3_recoverydf_parallel.csv")
 ggplot(recovery_df, aes(biasTrue, biasEst)) +
   geom_point(alpha = 0.1) +
   geom_smooth() +
   facet_wrap(.~noise) +
   theme_classic()
-
 ```
 
 
 ## The memory model: conditioning theta
 
-Now that we fitted the base model, we can move onto more complex models. For instance a memory model (including all previous trials). Here we rely on a generalized linear model kind of thinking: the theta is the expression of a linear model (bias + b1 * PreviousRate), which is bound to a probability 0-1 space via a logit link/transformation.
+Now that we fitted the base model, we can move onto more complex models. For instance a memory model (including all previous trials). Here we rely on a generalized linear model kind of thinking: the theta is the expression of a linear model (bias + b1 * PreviousRate). To make the variable more intuitive we code previous rate - which is bound to a probability 0-1 space - into log-odds via a logit link/transformation. In this way a previous rate with more left than right choices will result in a negative value, thereby decreasing our propensity to choose right; and one with more right than left choices will result in a positive value, thereby increasing our propensity to choose right.
 
 ```{r message = FALSE}
 
 # We subset to only include no noise and a specific rate
-d1 <- d %>% subset(noise == 0 & rate == 0.8)
+d1 <- d %>% 
+  subset(noise == 0 & rate == 0.8) %>% 
+  rename(Other = choice) %>% 
+  mutate(cumulativerate = lag(cumulativerate, 1),
+         cumulativerate = ifelse(cumulativerate == 0, -3, ifelse(
+           cumulativerate == 1, 3, logit_scaled(cumulativerate)) ))
+
+# Now we create the memory agent with a coefficient of 0.9
+MemoryAgent_f <- function(bias, beta, cumulativerate){
+    choice = rbinom(1, 1, inv_logit_scaled(bias + beta * cumulativerate))
+  return(choice)
+}
+
+d1$Self[1] <- RandomAgentNoise_f(0.5, 0)
+
+for (i in 2:trials) {
+  d1$Self[i] <- MemoryAgent_f(bias = 0, beta = 0.8, d1$cumulativerate[i])
+}
+
+d1$cumulativerate[1] <- 0 # no prior info at first trial
+
 
 ## Create the data
 data <- list(
   n = 120,
-  h = d1$choice,
-  memory = d1$cumulativerate # this creates the new parameter: the rate of right hands so far
+  h = d1$Self,
+  memory = d1$cumulativerate # this creates the new parameter: the rate of right hands so far in log-odds
 )
 
 stan_model <- "
@@ -407,7 +440,7 @@ stan_model <- "
 data {
  int<lower=1> n;
  array[n] int h;
- vector<lower=0, upper=1>[n] memory; // here we add the new parameter
+ vector[n] memory; // here we add the new parameter. N.B. Log odds
 }
 
 // The parameters accepted by the model. 
@@ -420,11 +453,11 @@ parameters {
 
 // The model to be estimated. 
 model {
-  // The prior for theta is a uniform distribution between 0 and 1
-  target += normal_lpdf(bias | 0, 1);
-  target += normal_lpdf(beta | 0, .3);
+  // priors
+  target += normal_lpdf(bias | 0, .3);
+  target += normal_lpdf(beta | 0, .5);
   
-  // The model consists of a binomial distributions with a rate theta
+  // model
   target += bernoulli_logit_lpmf(h | bias + beta * memory);
 }
 
@@ -458,7 +491,84 @@ samples$summary()
 
 ```
 
-We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.8 which in log odds is 1.39), and the beta coefficient for memory (roughly 0). More on quality checks of the models in the next chapter.
+We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 0.8). More on quality checks of the models in the next chapter.
+
+## Memory agent with internal parameter
+
+So far we behaved like in GLM: we keep feeding to the model an external variable of memory, but what if we coded memory as an internal parameter? This opens up to further possibilities to model how long memory is kept and weighted by distance from the current moment, etc.
+
+```{r}
+## Create the data
+data <- list(
+  n = 120,
+  h = d1$Self
+)
+
+stan_model <- "
+// The input (data) for the model. n of trials and h for (right and left) hand
+data {
+ int<lower=1> n;
+ array[n] int h;
+}
+
+// The parameters accepted by the model. 
+parameters {
+  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?
+  real beta; // how strongly is previous rate impacting the decision?
+}
+
+transformed parameters{
+  vector[n] memory;
+
+  for (trial in 1:n){
+  if (trial == 1) {
+    memory[trial] = 0.5;
+  } 
+  if (trial < n){
+      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+    }
+  }
+}
+
+// The model to be estimated. 
+model {
+  // Priors
+  target += normal_lpdf(bias | 0, .3);
+  target += normal_lpdf(beta | 0, .5);
+  
+  // Model, looping to keep track of memory
+  for (trial in 1:n) {
+    target += bernoulli_logit_lpmf(h[trial] | bias + beta * inv_logit(memory[trial]));
+  }
+}
+
+"
+write_stan_file(
+  stan_model,
+  dir = "stan/",
+  basename = "W3_InternalMemory.stan")
+
+## Specify where the model is
+file <- file.path("stan/W3_InternalMemory.stan")
+mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+# The following command calls Stan with specific options.
+samples <- mod$sample(
+  data = data,
+  seed = 123,
+  chains = 1,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  refresh = 0,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
 
 
+samples$summary() 
+```
 
+Now that we know how to model memory as an internal state, we can play with making the update discount the past, setting a parameter that indicates after how many trials memory is lost, etc. 

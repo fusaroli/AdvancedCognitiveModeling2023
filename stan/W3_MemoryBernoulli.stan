@@ -3,7 +3,7 @@
 data {
  int<lower=1> n;
  array[n] int h;
- vector<lower=0, upper=1>[n] memory; // here we add the new parameter
+ vector[n] memory; // here we add the new parameter. N.B. Log odds
 }
 
 // The parameters accepted by the model. 
@@ -16,11 +16,11 @@ parameters {
 
 // The model to be estimated. 
 model {
-  // The prior for theta is a uniform distribution between 0 and 1
-  target += normal_lpdf(bias | 0, 1);
-  target += normal_lpdf(beta | 0, .3);
+  // priors
+  target += normal_lpdf(bias | 0, .3);
+  target += normal_lpdf(beta | 0, .5);
   
-  // The model consists of a binomial distributions with a rate theta
+  // model
   target += bernoulli_logit_lpmf(h | bias + beta * memory);
 }
 

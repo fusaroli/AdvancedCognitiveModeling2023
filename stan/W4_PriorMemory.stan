@@ -7,13 +7,25 @@ data {
   real<lower=0> prior_sd_bias;
   real prior_mean_beta;
   real<lower=0> prior_sd_beta;
-  vector<lower=0, upper=1>[n] memory; // here we add the new parameter
 }
 
 // The parameters accepted by the model. 
 parameters {
   real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?
   real beta; // how strongly is previous rate impacting the decision?
+}
+
+transformed parameters{
+  vector[n] memory;
+
+  for (trial in 1:n){
+  if (trial == 1) {
+    memory[trial] = 0.5;
+  } 
+  if (trial < n){
+      memory[trial + 1] = memory[trial] + ((h[trial] - memory[trial]) / trial);
+    }
+  }
 }
 
 // The model to be estimated. 
