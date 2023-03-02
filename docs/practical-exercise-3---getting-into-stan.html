@@ -189,7 +189,10 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 </ul></li>
 <li class="chapter" data-level="4.4" data-path="practical-exercise-3---getting-into-stan.html"><a href="practical-exercise-3---getting-into-stan.html#parameter-recovery"><i class="fa fa-check"></i><b>4.4</b> Parameter recovery</a></li>
 <li class="chapter" data-level="4.5" data-path="practical-exercise-3---getting-into-stan.html"><a href="practical-exercise-3---getting-into-stan.html#the-memory-model-conditioning-theta"><i class="fa fa-check"></i><b>4.5</b> The memory model: conditioning theta</a></li>
-<li class="chapter" data-level="4.6" data-path="practical-exercise-3---getting-into-stan.html"><a href="practical-exercise-3---getting-into-stan.html#memory-agent-with-internal-parameter"><i class="fa fa-check"></i><b>4.6</b> Memory agent with internal parameter</a></li>
+<li class="chapter" data-level="4.6" data-path="practical-exercise-3---getting-into-stan.html"><a href="practical-exercise-3---getting-into-stan.html#memory-agent-with-internal-parameter"><i class="fa fa-check"></i><b>4.6</b> Memory agent with internal parameter</a>
+<ul>
+<li class="chapter" data-level="4.6.1" data-path="practical-exercise-3---getting-into-stan.html"><a href="practical-exercise-3---getting-into-stan.html#trying-out-a-more-complex-memory-model-with-a-rate-of-forgetting-that-exponentially-discounts-the-past"><i class="fa fa-check"></i><b>4.6.1</b> Trying out a more complex memory model, with a rate of forgetting that exponentially discounts the past</a></li>
+</ul></li>
 </ul></li>
 <li class="chapter" data-level="5" data-path="practical-exercise-4---model-quality-checks.html"><a href="practical-exercise-4---model-quality-checks.html"><i class="fa fa-check"></i><b>5</b> Practical exercise 4 - Model quality checks</a>
 <ul>
@@ -365,8 +368,8 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 <pre><code>## # A tibble: 2 × 10
 ##   variable    mean  median     sd    mad      q5     q95  rhat ess_bulk ess_tail
 ##   &lt;chr&gt;      &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -61.0   -60.7   0.758  0.325  -62.4   -60.5    1.00     976.     534.
-## 2 theta      0.805   0.806 0.0358 0.0359   0.744   0.862  1.00     687.     421.</code></pre>
+## 1 lp__     -62.4   -62.1   0.861  0.316  -63.9   -61.9    1.00     993.     813.
+## 2 theta      0.797   0.798 0.0374 0.0360   0.735   0.857  1.00     914.     745.</code></pre>
 <p>Then we need to look more in the details at the quality of the estimation:
 * the markov chains
 * how the prior and the posterior estimates relate to each other (whether the prior is constraining the posterior estimate)</p>
@@ -455,11 +458,11 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Total execution time: 0.1 seconds.</code></pre>
 <div class="sourceCode" id="cb43"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb43-1"><a href="practical-exercise-3---getting-into-stan.html#cb43-1" aria-hidden="true" tabindex="-1"></a>samples</span></code></pre></div>
 <pre><code>##  variable   mean median   sd  mad     q5    q95 rhat ess_bulk ess_tail
-##     lp__  -61.05 -60.76 0.75 0.30 -62.44 -60.54 1.00     1011      988
-##     theta   1.37   1.37 0.23 0.22   1.01   1.75 1.00      655      896</code></pre>
+##     lp__  -62.39 -62.12 0.74 0.32 -63.80 -61.88 1.00     1042      864
+##     theta   1.33   1.32 0.22 0.22   0.97   1.70 1.00      742      926</code></pre>
 <div class="sourceCode" id="cb45"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb45-1"><a href="practical-exercise-3---getting-into-stan.html#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Diagnostics</span></span>
 <span id="cb45-2"><a href="practical-exercise-3---getting-into-stan.html#cb45-2" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">cmdstan_diagnose</span>()</span></code></pre></div>
-<pre><code>## Processing csv files: /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/RtmpTP5vj3/W3_SimpleBernoulli_logodds-202303011128-1-6fdf3d.csv, /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/RtmpTP5vj3/W3_SimpleBernoulli_logodds-202303011128-2-6fdf3d.csv
+<pre><code>## Processing csv files: /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/RtmpTP5vj3/W3_SimpleBernoulli_logodds-202303021536-1-55a320.csv, /var/folders/lt/zspkqnxd5yg92kybm5f433_cfjr0d6/T/RtmpTP5vj3/W3_SimpleBernoulli_logodds-202303021536-2-55a320.csv
 ## 
 ## Checking sampler transitions treedepth.
 ## Treedepth satisfactory for all transitions.
@@ -484,10 +487,10 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 <p><img src="series_files/figure-html/unnamed-chunk-10-1.png" width="672" /></p>
 <div class="sourceCode" id="cb48"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb48-1"><a href="practical-exercise-3---getting-into-stan.html#cb48-1" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 2 × 10
-##   variable   mean median    sd   mad     q5    q95  rhat ess_bulk ess_tail
-##   &lt;chr&gt;     &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -61.0  -60.8  0.748 0.302 -62.4  -60.5   1.00    1012.     989.
-## 2 theta      1.37   1.37 0.225 0.219   1.01   1.75  1.00     655.     896.</code></pre>
+##   variable   mean median    sd   mad      q5    q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;     &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__     -62.4  -62.1  0.741 0.322 -63.8   -61.9   1.00    1042.     864.
+## 2 theta      1.33   1.32 0.222 0.222   0.969   1.70  1.00     743.     927.</code></pre>
 <p>We can see that the results are virtually identical, except for a slight shrinkage of the estimate from 0.755 to 0.75 (due to the prior being more conservative closer to 0 and 1).</p>
 </div>
 </div>
@@ -625,63 +628,64 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 <span id="cb60-2"><a href="practical-exercise-3---getting-into-stan.html#cb60-2" aria-hidden="true" tabindex="-1"></a>d1 <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> </span>
 <span id="cb60-3"><a href="practical-exercise-3---getting-into-stan.html#cb60-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="dv">0</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>) <span class="sc">%&gt;%</span> </span>
 <span id="cb60-4"><a href="practical-exercise-3---getting-into-stan.html#cb60-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">rename</span>(<span class="at">Other =</span> choice) <span class="sc">%&gt;%</span> </span>
-<span id="cb60-5"><a href="practical-exercise-3---getting-into-stan.html#cb60-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">cumulativerate =</span> <span class="fu">lag</span>(cumulativerate, <span class="dv">1</span>),</span>
-<span id="cb60-6"><a href="practical-exercise-3---getting-into-stan.html#cb60-6" aria-hidden="true" tabindex="-1"></a>         <span class="at">cumulativerate =</span> <span class="fu">ifelse</span>(cumulativerate <span class="sc">==</span> <span class="dv">0</span>, <span class="sc">-</span><span class="dv">3</span>, <span class="fu">ifelse</span>(</span>
-<span id="cb60-7"><a href="practical-exercise-3---getting-into-stan.html#cb60-7" aria-hidden="true" tabindex="-1"></a>           cumulativerate <span class="sc">==</span> <span class="dv">1</span>, <span class="dv">3</span>, <span class="fu">logit_scaled</span>(cumulativerate)) ))</span>
-<span id="cb60-8"><a href="practical-exercise-3---getting-into-stan.html#cb60-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb60-9"><a href="practical-exercise-3---getting-into-stan.html#cb60-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Now we create the memory agent with a coefficient of 0.9</span></span>
-<span id="cb60-10"><a href="practical-exercise-3---getting-into-stan.html#cb60-10" aria-hidden="true" tabindex="-1"></a>MemoryAgent_f <span class="ot">&lt;-</span> <span class="cf">function</span>(bias, beta, cumulativerate){</span>
-<span id="cb60-11"><a href="practical-exercise-3---getting-into-stan.html#cb60-11" aria-hidden="true" tabindex="-1"></a>    choice <span class="ot">=</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="fu">inv_logit_scaled</span>(bias <span class="sc">+</span> beta <span class="sc">*</span> cumulativerate))</span>
-<span id="cb60-12"><a href="practical-exercise-3---getting-into-stan.html#cb60-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">return</span>(choice)</span>
-<span id="cb60-13"><a href="practical-exercise-3---getting-into-stan.html#cb60-13" aria-hidden="true" tabindex="-1"></a>}</span>
-<span id="cb60-14"><a href="practical-exercise-3---getting-into-stan.html#cb60-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb60-15"><a href="practical-exercise-3---getting-into-stan.html#cb60-15" aria-hidden="true" tabindex="-1"></a>d1<span class="sc">$</span>Self[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fu">RandomAgentNoise_f</span>(<span class="fl">0.5</span>, <span class="dv">0</span>)</span></code></pre></div>
+<span id="cb60-5"><a href="practical-exercise-3---getting-into-stan.html#cb60-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">cumulativerate =</span> <span class="fu">lag</span>(cumulativerate, <span class="dv">1</span>))</span>
+<span id="cb60-6"><a href="practical-exercise-3---getting-into-stan.html#cb60-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb60-7"><a href="practical-exercise-3---getting-into-stan.html#cb60-7" aria-hidden="true" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.5</span> <span class="co"># no prior info at first trial</span></span>
+<span id="cb60-8"><a href="practical-exercise-3---getting-into-stan.html#cb60-8" aria-hidden="true" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">0</span>] <span class="ot">&lt;-</span> <span class="fl">0.01</span></span>
+<span id="cb60-9"><a href="practical-exercise-3---getting-into-stan.html#cb60-9" aria-hidden="true" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.99</span></span>
+<span id="cb60-10"><a href="practical-exercise-3---getting-into-stan.html#cb60-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb60-11"><a href="practical-exercise-3---getting-into-stan.html#cb60-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Now we create the memory agent with a coefficient of 0.9</span></span>
+<span id="cb60-12"><a href="practical-exercise-3---getting-into-stan.html#cb60-12" aria-hidden="true" tabindex="-1"></a>MemoryAgent_f <span class="ot">&lt;-</span> <span class="cf">function</span>(bias, beta, cumulativerate){</span>
+<span id="cb60-13"><a href="practical-exercise-3---getting-into-stan.html#cb60-13" aria-hidden="true" tabindex="-1"></a>    choice <span class="ot">=</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="fu">inv_logit_scaled</span>(bias <span class="sc">+</span> beta <span class="sc">*</span> cumulativerate))</span>
+<span id="cb60-14"><a href="practical-exercise-3---getting-into-stan.html#cb60-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">return</span>(choice)</span>
+<span id="cb60-15"><a href="practical-exercise-3---getting-into-stan.html#cb60-15" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb60-16"><a href="practical-exercise-3---getting-into-stan.html#cb60-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb60-17"><a href="practical-exercise-3---getting-into-stan.html#cb60-17" aria-hidden="true" tabindex="-1"></a>d1<span class="sc">$</span>Self[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fu">RandomAgentNoise_f</span>(<span class="fl">0.5</span>, <span class="dv">0</span>)</span></code></pre></div>
 <pre><code>## Warning: Unknown or uninitialised column: `Self`.</code></pre>
 <div class="sourceCode" id="cb62"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb62-1"><a href="practical-exercise-3---getting-into-stan.html#cb62-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">2</span><span class="sc">:</span>trials) {</span>
 <span id="cb62-2"><a href="practical-exercise-3---getting-into-stan.html#cb62-2" aria-hidden="true" tabindex="-1"></a>  d1<span class="sc">$</span>Self[i] <span class="ot">&lt;-</span> <span class="fu">MemoryAgent_f</span>(<span class="at">bias =</span> <span class="dv">0</span>, <span class="at">beta =</span> <span class="fl">0.8</span>, d1<span class="sc">$</span>cumulativerate[i])</span>
 <span id="cb62-3"><a href="practical-exercise-3---getting-into-stan.html#cb62-3" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb62-4"><a href="practical-exercise-3---getting-into-stan.html#cb62-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-5"><a href="practical-exercise-3---getting-into-stan.html#cb62-5" aria-hidden="true" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="dv">0</span> <span class="co"># no prior info at first trial</span></span>
+<span id="cb62-5"><a href="practical-exercise-3---getting-into-stan.html#cb62-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb62-6"><a href="practical-exercise-3---getting-into-stan.html#cb62-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-7"><a href="practical-exercise-3---getting-into-stan.html#cb62-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-8"><a href="practical-exercise-3---getting-into-stan.html#cb62-8" aria-hidden="true" tabindex="-1"></a><span class="do">## Create the data</span></span>
-<span id="cb62-9"><a href="practical-exercise-3---getting-into-stan.html#cb62-9" aria-hidden="true" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb62-10"><a href="practical-exercise-3---getting-into-stan.html#cb62-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
-<span id="cb62-11"><a href="practical-exercise-3---getting-into-stan.html#cb62-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">h =</span> d1<span class="sc">$</span>Self,</span>
-<span id="cb62-12"><a href="practical-exercise-3---getting-into-stan.html#cb62-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">memory =</span> d1<span class="sc">$</span>cumulativerate <span class="co"># this creates the new parameter: the rate of right hands so far in log-odds</span></span>
-<span id="cb62-13"><a href="practical-exercise-3---getting-into-stan.html#cb62-13" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb62-14"><a href="practical-exercise-3---getting-into-stan.html#cb62-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-15"><a href="practical-exercise-3---getting-into-stan.html#cb62-15" aria-hidden="true" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
-<span id="cb62-16"><a href="practical-exercise-3---getting-into-stan.html#cb62-16" aria-hidden="true" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h for (right and left) hand</span></span>
-<span id="cb62-17"><a href="practical-exercise-3---getting-into-stan.html#cb62-17" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb62-18"><a href="practical-exercise-3---getting-into-stan.html#cb62-18" aria-hidden="true" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
-<span id="cb62-19"><a href="practical-exercise-3---getting-into-stan.html#cb62-19" aria-hidden="true" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
-<span id="cb62-20"><a href="practical-exercise-3---getting-into-stan.html#cb62-20" aria-hidden="true" tabindex="-1"></a><span class="st"> vector[n] memory; // here we add the new parameter. N.B. Log odds</span></span>
-<span id="cb62-21"><a href="practical-exercise-3---getting-into-stan.html#cb62-21" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb62-22"><a href="practical-exercise-3---getting-into-stan.html#cb62-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-23"><a href="practical-exercise-3---getting-into-stan.html#cb62-23" aria-hidden="true" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
-<span id="cb62-24"><a href="practical-exercise-3---getting-into-stan.html#cb62-24" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb62-25"><a href="practical-exercise-3---getting-into-stan.html#cb62-25" aria-hidden="true" tabindex="-1"></a><span class="st">  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?</span></span>
-<span id="cb62-26"><a href="practical-exercise-3---getting-into-stan.html#cb62-26" aria-hidden="true" tabindex="-1"></a><span class="st">  real beta; // how strongly is previous rate impacting the decision?</span></span>
-<span id="cb62-27"><a href="practical-exercise-3---getting-into-stan.html#cb62-27" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb62-7"><a href="practical-exercise-3---getting-into-stan.html#cb62-7" aria-hidden="true" tabindex="-1"></a><span class="do">## Create the data</span></span>
+<span id="cb62-8"><a href="practical-exercise-3---getting-into-stan.html#cb62-8" aria-hidden="true" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb62-9"><a href="practical-exercise-3---getting-into-stan.html#cb62-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
+<span id="cb62-10"><a href="practical-exercise-3---getting-into-stan.html#cb62-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">h =</span> d1<span class="sc">$</span>Self,</span>
+<span id="cb62-11"><a href="practical-exercise-3---getting-into-stan.html#cb62-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">memory =</span> d1<span class="sc">$</span>cumulativerate <span class="co"># this creates the new parameter: the rate of right hands so far in log-odds</span></span>
+<span id="cb62-12"><a href="practical-exercise-3---getting-into-stan.html#cb62-12" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb62-13"><a href="practical-exercise-3---getting-into-stan.html#cb62-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-14"><a href="practical-exercise-3---getting-into-stan.html#cb62-14" aria-hidden="true" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb62-15"><a href="practical-exercise-3---getting-into-stan.html#cb62-15" aria-hidden="true" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h for (right and left) hand</span></span>
+<span id="cb62-16"><a href="practical-exercise-3---getting-into-stan.html#cb62-16" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb62-17"><a href="practical-exercise-3---getting-into-stan.html#cb62-17" aria-hidden="true" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
+<span id="cb62-18"><a href="practical-exercise-3---getting-into-stan.html#cb62-18" aria-hidden="true" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
+<span id="cb62-19"><a href="practical-exercise-3---getting-into-stan.html#cb62-19" aria-hidden="true" tabindex="-1"></a><span class="st"> vector[n] memory; // here we add the new parameter. N.B. Log odds</span></span>
+<span id="cb62-20"><a href="practical-exercise-3---getting-into-stan.html#cb62-20" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb62-21"><a href="practical-exercise-3---getting-into-stan.html#cb62-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-22"><a href="practical-exercise-3---getting-into-stan.html#cb62-22" aria-hidden="true" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb62-23"><a href="practical-exercise-3---getting-into-stan.html#cb62-23" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb62-24"><a href="practical-exercise-3---getting-into-stan.html#cb62-24" aria-hidden="true" tabindex="-1"></a><span class="st">  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?</span></span>
+<span id="cb62-25"><a href="practical-exercise-3---getting-into-stan.html#cb62-25" aria-hidden="true" tabindex="-1"></a><span class="st">  real beta; // how strongly is previous rate impacting the decision?</span></span>
+<span id="cb62-26"><a href="practical-exercise-3---getting-into-stan.html#cb62-26" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb62-27"><a href="practical-exercise-3---getting-into-stan.html#cb62-27" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb62-28"><a href="practical-exercise-3---getting-into-stan.html#cb62-28" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb62-29"><a href="practical-exercise-3---getting-into-stan.html#cb62-29" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-30"><a href="practical-exercise-3---getting-into-stan.html#cb62-30" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-31"><a href="practical-exercise-3---getting-into-stan.html#cb62-31" aria-hidden="true" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
-<span id="cb62-32"><a href="practical-exercise-3---getting-into-stan.html#cb62-32" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb62-33"><a href="practical-exercise-3---getting-into-stan.html#cb62-33" aria-hidden="true" tabindex="-1"></a><span class="st">  // priors</span></span>
-<span id="cb62-34"><a href="practical-exercise-3---getting-into-stan.html#cb62-34" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, .3);</span></span>
-<span id="cb62-35"><a href="practical-exercise-3---getting-into-stan.html#cb62-35" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | 0, .5);</span></span>
-<span id="cb62-36"><a href="practical-exercise-3---getting-into-stan.html#cb62-36" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb62-37"><a href="practical-exercise-3---getting-into-stan.html#cb62-37" aria-hidden="true" tabindex="-1"></a><span class="st">  // model</span></span>
-<span id="cb62-38"><a href="practical-exercise-3---getting-into-stan.html#cb62-38" aria-hidden="true" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | bias + beta * memory);</span></span>
-<span id="cb62-39"><a href="practical-exercise-3---getting-into-stan.html#cb62-39" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb62-40"><a href="practical-exercise-3---getting-into-stan.html#cb62-40" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb62-41"><a href="practical-exercise-3---getting-into-stan.html#cb62-41" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb62-42"><a href="practical-exercise-3---getting-into-stan.html#cb62-42" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb62-43"><a href="practical-exercise-3---getting-into-stan.html#cb62-43" aria-hidden="true" tabindex="-1"></a>  stan_model,</span>
-<span id="cb62-44"><a href="practical-exercise-3---getting-into-stan.html#cb62-44" aria-hidden="true" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb62-45"><a href="practical-exercise-3---getting-into-stan.html#cb62-45" aria-hidden="true" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W3_MemoryBernoulli.stan&quot;</span>)</span></code></pre></div>
+<span id="cb62-30"><a href="practical-exercise-3---getting-into-stan.html#cb62-30" aria-hidden="true" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb62-31"><a href="practical-exercise-3---getting-into-stan.html#cb62-31" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb62-32"><a href="practical-exercise-3---getting-into-stan.html#cb62-32" aria-hidden="true" tabindex="-1"></a><span class="st">  // priors</span></span>
+<span id="cb62-33"><a href="practical-exercise-3---getting-into-stan.html#cb62-33" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, .3);</span></span>
+<span id="cb62-34"><a href="practical-exercise-3---getting-into-stan.html#cb62-34" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | 0, .5);</span></span>
+<span id="cb62-35"><a href="practical-exercise-3---getting-into-stan.html#cb62-35" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb62-36"><a href="practical-exercise-3---getting-into-stan.html#cb62-36" aria-hidden="true" tabindex="-1"></a><span class="st">  // model</span></span>
+<span id="cb62-37"><a href="practical-exercise-3---getting-into-stan.html#cb62-37" aria-hidden="true" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));</span></span>
+<span id="cb62-38"><a href="practical-exercise-3---getting-into-stan.html#cb62-38" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb62-39"><a href="practical-exercise-3---getting-into-stan.html#cb62-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-40"><a href="practical-exercise-3---getting-into-stan.html#cb62-40" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb62-41"><a href="practical-exercise-3---getting-into-stan.html#cb62-41" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb62-42"><a href="practical-exercise-3---getting-into-stan.html#cb62-42" aria-hidden="true" tabindex="-1"></a>  stan_model,</span>
+<span id="cb62-43"><a href="practical-exercise-3---getting-into-stan.html#cb62-43" aria-hidden="true" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb62-44"><a href="practical-exercise-3---getting-into-stan.html#cb62-44" aria-hidden="true" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W3_MemoryBernoulli.stan&quot;</span>)</span></code></pre></div>
 <pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W3_MemoryBernoulli.stan&quot;</code></pre>
 <div class="sourceCode" id="cb64"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb64-1"><a href="practical-exercise-3---getting-into-stan.html#cb64-1" aria-hidden="true" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
 <span id="cb64-2"><a href="practical-exercise-3---getting-into-stan.html#cb64-2" aria-hidden="true" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W3_MemoryBernoulli.stan&quot;</span>)</span>
@@ -706,11 +710,11 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## Chain 1 finished in 0.1 seconds.</code></pre>
 <div class="sourceCode" id="cb66"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb66-1"><a href="practical-exercise-3---getting-into-stan.html#cb66-1" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 3 × 10
-##   variable     mean   median    sd   mad      q5     q95  rhat ess_bulk ess_tail
-##   &lt;chr&gt;       &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -73.9    -73.5    1.10  0.811 -76.0   -72.8   0.999     336.     331.
-## 2 bias      -0.0429  -0.0446 0.273 0.259  -0.489   0.418 1.00      200.     298.
-## 3 beta       0.712    0.715  0.256 0.258   0.258   1.10  1.00      201.     255.</code></pre>
+##   variable     mean   median    sd   mad       q5     q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;       &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__     -81.0    -80.7    1.06  0.687 -83.3    -80.0    1.00     405.     478.
+## 2 bias       0.387    0.393  0.253 0.246  -0.0455   0.799  1.01     209.     330.
+## 3 beta       0.0137   0.0107 0.185 0.182  -0.287    0.321  1.01     256.     230.</code></pre>
 <p>We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 0.8). More on quality checks of the models in the next chapter.</p>
 </div>
 <div id="memory-agent-with-internal-parameter" class="section level2 hasAnchor" number="4.6">
@@ -746,27 +750,29 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 <span id="cb68-28"><a href="practical-exercise-3---getting-into-stan.html#cb68-28" aria-hidden="true" tabindex="-1"></a><span class="st">  } </span></span>
 <span id="cb68-29"><a href="practical-exercise-3---getting-into-stan.html#cb68-29" aria-hidden="true" tabindex="-1"></a><span class="st">  if (trial &lt; n){</span></span>
 <span id="cb68-30"><a href="practical-exercise-3---getting-into-stan.html#cb68-30" aria-hidden="true" tabindex="-1"></a><span class="st">      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);</span></span>
-<span id="cb68-31"><a href="practical-exercise-3---getting-into-stan.html#cb68-31" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
-<span id="cb68-32"><a href="practical-exercise-3---getting-into-stan.html#cb68-32" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb68-33"><a href="practical-exercise-3---getting-into-stan.html#cb68-33" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb68-34"><a href="practical-exercise-3---getting-into-stan.html#cb68-34" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb68-35"><a href="practical-exercise-3---getting-into-stan.html#cb68-35" aria-hidden="true" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
-<span id="cb68-36"><a href="practical-exercise-3---getting-into-stan.html#cb68-36" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb68-37"><a href="practical-exercise-3---getting-into-stan.html#cb68-37" aria-hidden="true" tabindex="-1"></a><span class="st">  // Priors</span></span>
-<span id="cb68-38"><a href="practical-exercise-3---getting-into-stan.html#cb68-38" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, .3);</span></span>
-<span id="cb68-39"><a href="practical-exercise-3---getting-into-stan.html#cb68-39" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | 0, .5);</span></span>
-<span id="cb68-40"><a href="practical-exercise-3---getting-into-stan.html#cb68-40" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb68-41"><a href="practical-exercise-3---getting-into-stan.html#cb68-41" aria-hidden="true" tabindex="-1"></a><span class="st">  // Model, looping to keep track of memory</span></span>
-<span id="cb68-42"><a href="practical-exercise-3---getting-into-stan.html#cb68-42" aria-hidden="true" tabindex="-1"></a><span class="st">  for (trial in 1:n) {</span></span>
-<span id="cb68-43"><a href="practical-exercise-3---getting-into-stan.html#cb68-43" aria-hidden="true" tabindex="-1"></a><span class="st">    target += bernoulli_logit_lpmf(h[trial] | bias + beta * inv_logit(memory[trial]));</span></span>
-<span id="cb68-44"><a href="practical-exercise-3---getting-into-stan.html#cb68-44" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb68-45"><a href="practical-exercise-3---getting-into-stan.html#cb68-45" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb68-46"><a href="practical-exercise-3---getting-into-stan.html#cb68-46" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb68-47"><a href="practical-exercise-3---getting-into-stan.html#cb68-47" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb68-48"><a href="practical-exercise-3---getting-into-stan.html#cb68-48" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb68-49"><a href="practical-exercise-3---getting-into-stan.html#cb68-49" aria-hidden="true" tabindex="-1"></a>  stan_model,</span>
-<span id="cb68-50"><a href="practical-exercise-3---getting-into-stan.html#cb68-50" aria-hidden="true" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb68-51"><a href="practical-exercise-3---getting-into-stan.html#cb68-51" aria-hidden="true" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W3_InternalMemory.stan&quot;</span>)</span></code></pre></div>
+<span id="cb68-31"><a href="practical-exercise-3---getting-into-stan.html#cb68-31" aria-hidden="true" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}</span></span>
+<span id="cb68-32"><a href="practical-exercise-3---getting-into-stan.html#cb68-32" aria-hidden="true" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}</span></span>
+<span id="cb68-33"><a href="practical-exercise-3---getting-into-stan.html#cb68-33" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb68-34"><a href="practical-exercise-3---getting-into-stan.html#cb68-34" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb68-35"><a href="practical-exercise-3---getting-into-stan.html#cb68-35" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb68-36"><a href="practical-exercise-3---getting-into-stan.html#cb68-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-37"><a href="practical-exercise-3---getting-into-stan.html#cb68-37" aria-hidden="true" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb68-38"><a href="practical-exercise-3---getting-into-stan.html#cb68-38" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb68-39"><a href="practical-exercise-3---getting-into-stan.html#cb68-39" aria-hidden="true" tabindex="-1"></a><span class="st">  // Priors</span></span>
+<span id="cb68-40"><a href="practical-exercise-3---getting-into-stan.html#cb68-40" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, .3);</span></span>
+<span id="cb68-41"><a href="practical-exercise-3---getting-into-stan.html#cb68-41" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | 0, .5);</span></span>
+<span id="cb68-42"><a href="practical-exercise-3---getting-into-stan.html#cb68-42" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb68-43"><a href="practical-exercise-3---getting-into-stan.html#cb68-43" aria-hidden="true" tabindex="-1"></a><span class="st">  // Model, looping to keep track of memory</span></span>
+<span id="cb68-44"><a href="practical-exercise-3---getting-into-stan.html#cb68-44" aria-hidden="true" tabindex="-1"></a><span class="st">  for (trial in 1:n) {</span></span>
+<span id="cb68-45"><a href="practical-exercise-3---getting-into-stan.html#cb68-45" aria-hidden="true" tabindex="-1"></a><span class="st">    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));</span></span>
+<span id="cb68-46"><a href="practical-exercise-3---getting-into-stan.html#cb68-46" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb68-47"><a href="practical-exercise-3---getting-into-stan.html#cb68-47" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb68-48"><a href="practical-exercise-3---getting-into-stan.html#cb68-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-49"><a href="practical-exercise-3---getting-into-stan.html#cb68-49" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb68-50"><a href="practical-exercise-3---getting-into-stan.html#cb68-50" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb68-51"><a href="practical-exercise-3---getting-into-stan.html#cb68-51" aria-hidden="true" tabindex="-1"></a>  stan_model,</span>
+<span id="cb68-52"><a href="practical-exercise-3---getting-into-stan.html#cb68-52" aria-hidden="true" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb68-53"><a href="practical-exercise-3---getting-into-stan.html#cb68-53" aria-hidden="true" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W3_InternalMemory.stan&quot;</span>)</span></code></pre></div>
 <pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W3_InternalMemory.stan&quot;</code></pre>
 <div class="sourceCode" id="cb70"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb70-1"><a href="practical-exercise-3---getting-into-stan.html#cb70-1" aria-hidden="true" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
 <span id="cb70-2"><a href="practical-exercise-3---getting-into-stan.html#cb70-2" aria-hidden="true" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W3_InternalMemory.stan&quot;</span>)</span>
@@ -791,30 +797,105 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## Chain 1 finished in 0.6 seconds.</code></pre>
 <div class="sourceCode" id="cb74"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb74-1"><a href="practical-exercise-3---getting-into-stan.html#cb74-1" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 123 × 10
-##    variable     mean  median    sd   mad       q5     q95  rhat ess_bulk ess_tail
-##    &lt;chr&gt;       &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-##  1 lp__      -76.9   -76.6   1.03  0.614 -78.8    -76.0    1.00     330.     316.
-##  2 bias        0.273   0.281 0.228 0.232  -0.0735   0.640  1.00     301.     201.
-##  3 beta        0.582   0.557 0.344 0.351   0.0621   1.12   1.00     279.     242.
-##  4 memory[1]   0.5     0.5   0     0       0.5      0.5   NA         NA       NA 
-##  5 memory[2]   1       1     0     0       1        1     NA         NA       NA 
-##  6 memory[3]   1       1     0     0       1        1     NA         NA       NA 
-##  7 memory[4]   1       1     0     0       1        1     NA         NA       NA 
-##  8 memory[5]   1       1     0     0       1        1     NA         NA       NA 
-##  9 memory[6]   1       1     0     0       1        1     NA         NA       NA 
-## 10 memory[7]   0.833   0.833 0     0       0.833    0.833 NA         NA       NA 
+##    variable      mean   median    sd   mad       q5     q95   rhat ess_bulk ess_tail
+##    &lt;chr&gt;        &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 lp__      -80.9    -80.6    0.879 0.657 -82.6    -80.0    1.00      356.     528.
+##  2 bias        0.371    0.383  0.237 0.240  -0.0188   0.750  1.00      210.     278.
+##  3 beta        0.0225   0.0150 0.180 0.174  -0.264    0.330  0.999     236.     318.
+##  4 memory[1]   0.5      0.5    0     0       0.5      0.5   NA          NA       NA 
+##  5 memory[2]   0.99     0.99   0     0       0.99     0.99  NA          NA       NA 
+##  6 memory[3]   0.995    0.995  0     0       0.995    0.995 NA          NA       NA 
+##  7 memory[4]   0.663    0.663  0     0       0.663    0.663 NA          NA       NA 
+##  8 memory[5]   0.748    0.748  0     0       0.748    0.748 NA          NA       NA 
+##  9 memory[6]   0.798    0.798  0     0       0.798    0.798 NA          NA       NA 
+## 10 memory[7]   0.832    0.832  0     0       0.832    0.832 NA          NA       NA 
 ## # … with 113 more rows</code></pre>
 <p>Now that we know how to model memory as an internal state, we can play with making the update discount the past, setting a parameter that indicates after how many trials memory is lost, etc.</p>
-
-<div class="sourceCode" id="cb76"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb76-1"><a href="practical-exercise-3---getting-into-stan.html#cb76-1" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span>opts_chunk<span class="sc">$</span><span class="fu">set</span>(<span class="at">echo =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb76-2"><a href="practical-exercise-3---getting-into-stan.html#cb76-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb76-3"><a href="practical-exercise-3---getting-into-stan.html#cb76-3" aria-hidden="true" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(tidyverse,</span>
-<span id="cb76-4"><a href="practical-exercise-3---getting-into-stan.html#cb76-4" aria-hidden="true" tabindex="-1"></a>        here,</span>
-<span id="cb76-5"><a href="practical-exercise-3---getting-into-stan.html#cb76-5" aria-hidden="true" tabindex="-1"></a>        posterior,</span>
-<span id="cb76-6"><a href="practical-exercise-3---getting-into-stan.html#cb76-6" aria-hidden="true" tabindex="-1"></a>        cmdstanr,</span>
-<span id="cb76-7"><a href="practical-exercise-3---getting-into-stan.html#cb76-7" aria-hidden="true" tabindex="-1"></a>        brms, tidybayes)</span>
+<div id="trying-out-a-more-complex-memory-model-with-a-rate-of-forgetting-that-exponentially-discounts-the-past" class="section level3 hasAnchor" number="4.6.1">
+<h3><span class="header-section-number">4.6.1</span> Trying out a more complex memory model, with a rate of forgetting that exponentially discounts the past<a href="practical-exercise-3---getting-into-stan.html#trying-out-a-more-complex-memory-model-with-a-rate-of-forgetting-that-exponentially-discounts-the-past" class="anchor-section" aria-label="Anchor link to header"></a></h3>
+<div class="sourceCode" id="cb76"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb76-1"><a href="practical-exercise-3---getting-into-stan.html#cb76-1" aria-hidden="true" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb76-2"><a href="practical-exercise-3---getting-into-stan.html#cb76-2" aria-hidden="true" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h for (right and left) hand</span></span>
+<span id="cb76-3"><a href="practical-exercise-3---getting-into-stan.html#cb76-3" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb76-4"><a href="practical-exercise-3---getting-into-stan.html#cb76-4" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n;</span></span>
+<span id="cb76-5"><a href="practical-exercise-3---getting-into-stan.html#cb76-5" aria-hidden="true" tabindex="-1"></a><span class="st">  array[n] int h;</span></span>
+<span id="cb76-6"><a href="practical-exercise-3---getting-into-stan.html#cb76-6" aria-hidden="true" tabindex="-1"></a><span class="st">  array[n] int other;</span></span>
+<span id="cb76-7"><a href="practical-exercise-3---getting-into-stan.html#cb76-7" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
 <span id="cb76-8"><a href="practical-exercise-3---getting-into-stan.html#cb76-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb76-9"><a href="practical-exercise-3---getting-into-stan.html#cb76-9" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span></code></pre></div>
+<span id="cb76-9"><a href="practical-exercise-3---getting-into-stan.html#cb76-9" aria-hidden="true" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb76-10"><a href="practical-exercise-3---getting-into-stan.html#cb76-10" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb76-11"><a href="practical-exercise-3---getting-into-stan.html#cb76-11" aria-hidden="true" tabindex="-1"></a><span class="st">  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?</span></span>
+<span id="cb76-12"><a href="practical-exercise-3---getting-into-stan.html#cb76-12" aria-hidden="true" tabindex="-1"></a><span class="st">  real beta; // how strongly is previous rate impacting the decision?</span></span>
+<span id="cb76-13"><a href="practical-exercise-3---getting-into-stan.html#cb76-13" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; forgetting;</span></span>
+<span id="cb76-14"><a href="practical-exercise-3---getting-into-stan.html#cb76-14" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb76-15"><a href="practical-exercise-3---getting-into-stan.html#cb76-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb76-16"><a href="practical-exercise-3---getting-into-stan.html#cb76-16" aria-hidden="true" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb76-17"><a href="practical-exercise-3---getting-into-stan.html#cb76-17" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb76-18"><a href="practical-exercise-3---getting-into-stan.html#cb76-18" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb76-19"><a href="practical-exercise-3---getting-into-stan.html#cb76-19" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[n] memory;</span></span>
+<span id="cb76-20"><a href="practical-exercise-3---getting-into-stan.html#cb76-20" aria-hidden="true" tabindex="-1"></a><span class="st">  // Priors</span></span>
+<span id="cb76-21"><a href="practical-exercise-3---getting-into-stan.html#cb76-21" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_lpdf(forgetting | 1, 1);</span></span>
+<span id="cb76-22"><a href="practical-exercise-3---getting-into-stan.html#cb76-22" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, .3);</span></span>
+<span id="cb76-23"><a href="practical-exercise-3---getting-into-stan.html#cb76-23" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | 0, .5);</span></span>
+<span id="cb76-24"><a href="practical-exercise-3---getting-into-stan.html#cb76-24" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb76-25"><a href="practical-exercise-3---getting-into-stan.html#cb76-25" aria-hidden="true" tabindex="-1"></a><span class="st">  // Model, looping to keep track of memory</span></span>
+<span id="cb76-26"><a href="practical-exercise-3---getting-into-stan.html#cb76-26" aria-hidden="true" tabindex="-1"></a><span class="st">  for (trial in 1:n) {</span></span>
+<span id="cb76-27"><a href="practical-exercise-3---getting-into-stan.html#cb76-27" aria-hidden="true" tabindex="-1"></a><span class="st">    if (trial == 1) {</span></span>
+<span id="cb76-28"><a href="practical-exercise-3---getting-into-stan.html#cb76-28" aria-hidden="true" tabindex="-1"></a><span class="st">      memory[trial] = 0.5;</span></span>
+<span id="cb76-29"><a href="practical-exercise-3---getting-into-stan.html#cb76-29" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb76-30"><a href="practical-exercise-3---getting-into-stan.html#cb76-30" aria-hidden="true" tabindex="-1"></a><span class="st">    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));</span></span>
+<span id="cb76-31"><a href="practical-exercise-3---getting-into-stan.html#cb76-31" aria-hidden="true" tabindex="-1"></a><span class="st">    if (trial &lt; n){</span></span>
+<span id="cb76-32"><a href="practical-exercise-3---getting-into-stan.html#cb76-32" aria-hidden="true" tabindex="-1"></a><span class="st">      memory[trial + 1] = (1 - forgetting) * memory[trial] + forgetting * other[trial];</span></span>
+<span id="cb76-33"><a href="practical-exercise-3---getting-into-stan.html#cb76-33" aria-hidden="true" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}</span></span>
+<span id="cb76-34"><a href="practical-exercise-3---getting-into-stan.html#cb76-34" aria-hidden="true" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}</span></span>
+<span id="cb76-35"><a href="practical-exercise-3---getting-into-stan.html#cb76-35" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb76-36"><a href="practical-exercise-3---getting-into-stan.html#cb76-36" aria-hidden="true" tabindex="-1"></a><span class="st">    </span></span>
+<span id="cb76-37"><a href="practical-exercise-3---getting-into-stan.html#cb76-37" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb76-38"><a href="practical-exercise-3---getting-into-stan.html#cb76-38" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb76-39"><a href="practical-exercise-3---getting-into-stan.html#cb76-39" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb76-40"><a href="practical-exercise-3---getting-into-stan.html#cb76-40" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb76-41"><a href="practical-exercise-3---getting-into-stan.html#cb76-41" aria-hidden="true" tabindex="-1"></a>  stan_model,</span>
+<span id="cb76-42"><a href="practical-exercise-3---getting-into-stan.html#cb76-42" aria-hidden="true" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb76-43"><a href="practical-exercise-3---getting-into-stan.html#cb76-43" aria-hidden="true" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W3_InternalMemory2.stan&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W3_InternalMemory2.stan&quot;</code></pre>
+<div class="sourceCode" id="cb78"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb78-1"><a href="practical-exercise-3---getting-into-stan.html#cb78-1" aria-hidden="true" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
+<span id="cb78-2"><a href="practical-exercise-3---getting-into-stan.html#cb78-2" aria-hidden="true" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W3_InternalMemory2.stan&quot;</span>)</span>
+<span id="cb78-3"><a href="practical-exercise-3---getting-into-stan.html#cb78-3" aria-hidden="true" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb78-4"><a href="practical-exercise-3---getting-into-stan.html#cb78-4" aria-hidden="true" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span></code></pre></div>
+<pre><code>## Model executable is up to date!</code></pre>
+<div class="sourceCode" id="cb80"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb80-1"><a href="practical-exercise-3---getting-into-stan.html#cb80-1" aria-hidden="true" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
+<span id="cb80-2"><a href="practical-exercise-3---getting-into-stan.html#cb80-2" aria-hidden="true" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb80-3"><a href="practical-exercise-3---getting-into-stan.html#cb80-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb80-4"><a href="practical-exercise-3---getting-into-stan.html#cb80-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb80-5"><a href="practical-exercise-3---getting-into-stan.html#cb80-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>,</span>
+<span id="cb80-6"><a href="practical-exercise-3---getting-into-stan.html#cb80-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb80-7"><a href="practical-exercise-3---getting-into-stan.html#cb80-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb80-8"><a href="practical-exercise-3---getting-into-stan.html#cb80-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
+<span id="cb80-9"><a href="practical-exercise-3---getting-into-stan.html#cb80-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">1000</span>,</span>
+<span id="cb80-10"><a href="practical-exercise-3---getting-into-stan.html#cb80-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
+<span id="cb80-11"><a href="practical-exercise-3---getting-into-stan.html#cb80-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb80-12"><a href="practical-exercise-3---getting-into-stan.html#cb80-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb80-13"><a href="practical-exercise-3---getting-into-stan.html#cb80-13" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<pre><code>## Running MCMC with 1 chain, with 2 thread(s) per chain...
+## 
+## Chain 1 finished in 1.3 seconds.</code></pre>
+<div class="sourceCode" id="cb82"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb82-1"><a href="practical-exercise-3---getting-into-stan.html#cb82-1" aria-hidden="true" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
+<pre><code>## # A tibble: 4 × 10
+##   variable       mean   median    sd   mad        q5     q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;         &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;     &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__       -83.1    -82.7    1.44  1.21  -86.1     -81.5    1.00     222.     262.
+## 2 bias         0.299    0.300  0.222 0.229  -0.0681    0.664  1.01     280.     327.
+## 3 beta         0.0904   0.0577 0.202 0.114  -0.168     0.475  1.02     185.     189.
+## 4 forgetting   0.267    0.194  0.236 0.207   0.00892   0.759  1.00     232.     192.</code></pre>
+
+<div class="sourceCode" id="cb84"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb84-1"><a href="practical-exercise-3---getting-into-stan.html#cb84-1" aria-hidden="true" tabindex="-1"></a>knitr<span class="sc">::</span>opts_chunk<span class="sc">$</span><span class="fu">set</span>(<span class="at">echo =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb84-2"><a href="practical-exercise-3---getting-into-stan.html#cb84-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb84-3"><a href="practical-exercise-3---getting-into-stan.html#cb84-3" aria-hidden="true" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(tidyverse,</span>
+<span id="cb84-4"><a href="practical-exercise-3---getting-into-stan.html#cb84-4" aria-hidden="true" tabindex="-1"></a>        here,</span>
+<span id="cb84-5"><a href="practical-exercise-3---getting-into-stan.html#cb84-5" aria-hidden="true" tabindex="-1"></a>        posterior,</span>
+<span id="cb84-6"><a href="practical-exercise-3---getting-into-stan.html#cb84-6" aria-hidden="true" tabindex="-1"></a>        cmdstanr,</span>
+<span id="cb84-7"><a href="practical-exercise-3---getting-into-stan.html#cb84-7" aria-hidden="true" tabindex="-1"></a>        brms, tidybayes)</span>
+<span id="cb84-8"><a href="practical-exercise-3---getting-into-stan.html#cb84-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb84-9"><a href="practical-exercise-3---getting-into-stan.html#cb84-9" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span></code></pre></div>
 <pre><code>## Rows: 7920 Columns: 5
 ## ── Column specification ──────────────────────────────────────────────────────────────────────────────────
 ## Delimiter: &quot;,&quot;
@@ -822,6 +903,7 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## 
 ## ℹ Use `spec()` to retrieve the full column specification for this data.
 ## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.</code></pre>
+</div>
 </div>
 </div>
             </section>

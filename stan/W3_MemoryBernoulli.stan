@@ -21,7 +21,7 @@ model {
   target += normal_lpdf(beta | 0, .5);
   
   // model
-  target += bernoulli_logit_lpmf(h | bias + beta * memory);
+  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
 }
 
 

@@ -293,16 +293,18 @@ N.B. prior and posterior predictions now depend on the value on memory. I identi
 d1 <- d %>% 
   subset(noise == 0 & rate == 0.8) %>% 
   rename(Other = choice) %>% 
-  mutate(cumulativerate = logit_scaled(lag(cumulativerate, 1)))
+  mutate(cumulativerate = lag(cumulativerate, 1))
 
-d1$cumulativerate[1] <- 0 # no prior info at first trial
+d1$cumulativerate[1] <- 0.5 # no prior info at first trial
+d1$cumulativerate[d1$cumulativerate == 0] <- 0.01
+d1$cumulativerate[d1$cumulativerate == 1] <- 0.99
 
 # Now we create the memory agent with a coefficient of 0.9
 bias = 0
 beta = 0.9
 
 MemoryAgent_f <- function(bias, beta, cumulativerate){
-    choice = rbinom(1, 1, inv_logit_scaled(bias + beta * cumulativerate))
+    choice = rbinom(1, 1, inv_logit_scaled(bias + beta * logit_scaled(cumulativerate)))
   return(choice)
 }
 
@@ -341,6 +343,8 @@ transformed parameters{
   } 
   if (trial < n){
       memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);
+      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}
+      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}
     }
   }
 }
@@ -353,7 +357,7 @@ model {
   
   // Model, looping to keep track of memory
   for (trial in 1:n) {
-    target += bernoulli_logit_lpmf(h[trial] | bias + beta * inv_logit(memory[trial]));
+    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
   }
 }
 
@@ -492,6 +496,8 @@ transformed parameters{
   } 
   if (trial < n){
       memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);
+      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}
+      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}
     }
   }
 }
@@ -503,7 +509,7 @@ model {
   target += normal_lpdf(beta | prior_mean_beta, prior_sd_beta);
   
   // The model
-  target += bernoulli_logit_lpmf(h | bias + beta * memory);
+  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
 }
 
 generated quantities{
