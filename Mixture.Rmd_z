@@ -1,0 +1,314 @@
+---
+title: "Mixture"
+output: html_document
+date: "2023-03-09"
+---
+
+## BONUS CONTENT - Including noise in the generative model
+
+N.B. This should all be parallelized.
+
+### First with brms as a sanity check
+
+```{r message = FALSE}
+## Mixture in brms
+dd <- d %>% subset(rate == 0.8 & noise == 0.1)
+
+formula <- bf(choice ~ 1)
+
+mix <- mixture(bernoulli, bernoulli)
+
+get_prior(formula, family = mix, dd)
+
+prior <- c(
+  prior(normal(0, .1), class = "Intercept", dpar = mu1),
+  prior(normal(0, 1), class = "Intercept", dpar = mu2)
+)
+
+m <- brm(formula, 
+         family = mix, 
+         prior = prior, 
+         data = dd,
+         backend = "cmdstanr", 
+         chains = 2, 
+         cores = 2, 
+         control = list(adapt_delta = 0.99),
+         stan_model_args = list(stanc_options = list("O1")))
+
+## Now we need to scale it up to all possible rates and noises
+recovery_df <- NULL
+
+for (noiseLvl in unique(d$noise)) {
+  
+  for (rateLvl in unique(d$rate)) {
+    
+    dd <- d %>% subset(
+      noise == noiseLvl  & rate == rateLvl
+    )
+    m <- brm(
+        formula,
+        family = mix,
+        prior = prior,
+        data = dd,
+        backend = "cmdstanr",
+        chains = 2,
+        cores = 2,
+        control = list(adapt_delta = 0.99),
+        refresh = 1000,
+        stan_model_args = list(stanc_options = list("O1")))
+    
+    post_preds <- spread_draws(m, b_mu2_Intercept, theta1)
+    
+    temp <- tibble(biasEst = post_preds$b_mu2_Intercept, 
+                   biasTrue = rateLvl, 
+                   noiseEst = post_preds$theta1, 
+                   noiseTrue = noiseLvl, 
+                   Randomness = post_preds$b_mu2_Intercept,
+                   Bias_p = post_preds$theta2)
+    
+    if (exists("recovery_df")) {
+      recovery_df <- rbind(recovery_df, temp)
+      } else {recovery_df <- temp}
+    
+  }}
+
+ggplot(recovery_df, aes(biasTrue, biasEst)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  facet_wrap(.~noiseTrue) +
+  theme_classic()
+
+```
+
+### Then coding it directly in Stan
+
+```{r message = FALSE}
+dd <- d %>% subset(rate == 0.8 & noise == 0.1)
+data <- list(
+  n = 120,
+  h = dd$choice
+)
+file <- file.path("stan/W3_mixture.stan")
+mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+samples <- mod$sample(
+  data = data,
+  seed = 123,
+  chains = 2,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1500,
+  iter_sampling = 3000,
+  refresh = 500,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+
+## Now we need to scale it up to all possible rates and noises
+recovery_Standf <- NULL
+
+for (noiseLvl in unique(d$noise)) {
+  
+  for (rateLvl in unique(d$rate)) {
+    
+    dd <- d %>% subset(
+      noise == noiseLvl  & rate == rateLvl
+    )
+    
+    data <- list(
+      n = nrow(dd),
+      h = dd$choice
+    )
+    
+    samples <- mod$sample(
+      data = data,
+      seed = 123,
+      chains = 1,
+      parallel_chains = 1,
+      threads_per_chain = 1,
+      iter_warmup = 2000,
+      iter_sampling = 4000,
+      refresh = 1000,
+      max_treedepth = 20,
+      adapt_delta = 0.99,
+    )
+    
+    draws_df <- as_draws_df(samples$draws()) 
+    temp <- tibble(biasEst = draws_df$bias_p, 
+                   biasTrue = rateLvl, 
+                   noiseEst = draws_df$noise_p, 
+                   noiseTrue = noiseLvl)
+    
+    
+    if (exists("recovery_Standf")) {
+      recovery_Standf <- rbind(recovery_Standf, temp)
+      } else {recovery_Standf <- temp}
+    
+  }
+  
+}
+
+
+ggplot(recovery_Standf, aes(biasTrue, biasEst)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  facet_wrap(.~noiseTrue) +
+  ylim(0,1) +
+  theme_classic()
+
+ggplot(recovery_Standf, aes(noiseTrue, noiseEst)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  facet_wrap(.~biasTrue) +
+  ylim(0,1) +
+  theme_classic()
+```
+
+### Now we add different priors for noise
+
+```{r message = FALSE}
+## Now we adding different priors for noise
+NoiseMean <- seq(-3,0, .5)
+NoiseStD <- seq(0.1, 1, 0.1)
+noisePriors <-  expand.grid(NoiseMean = NoiseMean, NoiseStD = NoiseStD)
+
+file <- file.path("stan/W3_mixture_v2.stan")
+mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+
+recovery_Standf3 <- NULL
+
+for (p in seq(nrow(noisePriors))) {
+
+for (noiseLvl in unique(d$noise)) {
+  
+  for (rateLvl in unique(d$rate)) {
+    
+    dd <- d %>% subset(
+      noise == noiseLvl  & rate == rateLvl
+    )
+    
+    data <- list(
+      n = nrow(dd),
+      h = dd$choice,
+      noiseM = noisePriors$NoiseMean[p],
+      noiseSd = noisePriors$NoiseStD[p]
+    )
+    
+    samples <- mod$sample(
+      data = data,
+      seed = 123,
+      chains = 1,
+      parallel_chains = 1,
+      threads_per_chain = 1,
+      iter_warmup = 2000,
+      iter_sampling = 4000,
+      refresh = 1000,
+      max_treedepth = 20,
+      adapt_delta = 0.99,
+    )
+    
+    draws_df <- as_draws_df(samples$draws()) 
+    temp <- tibble(biasEst = draws_df$bias_p, 
+                   biasTrue = rateLvl, 
+                   noiseEst = draws_df$noise_p, 
+                   noiseTrue = noiseLvl,
+                   noiseM = noisePriors$NoiseMean[p],
+                   noiseSd = noisePriors$NoiseStD[p])
+    
+    
+    if (exists("recovery_Standf3")) {
+      recovery_Standf3 <- rbind(recovery_Standf3, temp)
+    } else {
+        recovery_Standf3 <- temp}
+    
+  }
+  
+}
+}
+```
+
+### Now also playing with priors for theta
+
+```{r message = FALSE}
+## Now we adding different priors for theta
+prior_mean <- seq(-3, 3, .5)
+prior_sd <- seq(0.1, 1, 0.1)
+priors <-  expand.grid(prior_mean, prior_sd)
+priors <- tibble(prior_mean = priors$Var1, prior_sd = priors$Var2)
+
+file <- file.path("stan/W3_mixture_v3.stan")
+mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+dd <- d %>% subset(noise == 0.1 & rate == 0.8)
+
+sensitivity_df <- NULL
+
+for (p in seq(nrow(priors))) {
+  
+      data <- list(
+        n = nrow(dd),
+        h = dd$choice,
+        prior_mean = priors$prior_mean[p],
+        prior_sd = priors$prior_sd[p]
+      )
+      
+      samples <- mod$sample(
+        data = data,
+        seed = 123,
+        chains = 1,
+        parallel_chains = 1,
+        threads_per_chain = 1,
+        iter_warmup = 1000,
+        iter_sampling = 1000,
+        refresh = 1000,
+        max_treedepth = 20,
+        adapt_delta = 0.99,
+      )
+      
+      draws_df <- as_draws_df(samples$draws()) 
+      temp <- tibble(theta_prior = draws_df$theta_prior, 
+                     theta_posterior = draws_df$theta_posterior, 
+                     prior_preds = draws_df$prior_preds, 
+                     posterior_preds = draws_df$posterior_preds, 
+                     prior_mean = priors$prior_mean[p],
+                     prior_sd = priors$prior_sd[p])
+      
+      
+      if (exists("sensitivity_df")) {
+        sensitivity_df <- rbind(sensitivity_df, temp)
+      } else {
+          sensitivity_df <- temp}
+      
+}
+
+ggplot(sensitivity_df, aes(prior_mean, theta_posterior)) +
+  geom_point(alpha = 0.01) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "blue") +
+  facet_wrap(.~prior_sd) +
+  theme_bw()
+
+ggplot(sensitivity_df, aes(prior_sd, theta_posterior)) +
+  geom_point(alpha = 0.01) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "blue") +
+  facet_wrap(.~prior_mean) +
+  theme_bw()
+
+ggplot(sensitivity_df, aes(prior_mean, posterior_preds)) +
+  geom_point(alpha = 0.01) +
+  geom_hline(yintercept = 96, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "blue") +
+  facet_wrap(.~prior_sd) +
+  theme_bw()
+
+ggplot(sensitivity_df, aes(prior_sd, posterior_preds)) +
+  geom_point(alpha = 0.01) +
+  geom_hline(yintercept = 96, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "blue") +
+  facet_wrap(.~prior_mean) +
+  theme_bw()
+```

@@ -49,14 +49,14 @@ generated quantities{
   int<lower=0, upper=n> prior_preds9;
   int<lower=0, upper=n> post_preds9;
   
-  bias_prior = normal_rng(0, 0.1);
+  bias_prior = normal_rng(0, 0.3);
   beta_prior = normal_rng(0, 0.5);
-  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.5));
-  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.7));
-  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.9));
-  post_preds5 = binomial_rng(n, inv_logit(bias + beta * 0.5));
-  post_preds7 = binomial_rng(n, inv_logit(bias + beta * 0.7));
-  post_preds9 = binomial_rng(n, inv_logit(bias + beta * 0.9));
+  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.5)));
+  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.7)));
+  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.9)));
+  post_preds5 = binomial_rng(n, inv_logit(bias + beta * logit(0.5)));
+  post_preds7 = binomial_rng(n, inv_logit(bias + beta * logit(0.7)));
+  post_preds9 = binomial_rng(n, inv_logit(bias + beta * logit(0.9)));
 
 }
 

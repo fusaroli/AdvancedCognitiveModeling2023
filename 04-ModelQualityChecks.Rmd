@@ -4,16 +4,10 @@ output: html_document
 date: "2023-02-22"
 ---
 
-```{r setup}
+```{r}
 knitr::opts_chunk$set(echo = TRUE)
 
-pacman::p_load(tidyverse,
-        here,
-        posterior,
-        cmdstanr,
-        brms, tidybayes)
 
-d <- read_csv("simdata/W3_randomnoise.csv")
 ```
 
 # Practical exercise 4 - Model quality checks
@@ -39,6 +33,14 @@ As we use complex models, the relation between prior/posterior estimates and pre
 
 
 ```{r adding priors, warning = F, message = F}
+pacman::p_load(tidyverse,
+        here,
+        posterior,
+        cmdstanr,
+        brms, tidybayes)
+
+d <- read_csv("simdata/W3_randomnoise.csv")
+
 stan_model <- "
 // This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)
 
@@ -215,7 +217,9 @@ write_stan_file(
   basename = "W4_PriorBernoulli.stan")
 
 file <- file.path("stan/W4_PriorBernoulli.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE))
+mod <- cmdstan_model(file, 
+                     cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
 
 dd <- d %>% subset(noise == 0.1 & rate == 0.8)
 
@@ -371,14 +375,14 @@ generated quantities{
   int<lower=0, upper=n> prior_preds9;
   int<lower=0, upper=n> post_preds9;
   
-  bias_prior = normal_rng(0, 0.1);
+  bias_prior = normal_rng(0, 0.3);
   beta_prior = normal_rng(0, 0.5);
-  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.5));
-  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.7));
-  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.9));
-  post_preds5 = binomial_rng(n, inv_logit(bias + beta * 0.5));
-  post_preds7 = binomial_rng(n, inv_logit(bias + beta * 0.7));
-  post_preds9 = binomial_rng(n, inv_logit(bias + beta * 0.9));
+  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.5)));
+  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.7)));
+  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.9)));
+  post_preds5 = binomial_rng(n, inv_logit(bias + beta * logit(0.5)));
+  post_preds7 = binomial_rng(n, inv_logit(bias + beta * logit(0.7)));
+  post_preds9 = binomial_rng(n, inv_logit(bias + beta * logit(0.9)));
 
 }
 
@@ -390,7 +394,8 @@ write_stan_file(
 
 ## Specify where the model is
 file <- file.path("stan/W4_MemoryBernoulli.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+mod <- cmdstan_model(file, 
+                     cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
 
 # The following command calls Stan with specific options.
@@ -524,12 +529,12 @@ generated quantities{
   
   bias_prior = normal_rng(prior_mean_bias, prior_sd_bias);
   beta_prior = normal_rng(prior_mean_beta, prior_sd_beta);
-  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.5));
-  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.7));
-  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * 0.9));
-  post_preds5 = binomial_rng(n, inv_logit(bias + beta * 0.5));
-  post_preds7 = binomial_rng(n, inv_logit(bias + beta * 0.7));
-  post_preds9 = binomial_rng(n, inv_logit(bias + beta * 0.9));
+  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.5)));
+  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.7)));
+  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.9)));
+  post_preds5 = binomial_rng(n, inv_logit(bias + beta * logit(0.5)));
+  post_preds7 = binomial_rng(n, inv_logit(bias + beta * logit(0.7)));
+  post_preds9 = binomial_rng(n, inv_logit(bias + beta * logit(0.9)));
   
 }
 "
