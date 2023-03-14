@@ -1,0 +1,823 @@
+---
+title: "06-ModelComparison"
+output: html_document
+date: "2023-03-10"
+---
+
+# Model comparison
+
+[MISSING INTRO]
+
+[MISSING: SAME CODE AS IN PREVIOUS CHAPTER, SHOULD I CALL IT FROM COMMON SOURCE, OR JUST LOAD THE DATA?]
+
+Generate data 
+
+```{r}
+pacman::p_load(tidyverse,
+               here,
+               posterior,
+               cmdstanr,
+               brms, 
+               tidybayes, 
+               loo, job)
+
+# Shared parameters
+agents <- 100
+trials <- 120
+noise <- 0
+
+# Biased agents parameters
+rateM <- 1.386 # roughly 0.8 once inv_logit scaled
+rateSD <- 0.65 # roughly giving a sd of 0.1 in prob scale
+
+# Memory agents parameters
+biasM <- 0
+biasSD <- 0.1
+betaM <- 1.5
+betaSD <- 0.3
+
+
+```
+
+```{r Defining the agents functions bla}
+
+# Functions of the agents
+RandomAgentNoise_f <- function(rate, noise) {
+  choice <- rbinom(1, 1, inv_logit_scaled(rate))
+  if (rbinom(1, 1, noise) == 1) {
+    choice = rbinom(1, 1, 0.5)
+  }
+  return(choice)
+}
+
+MemoryAgentNoise_f <- function(bias, beta, otherRate, noise) {
+  rate <- inv_logit_scaled(bias + beta * logit_scaled(otherRate))
+  choice <- rbinom(1, 1, rate)
+  if (rbinom(1, 1, noise) == 1) {
+    choice = rbinom(1, 1, 0.5)
+  }
+  return(choice)
+}
+
+
+```
+
+## Generating the agents
+
+[MISSING: PARALLELIZE]
+
+```{r Generating the agents bla}
+# Looping through all the agents to generate the data.
+d <- NULL
+
+for (agent in 1:agents) {
+  
+  rate <- rnorm(1, rateM, rateSD)
+  bias <- rnorm(1, biasM, biasSD)
+  beta <- rnorm(1, betaM, betaSD)
+  
+  randomChoice <- rep(NA, trials)
+  memoryChoice <- rep(NA, trials)
+  memoryRate <- rep(NA, trials)
+  
+  for (trial in 1:trials) {
+    
+    randomChoice[trial] <- RandomAgentNoise_f(rate, noise)
+    if (trial == 1) {
+      memoryChoice[trial] <- rbinom(1,1,0.5)
+    } else {
+      memoryChoice[trial] <- MemoryAgentNoise_f(bias, beta, mean(randomChoice[1:trial], na.rm = T), noise)
+    }
+  }
+  
+  temp <- tibble(agent, trial = seq(trials), randomChoice, randomRate = rate, memoryChoice, memoryRate, noise, rateM, rateSD, bias, beta, biasM, biasSD, betaM, betaSD)
+  
+  if (agent > 1) {
+    d <- rbind(d, temp)
+  } else{
+    d <- temp
+  }
+  
+}
+
+d <- d %>% group_by(agent) %>% mutate(
+  randomRate = cumsum(randomChoice) / seq_along(randomChoice),
+  memoryRate = cumsum(memoryChoice) / seq_along(memoryChoice)
+)
+```
+
+## Prep the data
+
+```{r}
+d1 <- d %>% 
+  subset(select = c(agent, randomChoice)) %>% 
+  mutate(row = row_number()) %>% 
+  pivot_wider(names_from = agent, values_from = randomChoice)
+
+d2 <- d %>% 
+  subset(select = c(agent, memoryChoice)) %>% 
+  mutate(row = row_number()) %>% 
+  pivot_wider(names_from = agent, values_from = memoryChoice)
+
+## Create the data
+data_biased <- list(
+  trials = trials,
+  agents = agents,
+  h = as.matrix(d1[,2:101]),
+  other = as.matrix(d2[,2:101])
+)
+
+data_memory <- list(
+  trials = trials,
+  agents = agents,
+  h = as.matrix(d2[,2:101]),
+  other = as.matrix(d1[,2:101])
+)
+```
+
+## Create the models: random agents
+
+N.B. compared to before we also need to include a log-likelihood, to calculate loo for model comparison.
+
+```{r}
+stan_biased_model <- "
+//
+// This STAN model infers a random bias from a sequences of 1s and 0s (right and left). Now multilevel
+//
+
+functions{
+  real normal_lb_rng(real mu, real sigma, real lb) { // normal distribution with a lower bound
+    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
+    real u = uniform_rng(p, 1);
+    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value
+  }
+}
+
+// The input (data) for the model. n of trials and h of hands
+data {
+ int<lower = 1> trials;
+ int<lower = 1> agents;
+ array[trials, agents] int h;
+}
+
+// The parameters accepted by the model. 
+parameters {
+  real thetaM;
+  real<lower = 0> thetaSD;
+  array[agents] real theta;
+}
+
+// The model to be estimated. 
+model {
+  target += normal_lpdf(thetaM | 0, 1);
+  target += normal_lpdf(thetaSD | 0, .3)  -
+    normal_lccdf(0 | 0, .3);
+
+  // The prior for theta is a uniform distribution between 0 and 1
+  target += normal_lpdf(theta | thetaM, thetaSD); 
+ 
+  for (i in 1:agents)
+    target += bernoulli_logit_lpmf(h[,i] | theta[i]);
+  
+}
+
+
+generated quantities{
+   real thetaM_prior;
+   real<lower=0> thetaSD_prior;
+   real<lower=0, upper=1> theta_prior;
+   real<lower=0, upper=1> theta_posterior;
+   
+   int<lower=0, upper = trials> prior_preds;
+   int<lower=0, upper = trials> posterior_preds;
+   
+   array[trials, agents] real log_lik;
+   
+   thetaM_prior = normal_rng(0,1);
+   thetaSD_prior = normal_lb_rng(0,0.3,0);
+   theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));
+   theta_posterior = inv_logit(normal_rng(thetaM, thetaSD));
+   
+   prior_preds = binomial_rng(trials, inv_logit(thetaM_prior));
+   posterior_preds = binomial_rng(trials, inv_logit(thetaM));
+   
+   for (i in 1:agents){
+    for (t in 1:trials){
+      log_lik[t,i] = bernoulli_logit_lpmf(h[t,i] | theta[i]);
+    }
+   }
+  
+}
+"
+write_stan_file(
+  stan_biased_model,
+  dir = "stan/",
+  basename = "W6_MultilevelBias.stan")
+
+file <- file.path("stan/W6_MultilevelBias.stan")
+mod_biased <- cmdstan_model(file, 
+                     cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+```
+
+
+## Multilevel memory model
+
+```{r}
+stan_memory_model <- "
+//
+// This STAN model infers a random bias from a sequences of 1s and 0s (heads and tails)
+//
+functions{
+  real normal_lb_rng(real mu, real sigma, real lb) {
+    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
+    real u = uniform_rng(p, 1);
+    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value
+  }
+}
+
+// The input (data) for the model. 
+data {
+ int<lower = 1> trials;
+ int<lower = 1> agents;
+ array[trials, agents] int h;
+ array[trials, agents] int other;
+}
+
+// The parameters accepted by the model. 
+parameters {
+  real biasM;
+  real betaM;
+  vector<lower = 0>[2] tau;
+  matrix[2, agents] z_IDs;
+  cholesky_factor_corr[2] L_u;
+}
+
+transformed parameters {
+  array[trials, agents] real memory;
+  matrix[agents,2] IDs;
+  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)';
+  
+  for (agent in 1:agents){
+    for (trial in 1:trials){
+      if (trial == 1) {
+        memory[trial, agent] = 0.5;
+      } 
+      if (trial < trials){
+        memory[trial + 1, agent] = memory[trial, agent] + ((other[trial, agent] - memory[trial, agent]) / trial);
+        if (memory[trial + 1, agent] == 0){memory[trial + 1, agent] = 0.01;}
+        if (memory[trial + 1, agent] == 1){memory[trial + 1, agent] = 0.99;}
+      }
+    }
+  }
+}
+
+// The model to be estimated. 
+model {
+  target += normal_lpdf(biasM | 0, 1);
+  target += normal_lpdf(tau[1] | 0, .3)  -
+    normal_lccdf(0 | 0, .3);
+  target += normal_lpdf(betaM | 0, .3);
+  target += normal_lpdf(tau[2] | 0, .3)  -
+    normal_lccdf(0 | 0, .3);
+  target += lkj_corr_cholesky_lpdf(L_u | 2);
+
+  target += std_normal_lpdf(to_vector(z_IDs));
+  for (agent in 1:agents){
+    for (trial in 1:trials){
+      target += bernoulli_logit_lpmf(h[trial, agent] | biasM + IDs[agent, 1] +  memory[trial, agent] * (betaM + IDs[agent, 2]));
+    }
+  }
+    
+}
+
+
+generated quantities{
+   real biasM_prior;
+   real<lower=0> biasSD_prior;
+   real betaM_prior;
+   real<lower=0> betaSD_prior;
+   
+   real bias_prior;
+   real beta_prior;
+   
+   array[agents] int<lower=0, upper = trials> prior_preds0;
+   array[agents] int<lower=0, upper = trials> prior_preds1;
+   array[agents] int<lower=0, upper = trials> prior_preds2;
+   array[agents] int<lower=0, upper = trials> posterior_preds0;
+   array[agents] int<lower=0, upper = trials> posterior_preds1;
+   array[agents] int<lower=0, upper = trials> posterior_preds2;
+   
+   array[trials, agents] real log_lik;
+   
+   biasM_prior = normal_rng(0,1);
+   biasSD_prior = normal_lb_rng(0,0.3,0);
+   betaM_prior = normal_rng(0,1);
+   betaSD_prior = normal_lb_rng(0,0.3,0);
+   
+   bias_prior = normal_rng(biasM_prior, biasSD_prior);
+   beta_prior = normal_rng(betaM_prior, betaSD_prior);
+   
+   for (i in 1:agents){
+      prior_preds0[i] = binomial_rng(trials, inv_logit(bias_prior + 0 * beta_prior));
+      prior_preds1[i] = binomial_rng(trials, inv_logit(bias_prior + 1 * beta_prior));
+      prior_preds2[i] = binomial_rng(trials, inv_logit(bias_prior + 2 * beta_prior));
+      posterior_preds0[i] = binomial_rng(trials, inv_logit(biasM + IDs[i,1] +  0 * (betaM + IDs[i,2])));
+      posterior_preds1[i] = binomial_rng(trials, inv_logit(biasM + IDs[i,1] +  1 * (betaM + IDs[i,2])));
+      posterior_preds2[i] = binomial_rng(trials, inv_logit(biasM + IDs[i,1] +  2 * (betaM + IDs[i,2])));
+      
+      for (t in 1:trials){
+        log_lik[t,i] = bernoulli_logit_lpmf(h[t, i] | biasM + IDs[i, 1] +  memory[t, i] * (betaM + IDs[i, 2]));
+      }
+   }
+  
+}
+"
+
+write_stan_file(
+  stan_memory_model,
+  dir = "stan/",
+  basename = "W6_MultilevelMemory.stan")
+
+file <- file.path("stan/W6_MultilevelMemory.stan")
+mod_memory <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+```
+
+## Fitting the models to the data
+
+```{r, eval = F}
+# Fitting biased agent model to biased agent data
+fit_biased2biased <- mod_biased$sample(
+  data = data_biased,
+  seed = 123,
+  chains = 1,
+  parallel_chains = 1,
+  threads_per_chain = 4,
+  iter_warmup = 2000,
+  iter_sampling = 2000,
+  refresh = 1000,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+save(fit_biased2biased, data_biased, 
+          file = "simmodels/W6_fit_biased2biased.RData") 
+fit_biased2biased$save_object(file = "simmodels/W6_fit_biased2biased.RDS")
+fit_biased2biased$save_output_files(dir = "simmodels", basename = "W6_fit_biased2biased")
+
+
+
+# Fitting biased agent model to memory agent data
+fit_biased2memory <- mod_biased$sample(
+  data = data_memory,
+  seed = 123,
+  chains = 1,
+  parallel_chains = 1,
+  threads_per_chain = 4,
+  iter_warmup = 2000,
+  iter_sampling = 2000,
+  refresh = 1000,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+save(fit_biased2memory, data_memory, 
+          file = "simmodels/W6_fit_biased2memory.RData") 
+fit_biased2memory$save_object(file = "simmodels/W6_fit_biased2memory.RDS")
+fit_biased2memory$save_output_files(dir = "simmodels", basename = "W6_fit_biased2memory")
+
+
+fit_memory2biased <- mod_memory$sample(
+  data = data_biased,
+  seed = 123,
+  chains = 1,
+  parallel_chains = 1,
+  threads_per_chain = 4,
+  iter_warmup = 2000,
+  iter_sampling = 2000,
+  refresh = 500,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+save(fit_memory2biased, data_biased, 
+          file = "simmodels/W6_fit_memory2biased.RData") 
+fit_memory2biased$save_object(file = "simmodels/W6_fit_memory2biased.RDS")
+fit_memory2biased$save_output_files(dir = "simmodels", basename = "W6_fit_memory2biased")
+
+fit_memory2memory <- mod_memory$sample(
+  data = data_memory,
+  seed = 123,
+  chains = 1,
+  parallel_chains = 1,
+  threads_per_chain = 4,
+  iter_warmup = 2000,
+  iter_sampling = 2000,
+  refresh = 1000,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+
+save(fit_memory2memory, data_memory, 
+          file = "simmodels/W6_fit_memory2memory.RData") 
+fit_memory2memory$save_object(file = "simmodels/W6_fit_memory2memory.RDS")
+fit_memory2memory$save_output_files(dir = "simmodels", basename = "W6_fit_memory2memory")
+```
+
+```{r}
+fit_biased2biased <- as_cmdstan_fit("simmodels/W6_fit_biased2biased-202303141000-1-75c13f.csv")
+Loo_biased2biased <- fit_biased2biased$loo(save_psis = TRUE, cores = 4)
+plot(Loo_biased2biased)
+
+fit_biased2memory <- as_cmdstan_fit("simmodels/W6_fit_biased2memory-202303141001-1-513269.csv")
+Loo_biased2memory <- fit_biased2memory$loo(save_psis = TRUE, cores = 4)
+plot(Loo_biased2memory)
+
+fit_memory2biased <- as_cmdstan_fit("simmodels/W6_fit_memory2biased-202303141022-1-778c49.csv")
+Loo_memory2biased <- fit_memory2biased$loo(save_psis = TRUE, cores = 4)
+plot(Loo_memory2biased)
+
+fit_memory2memory <- as_cmdstan_fit("simmodels/W6_fit_memory2memory-202303141150-1-35a401.csv")
+Loo_memory2memory <- fit_memory2memory$loo(save_psis = TRUE, cores = 4)
+plot(Loo_memory2memory)
+
+elpd <- tibble(
+  biased_diff_elpd = 
+  Loo_biased2biased$pointwise[, "elpd_loo"] - 
+  Loo_memory2biased$pointwise[, "elpd_loo"],
+  memory_diff_elpd = 
+  Loo_memory2memory$pointwise[, "elpd_loo"] -
+  Loo_biased2memory$pointwise[, "elpd_loo"])
+
+p1 <- ggplot(elpd, aes(x = rate, y = biased_diff_elpd)) +
+  geom_point(alpha = .1) +
+  #xlim(.5,1.01) +
+  #ylim(-1.5,1.5) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  theme_bw()
+
+p2 <- ggplot(elpd, aes(x = rate, y = memory_diff_elpd)) +
+  geom_point(alpha = .1) +
+  #xlim(.5,1.01) +
+  #ylim(-1.5,1.5) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  theme_bw()
+
+library(patchwork)
+p1 + p2
+
+loo_compare(Loo_biased2biased, Loo_memory2biased)
+loo_compare(Loo_biased2memory, Loo_memory2memory)
+loo_model_weights(list(Loo_biased2biased, Loo_memory2biased))
+loo_model_weights(list(Loo_biased2memory, Loo_memory2memory))
+
+```
+
+## Implementing Cross-Validation
+
+[MISSING: STAN CODE WITH THE TEST]
+[MISSING: VERSION W TRANSFORMED DATA]
+
+### Create cross-validation ready stan model for biased agents
+
+N.B. compared to before we also need to include specifics for test data 
+
+```{r}
+stan_biased_cv_model <- "
+//
+// This STAN model infers a random bias from a sequences of 1s and 0s (right and left). Now multilevel
+//
+
+functions{
+  real normal_lb_rng(real mu, real sigma, real lb) { // normal distribution with a lower bound
+    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
+    real u = uniform_rng(p, 1);
+    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value
+  }
+}
+
+// The input (data) for the model. n of trials and h of hands
+data {
+ int<lower = 1> trials;
+ int<lower = 1> agents;
+ array[trials, agents] int h;
+ 
+ int<lower = 1> agents_test;
+ array[trials, agents_test] int h_test;
+}
+
+// The parameters accepted by the model. 
+parameters {
+  real thetaM;
+  real<lower = 0> thetaSD;
+  array[agents] real theta;
+}
+
+// The model to be estimated. 
+model {
+  target += normal_lpdf(thetaM | 0, 1);
+  target += normal_lpdf(thetaSD | 0, .3)  -
+    normal_lccdf(0 | 0, .3);
+
+  // The prior for theta is a uniform distribution between 0 and 1
+  target += normal_lpdf(theta | thetaM, thetaSD); 
+ 
+  for (i in 1:agents)
+    target += bernoulli_logit_lpmf(h[,i] | theta[i]);
+  
+}
+
+
+generated quantities{
+   real thetaM_prior;
+   real<lower=0> thetaSD_prior;
+   real<lower=0, upper=1> theta_prior;
+   real<lower=0, upper=1> theta_posterior;
+   
+   int<lower=0, upper = trials> prior_preds;
+   int<lower=0, upper = trials> posterior_preds;
+   
+   array[trials, agents] real log_lik;
+   array[trials, agents_test] real log_lik_test;
+   
+   thetaM_prior = normal_rng(0,1);
+   thetaSD_prior = normal_lb_rng(0,0.3,0);
+   theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));
+   theta_posterior = inv_logit(normal_rng(thetaM, thetaSD));
+   
+   prior_preds = binomial_rng(trials, inv_logit(thetaM_prior));
+   posterior_preds = binomial_rng(trials, inv_logit(thetaM));
+   
+   for (i in 1:agents){
+    for (t in 1:trials){
+      log_lik[t,i] = bernoulli_logit_lpmf(h[t,i] | theta[i]);
+    }
+   }
+   
+   for (i in 1:agents_test){
+    for (t in 1:trials){
+      log_lik_test[t,i] = bernoulli_lpmf(h_test[t,i] | theta_posterior);
+    }
+  }
+  
+}
+"
+write_stan_file(
+  stan_biased_cv_model,
+  dir = "stan/",
+  basename = "W6_MultilevelBias_cv.stan")
+
+file <- file.path("stan/W6_MultilevelBias_cv.stan")
+mod_biased_cv <- cmdstan_model(file, 
+                     cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+```
+
+### Create cross-validation ready stan model for memory agents
+
+```{r}
+stan_memory_cv_model <- "
+//
+// This STAN model infers a random bias from a sequences of 1s and 0s (heads and tails)
+//
+functions{
+  real normal_lb_rng(real mu, real sigma, real lb) {
+    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
+    real u = uniform_rng(p, 1);
+    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value
+  }
+}
+
+// The input (data) for the model. 
+data {
+ int<lower = 1> trials;
+ int<lower = 1> agents;
+ array[trials, agents] int h;
+ array[trials, agents] int other;
+ 
+ int<lower = 1> agents_test;
+ array[trials, agents_test] int h_test;
+ array[trials, agents_test] int other_test;
+}
+
+// The parameters accepted by the model. 
+parameters {
+  real biasM;
+  real betaM;
+  vector<lower = 0>[2] tau;
+  matrix[2, agents] z_IDs;
+  cholesky_factor_corr[2] L_u;
+}
+
+transformed parameters {
+  array[trials, agents] real memory;
+  array[trials, agents_test] real memory_test;
+  matrix[agents,2] IDs;
+  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)';
+  
+  for (agent in 1:agents){
+    for (trial in 1:trials){
+      if (trial == 1) {
+        memory[trial, agent] = 0.5;
+      } 
+      if (trial < trials){
+        memory[trial + 1, agent] = memory[trial, agent] + ((other[trial, agent] - memory[trial, agent]) / trial);
+        if (memory[trial + 1, agent] == 0){memory[trial + 1, agent] = 0.01;}
+        if (memory[trial + 1, agent] == 1){memory[trial + 1, agent] = 0.99;}
+      }
+    }
+  }
+  
+  for (agent in 1:agents_test){
+    for (trial in 1:trials){
+      if (trial == 1) {
+        memory_test[trial, agent] = 0.5;
+      } 
+      if (trial < trials){
+        memory_test[trial + 1, agent] = memory_test[trial, agent] + ((other[trial, agent] - memory[trial, agent]) / trial);
+        if (memory_test[trial + 1, agent] == 0){memory_test[trial + 1, agent] = 0.01;}
+        if (memory_test[trial + 1, agent] == 1){memory_test[trial + 1, agent] = 0.99;}
+      }
+    }
+  }
+  
+}
+
+// The model to be estimated. 
+model {
+  target += normal_lpdf(biasM | 0, 1);
+  target += normal_lpdf(tau[1] | 0, .3)  -
+    normal_lccdf(0 | 0, .3);
+  target += normal_lpdf(betaM | 0, .3);
+  target += normal_lpdf(tau[2] | 0, .3)  -
+    normal_lccdf(0 | 0, .3);
+  target += lkj_corr_cholesky_lpdf(L_u | 2);
+
+  target += std_normal_lpdf(to_vector(z_IDs));
+  for (agent in 1:agents){
+    for (trial in 1:trials){
+      target += bernoulli_logit_lpmf(h[trial, agent] | biasM + IDs[agent, 1] +  memory[trial, agent] * (betaM + IDs[agent, 2]));
+    }
+  }
+    
+}
+
+
+generated quantities{
+   real biasM_prior;
+   real<lower=0> biasSD_prior;
+   real betaM_prior;
+   real<lower=0> betaSD_prior;
+   
+   real bias_prior;
+   real beta_prior;
+   
+   array[agents] int<lower=0, upper = trials> prior_preds0;
+   array[agents] int<lower=0, upper = trials> prior_preds1;
+   array[agents] int<lower=0, upper = trials> prior_preds2;
+   array[agents] int<lower=0, upper = trials> posterior_preds0;
+   array[agents] int<lower=0, upper = trials> posterior_preds1;
+   array[agents] int<lower=0, upper = trials> posterior_preds2;
+   
+   array[trials, agents] real log_lik;
+   array[trials, agents_test] real log_lik_test;
+   
+   biasM_prior = normal_rng(0,1);
+   biasSD_prior = normal_lb_rng(0,0.3,0);
+   betaM_prior = normal_rng(0,1);
+   betaSD_prior = normal_lb_rng(0,0.3,0);
+   
+   bias_prior = normal_rng(biasM_prior, biasSD_prior);
+   beta_prior = normal_rng(betaM_prior, betaSD_prior);
+   
+   for (i in 1:agents){
+      prior_preds0[i] = binomial_rng(trials, inv_logit(bias_prior + 0 * beta_prior));
+      prior_preds1[i] = binomial_rng(trials, inv_logit(bias_prior + 1 * beta_prior));
+      prior_preds2[i] = binomial_rng(trials, inv_logit(bias_prior + 2 * beta_prior));
+      posterior_preds0[i] = binomial_rng(trials, inv_logit(biasM + IDs[i,1] +  0 * (betaM + IDs[i,2])));
+      posterior_preds1[i] = binomial_rng(trials, inv_logit(biasM + IDs[i,1] +  1 * (betaM + IDs[i,2])));
+      posterior_preds2[i] = binomial_rng(trials, inv_logit(biasM + IDs[i,1] +  2 * (betaM + IDs[i,2])));
+      
+      for (t in 1:trials){
+        log_lik[t,i] = bernoulli_logit_lpmf(h[t, i] | biasM + IDs[i, 1] +  memory[t, i] * (betaM + IDs[i, 2]));
+      }
+   }
+   
+   for (i in 1:agents_test){
+    for (t in 1:trials){
+      log_lik_test[t,i] = bernoulli_logit_lpmf(h_test[t,i] | biasM +  memory_test[t, i] * betaM);
+    }
+  }
+  
+}
+"
+
+write_stan_file(
+  stan_memory_cv_model,
+  dir = "stan/",
+  basename = "W6_MultilevelMemory_cv.stan")
+
+file <- file.path("stan/W6_MultilevelMemory_cv.stan")
+mod_memory_cv <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+```
+
+
+[MISSING: PARALLELIZE]
+
+```{r, eval = F}
+d$fold <- kfold_split_grouped(K = 10, x = d$agent)
+
+log_pd_biased_kfold <- matrix(nrow = 1000, ncol = 12000)
+log_pd_memory_kfold <- matrix(nrow = 1000, ncol = 12000)
+
+for (k in unique(d$fold)) { 
+  
+  # Training set for k 
+  d_train <- d %>% filter(fold != k)  
+  
+  ## Create the data
+  d_memory1_train <- d_train %>% 
+    subset(select = c(agent, memoryChoice)) %>% 
+    mutate(row = row_number()) %>% 
+    pivot_wider(names_from = agent, values_from = memoryChoice)
+  d_memory2_train <- d_train %>% 
+    subset(select = c(agent, randomChoice)) %>% 
+    mutate(row = row_number()) %>% 
+    pivot_wider(names_from = agent, values_from = randomChoice)
+  
+  agents_n <- length(unique(d_train$agent))
+  
+  d_test <- d %>% 
+    filter(fold == k) 
+  d_memory1_test <- d_test %>% 
+    subset(select = c(agent, memoryChoice)) %>% 
+    mutate(row = row_number()) %>% 
+    pivot_wider(names_from = agent, values_from = memoryChoice)
+  d_memory2_test <- d_test %>% 
+    subset(select = c(agent, randomChoice)) %>% 
+    mutate(row = row_number()) %>% 
+    pivot_wider(names_from = agent, values_from = randomChoice)
+  
+  agents_test_n <- length(unique(d_test$agent))
+  
+  data_memory <- list(
+    trials = trials,
+    agents =  agents_n,
+    agents_test = agents_test_n,
+    h = as.matrix(d_memory1_train[,2:(agents_n + 1)]),
+    other = as.matrix(d_memory2_train[,2:(agents_n + 1)]),
+    
+    h_test = as.matrix(d_memory1_test[,2:(agents_test_n + 1)]),
+    other_test = as.matrix(d_memory2_test[,2:(agents_test_n + 1)]))
+  
+  # Train the models 
+  fit_random <- mod_biased_cv$sample(
+    data = data_memory,
+    seed = 123,
+    chains = 1,
+    threads_per_chain = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 1000,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+  
+  fit_memory <- mod_memory_cv$sample(
+    data = data_memory,
+    seed = 123,
+    chains = 1,
+    threads_per_chain = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 1000,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+  
+  # Extract log likelihood which represents 
+  # the pointwise predictive density. 
+  # n.b. the matrix has 1000 row, and 12000 columns. 
+  # d$fold==k yields 12000 logical values, of which 1200 TRUEs, identifying 1200 columns
+  ## the fit blabla yields 1000 obs (samples) and 1190 variables instead of 1200
+  log_pd_biased_kfold[, d$fold == k] <- fit_random$draws("log_lik_test", format = "matrix")
+  log_pd_memory_kfold[, d$fold == k] <- fit_memory$draws("log_lik_test", format = "matrix")
+
+}
+
+save(log_pd_biased_kfold, log_pd_memory_kfold, file = "simmodels/W6_CV_Biased&Memory.RData")
+```
+
+## Calculating elpd and comparing
+
+```{r}
+load("simmodels/W6_CV_Biased&Memory.RData") 
+
+elpd_biased_kfold <- elpd(log_pd_biased_kfold)
+elpd_memory_kfold <- elpd(log_pd_memory_kfold)
+
+loo_compare(elpd_biased_kfold, elpd_memory_kfold)
+#loo_model_weights(elpd_biased_kfold, elpd_memory_kfold)
+```
+
