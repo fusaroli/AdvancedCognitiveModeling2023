@@ -1,0 +1,353 @@
+---
+title: "09-BayesianModels"
+output: html_document
+date: "2023-03-18"
+---
+
+```{r w9 setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Bayesian models of cognition
+
+## Load the packages
+
+```{r cars}
+pacman::p_load(
+  tidyverse,
+  brms,
+  cmdstanr
+)
+```
+
+## Design the model
+
+[MISSING: EXPLAIN THE MODEL, INCLUDING DISTINCTION BETWEEN CONTINUOUS AND DISCRETE]
+
+```{r}
+
+SimpleBayes_f <- function(Source1, Source2){
+  
+  outcome <- inv_logit_scaled(logit_scaled(Source1) + logit_scaled(Source2))
+  
+  return(outcome)
+  
+}
+
+SimpleBayes_MultiSource_f <- function(sources) {
+
+  outcome <- inv_logit_scaled(sum(logit_scaled(sources)))
+  
+  return(outcome)
+}
+
+```
+
+## Create the data
+
+```{r}
+Source1 <- seq(0.1,0.9, 0.1)
+Source2 <- seq(0.1,0.9, 0.1)
+
+db <- expand.grid(Source1 = Source1, Source2 = Source2)
+
+for (n in seq(nrow(db))) {
+  db$belief[n] <- SimpleBayes_f(db$Source1[n], db$Source2[n])
+}
+
+for (n in seq(nrow(db))) {
+  db$belief[n] <- SimpleBayes_f(db$Source1[n], db$Source2[n])
+  db$choice[n] <- rbinom(1,1, db$belief[n])
+  db$continuous[n] <- db$belief[n]*9
+  db$discrete[n] <- round(db$belief[n]*9,0)
+}
+```
+
+## Visualize
+
+[MISSING: Explain]
+
+
+```{r}
+ggplot(db, aes(belief)) +
+  geom_density() +
+  theme_bw()
+
+ggplot(db, aes(Source1, belief, color = Source2, group = Source2)) +
+  geom_line() +
+  theme_bw()
+
+ggplot(db, aes(choice)) +
+  geom_density() +
+  theme_bw()
+
+ggplot(db, aes(Source1, choice, color = Source2, group = Source2)) +
+  geom_smooth(se = F) +
+  theme_bw()
+
+ggplot(db, aes(continuous)) +
+  geom_density() +
+  theme_bw()
+
+ggplot(db, aes(Source1, continuous, color = Source2, group = Source2)) +
+  geom_smooth() +
+  theme_bw()
+
+ggplot(db, aes(discrete)) +
+  geom_density() +
+  theme_bw()
+
+ggplot(db, aes(Source1, discrete, color = Source2, group = Source2)) +
+  geom_smooth() +
+  theme_bw()
+```
+
+## DAta for Stan
+
+```{r}
+data_simpleBayes <- list(
+  N = nrow(db),
+  y = db$choice,
+  Source1 = db$Source1,
+  Source2 = db$Source2
+)
+
+data_simpleBayes_ms <- list(
+  N = nrow(db),
+  y = db$choice,
+  Source1 = db$Source1,
+  Source2 = db$Source2
+)
+
+```
+
+## Create the Stan Model
+
+```{r}
+
+stan_simpleBayes_model <- "
+data {
+  int<lower=0> N;
+  array[N] int y;
+  array[N] real<lower=0, upper = 1> Source1;
+  array[N] real<lower=0, upper = 1> Source2;
+}
+
+transformed data{
+  array[N] real l_Source1;
+  array[N] real l_Source2;
+  l_Source1 = logit(Source1);
+  l_Source2 = logit(Source2);
+}
+
+parameters {
+  real bias;
+}
+
+model {
+  bias ~ normal(0, 1);
+  target += bernoulli_logit_lpmf(y | bias + to_vector(l_Source1) + to_vector(l_Source2));
+}
+
+generated quantities{
+  array[N] real log_lik;
+  
+  for (n in 1:N){  
+    log_lik[n] = bernoulli_logit_lpmf(y[n] | bias + l_Source1[n] +  l_Source2[n]);
+  }
+  
+}
+
+"
+
+write_stan_file(
+  stan_simpleBayes_model,
+  dir = "stan/",
+  basename = "W9_SimpleBayes.stan")
+
+file <- file.path("stan/W9_SimpleBayes.stan")
+mod_simpleBayes <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+
+```
+
+## Fitting the model
+```{r}
+samples_simple <- mod_simpleBayes$sample(
+  data = data_simpleBayes,
+  fixed_param = TRUE,
+  seed = 123,
+  chains = 2,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1500,
+  iter_sampling = 3000,
+  refresh = 500
+)
+```
+
+
+
+## Basic evaluation
+
+```{r}
+samples_simple$summary()
+samples_simple$loo()
+
+## What if the outcome is binary?
+
+## What if the outcome is a gaussian?
+
+## What if the outcome is ordinal?
+
+## What if the outcome is a reaction time?
+
+## What if the outcome is determined by n sources?
+```
+
+## Weighted Bayes
+
+[MISSING: EXPLANATION]
+[MISSING: MODEL WITH EXACT WEIGHT FORMULA]
+
+```{r}
+WeightedBayes_f <- function(Source1, Source2, w1, w2){
+  w1 <- (w1 - 0.5)*2
+  w2 <- (w2 - 0.5)*2
+  outcome <- w1 * logit_scaled(Source1) + w2 * logit_scaled(Source2)
+  return(outcome)
+}
+
+Source1 <- seq(0.1,0.9, 0.1)
+Source2 <- seq(0.1,0.9, 0.1)
+w1 <- seq(0.5,1, 0.1)
+w2 <- seq(0.5,1, 0.1)
+
+db <- expand.grid(Source1 = Source1, Source2 = Source2, w1 = w1, w2 = w2)
+
+for (n in seq(nrow(db))) {
+  db$belief[n] <- WeightedBayes_f(db$Source1[n], db$Source2[n],db$w1[n], db$w2[n])
+}
+
+for (n in seq(nrow(db))) {
+  db$belief[n] <- WeightedBayes_f(db$Source1[n], db$Source2[n],db$w1[n], db$w2[n])
+  db$binary[n] <- rbinom(1,1, inv_logit_scaled(db$belief[n]))
+  db$continuous[n] <- (inv_logit_scaled(db$belief[n])*9)
+  db$discrete[n] <- round(inv_logit_scaled(db$belief[n])*9,0)
+}
+```
+
+## Visualize
+
+```{r}
+
+ggplot(db, aes(belief)) +
+  geom_density() +
+  theme_bw()
+
+p1 <- ggplot(db, aes(Source1, inv_logit_scaled(belief), color = Source2, group = Source2)) +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(w1~w2)
+
+p1
+
+```
+
+## Build the Stan model
+
+```{r}
+
+stan_WB_model <- "
+
+data {
+  int<lower=0> N;
+  array[N] int y;
+  vector[N] Source1;
+  vector[N] Source2;
+}
+
+parameters {
+  real weight1;
+  real weight2;
+}
+
+model {
+  target += normal_lpdf(weight1 | 1,1);
+  target += normal_lpdf(weight2 | 1,1);
+  for (n in 1:N)
+    target += bernoulli_logit_lpmf(y[n] | weight1 * Source1[n] + weight2 * Source2[n]);
+}
+
+generated quantities{
+  array[N] real log_lik;
+  real w1;
+  real w2;
+  real w1_prior;
+  real w2_prior;
+  
+  w1_prior = (normal_rng(1,1) - 0.5)*2 ;
+  w2_prior = (normal_rng(1,1) - 0.5)*2 ;
+  w1 = (weight1 - 0.5)*2;
+  w2 = (weight2 - 0.5)*2;
+  for (n in 1:N)
+    log_lik[n] = bernoulli_logit_lpmf(y[n] | weight1 * Source1[n] + weight2 * Source2[n]);
+  
+}
+
+"
+
+write_stan_file(
+  stan_WB_model,
+  dir = "stan/",
+  basename = "W9_WB.stan")
+
+file <- file.path("stan/W9_WB.stan")
+mod_wb <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE))
+
+db1 <-  db %>% subset(w1 == 1 & w2 == 1) %>% mutate(
+  l1 = logit_scaled(Source1),
+  l2 = logit_scaled(Source2)
+)
+
+
+p3 <- ggplot(db1, aes(Source1, inv_logit_scaled(belief), color = Source2, group = Source2)) +
+  geom_line() +
+  theme_bw()
+p3 
+
+ggplot(db1, aes(Source1, binary)) +
+  geom_smooth() +
+  theme_bw()
+
+
+data_weightedBayes <- list(
+  N = nrow(db1),
+  y = db1$binary,
+  Source1 = logit_scaled(db1$Source1),
+  Source2 = logit_scaled(db1$Source2)
+)
+
+samples_weighted <- mod_wb$sample(
+  data = data_weightedBayes,
+  seed = 123,
+  chains = 2,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1500,
+  iter_sampling = 3000,
+  refresh = 500
+)
+samples_weighted$summary()
+samples_weighted$loo()
+
+
+draws_df <- samples_weighted$draws()
+```
+
+[MISSING: EVALUATION]
+
+[MISSING: MODEL RECOVERY]
+
+[MISSING: Fitting on real data and model comparison]

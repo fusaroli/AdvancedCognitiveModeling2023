@@ -426,7 +426,8 @@ fit_memory2memory$save_output_files(dir = "simmodels", basename = "W6_fit_memory
 ```{r}
 fit_biased2biased <- as_cmdstan_fit("simmodels/W6_fit_biased2biased-202303141000-1-75c13f.csv")
 Loo_biased2biased <- fit_biased2biased$loo(save_psis = TRUE, cores = 4)
-plot(Loo_biased2biased)
+p1 <- plot(Loo_biased2biased)
+p1 <- p1 + ylim(-0.4, 0.4)
 
 fit_biased2memory <- as_cmdstan_fit("simmodels/W6_fit_biased2memory-202303141001-1-513269.csv")
 Loo_biased2memory <- fit_biased2memory$loo(save_psis = TRUE, cores = 4)
@@ -441,6 +442,7 @@ Loo_memory2memory <- fit_memory2memory$loo(save_psis = TRUE, cores = 4)
 plot(Loo_memory2memory)
 
 elpd <- tibble(
+  n = seq(12000),
   biased_diff_elpd = 
   Loo_biased2biased$pointwise[, "elpd_loo"] - 
   Loo_memory2biased$pointwise[, "elpd_loo"],
@@ -448,14 +450,14 @@ elpd <- tibble(
   Loo_memory2memory$pointwise[, "elpd_loo"] -
   Loo_biased2memory$pointwise[, "elpd_loo"])
 
-p1 <- ggplot(elpd, aes(x = rate, y = biased_diff_elpd)) +
+p1 <- ggplot(elpd, aes(x = n, y = biased_diff_elpd)) +
   geom_point(alpha = .1) +
   #xlim(.5,1.01) +
   #ylim(-1.5,1.5) +
   geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
   theme_bw()
 
-p2 <- ggplot(elpd, aes(x = rate, y = memory_diff_elpd)) +
+p2 <- ggplot(elpd, aes(x = n, y = memory_diff_elpd)) +
   geom_point(alpha = .1) +
   #xlim(.5,1.01) +
   #ylim(-1.5,1.5) +

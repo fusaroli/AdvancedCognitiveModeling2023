@@ -11,7 +11,7 @@ date: "2023-03-13"
 We load the data set from chapter NN, where we loop through possible rates and noise levels, and pick one agent to build up the model progressively.
 
 ```{r}
-recovery_df <- read_csv("simdata/W3_randomnoise.csv")
+d <- read_csv("simdata/W3_randomnoise.csv")
 
 dd <- d %>% subset(rate == 0.8 & noise == 0.1)
 
@@ -89,9 +89,21 @@ samples <- mod_mixture$sample(
   max_treedepth = 20,
   adapt_delta = 0.99,
 )
+
+save(samples, data, 
+          file = "simmodels/W7_singlemixture.RData") 
+samples$save_object(file = "simmodels/W7_singlemixture.RDS")
+samples$save_output_files(dir = "simmodels", basename = "W7_singlemixture")
+
 ```
 
 [MISSING: EVALUATION]
+
+## Basic evaluation
+```{r}
+samples$summary()
+```
+
 
 ## Multilevel mixture model
 
@@ -216,7 +228,7 @@ generated quantities{
 "
 
 write_stan_file(
-  stan_mixture_model,
+  stan_multilevelMixture_model,
   dir = "stan/",
   basename = "W6_MixtureMultilevel.stan")
 
@@ -225,7 +237,7 @@ mod_mixture <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
 
 
-samples <- mod$sample(
+samples <- mod_mixture$sample(
   data = data_biased,
   seed = 123,
   chains = 2,
@@ -238,9 +250,21 @@ samples <- mod$sample(
   adapt_delta = 0.99,
 )
 
-samples$loo()
+save(samples, data, 
+          file = "simmodels/W7_multimixture.RData") 
+samples$save_object(file = "simmodels/W7_multimixture.RDS")
+samples$save_output_files(dir = "simmodels", basename = "W7_multimixture")
 ```
 
 [MISSING: EVALUATION]
+```{r}
+samples$summary()
+
+samples$loo()
+```
+
+
+[MISSING: PARAMETER RECOVERY]
 
 [MISSING: BIASED VS. MEMORY?]
+
