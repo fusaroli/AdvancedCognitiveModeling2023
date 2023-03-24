@@ -18,12 +18,15 @@ parameters {
 }
 
 model {
-  bias ~ normal(0, 1);
-  target += bernoulli_logit_lpmf(y | bias + to_vector(l_Source1) + to_vector(l_Source2));
+  target +=  normal_lpdf(bias | 0, 1);
+  target +=  bernoulli_logit_lpmf(y | bias + to_vector(l_Source1) + to_vector(l_Source2));
 }
 
 generated quantities{
+  real bias_prior;
   array[N] real log_lik;
+  
+  bias_prior = normal_rng(0, 1);
   
   for (n in 1:N){  
     log_lik[n] = bernoulli_logit_lpmf(y[n] | bias + l_Source1[n] +  l_Source2[n]);

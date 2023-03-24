@@ -10,7 +10,7 @@ The goal of the practical exercise is to build on the simulated data from Practi
 Here we build a new simulation of random agents with bias and noise. The code and visualization is really nothing different from  last week's exercise.
 
 
-```{r message = FALSE}
+```{r, 03 simulating data}
 pacman::p_load(tidyverse,
         here,
         posterior,
@@ -73,7 +73,7 @@ We make it into the right format for Stan, build the Stan model, and fit it.
 
 Here we define the data and format it for Stan. Stan likes data as a list. Why a list? Well, dataframes (now tibbles) are amazing. But they have a big drawback: they require each variable to have the same length. Lists do not have that limitation, they are more flexible. So, lists. We'll have to learn how to live with them. 
 
-```{r message = FALSE}
+```{r, 03 create data from one agent for stan}
 d1 <- d %>% subset(noise == 0 & rate == 0.8)
 
 ## Create the data. N.B. note the two variables have different lengths: 1 for n, n for h.
@@ -91,7 +91,7 @@ We write the stan code within the R code (so I can show it to you more easily), 
 
 Remember that the minimal Stan model requires 3 chunks, one specifying the data it will need as input; one specifying the parameters to be estimated; one specifying the model within which the parameters appear, and the priors for those parameters.
 
-```{r message = FALSE}
+```{r, 03 defining the biased model, eval = F}
 stan_model <- "
 // This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)
 
@@ -125,9 +125,11 @@ write_stan_file(
 
 ### Compiling and fitting the model
 
-```{r message = FALSE}
+```{r 03 fit the biased model, eval = F}
 ## Specify where the model is
 file <- file.path("stan/W3_SimpleBernoulli.stan")
+
+# Compile the model
 mod <- cmdstan_model(file, 
                      # this specifies we can parallelize the gradient estimations on multiple cores
                      cpp_options = list(stan_threads = TRUE), 
@@ -144,24 +146,34 @@ samples <- mod$sample(
   iter_warmup = 1000,  # warmup iterations through which hyperparameters (steps and step length) are adjusted
   iter_sampling = 2000, # total number of iterations
   refresh = 0,  # how often to show that iterations have been run
+  output_dir = "simmodels", # saves the samples as csv so it can be later loaded
   max_treedepth = 20, # how many steps in the future to check to avoid u-turns
   adapt_delta = 0.99, # how high a learning rate to adjust hyperparameters during warmup
 )
 
+# Same the fitted model
+samples$save_object("simmodels/W3_SimpleBernoulli.rds")
+
 ```
+
+### Summarizing the model
 
 Now the model is ready to be assessed. First we simply generate a summary of the estimates to have a first idea.
 
-```{r message = FALSE}
+```{r 03 summarizing the biased model samples}
+samples <- readRDS("simmodels/W3_SimpleBernoulli.rds")
+
 samples$summary() # summarize the model
 
 ```
+
+### Assessing model quality
 
 Then we need to look more in the details at the quality of the estimation:
 * the markov chains
 * how the prior and the posterior estimates relate to each other (whether the prior is constraining the posterior estimate)
 
-```{r message = FALSE}
+```{r 03 biased model quality}
 
 # Extract posterior samples and include sampling of the prior:
 draws_df <- as_draws_df(samples$draws())
@@ -192,7 +204,7 @@ As we can see from the posterior estimates and the prior posterior update check,
 Now we build the same model, but using the log odds scale for the theta parameter, which will become useful later when we condition theta on variables and build multilevel models (as we can do what we want in a log odds space and it will always be bound between 0 and 1).
 
 
-```{r message = FALSE}
+```{r, 03 defining the log-odds biased model}
 
 stan_model <- "
 // This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)
@@ -242,12 +254,19 @@ samples <- mod$sample(
   iter_warmup = 1000,
   iter_sampling = 2000,
   refresh = 0,
+  output_dir = "simmodels",
   max_treedepth = 20,
   adapt_delta = 0.99,
 )
 
+# Same the fitted model
+samples$save_object("simmodels/W3_SimpleBernoulli_logodds.rds")
+```
 
-samples
+### Summarizing the results
+```{r 03 biased model log-odds quality assessment}
+
+samples <- readRDS("simmodels/W3_SimpleBernoulli_logodds.rds")
 # Diagnostics
 samples$cmdstan_diagnose()
 
@@ -258,9 +277,22 @@ ggplot(draws_df, aes(.iteration, theta, group = .chain, color = .chain)) +
   geom_line() +
   theme_classic()
 
-samples$summary() 
+# add a prior for theta (ugly, but we'll do better soon)
+draws_df <- draws_df %>% mutate(
+  theta_prior = rnorm(nrow(draws_df), 0, 1)
+)
 
+# Now let's plot the density for theta (prior and posterior)
+ggplot(draws_df) +
+  geom_density(aes(theta), fill = "blue", alpha = 0.3) +
+  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
+  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
+  xlab("Rate") +
+  ylab("Posterior Density") +
+  theme_classic()
 
+# Summary
+samples$summary()
 ```
 
 We can see that the results are very similar.
@@ -269,7 +301,7 @@ We can see that the results are very similar.
 
 Now that we see that the model works in one case, we can run it throughout all possible rate and noise levels in the simulation. N.B. here is using loops, parallelized version in the next code chunk.
 
-```{r message = FALSE, eval = FALSE}
+```{r 03 biased parameter recovery, eval = FALSE}
 # Now we need to scale it up to all possible rates and noises
 recovery_df <- NULL
 
@@ -316,7 +348,7 @@ write_csv(recovery_df, "simdata/W3_recoverydf_simple.csv")
 
 Now we can look at the relation between the "true" bias value we inputted in the simulation and the inferred bias value - the posterior estimates of bias.
 
-```{r}
+```{r 03 plot parameter recovery}
 recovery_df <- read_csv("simdata/W3_recoverydf_simple.csv")
 
 ggplot(recovery_df, aes(biasTrue, biasEst)) +
@@ -338,7 +370,7 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 
 
 
-```{r message = FALSE, warning = FALSE, eval = F}
+```{r 03 parallelizing the code, eval = F}
 
 pacman::p_load(future, purrr, furrr)
 plan(multisession, workers = 4)
@@ -389,7 +421,7 @@ write_csv(recovery_df, "simdata/W3_recoverydf_parallel.csv")
 
 And now we load the data and visualize it as before.
 
-```{r}
+```{r 03 visualizing the parallelization}
 recovery_df <- read_csv("simdata/W3_recoverydf_parallel.csv")
 ggplot(recovery_df, aes(biasTrue, biasEst)) +
   geom_point(alpha = 0.1) +
@@ -403,7 +435,7 @@ ggplot(recovery_df, aes(biasTrue, biasEst)) +
 
 Now that we fitted the base model, we can move onto more complex models. For instance a memory model (including all previous trials). Here we rely on a generalized linear model kind of thinking: the theta is the expression of a linear model (bias + b1 * PreviousRate). To make the variable more intuitive we code previous rate - which is bound to a probability 0-1 space - into log-odds via a logit link/transformation. In this way a previous rate with more left than right choices will result in a negative value, thereby decreasing our propensity to choose right; and one with more right than left choices will result in a positive value, thereby increasing our propensity to choose right.
 
-```{r message = FALSE}
+```{r, 03 generate data for the memory agent model}
 
 # We subset to only include no noise and a specific rate
 d1 <- d %>% 
@@ -427,14 +459,17 @@ for (i in 2:trials) {
   d1$Self[i] <- MemoryAgent_f(bias = 0, beta = 0.8, d1$cumulativerate[i])
 }
 
-
-
 ## Create the data
 data <- list(
   n = 120,
   h = d1$Self,
   memory = d1$cumulativerate # this creates the new parameter: the rate of right hands so far in log-odds
 )
+
+```
+
+
+```{r, 03 memory stan model, eval = F}
 
 stan_model <- "
 // The input (data) for the model. n of trials and h for (right and left) hand
@@ -477,28 +512,75 @@ mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
 samples <- mod$sample(
   data = data,
   seed = 123,
-  chains = 1,
+  chains = 2,
   parallel_chains = 2,
   threads_per_chain = 2,
   iter_warmup = 1000,
   iter_sampling = 1000,
   refresh = 0,
+  output_dir = "simmodels",
   max_treedepth = 20,
   adapt_delta = 0.99,
 )
 
 
-samples$summary() 
-
+# Same the fitted model
+samples$save_object("simmodels/W3_MemoryBernoulli.rds")
 ```
 
-We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 0.8). More on quality checks of the models in the next chapter.
+### Summarizing the results
+```{r 03 memory model log-odds quality assessment}
+
+samples <- readRDS("simmodels/W3_MemoryBernoulli.rds")
+
+# Diagnostics
+samples$cmdstan_diagnose()
+
+# Extract posterior samples and include sampling of the prior:
+draws_df <- as_draws_df(samples$draws()) 
+
+ggplot(draws_df, aes(.iteration, bias, group = .chain, color = .chain)) +
+  geom_line() +
+  theme_classic()
+
+ggplot(draws_df, aes(.iteration, beta, group = .chain, color = .chain)) +
+  geom_line() +
+  theme_classic()
+
+# add a prior for theta (ugly, but we'll do better soon)
+draws_df <- draws_df %>% mutate(
+  bias_prior = rnorm(nrow(draws_df), 0, .3),
+  beta_prior = rnorm(nrow(draws_df), 0, .5),
+)
+
+# Now let's plot the density for theta (prior and posterior)
+ggplot(draws_df) +
+  geom_density(aes(bias), fill = "blue", alpha = 0.3) +
+  geom_density(aes(bias_prior), fill = "red", alpha = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 1.5) +
+  xlab("Bias") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+ggplot(draws_df) +
+  geom_density(aes(beta), fill = "blue", alpha = 0.3) +
+  geom_density(aes(beta_prior), fill = "red", alpha = 0.3) +
+  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
+  xlab("Beta") +
+  ylab("Posterior Density") +
+  theme_classic()
+
+samples$summary() 
+```
+
+
+We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 0.8). More on the quality checks of the models in the next chapter.
 
 ## Memory agent with internal parameter
 
 So far we behaved like in GLM: we keep feeding to the model an external variable of memory, but what if we coded memory as an internal parameter? This opens up to further possibilities to model how long memory is kept and weighted by distance from the current moment, etc.
 
-[Missing: discussion of the equation of the model, how it relates to kalman filters, rescorla-wagner, and hierarchical gaussian filters]
+[Missing: discussion of the equation of the model, how it relates to Kalman filters, Rescorla-Wagner, and hierarchical gaussian filters]
 
 ```{r}
 ## Create the data
