@@ -8,17 +8,19 @@ date: "2023-03-10"
 
 [MISSING INTRO]
 
-Imagine havi
+Imagine having several models of what might be going on and want to know which is the best explanation of the data. E.g. Are people more likely to use a memory strategy, or a win stay lose shift strategy? Or are we justified in assuming that people react differently to losses than to wins (e.g. by being more likely to shift when losing, than to stay when winning)? Or would we be justified in assuming that capuchin monkeys and cognitive science students use the same model?
 
-Model comparison defines a broad range of practices aimed at identifying among a set of models the best model for a given data set. What "best" means is, however, a non-trivial question. Ideally, "best" would mean the model describing the mechanism that actually generated the data. However, as we will see that is a tricky proposition and we analysts tend to rely on proxies such as the model that explains the most variance in the (training) data, or - better - the model that best predicts new (test) data. These proxies can be useful, but we should always remember that predictive performance is not a magical solution. It allows us to combat overfitting to the training sample, but it has two key limitations. 1) it might be overfitting to the training population, that is, to the 
+Model comparison defines a broad range of practices aimed at identifying among a set of models the best model for a given data set. What "best" means is, however, a non-trivial question. Ideally, "best" would mean the model describing the mechanism that actually generated the data. However, as we will see that is a tricky proposition and we analysts tend to rely on proxies. There are many of such proxies in the literature. For instance, Nicenboim et al (2023) suggests employing either Bayes Factors or cross-validation (https://vasishth.github.io/bayescogsci/book/ch-comparison.html). In this course, we rely on cross-validation based predictive performance (this chapter) and mixture models (next chapter).
 
-In this chapter, we rely on previously generated data: biased agents playing against the memory agents. This provides us with data generated according to two different mechanisms: biased agents and memory agents. We can fit both models separately on each of the two sets of agents, so we can compare the relative performance of the two models: can we identify the true model generating the data (in a setup where truth is known)?
+In other words, this chapter will assess models in terms of their (estimated) ability to predict new (test) data. Remember that predictive performance is a very useful tool, but not a magical solution. It allows us to combat overfitting to the training sample (your model snuggling to your data so much that it fits both signal and noise), but it has key limitations, which we will discuss at the end of the chapter. 
 
+To learn how to make model comparison, in this chapter, we rely on our usual simulation based approach to ensure that the method is doing what we want. We simulate the behavior of biased agents playing against the memory agents. This provides us with data generated according to two different mechanisms: biased agents and memory agents. We can fit both models separately on each of the two sets of agents, so we can compare the relative performance of the two models: can we identify the true model generating the data (in a setup where truth is known)? This is what is usually called "model recovery" and complements nicely "parameter recovery". In model recovery we assess whether we can identify the correct model, in parameter recovery we assess whether - once we know the correct model - we can identify the correct parameter values.
 
+Let's get going.
 
 ## Define parameters
 
-```{r}
+```{r 06 define parameters}
 pacman::p_load(tidyverse,
                here,
                posterior,
@@ -44,7 +46,10 @@ betaSD <- 0.3
 
 ```
 
-```{r Defining the agents functions bla}
+## Define biased and memory agents
+
+
+```{r 06 Defining the agents functions}
 
 # Functions of the agents
 RandomAgentNoise_f <- function(rate, noise) {
@@ -140,16 +145,26 @@ data_memory <- list(
 )
 ```
 
-## Create the models: random agents
+## Log posterior likelihood
 
-N.B. compared to before we also need to include a log-likelihood, to calculate loo for model comparison.
+While the previous sections did not present any new materials (and therefore weren't much commented), as we create our Stan models to fit to the data, we need to (re)introduce the notion of log-likelihood, or even better, log posterior likelihood. 
 
-```{r}
+Given certain values for our parameters (let's say a bias of 0 and beta for memory of 1) and for our variables (let's say the vector of memory values estimated by the agent on a trial by trial basis), the model will predict a certain distribution of outcomes, that is, a certain distribution of choices (n times right, m times left hand). Comparing this to the actual data, we can identify how likely the model is to produce it. In other words, the probability that the model will actually generate the data we observed out of all its possible outcomes. Remember that we are doing Bayesian statistics, so this probability needs to be combined with the probability of the parameter values given the priors on those parameters. This would give us a *posterior likelihood* of the model's parameter values given the data. The last step is that we need to work on a log scale. Working on a log scale is very useful because it avoids low probabilities (close to 0) being rounded down to exactly 0. [MISSING A LINK TO A LENGTHIER EXPLANATION]. By log-transforming the posterior likelihood, we now have the *log-posterior likelihood*.
+
+Now, remember that our agent's memory varies on a trial by trial level. In other words, for each data point, for each agent we can calculate separate values of log-posterior likelihood for each of the possible values of the parameters. That is, we can have a distribution of log-posterior likelihood for each data point.
+
+Luckily for us telling Stan to calculate and such distributions is extremely easy: we just need to add to the generated quantities block the same log probability density/mass statement that we use in the model block, but here we specify it should be saved (replacing target += with an actual variable to be filled).
+
+N.B. Some of you might be wandering: if Stan is already using the log-posterior probability in the sampling process, why do we need to tell it to calculate and save it? Fair enough point. But Stan does not save by default (to avoid clogging your computer with endless data) and we need the log posterior likelihood saved as "log_lik" in order to be able to use more automated functions later on.
+
+## Create the models: multilevel biased agents
+
+Remember to add the log_lik part in the generated quantities block!
+
+
+```{r 06 Multilevel baised agents, eval = F}
+
 stan_biased_model <- "
-//
-// This STAN model infers a random bias from a sequences of 1s and 0s (right and left). Now multilevel
-//
-
 functions{
   real normal_lb_rng(real mu, real sigma, real lb) { // normal distribution with a lower bound
     real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
@@ -229,11 +244,8 @@ mod_biased <- cmdstan_model(file,
 
 ## Multilevel memory model
 
-```{r}
+```{r 06 Multilevel memory agents, eval = F}
 stan_memory_model <- "
-//
-// This STAN model infers a random bias from a sequences of 1s and 0s (heads and tails)
-//
 functions{
   real normal_lb_rng(real mu, real sigma, real lb) {
     real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
@@ -352,7 +364,7 @@ mod_memory <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
 
 ## Fitting the models to the data
 
-```{r, eval = F}
+```{r, 06 fitting models, eval = F}
 # Fitting biased agent model to biased agent data
 fit_biased2biased <- mod_biased$sample(
   data = data_biased,
@@ -362,15 +374,13 @@ fit_biased2biased <- mod_biased$sample(
   threads_per_chain = 4,
   iter_warmup = 2000,
   iter_sampling = 2000,
-  refresh = 1000,
+  refresh = 0,
+  output_dir = "simmodels",
   max_treedepth = 20,
-  adapt_delta = 0.99,
+  adapt_delta = 0.99
 )
-save(fit_biased2biased, data_biased, 
-          file = "simmodels/W6_fit_biased2biased.RData") 
-fit_biased2biased$save_object(file = "simmodels/W6_fit_biased2biased.RDS")
-fit_biased2biased$save_output_files(dir = "simmodels", basename = "W6_fit_biased2biased")
 
+fit_biased2biased$save_object(file = "simmodels/W6_fit_biased2biased.RDS")
 
 
 # Fitting biased agent model to memory agent data
@@ -382,15 +392,13 @@ fit_biased2memory <- mod_biased$sample(
   threads_per_chain = 4,
   iter_warmup = 2000,
   iter_sampling = 2000,
-  refresh = 1000,
+  refresh = 0,
+  output_dir = "simmodels",
   max_treedepth = 20,
-  adapt_delta = 0.99,
+  adapt_delta = 0.99
 )
-save(fit_biased2memory, data_memory, 
-          file = "simmodels/W6_fit_biased2memory.RData") 
-fit_biased2memory$save_object(file = "simmodels/W6_fit_biased2memory.RDS")
-fit_biased2memory$save_output_files(dir = "simmodels", basename = "W6_fit_biased2memory")
 
+fit_biased2memory$save_object(file = "simmodels/W6_fit_biased2memory.RDS")
 
 fit_memory2biased <- mod_memory$sample(
   data = data_biased,
@@ -400,14 +408,13 @@ fit_memory2biased <- mod_memory$sample(
   threads_per_chain = 4,
   iter_warmup = 2000,
   iter_sampling = 2000,
-  refresh = 500,
+  refresh = 0,
+  output_dir = "simmodels",
   max_treedepth = 20,
-  adapt_delta = 0.99,
+  adapt_delta = 0.99
 )
-save(fit_memory2biased, data_biased, 
-          file = "simmodels/W6_fit_memory2biased.RData") 
+
 fit_memory2biased$save_object(file = "simmodels/W6_fit_memory2biased.RDS")
-fit_memory2biased$save_output_files(dir = "simmodels", basename = "W6_fit_memory2biased")
 
 fit_memory2memory <- mod_memory$sample(
   data = data_memory,
@@ -417,32 +424,52 @@ fit_memory2memory <- mod_memory$sample(
   threads_per_chain = 4,
   iter_warmup = 2000,
   iter_sampling = 2000,
-  refresh = 1000,
+  refresh = 0,
+  output_dir = "simmodels",
   max_treedepth = 20,
-  adapt_delta = 0.99,
+  adapt_delta = 0.99
 )
 
-save(fit_memory2memory, data_memory, 
-          file = "simmodels/W6_fit_memory2memory.RData") 
 fit_memory2memory$save_object(file = "simmodels/W6_fit_memory2memory.RDS")
-fit_memory2memory$save_output_files(dir = "simmodels", basename = "W6_fit_memory2memory")
 ```
 
-```{r}
-fit_biased2biased <- as_cmdstan_fit("simmodels/W6_fit_biased2biased-202303141000-1-75c13f.csv")
+## Calculating the expected log predictive density of a model
+
+In the previous section, we fitted each model (biased and memory) to each dataset (biased and memory), and calculated and saved the log-posterior likelihood distributions for each data point. However, as we know from previous courses, calculating the goodness of fit of a model on the actual data it has been trained/fitted on is a bad idea. Models - expecially complex models - tend to overfit to the data. The multilevel implementation we have used is a bit skeptical of the data (it pools information across agents and combines it with the data from any given agent, thus de facto regularizing the estimates). Still overfitting is a serious risk.
+
+Machine learning has made common practices of validation, that is, of keeping parts of the dataset out of the training/fitting process, in order to then see how well the trained model can predict those untouched data, and get an *out of sample error*. [RANT ON INTERNAL VS. EXTERNAL TEST SET: HOW WELL DOES IT GENERALIZE TO DIVERSE CONTEXTS?].
+
+When the datasets are small, as it is often the case in cognitive science, keeping a substantial portion of the data out - substantial enough to be representative of a more general population - is problematic as it risks starving the model of data: there might not be enough data for reliable estimation of the parameter values. This is where the notion of cross-validation comes in: we can split the dataset in k folds, let's say k = 10. Then each fold is in turn kept aside as validation set, the model is fitted on the other folds, and its predictive performance tested on the validation set. Repeat this operation of each of the folds. This operation ensures that all the data can be used for training as well as for validation, and is in its own terms quite genial. However, this does not mean it is free of shortcomings. First, small validation folds might not be representative of the diversity of true out-of-sample populations - and there is a tendency to set k equal to the number of datapoints (leave-one-out cross validation). Second, there are many ways in which information could leak or contaminate across folds if the pipeline is not very careful (e.g. via data preprocessing scaling the full dataset, or hyper-parameter estimation). Third, and crucial for our case here, cross validation implies refitting the model k times, which for Bayesian models might be very cumbersome (I once had a model that took 6 weeks to run).
+
+The elpd (expected log predictive density) is an attempt at estimating the out-of-sample error without actually re-running the model. To understand elpd we need to decompose it in several steps.
+
+* Log pointwise predictive density (lppd) is the sum of the logarithm of the average log posterior likelihood of each observation ( Pr(yi) )
+
+* A penalty is given according to the sum of the variance in log posterior likelihood per each observation. The more unstable (varying) the higher the penalty.
+
+* This is all still fully based on the training sample. Elpd moves it one step forward by weighting the lppd according to the frequency of the observation
+
+
+
+```{r, 06 assess predictive performance}
+
+fit_biased2biased <-readRDS("simmodels/W6_fit_memory2memory.RDS")
+
 Loo_biased2biased <- fit_biased2biased$loo(save_psis = TRUE, cores = 4)
+
 p1 <- plot(Loo_biased2biased)
+
 p1 <- p1 + ylim(-0.4, 0.4)
 
-fit_biased2memory <- as_cmdstan_fit("simmodels/W6_fit_biased2memory-202303141001-1-513269.csv")
+fit_biased2memory <- readRDS("simmodels/W6_fit_biased2memory.RDS")
 Loo_biased2memory <- fit_biased2memory$loo(save_psis = TRUE, cores = 4)
 plot(Loo_biased2memory)
 
-fit_memory2biased <- as_cmdstan_fit("simmodels/W6_fit_memory2biased-202303141022-1-778c49.csv")
+fit_memory2biased <- readRDS("simmodels/W6_fit_memory2biased.RDS")
 Loo_memory2biased <- fit_memory2biased$loo(save_psis = TRUE, cores = 4)
 plot(Loo_memory2biased)
 
-fit_memory2memory <- as_cmdstan_fit("simmodels/W6_fit_memory2memory-202303141150-1-35a401.csv")
+fit_memory2memory <- readRDS("simmodels/W6_fit_memory2memory.RDS")
 Loo_memory2memory <- fit_memory2memory$loo(save_psis = TRUE, cores = 4)
 plot(Loo_memory2memory)
 
@@ -481,7 +508,6 @@ loo_model_weights(list(Loo_biased2memory, Loo_memory2memory))
 
 ## Implementing Cross-Validation
 
-[MISSING: STAN CODE WITH THE TEST]
 [MISSING: VERSION W TRANSFORMED DATA]
 
 ### Create cross-validation ready stan model for biased agents
@@ -828,3 +854,6 @@ loo_compare(elpd_biased_kfold, elpd_memory_kfold)
 #loo_model_weights(elpd_biased_kfold, elpd_memory_kfold)
 ```
 
+## Limitations of model comparison techniques
+
+1) it might be overfitting to the training population, that is, to the 

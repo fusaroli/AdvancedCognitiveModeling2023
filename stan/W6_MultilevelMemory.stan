@@ -1,7 +1,4 @@
 
-//
-// This STAN model infers a random bias from a sequences of 1s and 0s (heads and tails)
-//
 functions{
   real normal_lb_rng(real mu, real sigma, real lb) {
     real p = normal_cdf(lb | mu, sigma);  // cdf for bounds

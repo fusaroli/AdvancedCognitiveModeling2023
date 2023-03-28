@@ -1,8 +1,4 @@
 
-//
-// This STAN model infers a random bias from a sequences of 1s and 0s (right and left). Now multilevel
-//
-
 functions{
   real normal_lb_rng(real mu, real sigma, real lb) { // normal distribution with a lower bound
     real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
