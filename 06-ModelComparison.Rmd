@@ -447,13 +447,14 @@ The elpd (expected log predictive density) is an attempt at estimating the out-o
 
 * A penalty is given according to the sum of the variance in log posterior likelihood per each observation. The more unstable (varying) the higher the penalty.
 
-* This is all still fully based on the training sample. Elpd moves it one step forward by weighting the lppd according to the frequency of the observation
+* This is all still fully based on the training sample. Elpd moves it one step forward by weighting the lppd according to the frequency of the observation in the dataset excluding that observation. The more frequent, the more it matters. N.B. elpd only keeps one datapoint out, meaning that dependencies within larger clusters (e.g. repeated measures by participants) confound the measure.
 
+Let's calculate this, and then we will implement a more properly cross-validated version.
 
 
 ```{r, 06 assess predictive performance}
 
-fit_biased2biased <-readRDS("simmodels/W6_fit_memory2memory.RDS")
+fit_biased2biased <- readRDS("simmodels/W6_fit_memory2memory.RDS")
 
 Loo_biased2biased <- fit_biased2biased$loo(save_psis = TRUE, cores = 4)
 
@@ -508,6 +509,7 @@ loo_model_weights(list(Loo_biased2memory, Loo_memory2memory))
 
 ## Implementing Cross-Validation
 
+As we mentioned, elpd per se is only an approximation of the cross-validated performance and it only leaves one datapoint out at a time.
 [MISSING: VERSION W TRANSFORMED DATA]
 
 ### Create cross-validation ready stan model for biased agents

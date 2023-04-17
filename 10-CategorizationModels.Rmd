@@ -1,0 +1,395 @@
+---
+title: "10-CategorizationModels"
+output: html_document
+date: "2023-03-13"
+---
+
+```{r}
+pacman::p_load(
+    tidyverse,
+    future,
+    purrr,
+    furrr,
+    patchwork
+)
+```
+
+
+# Categorization models
+
+In this module the course covers formal models of categorization. In particular, here we implement a version of the Generalized Context Model (from now on GCM). 
+
+[MISSING: INTRODUCTION TO THE GCM]
+
+In order to understand the GCM, we will rely on a setup from Kruschke 1993. Participants go through 8 blocks of trials. Within each block, participants see 8 stimuli, the same across every block. Each stimulus has to be categorised (classified) as belonging to either category A or category B. After categorizing a stimulus, feedback is given, so that the participant knows which category the stimulus truly belongs to.
+
+The stimuli differ along two continuous dimensions (more specifically the height of a square and the position of a line with it).
+
+Following on the structure in Kruschke 1993, we need to start simulating data. Let's start with the stimuli.
+
+```{r}
+
+# Defining the stimuli, their height and position features, and their category
+stimulus <- c(5,3,7,1,8,2,6,4)
+height <- c(1,1, 2,2, 3,3, 4,4)
+position <- c(2,3, 1,4, 1,4, 2,3)
+category <- as.factor(c(0,0, 1,0, 1,0, 1,1))
+
+# Making this into a tibble
+stimuli <- tibble(stimulus, height, position, category)
+
+# Plotting to make sure all looks right
+ggplot(stimuli, aes(position, height, color = category, label = stimulus)) +
+  geom_point(shape = 16, size = 3) +
+  geom_label() +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  theme_bw()
+
+# Generating the sequence of stimuli in the full experiment
+sequence <- c()
+for (i in 1:8) {
+  temp <- sample(seq(8), 8, replace = F)
+  sequence <- append(sequence, temp)
+}
+
+experiment <- tibble(stimulus = sequence, height = NA, position = NA, category = NA)
+for (i in seq(nrow(experiment))) {
+  experiment$height[i] <- stimuli$height[stimuli$stimulus == experiment$stimulus[i]]
+  experiment$position[i] <- stimuli$position[stimuli$stimulus == experiment$stimulus[i]]
+  experiment$category[i] <- as.numeric(as.character(stimuli$category[stimuli$stimulus == experiment$stimulus[i]]))
+}
+
+```
+
+We then have to simulate an agent using the GCM to assess the stimuli. 
+N.B. code based on work by Sara Østergaard
+
+First we define functions for distance and similarity and assess them.
+Distance takes feature values along n dimensions and calculate their euclidean distance,
+weighing dimensions according to pregiven weights (w).
+Similarity decays exponentially with distance, with a pre-given exponent (c). See plot.
+
+```{r}
+# Distance 
+distance <- function(vect1, vect2, w) {
+  return(sum(w * abs(vect1 - vect2)))
+}
+
+# Similarity
+similarity <- function(distance, c) {
+  return(exp(-c * distance))
+}
+
+# Let's assess similarity
+dd <- tibble(
+  expand_grid(
+    distance = c(0,.1,.2, .3,.4,.5,1,1.5,2,3,4,5,6), 
+    c = c(0.1, 0.2, 0.5, 0.7, 1, 1.5, 2, 3, 4, 5, 6))) %>% 
+  mutate(
+    similarity = similarity(distance, c)
+  )
+
+dd %>% mutate(c = factor(c)) %>%
+  ggplot() +
+  geom_line(aes(distance, similarity, group = c, color = c)) + 
+  theme_bw()
+
+#
+```
+
+
+With distance and similarity in place, we now need to implement an agent that can observe stimuli,
+put them into categories according to feedback and - once enough stimuli are collected to have at
+least one exemplar in each category - compare stimuli to exemplars in each category and assess
+which category is more likely.
+In other words: 1) if not enough stimuli have already been observed, the agent picks a category at random,
+receives feedback and adjusts accordingly the category; otherwise, 2) it assesses average distance (according to weights) from observed exemplars by category; calculates similarity (according to c); and uses the relative similarity to the two categories to produce a probability of choosing category one. then it receives feedback and adjusts category accordingly.
+
+As usual we make the agent a function, so that we can more easily deploy it.
+
+```{r}
+### generative model ###
+gcm <- function(w, c, obs, cat_one, quiet = TRUE) {
+  # create an empty list to save probability of saying "1" for each trial
+  r <- c()
+  
+  ntrials <- nrow(obs)
+  
+  for (i in 1:ntrials) {
+    # If quiet is FALSE, print every ten trials
+    if (!quiet && i %% 10 == 0) {
+      print(paste("i =", i))
+    }
+    # if this is the first trial, or there any category with no exemplars seen yet, set the choice to random
+    if (i == 1 || sum(cat_one[1:(i - 1)]) == 0 || sum(cat_one[1:(i - 1)]) == (i - 1)) {
+      r <- c(r, .5)
+    } else {
+      similarities <- c()
+      # for each previously seen stimulus assess distance and similarity
+      for (e in 1:(i - 1)) {
+        sim <- similarity(distance(obs[i, ], obs[e, ], w), c)
+        similarities <- c(similarities, sim)
+      }
+      # Calculate prob of saying "1" by dividing similarity to 1 by the sum of similarity to 1 and to 2
+      numerator <- 0.5 * sum(similarities[cat_one[1:(i - 1)] == 1])
+      denominator <- 0.5 * sum(similarities[cat_one[1:(i - 1)] == 1]) + 0.5 * sum(similarities[cat_one[1:(i - 1)] == 0])
+      r <- c(r, numerator / denominator)
+    }
+  }
+
+  return(rbinom(ntrials, 1, r))
+}
+```
+
+With the agent in place, we can now simulate behavior on our simulated stimuli and observe the impact of different weights and scaling parameters c.
+
+```{r}
+# function for simulation responses
+simulate_responses <- function(agent, w, c) {
+    
+    observations <- experiment %>%
+        select(
+            c("height", "position")
+        )
+    
+    category <- experiment$category
+    
+    if (w == "equal") {
+        weight <- rep(1 / 2, 2)
+    } else if (w == "skewed") {
+        weight <- c(0, 1)
+    }
+
+    # simulate responses
+    responses <- gcm(
+        weight,
+        c,
+        observations,
+        category
+    )
+    
+    tmp_simulated_responses <- experiment %>%
+        mutate(
+            trial = seq(nrow(experiment)),
+            sim_response = responses,
+            correct = ifelse(category == sim_response, 1, 0),
+            performance = cumsum(correct) / seq_along(correct),
+            c = c,
+            w = w,
+            agent = agent
+        )
+
+    return(tmp_simulated_responses)
+}
+
+
+# simulate responses
+plan(multisession, workers = availableCores())
+
+param_df <- dplyr::tibble(
+    expand_grid(
+        agent = 1:10,
+        c = seq(.1, 3, 0.2),
+        w = c("equal", "skewed")
+    )
+)
+
+simulated_responses <- future_pmap_dfr(param_df,
+    simulate_responses,
+    .options = furrr_options(seed = TRUE)
+)
+
+```
+
+And now we can try a few plots to better understand how the model fares and the difference made by weights and scaling factors.
+
+```{r}
+
+p3 <- simulated_responses %>%
+  mutate(w = as.factor(w)) %>%
+  ggplot(aes(trial, performance, group = w, color = w)) +
+  geom_smooth() +
+  theme_bw() +
+  facet_wrap(c ~ .)
+
+p4 <- simulated_responses %>%
+  mutate(c = as.factor(c)) %>%
+  ggplot(aes(trial, performance, group = c, color = c)) +
+  geom_smooth() +
+  theme_bw() +
+  facet_wrap(w ~ .)
+
+p3 + p4
+```
+
+[MISSING: Discussion of how to make sense of the plots: Equal Weights (matching the actual rule) generating better decisions as long as c is above 1]
+
+While we could try different scenarios, let us now move on to inference. We need to build the same GCM model in Stan.
+
+```{r}
+
+gcm_model <- "
+// Generalized Context Model (GCM)
+
+data {
+    int<lower=1> ntrials;  // number of trials
+    int<lower=1> nfeatures;  // number of predefined relevant features
+    array[ntrials] int<lower=0, upper=1> cat_one; // true responses on a trial by trial basis
+    array[ntrials] int<lower=0, upper=1> y;  // decisions on a trial by trial basis
+    array[ntrials, nfeatures] int<lower=0, upper=1> obs; // stimuli as vectors of features
+    real<lower=0, upper=1> b;  // initial bias for category one over two
+
+    // priors
+    vector[nfeatures] w_prior_values;  // concentration parameters for dirichlet distribution <lower=1>
+    array[2] int c_prior_values;  // mean and variance for logit-normal distribution
+}
+
+transformed data {
+    array[ntrials] int<lower=0, upper=1> cat_two; // dummy variable for category two over cat 1
+    array[sum(cat_one)] int<lower=1, upper=ntrials> cat_one_idx; // array of which stimuli are cat 1
+    array[ntrials-sum(cat_one)] int<lower=1, upper=ntrials> cat_two_idx; //  array of which stimuli are cat 2
+    int idx_one = 1; // Initializing 
+    int idx_two = 1;
+    for (i in 1:ntrials){
+        cat_two[i] = abs(cat_one[i]-1);
+
+        if (cat_one[i]==1){
+            cat_one_idx[idx_one] = i;
+            idx_one +=1;
+        } else {
+            cat_two_idx[idx_two] = i;
+            idx_two += 1;
+        }
+    }
+}
+
+parameters {
+    simplex[nfeatures] w;  // simplex means sum(w)=1
+    real logit_c;
+}
+
+transformed parameters {
+    // parameter c 
+    real<lower=0, upper=5> c = inv_logit(logit_c)*5;  // times 5 as c is bounded between 0 and 5
+
+    // parameter r (probability of response = category 1)
+    array[ntrials] real<lower=0.0001, upper=0.9999> r;
+    array[ntrials] real rr;
+
+    for (i in 1:ntrials) {
+
+        // calculate distance from obs to all exemplars
+        array[(i-1)] real exemplar_dist;
+        for (e in 1:(i-1)){
+            array[nfeatures] real tmp_dist;
+            for (j in 1:nfeatures) {
+                tmp_dist[j] = w[j]*abs(obs[e,j] - obs[i,j]);
+            }
+            exemplar_dist[e] = sum(tmp_dist);
+        }
+
+        if (sum(cat_one[:(i-1)])==0 || sum(cat_two[:(i-1)])==0){  // if there are no examplars in one of the categories
+            r[i] = 0.5;
+
+        } else {
+            // calculate similarity
+            array[2] real similarities;
+            
+            array[sum(cat_one[:(i-1)])] int tmp_idx_one = cat_one_idx[:sum(cat_one[:(i-1)])];
+            array[sum(cat_two[:(i-1)])] int tmp_idx_two = cat_two_idx[:sum(cat_two[:(i-1)])];
+            similarities[1] = exp(-c * sum(exemplar_dist[tmp_idx_one]));
+            similarities[2] = exp(-c * sum(exemplar_dist[tmp_idx_two]));
+
+            // calculate r[i]
+            rr[i] = (b*similarities[1]) / (b*similarities[1] + (1-b)*similarities[2]);
+
+            // to make the sampling work
+            if (rr[i] > 0.9999){
+                r[i] = 0.9999;
+            } else if (rr[i] < 0.0001) {
+                r[i] = 0.0001;
+            } else if (rr[i] > 0.0001 && rr[i] < 0.9999) {
+                r[i] = rr[i];
+            } else {
+                r[i] = 0.5;
+            }
+        }
+    }
+}
+
+model {
+    // Priors
+    target += dirichlet_lpdf(w | w_prior_values);
+    target += normal_lpdf(logit_c | c_prior_values[1], c_prior_values[2]);
+    
+    
+    // Decision Data
+    target += bernoulli_lpmf(y | r);
+}
+
+generated quantities {
+    // priors
+    simplex[nfeatures] w_prior = dirichlet_rng(w_prior_values);
+    real logit_c_prior = normal_rng(c_prior_values[1], c_prior_values[2]);
+    real<lower=0, upper=5> c_prior = inv_logit(logit_c_prior)*5;
+
+    // prior pred
+    array[ntrials] real<lower=0, upper=1> r_prior;
+    array[ntrials] real rr_prior;
+    for (i in 1:ntrials) {
+
+        // calculate distance from obs to all exemplars
+        array[(i-1)] real exemplar_dist;
+        for (e in 1:(i-1)){
+            array[nfeatures] real tmp_dist;
+            for (j in 1:nfeatures) {
+                tmp_dist[j] = w_prior[j]*abs(obs[e,j] - obs[i,j]);
+            }
+            exemplar_dist[e] = sum(tmp_dist);
+        }
+
+        if (sum(cat_one[:(i-1)])==0 || sum(cat_two[:(i-1)])==0){  // if there are no examplars in one of the categories
+            r_prior[i] = 0.5;
+
+        } else {
+            // calculate similarity
+            array[2] real similarities;
+            
+            array[sum(cat_one[:(i-1)])] int tmp_idx_one = cat_one_idx[:sum(cat_one[:(i-1)])];
+            array[sum(cat_two[:(i-1)])] int tmp_idx_two = cat_two_idx[:sum(cat_two[:(i-1)])];
+            similarities[1] = exp(-c_prior * sum(exemplar_dist[tmp_idx_one]));
+            similarities[2] = exp(-c_prior * sum(exemplar_dist[tmp_idx_two]));
+
+            // calculate r[i]
+            rr_prior[i] = (b*similarities[1]) / (b*similarities[1] + (1-b)*similarities[2]);
+
+            // to make the sampling work
+            if (rr_prior[i] == 1){
+                r_prior[i] = 0.9999;
+            } else if (rr_prior[i] == 0) {
+                r_prior[i] = 0.0001;
+            } else if (rr_prior[i] > 0 && rr_prior[i] < 1) {
+                r_prior[i] = rr_prior[i];
+            } else {
+                r_prior[i] = 0.5;
+            }
+        }
+    }
+
+    array[ntrials] int<lower=0, upper=1> priorpred = bernoulli_rng(r_prior);
+
+
+    // posterior pred
+    array[ntrials] int<lower=0, upper=1> posteriorpred = bernoulli_rng(r);
+    
+    
+    // log likelihood
+   array[ntrials] real log_lik;
+
+   for (i in 1:ntrials) {
+        log_lik[i] = bernoulli_lpmf(y[i] | r[i]);
+   }
+
+}"
+```
+
