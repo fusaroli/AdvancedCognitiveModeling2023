@@ -6,7 +6,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>Chapter 2 Practical exercise 1 - Building verbal models of the matching pennies game | 10-CategorizationModels</title>
   <meta name="description" content="My notes for the advanced cognitive modeling course - 2023" />
-  <meta name="generator" content="bookdown 0.33 and GitBook 2.6.7" />
+  <meta name="generator" content="bookdown 0.37 and GitBook 2.6.7" />
 
   <meta property="og:title" content="Chapter 2 Practical exercise 1 - Building verbal models of the matching pennies game | 10-CategorizationModels" />
   <meta property="og:type" content="book" />
@@ -119,6 +119,10 @@ code span.vs { color: #4070a0; } /* VerbatimString */
 code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
 </style>
 
+<style type="text/css">
+  
+  div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+</style>
 
 <link rel="stylesheet" href="lib/css/bootstrap.min.css" type="text/css" />
 <link rel="stylesheet" href="lib/css/style.css" type="text/css" />
@@ -166,6 +170,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 </ul></li>
 <li class="chapter" data-level="2.6" data-path="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#continuity-between-models"><i class="fa fa-check"></i><b>2.6</b> Continuity between models</a></li>
 <li class="chapter" data-level="2.7" data-path="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#mixture-of-strategies"><i class="fa fa-check"></i><b>2.7</b> Mixture of strategies</a></li>
+<li class="chapter" data-level="2.8" data-path="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#differences-from-more-traditional-general-linear-model-based-approaches"><i class="fa fa-check"></i><b>2.8</b> Differences from more traditional (general linear model-based) approaches</a></li>
 </ul></li>
 <li class="chapter" data-level="3" data-path="practical-exercise-2---from-verbal-to-formal-models.html"><a href="practical-exercise-2---from-verbal-to-formal-models.html"><i class="fa fa-check"></i><b>3</b> Practical exercise 2 - From verbal to formal models</a>
 <ul>
@@ -362,37 +367,46 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <li><p>What do you think your opponent was doing?</p></li>
 </ul>
 <p>Below you can observe how a previous year of CogSci did against bots (computational agents) playing according to different strategies. Look at the plots below, where the x axes indicate trial, the y axes how many points the CogSci’ers scored (0 being chance, negative means being completely owned by the bots, positive owning the bot) and the different colors indicate different strategies employed by the bots. Strategy “-2” was a Win-Stay-Lose-Shift bot: when it got a +1, it repeated its previous move (e.g. right if it had just played right), otherwise it would perform the opposite move (e.g. left if it had just played right). Strategy “-1” was a biased Nash both, playing “right” 80% of the time. Strategy “0” indicates a reinforcement learning bot; “1” a bot assuming you were playing according to a reinforcement learning strategy and trying to infer your learning and temperature parameters; “2” a bot assuming you were following strategy “1” and trying to accordingly infer your parameters.</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(tidyverse)</span>
-<span id="cb1-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb1-2" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;data/MP_MSc_CogSci22.csv&quot;</span>) <span class="sc">%&gt;%</span> </span>
-<span id="cb1-3"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">BotStrategy =</span> <span class="fu">as.factor</span>(BotStrategy))</span></code></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb1-1" tabindex="-1"></a><span class="fu">library</span>(tidyverse)</span></code></pre></div>
+<pre><code>## ── Attaching core tidyverse packages ───────────────────────────────────────────────────────── tidyverse 2.0.0 ──
+## ✔ dplyr     1.1.4     ✔ readr     2.1.5
+## ✔ forcats   1.0.0     ✔ stringr   1.5.1
+## ✔ ggplot2   3.4.4     ✔ tibble    3.2.1
+## ✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+## ✔ purrr     1.0.2     
+## ── Conflicts ─────────────────────────────────────────────────────────────────────────── tidyverse_conflicts() ──
+## ✖ dplyr::filter() masks stats::filter()
+## ✖ dplyr::lag()    masks stats::lag()
+## ℹ Use the conflicted package (&lt;http://conflicted.r-lib.org/&gt;) to force all conflicts to become errors</code></pre>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-1" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;data/MP_MSc_CogSci22.csv&quot;</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb3-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-2" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">BotStrategy =</span> <span class="fu">as.factor</span>(BotStrategy))</span></code></pre></div>
 <pre><code>## Rows: 4400 Columns: 11
-## ── Column specification ────────────────────────────────────────────────────────────────────
+## ── Column specification ─────────────────────────────────────────────────────────────────────────────────────────
 ## Delimiter: &quot;,&quot;
 ## chr (2): ID, BotParameters
-## dbl (9): BotStrategyN, Role, player.tom_role, Choice, BotChoice, Payoff, BotPayoff, Tria...
+## dbl (9): BotStrategyN, Role, player.tom_role, Choice, BotChoice, Payoff, BotPayoff, Trial, BotStrategy
 ## 
 ## ℹ Use `spec()` to retrieve the full column specification for this data.
 ## ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.</code></pre>
-<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-1" aria-hidden="true" tabindex="-1"></a>d<span class="sc">$</span>Role <span class="ot">&lt;-</span> <span class="fu">ifelse</span>(d<span class="sc">$</span>Role <span class="sc">==</span> <span class="dv">0</span>, <span class="st">&quot;Matcher&quot;</span>, <span class="st">&quot;Mismatcher&quot;</span>)</span>
-<span id="cb3-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-3"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(d, <span class="fu">aes</span>(Trial, Payoff, <span class="at">group =</span> BotStrategy, <span class="at">color =</span> BotStrategy)) <span class="sc">+</span> </span>
-<span id="cb3-4"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_smooth</span>(<span class="at">se =</span> F) <span class="sc">+</span> </span>
-<span id="cb3-5"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_classic</span>() <span class="sc">+</span> </span>
-<span id="cb3-6"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb3-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(.<span class="sc">~</span>Role)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-1" tabindex="-1"></a>d<span class="sc">$</span>Role <span class="ot">&lt;-</span> <span class="fu">ifelse</span>(d<span class="sc">$</span>Role <span class="sc">==</span> <span class="dv">0</span>, <span class="st">&quot;Matcher&quot;</span>, <span class="st">&quot;Mismatcher&quot;</span>)</span>
+<span id="cb5-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-2" tabindex="-1"></a></span>
+<span id="cb5-3"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-3" tabindex="-1"></a><span class="fu">ggplot</span>(d, <span class="fu">aes</span>(Trial, Payoff, <span class="at">group =</span> BotStrategy, <span class="at">color =</span> BotStrategy)) <span class="sc">+</span> </span>
+<span id="cb5-4"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-4" tabindex="-1"></a>  <span class="fu">geom_smooth</span>(<span class="at">se =</span> F) <span class="sc">+</span> </span>
+<span id="cb5-5"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-5" tabindex="-1"></a>  <span class="fu">theme_classic</span>() <span class="sc">+</span> </span>
+<span id="cb5-6"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-6" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(.<span class="sc">~</span>Role)</span></code></pre></div>
 <pre><code>## `geom_smooth()` using method = &#39;loess&#39; and formula = &#39;y ~ x&#39;</code></pre>
 <p><img src="series_files/figure-html/01%20plot%20collective%20performance%20in%20MP-1.png" width="672" /></p>
 <p>That doesn’t look too good, ah? What about individual variability? In the plot below we indicate the score of each of the former students, against the different bots.</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-1" aria-hidden="true" tabindex="-1"></a>d1 <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">group_by</span>(ID, BotStrategy) <span class="sc">%&gt;%</span> </span>
-<span id="cb5-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb5-2" aria-hidden="true" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">summarize</span>(<span class="at">Score =</span> <span class="fu">sum</span>(Payoff))</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb7-1" tabindex="-1"></a>d1 <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">group_by</span>(ID, BotStrategy) <span class="sc">%&gt;%</span> </span>
+<span id="cb7-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb7-2" tabindex="-1"></a>  dplyr<span class="sc">::</span><span class="fu">summarize</span>(<span class="at">Score =</span> <span class="fu">sum</span>(Payoff))</span></code></pre></div>
 <pre><code>## `summarise()` has grouped output by &#39;ID&#39;. You can override using the `.groups` argument.</code></pre>
-<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(d1, <span class="fu">aes</span>(BotStrategy, Score, <span class="at">label =</span> ID)) <span class="sc">+</span></span>
-<span id="cb7-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="fu">aes</span>(<span class="at">color =</span> ID)) <span class="sc">+</span></span>
-<span id="cb7-3"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_boxplot</span>(<span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb7-4"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb9-1" tabindex="-1"></a><span class="fu">ggplot</span>(d1, <span class="fu">aes</span>(BotStrategy, Score, <span class="at">label =</span> ID)) <span class="sc">+</span></span>
+<span id="cb9-2"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb9-2" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="fu">aes</span>(<span class="at">color =</span> ID)) <span class="sc">+</span></span>
+<span id="cb9-3"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb9-3" tabindex="-1"></a>  <span class="fu">geom_boxplot</span>(<span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb9-4"><a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#cb9-4" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <pre><code>## Warning: The following aesthetics were dropped during statistical transformation: label
 ## ℹ This can happen when ggplot fails to infer the correct grouping structure in the data.
-## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical variable into a
-##   factor?</code></pre>
+## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical variable into a factor?</code></pre>
 <p><img src="series_files/figure-html/01%20plot%20individual%20performance%20in%20MP-1.png" width="672" /></p>
 <p>Now, let’s take a bit of group discussion. Get together in groups, and discuss which strategies and cognitive processes might underlie your and the agents’ behaviors in the game. One thing to keep in mind is what a model is: a simplification that can help us make sense of the world. In other words, any behavior is incredibly complex and involves many complex cognitive mechanisms. So start simple, and if you think it’s too simple, progressively add simple components.</p>
 <p>Once your study group has discussed a few (during the PE), add them here:
@@ -400,7 +414,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 </div>
 <div id="the-distinction-between-participant-and-researcher-perspectives" class="section level2 hasAnchor" number="2.3">
 <h2><span class="header-section-number">2.3</span> The distinction between participant and researcher perspectives<a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#the-distinction-between-participant-and-researcher-perspectives" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<p>As participants we might not be aware of the strategy we use, or we might believe something erroneous. The exercise here is to act as researchers: what are the principles underlying the participants’ behaviors, no matter what the participants know or believe? Note that talking to participants and being participants help developing ideas, but it’s not the end point of the process. Also note that as cognitive scientists we can rely on what we have learned about cognitive processes (e.g. memory).</p>
+<p>As participants we might not be aware of the strategy we use, or we might believe something erroneous. The exercise here is to act as researchers: what are the principles underlying the participants’ behaviors, no matter what the participants know or believe? Note that talking to participants and being participants helps developing ideas, but it’s not the end point of the process. Also note that as cognitive scientists we can rely on what we have learned about cognitive processes (e.g. memory).</p>
 </div>
 <div id="strategies" class="section level2 hasAnchor" number="2.4">
 <h2><span class="header-section-number">2.4</span> Strategies<a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#strategies" class="anchor-section" aria-label="Anchor link to header"></a></h2>
@@ -451,12 +465,19 @@ Shortly described, reinforcement learning assumes that each choice has a possibl
 </div>
 <div id="continuity-between-models" class="section level2 hasAnchor" number="2.6">
 <h2><span class="header-section-number">2.6</span> Continuity between models<a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#continuity-between-models" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<p>Many of these models are simply extreme cases of others. For instance, WSLS is a reinforcement learning model with an extreme learning rate (reward replaces the formerly expected value without any moderation), which is also a memory model with a memory of 1 previous trial.</p>
+<p>Many of these models are simply extreme cases of others. For instance, WSLS is a reinforcement learning model with an extreme learning rate (reward replaces the formerly expected value without any moderation), which is also a memory model with a memory of 1 previous trial. k-ToM builds on reinforcement learning: at level 1 assumes the other is a RL agent.</p>
 </div>
 <div id="mixture-of-strategies" class="section level2 hasAnchor" number="2.7">
 <h2><span class="header-section-number">2.7</span> Mixture of strategies<a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#mixture-of-strategies" class="anchor-section" aria-label="Anchor link to header"></a></h2>
 <p>We discussed that there are techniques to consider the data generated by a mixture of models: estimating the probability that they are generated by model 1 or 2 or n. This probability can then be conditioned, according to our research question, to group (are people w schizophrenia more likely to employ model 1) or ID (are different participants using different models), or condition, or… We discussed that we often need lots of data to disambiguate between models, so conditioning e.g. on trial would in practice almost (?) never work.</p>
-<p>[MISSING: DISCUSSION OF DIFFERENCE BTW TRADITIONAL STAT APPROACH AND COGNITIVE MODELING; INCLUDING HOW WE DO USE THE GLM IN COGNITIVE MODELING]</p>
+</div>
+<div id="differences-from-more-traditional-general-linear-model-based-approaches" class="section level2 hasAnchor" number="2.8">
+<h2><span class="header-section-number">2.8</span> Differences from more traditional (general linear model-based) approaches<a href="practical-exercise-1---building-verbal-models-of-the-matching-pennies-game.html#differences-from-more-traditional-general-linear-model-based-approaches" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>In a more traditional approach we would carefully set up the experiment to discriminate between hypotheses. For instance, if the hypothesis is that humans deploy ToM only when playing against intentional agents, we can set agents with increasing levels of k-ToM against humans, set up two framings (this is a human playing hide and seek, this is a slot machine), and assess whether humans perform differently. E.g. whether they perform better when thinking it’s a human. We analyze performance e.g. as binary outcome on a trial by trial base and condition its rate on framing and complexity. If framing makes a difference in the expected direction, we are good.</p>
+<p>If we do this properly, thanks to the clever experimental designs we set up, we can discriminate between hypotheses. And that is good. However, cognitive modeling opens additional opportunities.
+For instance, we can actually reconstruct which level of recursion the participants are enacting and if it changes over time. This might be very useful in the experimental setup, and crucial in more observational setups.
+Cognitive modeling also allows us to discriminate between different cognitive components more difficult to assess by looking at performance only. For instance, why are participants performing less optimally when facing a supposedly non-intentional agent? Is their learning rate different? Is their estimate of volatility different?</p>
+<p>In other setups, e.g. a gambling context, we might observe that some participants (e.g. parkinson’s patients) are gambling away much. Is this due to changes in their risk-seeking propensities, loss aversion, or changes in the ability to actually learn the reward structure? Experimental setups help, but cognitive modeling can provide more nuanced and direct evidence.</p>
 
 </div>
 </div>
