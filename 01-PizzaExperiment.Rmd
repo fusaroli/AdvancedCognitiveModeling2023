@@ -4,11 +4,43 @@ output: html_document
 date: "2025-01-31"
 ---
 
-# Pizza Stone Temperature Analysis: A Bayesian Modeling Approach
+```{r}
+knitr::opts_chunk$set(
+  warning = FALSE,        # Suppress warnings
+  message = FALSE,        # Suppress package loading messages
+  echo = TRUE,           # Show R code
+  fig.width = 8,         # Set default figure width
+  fig.height = 5,        # Set default figure height
+  fig.align = 'center',  # Center figures
+  out.width = "80%",     # Make figures 80% of text width
+  dpi = 300             # Set high resolution for figures
+)
+```
+
+
+# (PART) Foundations {-}
+
+## From Pizza to Cognitive Models: An Introduction
+
+This chapter introduces core modeling concepts through an unexpected lens: the physics of pizza stone heating. While this might seem far removed from cognitive science, it provides an insightful introduction to the challenges and methodologies of modeling complex phenomena.
+
+## Why Start with Pizza?
+
+Do I even need to answer that question? Because pizza, obviously.
+
+In any case, understanding how humans think and make decisions is arguably one of the most complex challenges in science. Rather than diving directly into this complexity, we begin with a more tractable problem: modeling how a pizza stone heats up in an oven. This seemingly simple process introduces us to key modeling concepts:
+
+- The importance of selecting appropriate levels of analysis
+- The role of prior knowledge in model development
+- The challenge of balancing model complexity with practical utility
+- The necessity of rigorous validation approaches
+
+Through this concrete example, we can focus on understanding modeling principles without the added complexity of cognitive theory.
+
 
 ## Learning Objectives
 
-This first module is a bit odd, in that it pushes you straight into the deep waters of a complex example. I don't expect you to understand all the technicalities. But, by completing this tutorial, you will be able to better grasp the importance of generative modeling, that is, of modeling that is focused on the underlying mechanisms producing the data.
+This first chpater is a bit odd, in that it pushes you straight into the deep waters of a complex example. I don't expect you to understand all the technicalities. But, by completing this tutorial, you will be able to better grasp the importance of generative modeling, that is, of modeling that is focused on the underlying mechanisms producing the data.
 
 On the side you might learn something about how to
 * Implement physics-based thermal modeling using R and Stan
@@ -19,10 +51,6 @@ On the side you might learn something about how to
 
 Oh, and you'll probably get hungry as well!
 
-## Prerequisites
-
-* Intermediate R programming knowledge
-* Basic understanding of Bayesian statistics
 
 Required Packages
 
@@ -348,35 +376,55 @@ Temperature evolution in a pizza stone follows Newton's Law of Cooling/Heating. 
 
 ### The Basic Temperature Evolution Equation
 
-The temperature evolution of a pizza stone in a gas-fired oven is governed by the heat diffusion equation, which describes how heat flows through solid materials. This comprehensive equation accounts for all aspects of heat transfer:
+The temperature evolution of a pizza stone in a gas-fired oven is governed by the heat diffusion equation, which describes how heat flows through solid materials: 
 
-ρcp ∂T/∂t = k∇²T + Q
 
-In this equation, ρ represents the density of the pizza stone, while cp denotes its specific heat capacity - the amount of energy needed to raise its temperature by one degree. The temperature T varies with time t, and k represents the stone's thermal conductivity. The Laplacian operator ∇² captures how temperature varies across different points in the stone, while Q represents the heat input from the oven's flames.
-While this equation provides a complete description of heat flow, we can significantly simplify our analysis by applying the lumped capacitance model. This simplification assumes that the temperature throughout the pizza stone remains uniform at any given time - a reasonable assumption given the stone's relatively thin profile and good thermal conductivity. This approach reduces our model to:
+$$\rho c_p \frac{\partial T}{\partial t} = k\nabla^2T + Q$$
 
-dT/dt = h * A/(m * cp) * (T∞ - T)
+where:
+$\rho$ represents the stone's density (kg/m³)
+$c_p$ denotes specific heat capacity (J/kg·K)
+$T$ is temperature (K)
+$t$ represents time (s)
+$k$ is thermal conductivity (W/m·K)
+$\nabla^2$ is the Laplacian operator
+$Q$ represents heat input from the oven (W/m³)
+
+While this equation provides a complete description of heat flow, we can significantly simplify our analysis by applying the lumped capacitance model. This simplification assumes that the temperature throughout the pizza stone remains uniform at any given time - not perfect, but a reasonable assumption given the stone's relatively thin profile and good thermal conductivity. This approach reduces our model to:
+
+$$\frac{dT}{dt} = \frac{hA}{mc_p}(T_{\infty} - T)$$
+
+where: 
+$h$ is the heat transfer coefficient (W/m²·K)
+$A$ is the surface area exposed to heat (m²)
+$m$ is the stone's mass (kg)
+$T_{\infty}$ is the oven temperature (K)
 
 This simplified equation relates the rate of temperature change to the difference between the current stone temperature T and the flame temperature T∞. The coefficient h represents the heat transfer coefficient between the flame and stone, A is the stone's surface area exposed to heat, m is its mass, and cp remains the specific heat capacity.
+
 To solve this differential equation, we begin by separating variables:
 
-dT/(T∞ - T) = (hA/(mcp)) * dt
+$$\frac{dT}{T_{\infty} - T} = \left(\frac{hA}{mc_p}\right)dt$$
 
 Integration of both sides yields:
 
--ln|T∞ - T| = (hA/(mcp)) * t + C
+$$-\ln|T_{\infty} - T| = \left(\frac{hA}{mc_p}\right)t + C$$
 
-Using the initial condition that the temperature equals Ti when time equals zero, we can determine the integration constant C = -ln|T∞ - Ti|. Substituting this back and solving for temperature gives us:
+where C is an integration constant.
 
-T = T∞ + (Ti - T∞) * exp(-hAt/(m*cp))
+Using the initial condition $T = T_i$ at $t = 0$, we can determine the integration constant:
 
-For practical analysis, we can combine all the physical parameters that determine heating rate into a single coefficient, which we'll call HOT:
+$$C = -\ln|T_{\infty} - T_i|$$
 
-HOT = hA/(mcp)
+Substituting this back and solving for temperature gives us:
 
-This gives us our final working equation:
+$$T = T_{\infty} + (T_i - T_{\infty})\exp\left(-\frac{hA}{mc_p}t\right)$$
 
-T = T∞ + (Ti - T∞) * exp(-HOT * t)
+For practical reasons, we combine physical parameters into a single coefficient $\theta$:
+
+$$HOT = \frac{hA}{mc_p}$$
+Giving our working equation:
+$$T = T_{\infty} + (T_i - T_{\infty})\exp(-HOT * t)$$
 
 This equation retains the essential physics while providing a practical model for analyzing our experimental data. The HOT coefficient encapsulates the combined effects of heat transfer efficiency, stone geometry, and material properties into a single parameter that determines how quickly the stone approaches the flame temperature.
 
@@ -586,13 +634,24 @@ For practical application, we can provide specific heating guidelines based on o
 
 * Initial stone temperature
 * Flame temperature and consistency
-* Environmental conditions
+* Environmental conditions.
 
-## Conclusions
+Can we really wait that long?
 
-All of this to work with heat, which is a well understood and supposedly simple physical phenomenon. Yet we need complex models to better understand this (and what I sketched here could be vastly improved still). I want you to keep this in mind when we then go and talk about cognitive phenomena, like decision-making or memory. Can we really just run regressions?
+## Conclusion: From Pizza to Principles
 
-A second important lesson is that we need to pick the level of analysis. Here we work on heat, but we completely ignored e.g. particle level details. They would actually impede what we want to do. It's the same for cognitive processes. We don't (always) need to invoke the brain to model generative processes. Sometimes it helps, sometimes it doesn't at the stage of research in which we are. The course will try to develop solid foundations for modeling at this "cognitive" level of analysis. You'll be ready to tackle neurocognitive aspects at the end of the course.
+The journey from modeling a heating pizza stone to understanding cognitive processes might seem unusual, but it illustrates fundamental principles that will guide us throughout this course.
+
+Through this seemingly simple physics problem, we have encountered the core challenges that cognitive scientists face daily. Just relying on standard statistical models is not enough. We need to understand the underlying generative processes. We discovered how choosing the right level of analysis shapes our understanding - just as we simplified complex heat equations into workable models, cognitive scientists must decide which aspects of the mental processes to model explicitly and which to abstract. We learned that even well-understood physical processes require careful statistical treatment, foreshadowing the challenges we will face with more complex cognitive phenomena.
+
+The pizza stone experiment also demonstrated the importance of rigorous methodology. We saw how multiple measurements from different raters revealed variability in our data, leading us to consider measurement error and individual differences - themes that will become crucial when studying human behavior. Our exploration of different statistical approaches, from simple linear models to more sophisticated Bayesian frameworks, established a foundation for the modeling techniques we will develop throughout this course.
+
+Perhaps most importantly, this chapter starts showing that successful modeling requires balancing competing demands. We must weigh theoretical complexity against practical utility, statistical sophistication against interpretability, and mathematical elegance against real-world applicability. These trade-offs will become even more prominent as we move into modeling cognitive processes.
+
+As we progress through this course, we will encounter increasingly complex cognitive phenomena. The principles we learned here - careful data collection, thoughtful model specification, rigorous validation, and balanced interpretation - will serve as our guide. While human cognition presents challenges far beyond those of heating pizza stones, the fundamental approach remains the same: start with clear observations, build theoretically motivated models, and test them systematically against data.
+
+In the next chapter, we will begin applying these principles directly to cognitive processes, starting with simple decision-making tasks. The mathematical tools and statistical frameworks introduced here will provide the foundation for understanding how humans process information and make choices.
+
 
 Finally, I hope you are hungry now. I know I am. Let's go and make some pizza!
 
