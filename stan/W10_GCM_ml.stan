@@ -78,8 +78,8 @@ transformed parameters {
             
             array[sum(cat_one[:(trial-1)])] int tmp_idx_one = cat_one_idx[:sum(cat_one[:(trial-1)])];
             array[sum(cat_two[:(trial-1)])] int tmp_idx_two = cat_two_idx[:sum(cat_two[:(trial-1)])];
-            similarities[1] = sum(exemplar_sim[tmp_idx_one]);
-            similarities[2] = sum(exemplar_sim[tmp_idx_two]);
+            similarities[1] = mean(exemplar_sim[tmp_idx_one]);
+            similarities[2] = mean(exemplar_sim[tmp_idx_two]);
 
             // calculate r
             rr[trial,sub] = (b*similarities[1]) / (b*similarities[1] + (1-b)*similarities[2]);
@@ -148,8 +148,8 @@ model {
 //             
 //             array[sum(cat_one[:(i-1)])] int tmp_idx_one = cat_one_idx[:sum(cat_one[:(i-1)])];
 //             array[sum(cat_two[:(i-1)])] int tmp_idx_two = cat_two_idx[:sum(cat_two[:(i-1)])];
-//             similarities[1] = exp(-c_prior * sum(exemplar_dist[tmp_idx_one]));
-//             similarities[2] = exp(-c_prior * sum(exemplar_dist[tmp_idx_two]));
+//             similarities[1] = mean(exp(-c_prior * exemplar_dist[tmp_idx_one]));
+//             similarities[2] = mean(exp(-c_prior * exemplar_dist[tmp_idx_two]));
 // 
 //             // calculate r[i]
 //             rr_prior[i] = (b*similarities[1]) / (b*similarities[1] + (1-b)*similarities[2]);

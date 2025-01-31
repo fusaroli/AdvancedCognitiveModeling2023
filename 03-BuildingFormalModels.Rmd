@@ -1,9 +1,15 @@
 
 # From verbal to formal models
 
-We will now discuss how to go from verbal to formal models. 
-We will not just write a formula, we will implement these models as algorithms in R.
-By implementing the models of algorithms, 
+## Learning Objectives
+By the end of this exercise, you will be able to:
+
+* Transform verbal descriptions of decision-making strategies into formal computational models
+* Implement and test different agent-based models in R
+* Compare and evaluate the performance of different strategic agents
+* Visualize and interpret simulation results at scale
+
+By computationally implementing the our models, 
 
 * we are forced to make them very explicit in their assumptions;
 
@@ -30,8 +36,14 @@ So, the steps for today's exercise are:
 
 pacman::p_load(tidyverse, patchwork)
 
-trials <- 120
-agents <- 100
+# Number of trials per simulation
+trials <- 120  
+
+# Number of agents to simulate
+agents <- 100  
+
+# Optional: Set random seed for reproducibility
+# set.seed(123)
 
 ```
 
@@ -41,14 +53,21 @@ Remember a random agent is an agent that picks at random between "right" and "le
 A random agent might be perfectly random (50% chance of choosing "right", same for "left") or biased. The variable "rate" determines the rate of choosing "right".
 
 ```{r 02 implementing random agent}
+
 rate <- 0.5
 
 RandomAgent <- rbinom(trials, 1, rate) # we simply sample randomly from a binomial
 
 # Now let's plot how it's choosing
 d1 <- tibble(trial = seq(trials), choice = RandomAgent)
+
 p1 <- ggplot(d1, aes(trial, choice)) + 
   geom_line() + 
+  labs(
+    title = "Random Agent Behavior (rate 0.5)",
+    x = "Trial Number",
+    y = "Choice (0/1)"
+  ) +
   theme_classic()
 p1
 
@@ -61,6 +80,11 @@ RandomAgent <- rbinom(trials, 1, rate) # we simply sample randomly from a binomi
 d2 <- tibble(trial = seq(trials), choice = RandomAgent)
 p2 <- ggplot(d2, aes(trial, choice)) + 
   geom_line() + 
+  labs(
+    title = "Biased Random Agent Behavior",
+    x = "Trial Number",
+    y = "Choice (0/1)"
+  ) + 
   theme_classic()
 
 p1 + p2
@@ -73,10 +97,20 @@ d2$cumulativerate <- cumsum(d2$choice) / seq_along(d2$choice)
 p3 <- ggplot(d1, aes(trial, cumulativerate)) + 
   geom_line() + 
   ylim(0,1) + 
+  labs(
+    title = "Random Agent Behavior",
+    x = "Trial Number",
+    y = "Cumulative probability of choosing 1 (0-1)"
+  ) + 
   theme_classic()
 
 p4 <- ggplot(d2, aes(trial, cumulativerate)) + 
   geom_line() + 
+  labs(
+    title = "Random Agent Behavior",
+    x = "Trial Number",
+    y = "Cumulative probability of choosing 1 (0-1)"
+  ) + 
   ylim(0,1) + 
   theme_classic()
 
@@ -85,16 +119,34 @@ p3 + p4
 ## Now in the same plot
 d1$rate <- 0.5
 d2$rate <- 0.8
-d <- rbind(d1,d2)
+d <- rbind(d1,d2) %>% 
+  mutate(rate = as.factor(rate))
 
 p5 <- ggplot(d, aes(trial, cumulativerate, color = rate, group = rate)) + 
   geom_line() + 
+  labs(
+    title = "Random Agents Behavior",
+    x = "Trial Number",
+    y = "Cumulative probability of choosing 1 (0-1)"
+  ) + 
   ylim(0,1) + 
   theme_classic()
 p5
 
-# now as a function
-RandomAgent_f <- function(input, rate){
+# Now as a function
+#' Create a random decision-making agent
+#' @param input Vector of previous choices (not used but included for API consistency)
+#' @param rate Probability of choosing option 1 (default: 0.5 for unbiased)
+#' @return Vector of binary choices
+#' @examples 
+#' # Create unbiased random agent for 10 trials
+#' choices <- RandomAgent_f(rep(1,10), 0.5)
+RandomAgent_f <- function(input, rate = 0.5) {
+  # Input validation
+  if (!is.numeric(rate) || rate < 0 || rate > 1) {
+    stop("Rate must be a probability between 0 and 1")
+  }
+  
   n <- length(input)
   choice <- rbinom(n, 1, rate)
   return(choice)
@@ -103,7 +155,15 @@ RandomAgent_f <- function(input, rate){
 input <- rep(1,trials) # it doesn't matter, it's not taken into account
 choice <- RandomAgent_f(input, rate)
 d3 <- tibble(trial = seq(trials), choice)
-ggplot(d3, aes(trial, choice)) + geom_line() + theme_classic()
+
+ggplot(d3, aes(trial, choice)) + 
+  geom_line() + 
+  labs(
+    title = "Random Agent Behavior",
+    x = "Trial Number",
+    y = "Cumulative probability of choosing 1 (0-1)"
+  ) + 
+  theme_classic()
 
 ## What if there's noise?
 RandomAgentNoise_f <- function(input, rate, noise){
@@ -119,13 +179,38 @@ RandomAgentNoise_f <- function(input, rate, noise){
 
 ```{r 02 Implementing a Win-Stay-Lose-Shift agent}
 
-# as a function
-WSLSAgent_f <- function(prevChoice, Feedback){
-  if (Feedback == 1) {
-    choice = prevChoice
-  } else if (Feedback == 0) {
-      choice = 1 - prevChoice
-      }
+#' Create a Win-Stay-Lose-Shift decision-making agent
+#' @param prevChoice Previous choice made by the agent (0 or 1)
+#' @param feedback Success of previous choice (1 for win, 0 for loss)
+#' @param noise Optional probability of random choice (default: 0)
+#' @return Next choice (0 or 1)
+#' @examples
+#' # Basic WSLS decision after a win
+#' next_choice <- WSLSAgent_f(prevChoice = 1, feedback = 1)
+WSLSAgent_f <- function(prevChoice, feedback, noise = 0) {
+  # Input validation
+  if (!is.numeric(prevChoice) || !prevChoice %in% c(0,1)) {
+    stop("Previous choice must be 0 or 1")
+  }
+  if (!is.numeric(feedback) || !feedback %in% c(0,1)) {
+    stop("Feedback must be 0 or 1")
+  }
+  if (!is.numeric(noise) || noise < 0 || noise > 1) {
+    stop("Noise must be a probability between 0 and 1")
+  }
+  
+  # Core WSLS logic
+  choice <- if (feedback == 1) {
+    prevChoice  # Stay with previous choice if won
+  } else {
+    1 - prevChoice  # Switch to opposite choice if lost
+  }
+  
+  # Apply noise if specified
+  if (noise > 0 && runif(1) < noise) {
+    choice <- sample(c(0,1), 1)
+  }
+  
   return(choice)
 }
 
@@ -165,18 +250,36 @@ df <- tibble(Self, Other, trial = seq(trials), Feedback = as.numeric(Self == Oth
 
 ggplot(df) + theme_classic() +
   geom_line(color = "red", aes(trial, Self)) +
-  geom_line(color = "blue", aes(trial, Other))
+  geom_line(color = "blue", aes(trial, Other)) +
+  labs(
+    title = "WSLS Agent (red) vs Biased Random Opponent (blue)",
+    x = "Trial Number",
+    y = "Choice (0/1)",
+    color = "Agent Type"
+  )
 
 ggplot(df) + theme_classic() +
   geom_line(color = "red", aes(trial, Feedback)) +
-  geom_line(color = "blue", aes(trial, 1 - Feedback))
+  geom_line(color = "blue", aes(trial, 1 - Feedback)) +
+  labs(
+    title = "WSLS Agent (red) vs Biased Random Opponent (blue)",
+    x = "Trial Number",
+    y = "Feedback received (0/1)",
+    color = "Agent Type"
+  )
 
 df$cumulativerateSelf <- cumsum(df$Feedback) / seq_along(df$Feedback)
 df$cumulativerateOther <- cumsum(1 - df$Feedback) / seq_along(df$Feedback)
 
 ggplot(df) + theme_classic() +
   geom_line(color = "red", aes(trial, cumulativerateSelf)) +
-  geom_line(color = "blue", aes(trial, cumulativerateOther))
+  geom_line(color = "blue", aes(trial, cumulativerateOther))  +
+  labs(
+    title = "WSLS Agent (red) vs Biased Random Opponent (blue)",
+    x = "Trial Number",
+    y = "Cumulative probability of choosing 1 (0-1)",
+    color = "Agent Type"
+  )
 
 # Against a Win-Stay-Lose Shift
 Self <- rep(NA, trials)
