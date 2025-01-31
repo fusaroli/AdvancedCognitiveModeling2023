@@ -1,0 +1,99 @@
+---
+title: "test HGF"
+output: html_document
+date: "2024-04-08"
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(cmdstanr)
+```
+
+## R Markdown
+
+
+
+```{r}
+
+set.seed(123)
+parameters = data.frame(omega = -2,
+                        N = 100)
+
+N = parameters$N
+omega = parameters$omega
+
+mu1hat = array(NA,N + 1)
+sa1hat = array(NA,N)
+mu2 = array(NA,N)
+sa2hat = array(NA,N)
+sa2 = array(NA,N)
+pe1 = array(NA,N)
+r = array(NA,N)
+
+
+# contingencies  here just directly simulated
+
+u = c(rbinom(N/2,1,0.8),rbinom(N/2,1,0.2))
+
+#inital values
+mu2[1] = 0
+
+sa2[1] = 4
+
+#trial by trial loop
+for (i in 1:N) {  
+  
+  mu1hat[i] = brms::inv_logit_scaled(mu2[i])
+
+  pe1[i] = u[i] - mu1hat[i];
+
+  mu2[i + 1] = mu2[i] + sa2[i]*pe1[i]
+  
+
+  sa1hat[i + 1] = mu1hat[i] * (1 - mu1hat[i])
+
+  sa2hat[i + 1] = sa2[i] + exp(omega)
+  
+  sa2[i + 1] = 1 / ((1/sa2hat[i + 1]) + sa1hat[i + 1]);
+  
+  
+  r[i] = rbinom(1,1,mu1hat[i])
+
+  
+  
+}
+
+#plot that it kinda makes sense
+data.frame(trials = 1:N, beliefs = mu1hat[1:N], contingency = u[1:N]) %>% 
+  ggplot(aes(x = trials, y = beliefs)) + geom_point() + geom_line(alpha = 0.5) + theme_classic() +
+  geom_point(aes(x = trials, y = contingency), col = "red")
+
+
+#standata
+data_stan = list(N = nrow((data.frame(r) %>% drop_na())),
+                 u = data.frame(u) %>% drop_na() %>% .$u,
+                 resp = data.frame(r) %>% drop_na() %>% .$r)
+
+
+#model
+mod = cmdstanr::cmdstan_model(here::here("HGF-2level.stan"))
+
+#run model
+fit_hgf <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.99,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+library(bayesplot)
+mcmc_trace(fit_hgf$draws(c("omega","E_i","sa2_i")))
+```
+
+
+
+
