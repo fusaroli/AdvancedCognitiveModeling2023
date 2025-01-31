@@ -1,15 +1,43 @@
 
-# Practical exercise 3 - Getting into Stan
+# From simulation to model fitting
 
-## Overview
-The goal of the practical exercise is to build on the simulated data from Practical Exercise 2 to construct our Stan models of the generative processes of the data. Here we know the truth: we simulated the data ourselves, so we can assess how accurate the model is in reconstructing, e.g. the bias of the agents.
+This chapter introduces essential techniques for moving from theoretical models to empirical validation. Building on our implementation of decision-making agents, we now tackle the challenge of determining whether these models accurately describe observed behavior.
+
+## Learning Goals
+
+After completing this chapter, you will be able to:
+
+* Design and implement Bayesian parameter estimation for cognitive models using Stan
+
+* Create and interpret prior and posterior predictive checks to validate model behavior
+
+* Evaluate model quality through systematic parameter recovery studies
+
+## The Challenge of Model Fitting
+
+Understanding human behavior requires more than just implementing plausible models - we must determine whether these models actually capture meaningful empirical patterns. Consider our biased agent model that tends to favor one choice over another. While we can specify different levels of bias in our simulations, real-world application requires determining what bias values best explain observed behavior, and for instance whether a pharmacological manipulation can affect the bias.
+
+Bayesian inference provides a powerful framework for this challenge. It allows us to:
+
+* Express our prior beliefs about reasonable parameter values
+
+* Update these beliefs based on observed data
+
+* Quantify uncertainty in our parameter estimates
+
+* Generate predictions that account for parameter uncertainty
 
 ## Simulating data
 
-Here we build a new simulation of random agents with bias and noise. The code and visualization is really nothing different from  last week's exercise.
+As usual we start with simulated data, where we know the underlying mechanisms and parameter values.
+
+Simulated data are rarely enough (empirical data often offer unexpected challenges), but they are a great starting point to stress test your model: does the model reconstruct the right parameter values? Does it reproduce the overall patterns in the data?
+
+Here we build a new simulation of random agents with bias and noise. The code and visualization is really nothing different from last chapter.
 
 
 ```{r, 03 simulating data}
+
 pacman::p_load(tidyverse,
         here,
         posterior,
@@ -184,6 +212,7 @@ ggplot(draws_df, aes(.iteration, theta, group = .chain, color = .chain)) +
   geom_line() +
   theme_classic()
 
+
 # add a prior for theta (ugly, but we'll do better soon)
 draws_df <- draws_df %>% mutate(
   theta_prior = rbeta(nrow(draws_df), 1, 1)
@@ -306,53 +335,54 @@ Now that we see that the model works in one case, we can run it throughout all p
 
 ```{r 03 biased parameter recovery, eval = FALSE}
 # Now we need to scale it up to all possible rates and noises
-recovery_df <- NULL
+# recovery_df <- NULL
+# 
+# for (noiseLvl in unique(d$noise)) {
+#   
+#   for (rateLvl in unique(d$rate)) {
+#     
+#     dd <- d %>% subset(
+#       noise == noiseLvl  & rate == rateLvl
+#     )
+#     
+#     data <- list(
+#       n = 120,
+#       h = dd$choice
+#     )
+#     
+#     samples <- mod$sample(
+#       data = data,
+#       seed = 123,
+#       chains = 1,
+#       parallel_chains = 1,
+#       threads_per_chain = 1,
+#       iter_warmup = 1000,
+#       iter_sampling = 2000,
+#       refresh = 0,
+#       max_treedepth = 20,
+#       adapt_delta = 0.99,
+#     )
+#     
+#     draws_df <- as_draws_df(samples$draws()) 
+#     temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
+#                    biasTrue = rateLvl, noise = noiseLvl)
+#     
+#     
+#     if (exists("recovery_df")) {recovery_df <- rbind(recovery_df, temp)} else {recovery_df <- temp}
+#     
+#   }
+#   
+# }
+# 
+# write_csv(recovery_df, "simdata/W3_recoverydf_simple.csv")
 
-for (noiseLvl in unique(d$noise)) {
-  
-  for (rateLvl in unique(d$rate)) {
-    
-    dd <- d %>% subset(
-      noise == noiseLvl  & rate == rateLvl
-    )
-    
-    data <- list(
-      n = 120,
-      h = dd$choice
-    )
-    
-    samples <- mod$sample(
-      data = data,
-      seed = 123,
-      chains = 1,
-      parallel_chains = 1,
-      threads_per_chain = 1,
-      iter_warmup = 1000,
-      iter_sampling = 2000,
-      refresh = 0,
-      max_treedepth = 20,
-      adapt_delta = 0.99,
-    )
-    
-    draws_df <- as_draws_df(samples$draws()) 
-    temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
-                   biasTrue = rateLvl, noise = noiseLvl)
-    
-    
-    if (exists("recovery_df")) {recovery_df <- rbind(recovery_df, temp)} else {recovery_df <- temp}
-    
-  }
-  
-}
-
-write_csv(recovery_df, "simdata/W3_recoverydf_simple.csv")
+recovery_df <- read_csv("simdata/W3_recoverydf_simple.csv")
 
 ```
 
 Now we can look at the relation between the "true" bias value we inputted in the simulation and the inferred bias value - the posterior estimates of bias.
 
 ```{r 03 plot parameter recovery}
-recovery_df <- read_csv("simdata/W3_recoverydf_simple.csv")
 
 ggplot(recovery_df, aes(biasTrue, biasEst)) +
   geom_point(alpha = 0.1) +
@@ -375,57 +405,58 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 
 ```{r 03 parallelizing the code, eval = F}
 
-pacman::p_load(future, purrr, furrr)
-plan(multisession, workers = 4)
+# pacman::p_load(future, purrr, furrr)
+# 
+# plan(multisession, workers = 4)
+# 
+# sim_d_and_fit <- function(seed, trials, rateLvl, noiseLvl) {
+#   
+#     for (t in seq(trials)) { # looping through trials (to make it homologous to more reactive models)
+#       randomChoice[t] <- RandomAgentNoise_f(rateLvl, noiseLvl)
+#     }
+#     temp <- tibble(trial = seq(trials), choice = randomChoice, rate, noise)
+#     
+#     data <- list(
+#       n = 120,
+#       h = temp$choice
+#     )
+#     
+#     samples <- mod$sample(
+#       data = data,
+#       seed = 1000,
+#       chains = 1,
+#       parallel_chains = 1,
+#       threads_per_chain = 1,
+#       iter_warmup = 1000,
+#       iter_sampling = 2000,
+#       refresh = 0,
+#       max_treedepth = 20,
+#       adapt_delta = 0.99,
+#     )
+#     
+#     draws_df <- as_draws_df(samples$draws()) 
+#     temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
+#                    biasTrue = rateLvl, noise = noiseLvl)
+#     
+#     return(temp)
+#   
+# }
+# 
+# 
+# temp <- tibble(unique(d[,c("rate", "noise")])) %>% 
+#   mutate(seed = 1000, trials = 120) %>%
+#   rename(rateLvl = rate, noiseLvl = noise)
+# 
+# recovery_df <- future_pmap_dfr(temp, sim_d_and_fit, .options = furrr_options(seed = TRUE))
+# 
+# write_csv(recovery_df, "simdata/W3_recoverydf_parallel.csv")
 
-sim_d_and_fit <- function(seed, trials, rateLvl, noiseLvl) {
-  
-    for (t in seq(trials)) { # looping through trials (to make it homologous to more reactive models)
-      randomChoice[t] <- RandomAgentNoise_f(rateLvl, noiseLvl)
-    }
-    temp <- tibble(trial = seq(trials), choice = randomChoice, rate, noise)
-    
-    data <- list(
-      n = 120,
-      h = temp$choice
-    )
-    
-    samples <- mod$sample(
-      data = data,
-      seed = 1000,
-      chains = 1,
-      parallel_chains = 1,
-      threads_per_chain = 1,
-      iter_warmup = 1000,
-      iter_sampling = 2000,
-      refresh = 0,
-      max_treedepth = 20,
-      adapt_delta = 0.99,
-    )
-    
-    draws_df <- as_draws_df(samples$draws()) 
-    temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
-                   biasTrue = rateLvl, noise = noiseLvl)
-    
-    return(temp)
-  
-}
-
-
-temp <- tibble(unique(d[,c("rate", "noise")])) %>% 
-  mutate(seed = 1000, trials = 120) %>%
-  rename(rateLvl = rate, noiseLvl = noise)
-
-recovery_df <- future_pmap_dfr(temp, sim_d_and_fit, .options = furrr_options(seed = TRUE))
-
-write_csv(recovery_df, "simdata/W3_recoverydf_parallel.csv")
-
+recovery_df <- read_csv("simdata/W3_recoverydf_parallel.csv")
 ```
 
 And now we load the data and visualize it as before.
 
 ```{r 03 visualizing the parallelization}
-recovery_df <- read_csv("simdata/W3_recoverydf_parallel.csv")
 ggplot(recovery_df, aes(biasTrue, biasEst)) +
   geom_point(alpha = 0.1) +
   geom_smooth() +
