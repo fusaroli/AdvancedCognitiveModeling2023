@@ -4,18 +4,18 @@ output: html_document
 date: "2023-02-22"
 ---
 
-```{r}
-knitr::opts_chunk$set(echo = TRUE)
+# Model Quality Assessment
 
+## Introduction
 
-```
-
-# Practical exercise 4 - Model quality checks
+Building computational models is only the first step in understanding cognitive processes. We must rigorously evaluate whether our models actually capture meaningful patterns in behavior and provide reliable insights. This chapter introduces systematic approaches for assessing model quality, focusing on techniques that help us understand both the strengths and limitations of our cognitive models.
 
 This document covers: 
 - generating and plotting priors (against posteriors)
 - generating and plotting predictive checks (prior and posterior ones)
 - prior sensitivity checks
+
+[I SHOULD RESTRUCTURE THE DOCUMENT SO THAT PRIOR PREDICTIVE CHECKS COME BEFORE PRIOR / POSTERIOR UPDATE CHECKS]
 
 ## Generating and plotting additional variables
 
@@ -29,8 +29,6 @@ We can then generate theta according to the prior in generated quantities. While
 However, prior and posterior estimates are not always the most immediate thing to understand. For instance, we might have trouble having a good grasp for how the uncertainty in the estimate will play out on 120 trials, or 6 trials, or however many trials we are planning for our experiment. Luckily, we can ask Stan to run predictions from either priors or posteriors, or both: given the priors how many trials will have "right hand" choice? and given the posterior estimates?
 
 As we use complex models, the relation between prior/posterior estimates and predictions becomes less and less intuitive. Simulating their implications for the outcomes - also called prior/posterior predictive checks - becomes a very useful tool to adjust our priors and their uncertainty so that they reflect what we know of the outcome scale; as well as to assess whether the model (and its posterior estimates) can appropriately describe the data we observe, or there's some bias there. More discussion of this can be found at https://4ccoxau.github.io/PriorsWorkshop/.
-
-
 
 ```{r adding priors, warning = F, message = F}
 pacman::p_load(tidyverse,
@@ -136,8 +134,27 @@ ggplot(draws_df) +
 
 ```
 
+## Prior Predictive Checks
 
-## Assessing prior and posterior predictions
+Prior predictive checks involve simulating data from our model using only the prior distributions, before seeing any actual data. This helps us understand what kinds of patterns our model assumes are possible before we begin fitting to real observations.
+
+These predictions should be assessed for:
+
+* Plausible ranges of behavior
+* Appropriate levels of uncertainty
+* Preservation of known constraints
+* Coverage of theoretically important patterns
+
+## Posterior Predictive Checks
+
+After fitting our models, posterior predictive checks help us determine whether the fitted model can reproduce key patterns in our observed data. We generate new data using parameters sampled from the posterior distribution and compare these simulations to our actual observations.
+For decision-making models, important patterns to check include:
+
+* Overall choice proportions
+* Sequential dependencies in choices
+* Learning curves
+* Response to feedback
+* Individual differences in strategies
 
 ```{r, predictive checks, warning = F, message = F}
 ggplot(draws_df) +
@@ -262,10 +279,9 @@ sim_d_and_fit <- function(prior_mean, prior_sd) {
 
 
 
-
-recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
-
-write_csv(recovery_df, "simdata/W4_priorSensitivityRecovery.csv")
+# Commenting this out to ensure faster compiling time for the book. Uncomment to run the code
+# recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
+# write_csv(recovery_df, "simdata/W4_priorSensitivityRecovery.csv")
 
 ```
 
@@ -602,10 +618,9 @@ sim_d_and_fit <- function(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior
 
 
 
-
-recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
-
-write_csv(recovery_df, "simdata/W4_MemoryPriorSensitivity.csv")
+# Commenting this out to ensure the book compiles faster. Uncomment to run the code.
+#recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
+#write_csv(recovery_df, "simdata/W4_MemoryPriorSensitivity.csv")
 
 ```
 
@@ -621,4 +636,7 @@ ggplot(recovery_df, aes(prior_sd_beta, beta_posterior)) +
   theme_classic()
 ```
 
+## Conclusion
 
+Rigorous model assessment is essential for developing reliable insights into cognitive processes. The techniques covered in this chapter provide a systematic framework for validating our models and understanding their limitations. As we move forward to more complex models incorporating individual differences and learning mechanisms, these quality checks become increasingly important for ensuring our conclusions are well-supported by the evidence.
+In the next chapter, we'll build on these foundations as we explore multilevel modeling approaches that can capture individual differences while maintaining population-level insights.
