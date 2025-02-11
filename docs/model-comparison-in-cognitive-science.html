@@ -4,18 +4,18 @@
 
   <meta charset="utf-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>Chapter 8 Model Comparison in Cognitive Science | 06-ModelComparison</title>
+  <title>Chapter 8 Model Comparison in Cognitive Science | 07-MixtureModels</title>
   <meta name="description" content="My notes for the advanced cognitive modeling course - 2025" />
   <meta name="generator" content="bookdown 0.42 and GitBook 2.6.7" />
 
-  <meta property="og:title" content="Chapter 8 Model Comparison in Cognitive Science | 06-ModelComparison" />
+  <meta property="og:title" content="Chapter 8 Model Comparison in Cognitive Science | 07-MixtureModels" />
   <meta property="og:type" content="book" />
   
   <meta property="og:description" content="My notes for the advanced cognitive modeling course - 2025" />
   <meta name="github-repo" content="openscapes/series" />
 
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="Chapter 8 Model Comparison in Cognitive Science | 06-ModelComparison" />
+  <meta name="twitter:title" content="Chapter 8 Model Comparison in Cognitive Science | 07-MixtureModels" />
   
   <meta name="twitter:description" content="My notes for the advanced cognitive modeling course - 2025" />
   
@@ -23,7 +23,7 @@
 <meta name="author" content="Riccardo Fusaroli" />
 
 
-<meta name="date" content="2023-03-10" />
+<meta name="date" content="2023-03-13" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -309,6 +309,14 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 </ul></li>
 <li class="chapter" data-level="8.13" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#calculating-elpd-and-comparing"><i class="fa fa-check"></i><b>8.13</b> Calculating elpd and comparing</a></li>
 <li class="chapter" data-level="8.14" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#limitations-of-model-comparison-techniques"><i class="fa fa-check"></i><b>8.14</b> Limitations of model comparison techniques</a></li>
+<li class="chapter" data-level="8.15" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#mixture-models"><i class="fa fa-check"></i><b>8.15</b> Mixture models</a>
+<ul>
+<li class="chapter" data-level="8.15.1" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#load-the-dataset"><i class="fa fa-check"></i><b>8.15.1</b> Load the dataset</a></li>
+</ul></li>
+<li class="chapter" data-level="8.16" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#stan-model-mixing-biased-and-noise"><i class="fa fa-check"></i><b>8.16</b> Stan model mixing biased and noise</a></li>
+<li class="chapter" data-level="8.17" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#fitting-and-assessing-the-model"><i class="fa fa-check"></i><b>8.17</b> Fitting and assessing the model</a></li>
+<li class="chapter" data-level="8.18" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#basic-evaluation"><i class="fa fa-check"></i><b>8.18</b> Basic evaluation</a></li>
+<li class="chapter" data-level="8.19" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#multilevel-mixture-model"><i class="fa fa-check"></i><b>8.19</b> Multilevel mixture model</a></li>
 </ul></li>
 <li class="divider"></li>
 <li><a href="https://bookdown.org" target="blank">Published with bookdown</a></li>
@@ -322,7 +330,7 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
       <div class="body-inner">
         <div class="book-header" role="navigation">
           <h1>
-            <i class="fa fa-circle-o-notch fa-spin"></i><a href="./">06-ModelComparison</a>
+            <i class="fa fa-circle-o-notch fa-spin"></i><a href="./">07-MixtureModels</a>
           </h1>
         </div>
 
@@ -1188,6 +1196,360 @@ This limitation of internal test sets is one reason why cognitive scientists oft
 <ol style="list-style-type: decimal">
 <li>it might be overfitting to the training population, that is, to the</li>
 </ol>
+
+</div>
+<div id="mixture-models" class="section level2 hasAnchor" number="8.15">
+<h2><span class="header-section-number">8.15</span> Mixture models<a href="model-comparison-in-cognitive-science.html#mixture-models" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>Mixture models are another powerful tool to compare the fit of different models to the data or to different portions of the data. This feature makes mixture models also a great tool to explore the possibility of multiple strategies involved in the mechanisms generating the data.</p>
+<p>Indeed, human behaviors rarely follow a single, simple strategy. People may switch between different approaches, combine multiple strategies, or show inconsistent behavior due to factors like attention and fatigue. This creates a significant challenge for cognitive modeling - how can we account for this complexity while maintaining models that are tractable and interpretable?</p>
+<p>Mixture models offer a powerful solution to this challenge. Rather than assuming behavior follows a single process, mixture models allow us to combine multiple cognitive strategies within a unified framework. For example, a participant in a decision-making task might sometimes respond based on careful deliberation and other times rely on quick heuristics or even random guessing; or different participants might be using different strategies. Mixture models let us estimate not only the parameters of these different strategies but also their relative frequencies.
+In this chapter, we’ll explore how to implement mixture models using Stan, beginning with a simple case that combines a biased choice strategy with random responses. We’ll then extend this to more sophisticated models that can capture multiple cognitive strategies. Through this process, we’ll learn:</p>
+<ul>
+<li>How to formally specify mixture models in Stan</li>
+<li>Techniques for estimating mixture proportions and component parameters</li>
+<li>Methods for validating mixture models through posterior predictive checks</li>
+<li>Approaches for comparing different mixture specifications</li>
+</ul>
+<p>Understanding mixture models is crucial for cognitive modeling as they bridge the gap between simplified theoretical models and the messy reality of human behavior. Let’s begin by examining how we can combine two simple decision strategies in a mixture model framework.</p>
+<div id="load-the-dataset" class="section level3 hasAnchor" number="8.15.1">
+<h3><span class="header-section-number">8.15.1</span> Load the dataset<a href="model-comparison-in-cognitive-science.html#load-the-dataset" class="anchor-section" aria-label="Anchor link to header"></a></h3>
+<p>We load the data set from chapter NN, where we loop through possible rates and noise levels, and pick one agent to build up the model progressively.</p>
+<div class="sourceCode" id="cb182"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb182-1"><a href="model-comparison-in-cognitive-science.html#cb182-1" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span>
+<span id="cb182-2"><a href="model-comparison-in-cognitive-science.html#cb182-2" tabindex="-1"></a></span>
+<span id="cb182-3"><a href="model-comparison-in-cognitive-science.html#cb182-3" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(rate <span class="sc">==</span> <span class="fl">0.8</span> <span class="sc">&amp;</span> noise <span class="sc">==</span> <span class="fl">0.1</span>)</span>
+<span id="cb182-4"><a href="model-comparison-in-cognitive-science.html#cb182-4" tabindex="-1"></a></span>
+<span id="cb182-5"><a href="model-comparison-in-cognitive-science.html#cb182-5" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb182-6"><a href="model-comparison-in-cognitive-science.html#cb182-6" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
+<span id="cb182-7"><a href="model-comparison-in-cognitive-science.html#cb182-7" tabindex="-1"></a>  <span class="at">h =</span> dd<span class="sc">$</span>choice</span>
+<span id="cb182-8"><a href="model-comparison-in-cognitive-science.html#cb182-8" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+</div>
+<div id="stan-model-mixing-biased-and-noise" class="section level2 hasAnchor" number="8.16">
+<h2><span class="header-section-number">8.16</span> Stan model mixing biased and noise<a href="model-comparison-in-cognitive-science.html#stan-model-mixing-biased-and-noise" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>We then build a Stan model with the noise parameter</p>
+<div class="sourceCode" id="cb183"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb183-1"><a href="model-comparison-in-cognitive-science.html#cb183-1" tabindex="-1"></a>stan_mixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb183-2"><a href="model-comparison-in-cognitive-science.html#cb183-2" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
+<span id="cb183-3"><a href="model-comparison-in-cognitive-science.html#cb183-3" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb183-4"><a href="model-comparison-in-cognitive-science.html#cb183-4" tabindex="-1"></a></span>
+<span id="cb183-5"><a href="model-comparison-in-cognitive-science.html#cb183-5" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
+<span id="cb183-6"><a href="model-comparison-in-cognitive-science.html#cb183-6" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb183-7"><a href="model-comparison-in-cognitive-science.html#cb183-7" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
+<span id="cb183-8"><a href="model-comparison-in-cognitive-science.html#cb183-8" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
+<span id="cb183-9"><a href="model-comparison-in-cognitive-science.html#cb183-9" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb183-10"><a href="model-comparison-in-cognitive-science.html#cb183-10" tabindex="-1"></a></span>
+<span id="cb183-11"><a href="model-comparison-in-cognitive-science.html#cb183-11" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb183-12"><a href="model-comparison-in-cognitive-science.html#cb183-12" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb183-13"><a href="model-comparison-in-cognitive-science.html#cb183-13" tabindex="-1"></a><span class="st">  real bias;</span></span>
+<span id="cb183-14"><a href="model-comparison-in-cognitive-science.html#cb183-14" tabindex="-1"></a><span class="st">  real noise;</span></span>
+<span id="cb183-15"><a href="model-comparison-in-cognitive-science.html#cb183-15" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb183-16"><a href="model-comparison-in-cognitive-science.html#cb183-16" tabindex="-1"></a></span>
+<span id="cb183-17"><a href="model-comparison-in-cognitive-science.html#cb183-17" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb183-18"><a href="model-comparison-in-cognitive-science.html#cb183-18" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb183-19"><a href="model-comparison-in-cognitive-science.html#cb183-19" tabindex="-1"></a><span class="st">  // The prior for theta is a uniform distribution between 0 and 1</span></span>
+<span id="cb183-20"><a href="model-comparison-in-cognitive-science.html#cb183-20" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, 1);</span></span>
+<span id="cb183-21"><a href="model-comparison-in-cognitive-science.html#cb183-21" tabindex="-1"></a><span class="st">  target += normal_lpdf(noise | 0, 1);</span></span>
+<span id="cb183-22"><a href="model-comparison-in-cognitive-science.html#cb183-22" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb183-23"><a href="model-comparison-in-cognitive-science.html#cb183-23" tabindex="-1"></a><span class="st">  // The model consists of a binomial distributions with a rate theta</span></span>
+<span id="cb183-24"><a href="model-comparison-in-cognitive-science.html#cb183-24" tabindex="-1"></a><span class="st">  target += log_sum_exp(log(inv_logit(noise)) +</span></span>
+<span id="cb183-25"><a href="model-comparison-in-cognitive-science.html#cb183-25" tabindex="-1"></a><span class="st">            bernoulli_logit_lpmf(h | 0),</span></span>
+<span id="cb183-26"><a href="model-comparison-in-cognitive-science.html#cb183-26" tabindex="-1"></a><span class="st">            log1m(inv_logit(noise)) +  bernoulli_logit_lpmf(h | bias));</span></span>
+<span id="cb183-27"><a href="model-comparison-in-cognitive-science.html#cb183-27" tabindex="-1"></a><span class="st">            </span></span>
+<span id="cb183-28"><a href="model-comparison-in-cognitive-science.html#cb183-28" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb183-29"><a href="model-comparison-in-cognitive-science.html#cb183-29" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb183-30"><a href="model-comparison-in-cognitive-science.html#cb183-30" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_p;</span></span>
+<span id="cb183-31"><a href="model-comparison-in-cognitive-science.html#cb183-31" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; bias_p;</span></span>
+<span id="cb183-32"><a href="model-comparison-in-cognitive-science.html#cb183-32" tabindex="-1"></a><span class="st">  noise_p = inv_logit(noise);</span></span>
+<span id="cb183-33"><a href="model-comparison-in-cognitive-science.html#cb183-33" tabindex="-1"></a><span class="st">  bias_p = inv_logit(bias);</span></span>
+<span id="cb183-34"><a href="model-comparison-in-cognitive-science.html#cb183-34" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb183-35"><a href="model-comparison-in-cognitive-science.html#cb183-35" tabindex="-1"></a></span>
+<span id="cb183-36"><a href="model-comparison-in-cognitive-science.html#cb183-36" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb183-37"><a href="model-comparison-in-cognitive-science.html#cb183-37" tabindex="-1"></a></span>
+<span id="cb183-38"><a href="model-comparison-in-cognitive-science.html#cb183-38" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb183-39"><a href="model-comparison-in-cognitive-science.html#cb183-39" tabindex="-1"></a>  stan_mixture_model,</span>
+<span id="cb183-40"><a href="model-comparison-in-cognitive-science.html#cb183-40" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb183-41"><a href="model-comparison-in-cognitive-science.html#cb183-41" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureSingle.stan&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W6_MixtureSingle.stan&quot;</code></pre>
+<div class="sourceCode" id="cb185"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb185-1"><a href="model-comparison-in-cognitive-science.html#cb185-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureSingle.stan&quot;</span>)</span>
+<span id="cb185-2"><a href="model-comparison-in-cognitive-science.html#cb185-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb185-3"><a href="model-comparison-in-cognitive-science.html#cb185-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span></code></pre></div>
+</div>
+<div id="fitting-and-assessing-the-model" class="section level2 hasAnchor" number="8.17">
+<h2><span class="header-section-number">8.17</span> Fitting and assessing the model<a href="model-comparison-in-cognitive-science.html#fitting-and-assessing-the-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<div class="sourceCode" id="cb186"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb186-1"><a href="model-comparison-in-cognitive-science.html#cb186-1" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod_mixture<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb186-2"><a href="model-comparison-in-cognitive-science.html#cb186-2" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb186-3"><a href="model-comparison-in-cognitive-science.html#cb186-3" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb186-4"><a href="model-comparison-in-cognitive-science.html#cb186-4" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>,</span>
+<span id="cb186-5"><a href="model-comparison-in-cognitive-science.html#cb186-5" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb186-6"><a href="model-comparison-in-cognitive-science.html#cb186-6" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb186-7"><a href="model-comparison-in-cognitive-science.html#cb186-7" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">2000</span>,</span>
+<span id="cb186-8"><a href="model-comparison-in-cognitive-science.html#cb186-8" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
+<span id="cb186-9"><a href="model-comparison-in-cognitive-science.html#cb186-9" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">500</span>,</span>
+<span id="cb186-10"><a href="model-comparison-in-cognitive-science.html#cb186-10" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb186-11"><a href="model-comparison-in-cognitive-science.html#cb186-11" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb186-12"><a href="model-comparison-in-cognitive-science.html#cb186-12" tabindex="-1"></a>)</span></code></pre></div>
+<pre><code>## Running MCMC with 2 parallel chains, with 2 thread(s) per chain...
+## 
+## Chain 1 Iteration:    1 / 4000 [  0%]  (Warmup) 
+## Chain 1 Iteration:  500 / 4000 [ 12%]  (Warmup) 
+## Chain 1 Iteration: 1000 / 4000 [ 25%]  (Warmup) 
+## Chain 1 Iteration: 1500 / 4000 [ 37%]  (Warmup) 
+## Chain 1 Iteration: 2000 / 4000 [ 50%]  (Warmup) 
+## Chain 1 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
+## Chain 1 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
+## Chain 1 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
+## Chain 1 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
+## Chain 2 Iteration:    1 / 4000 [  0%]  (Warmup) 
+## Chain 2 Iteration:  500 / 4000 [ 12%]  (Warmup) 
+## Chain 2 Iteration: 1000 / 4000 [ 25%]  (Warmup) 
+## Chain 2 Iteration: 1500 / 4000 [ 37%]  (Warmup) 
+## Chain 2 Iteration: 2000 / 4000 [ 50%]  (Warmup) 
+## Chain 2 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
+## Chain 2 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
+## Chain 1 Iteration: 4000 / 4000 [100%]  (Sampling) 
+## Chain 2 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
+## Chain 2 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
+## Chain 2 Iteration: 4000 / 4000 [100%]  (Sampling) 
+## Chain 1 finished in 0.2 seconds.
+## Chain 2 finished in 0.2 seconds.
+## 
+## Both chains finished successfully.
+## Mean chain execution time: 0.2 seconds.
+## Total execution time: 0.4 seconds.</code></pre>
+<div class="sourceCode" id="cb188"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb188-1"><a href="model-comparison-in-cognitive-science.html#cb188-1" tabindex="-1"></a><span class="fu">save</span>(samples, data, </span>
+<span id="cb188-2"><a href="model-comparison-in-cognitive-science.html#cb188-2" tabindex="-1"></a>          <span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RData&quot;</span>) </span>
+<span id="cb188-3"><a href="model-comparison-in-cognitive-science.html#cb188-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_object</span>(<span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RDS&quot;</span>)</span>
+<span id="cb188-4"><a href="model-comparison-in-cognitive-science.html#cb188-4" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_output_files</span>(<span class="at">dir =</span> <span class="st">&quot;simmodels&quot;</span>, <span class="at">basename =</span> <span class="st">&quot;W7_singlemixture&quot;</span>)</span></code></pre></div>
+<p>[MISSING: EVALUATION]</p>
+</div>
+<div id="basic-evaluation" class="section level2 hasAnchor" number="8.18">
+<h2><span class="header-section-number">8.18</span> Basic evaluation<a href="model-comparison-in-cognitive-science.html#basic-evaluation" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<div class="sourceCode" id="cb189"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb189-1"><a href="model-comparison-in-cognitive-science.html#cb189-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
+<pre><code>## # A tibble: 5 × 10
+##   variable    mean  median     sd    mad      q5     q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;      &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__     -69.3   -69.0   0.991  0.713  -71.3   -68.4    1.00    1319.    1632.
+## 2 bias       1.14    1.14  0.210  0.210    0.804   1.48   1.00    1931.    1853.
+## 3 noise     -0.425  -0.420 0.901  0.908   -1.90    1.04   1.00    2241.    2100.
+## 4 noise_p    0.410   0.397 0.189  0.211    0.130   0.738  1.00    2240.    2100.
+## 5 bias_p     0.756   0.757 0.0383 0.0384   0.691   0.815  1.00    1931.    1853.</code></pre>
+</div>
+<div id="multilevel-mixture-model" class="section level2 hasAnchor" number="8.19">
+<h2><span class="header-section-number">8.19</span> Multilevel mixture model<a href="model-comparison-in-cognitive-science.html#multilevel-mixture-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<div class="sourceCode" id="cb191"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb191-1"><a href="model-comparison-in-cognitive-science.html#cb191-1" tabindex="-1"></a><span class="do">### Multilevel mixture</span></span>
+<span id="cb191-2"><a href="model-comparison-in-cognitive-science.html#cb191-2" tabindex="-1"></a>stan_multilevelMixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb191-3"><a href="model-comparison-in-cognitive-science.html#cb191-3" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb191-4"><a href="model-comparison-in-cognitive-science.html#cb191-4" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
+<span id="cb191-5"><a href="model-comparison-in-cognitive-science.html#cb191-5" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb191-6"><a href="model-comparison-in-cognitive-science.html#cb191-6" tabindex="-1"></a><span class="st">functions{</span></span>
+<span id="cb191-7"><a href="model-comparison-in-cognitive-science.html#cb191-7" tabindex="-1"></a><span class="st">  real normal_lb_rng(real mu, real sigma, real lb) {</span></span>
+<span id="cb191-8"><a href="model-comparison-in-cognitive-science.html#cb191-8" tabindex="-1"></a><span class="st">    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds</span></span>
+<span id="cb191-9"><a href="model-comparison-in-cognitive-science.html#cb191-9" tabindex="-1"></a><span class="st">    real u = uniform_rng(p, 1);</span></span>
+<span id="cb191-10"><a href="model-comparison-in-cognitive-science.html#cb191-10" tabindex="-1"></a><span class="st">    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value</span></span>
+<span id="cb191-11"><a href="model-comparison-in-cognitive-science.html#cb191-11" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb191-12"><a href="model-comparison-in-cognitive-science.html#cb191-12" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb191-13"><a href="model-comparison-in-cognitive-science.html#cb191-13" tabindex="-1"></a></span>
+<span id="cb191-14"><a href="model-comparison-in-cognitive-science.html#cb191-14" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
+<span id="cb191-15"><a href="model-comparison-in-cognitive-science.html#cb191-15" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb191-16"><a href="model-comparison-in-cognitive-science.html#cb191-16" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; trials;</span></span>
+<span id="cb191-17"><a href="model-comparison-in-cognitive-science.html#cb191-17" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; agents;</span></span>
+<span id="cb191-18"><a href="model-comparison-in-cognitive-science.html#cb191-18" tabindex="-1"></a><span class="st"> array[trials, agents] int h;</span></span>
+<span id="cb191-19"><a href="model-comparison-in-cognitive-science.html#cb191-19" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb191-20"><a href="model-comparison-in-cognitive-science.html#cb191-20" tabindex="-1"></a></span>
+<span id="cb191-21"><a href="model-comparison-in-cognitive-science.html#cb191-21" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb191-22"><a href="model-comparison-in-cognitive-science.html#cb191-22" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb191-23"><a href="model-comparison-in-cognitive-science.html#cb191-23" tabindex="-1"></a><span class="st">  real thetaM;</span></span>
+<span id="cb191-24"><a href="model-comparison-in-cognitive-science.html#cb191-24" tabindex="-1"></a><span class="st">  real noiseM; // p of noise</span></span>
+<span id="cb191-25"><a href="model-comparison-in-cognitive-science.html#cb191-25" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb191-26"><a href="model-comparison-in-cognitive-science.html#cb191-26" tabindex="-1"></a><span class="st">  vector&lt;lower = 0&gt;[2] tau;</span></span>
+<span id="cb191-27"><a href="model-comparison-in-cognitive-science.html#cb191-27" tabindex="-1"></a><span class="st">  matrix[2, agents] z_IDs;</span></span>
+<span id="cb191-28"><a href="model-comparison-in-cognitive-science.html#cb191-28" tabindex="-1"></a><span class="st">  cholesky_factor_corr[2] L_u;</span></span>
+<span id="cb191-29"><a href="model-comparison-in-cognitive-science.html#cb191-29" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb191-30"><a href="model-comparison-in-cognitive-science.html#cb191-30" tabindex="-1"></a></span>
+<span id="cb191-31"><a href="model-comparison-in-cognitive-science.html#cb191-31" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
+<span id="cb191-32"><a href="model-comparison-in-cognitive-science.html#cb191-32" tabindex="-1"></a><span class="st">  matrix[agents,2] IDs;</span></span>
+<span id="cb191-33"><a href="model-comparison-in-cognitive-science.html#cb191-33" tabindex="-1"></a><span class="st">  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)&#39;;</span></span>
+<span id="cb191-34"><a href="model-comparison-in-cognitive-science.html#cb191-34" tabindex="-1"></a><span class="st"> }</span></span>
+<span id="cb191-35"><a href="model-comparison-in-cognitive-science.html#cb191-35" tabindex="-1"></a></span>
+<span id="cb191-36"><a href="model-comparison-in-cognitive-science.html#cb191-36" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb191-37"><a href="model-comparison-in-cognitive-science.html#cb191-37" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb191-38"><a href="model-comparison-in-cognitive-science.html#cb191-38" tabindex="-1"></a><span class="st">  target += normal_lpdf(thetaM | 0, 1);</span></span>
+<span id="cb191-39"><a href="model-comparison-in-cognitive-science.html#cb191-39" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[1] | 0, .3)  -</span></span>
+<span id="cb191-40"><a href="model-comparison-in-cognitive-science.html#cb191-40" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
+<span id="cb191-41"><a href="model-comparison-in-cognitive-science.html#cb191-41" tabindex="-1"></a></span>
+<span id="cb191-42"><a href="model-comparison-in-cognitive-science.html#cb191-42" tabindex="-1"></a><span class="st">  target += normal_lpdf(noiseM | -1, .5);</span></span>
+<span id="cb191-43"><a href="model-comparison-in-cognitive-science.html#cb191-43" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[2] | 0, .3)  -</span></span>
+<span id="cb191-44"><a href="model-comparison-in-cognitive-science.html#cb191-44" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
+<span id="cb191-45"><a href="model-comparison-in-cognitive-science.html#cb191-45" tabindex="-1"></a><span class="st">    </span></span>
+<span id="cb191-46"><a href="model-comparison-in-cognitive-science.html#cb191-46" tabindex="-1"></a><span class="st">  target += lkj_corr_cholesky_lpdf(L_u | 2);</span></span>
+<span id="cb191-47"><a href="model-comparison-in-cognitive-science.html#cb191-47" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb191-48"><a href="model-comparison-in-cognitive-science.html#cb191-48" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(to_vector(z_IDs));</span></span>
+<span id="cb191-49"><a href="model-comparison-in-cognitive-science.html#cb191-49" tabindex="-1"></a></span>
+<span id="cb191-50"><a href="model-comparison-in-cognitive-science.html#cb191-50" tabindex="-1"></a><span class="st">  for (i in 1:agents)</span></span>
+<span id="cb191-51"><a href="model-comparison-in-cognitive-science.html#cb191-51" tabindex="-1"></a><span class="st">    target += log_sum_exp(</span></span>
+<span id="cb191-52"><a href="model-comparison-in-cognitive-science.html#cb191-52" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
+<span id="cb191-53"><a href="model-comparison-in-cognitive-science.html#cb191-53" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | 0), // times post likelihood of the noise model</span></span>
+<span id="cb191-54"><a href="model-comparison-in-cognitive-science.html#cb191-54" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
+<span id="cb191-55"><a href="model-comparison-in-cognitive-science.html#cb191-55" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
+<span id="cb191-56"><a href="model-comparison-in-cognitive-science.html#cb191-56" tabindex="-1"></a><span class="st">                    </span></span>
+<span id="cb191-57"><a href="model-comparison-in-cognitive-science.html#cb191-57" tabindex="-1"></a></span>
+<span id="cb191-58"><a href="model-comparison-in-cognitive-science.html#cb191-58" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb191-59"><a href="model-comparison-in-cognitive-science.html#cb191-59" tabindex="-1"></a></span>
+<span id="cb191-60"><a href="model-comparison-in-cognitive-science.html#cb191-60" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb191-61"><a href="model-comparison-in-cognitive-science.html#cb191-61" tabindex="-1"></a><span class="st">  real thetaM_prior;</span></span>
+<span id="cb191-62"><a href="model-comparison-in-cognitive-science.html#cb191-62" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; thetaSD_prior;</span></span>
+<span id="cb191-63"><a href="model-comparison-in-cognitive-science.html#cb191-63" tabindex="-1"></a><span class="st">  real noiseM_prior;</span></span>
+<span id="cb191-64"><a href="model-comparison-in-cognitive-science.html#cb191-64" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; noiseSD_prior;</span></span>
+<span id="cb191-65"><a href="model-comparison-in-cognitive-science.html#cb191-65" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;</span></span>
+<span id="cb191-66"><a href="model-comparison-in-cognitive-science.html#cb191-66" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_prior;</span></span>
+<span id="cb191-67"><a href="model-comparison-in-cognitive-science.html#cb191-67" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior;</span></span>
+<span id="cb191-68"><a href="model-comparison-in-cognitive-science.html#cb191-68" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_posterior;</span></span>
+<span id="cb191-69"><a href="model-comparison-in-cognitive-science.html#cb191-69" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb191-70"><a href="model-comparison-in-cognitive-science.html#cb191-70" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_noise;</span></span>
+<span id="cb191-71"><a href="model-comparison-in-cognitive-science.html#cb191-71" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_noise;</span></span>
+<span id="cb191-72"><a href="model-comparison-in-cognitive-science.html#cb191-72" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_preds;</span></span>
+<span id="cb191-73"><a href="model-comparison-in-cognitive-science.html#cb191-73" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_preds;</span></span>
+<span id="cb191-74"><a href="model-comparison-in-cognitive-science.html#cb191-74" tabindex="-1"></a></span>
+<span id="cb191-75"><a href="model-comparison-in-cognitive-science.html#cb191-75" tabindex="-1"></a><span class="st">  array[trials, agents] real log_lik;</span></span>
+<span id="cb191-76"><a href="model-comparison-in-cognitive-science.html#cb191-76" tabindex="-1"></a></span>
+<span id="cb191-77"><a href="model-comparison-in-cognitive-science.html#cb191-77" tabindex="-1"></a><span class="st">  thetaM_prior = normal_rng(0,1);</span></span>
+<span id="cb191-78"><a href="model-comparison-in-cognitive-science.html#cb191-78" tabindex="-1"></a><span class="st">  thetaSD_prior = normal_lb_rng(0,0.3,0);</span></span>
+<span id="cb191-79"><a href="model-comparison-in-cognitive-science.html#cb191-79" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));</span></span>
+<span id="cb191-80"><a href="model-comparison-in-cognitive-science.html#cb191-80" tabindex="-1"></a><span class="st">  noiseM_prior = normal_rng(-1,.5);</span></span>
+<span id="cb191-81"><a href="model-comparison-in-cognitive-science.html#cb191-81" tabindex="-1"></a><span class="st">  noiseSD_prior = normal_lb_rng(0,0.3,0);</span></span>
+<span id="cb191-82"><a href="model-comparison-in-cognitive-science.html#cb191-82" tabindex="-1"></a><span class="st">  noise_prior = inv_logit(normal_rng(noiseM_prior, noiseSD_prior));</span></span>
+<span id="cb191-83"><a href="model-comparison-in-cognitive-science.html#cb191-83" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb191-84"><a href="model-comparison-in-cognitive-science.html#cb191-84" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(normal_rng(thetaM, tau[1]));</span></span>
+<span id="cb191-85"><a href="model-comparison-in-cognitive-science.html#cb191-85" tabindex="-1"></a><span class="st">  noise_posterior = inv_logit(normal_rng(noiseM, tau[2]));</span></span>
+<span id="cb191-86"><a href="model-comparison-in-cognitive-science.html#cb191-86" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb191-87"><a href="model-comparison-in-cognitive-science.html#cb191-87" tabindex="-1"></a><span class="st">   </span></span>
+<span id="cb191-88"><a href="model-comparison-in-cognitive-science.html#cb191-88" tabindex="-1"></a><span class="st">   for (i in 1:agents){</span></span>
+<span id="cb191-89"><a href="model-comparison-in-cognitive-science.html#cb191-89" tabindex="-1"></a><span class="st">     </span></span>
+<span id="cb191-90"><a href="model-comparison-in-cognitive-science.html#cb191-90" tabindex="-1"></a><span class="st">    for (t in 1:trials){</span></span>
+<span id="cb191-91"><a href="model-comparison-in-cognitive-science.html#cb191-91" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb191-92"><a href="model-comparison-in-cognitive-science.html#cb191-92" tabindex="-1"></a><span class="st">      prior_noise[t,i] = bernoulli_rng(noise_prior);</span></span>
+<span id="cb191-93"><a href="model-comparison-in-cognitive-science.html#cb191-93" tabindex="-1"></a><span class="st">      posterior_noise[t,i] = bernoulli_rng(inv_logit(noiseM + IDs[i,2]));</span></span>
+<span id="cb191-94"><a href="model-comparison-in-cognitive-science.html#cb191-94" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb191-95"><a href="model-comparison-in-cognitive-science.html#cb191-95" tabindex="-1"></a><span class="st">      if(prior_noise[t,i]==1){</span></span>
+<span id="cb191-96"><a href="model-comparison-in-cognitive-science.html#cb191-96" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(theta_prior);</span></span>
+<span id="cb191-97"><a href="model-comparison-in-cognitive-science.html#cb191-97" tabindex="-1"></a><span class="st">      } else{</span></span>
+<span id="cb191-98"><a href="model-comparison-in-cognitive-science.html#cb191-98" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(0.5);</span></span>
+<span id="cb191-99"><a href="model-comparison-in-cognitive-science.html#cb191-99" tabindex="-1"></a><span class="st">      }</span></span>
+<span id="cb191-100"><a href="model-comparison-in-cognitive-science.html#cb191-100" tabindex="-1"></a><span class="st">      if(posterior_noise[t,i]==1){</span></span>
+<span id="cb191-101"><a href="model-comparison-in-cognitive-science.html#cb191-101" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(inv_logit(thetaM + IDs[i,1]));</span></span>
+<span id="cb191-102"><a href="model-comparison-in-cognitive-science.html#cb191-102" tabindex="-1"></a><span class="st">      } else{</span></span>
+<span id="cb191-103"><a href="model-comparison-in-cognitive-science.html#cb191-103" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(0.5);</span></span>
+<span id="cb191-104"><a href="model-comparison-in-cognitive-science.html#cb191-104" tabindex="-1"></a><span class="st">      }</span></span>
+<span id="cb191-105"><a href="model-comparison-in-cognitive-science.html#cb191-105" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb191-106"><a href="model-comparison-in-cognitive-science.html#cb191-106" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb191-107"><a href="model-comparison-in-cognitive-science.html#cb191-107" tabindex="-1"></a><span class="st">      log_lik[t,i] = log_sum_exp(</span></span>
+<span id="cb191-108"><a href="model-comparison-in-cognitive-science.html#cb191-108" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
+<span id="cb191-109"><a href="model-comparison-in-cognitive-science.html#cb191-109" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | 0), // times post likelihood of the noise model</span></span>
+<span id="cb191-110"><a href="model-comparison-in-cognitive-science.html#cb191-110" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
+<span id="cb191-111"><a href="model-comparison-in-cognitive-science.html#cb191-111" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
+<span id="cb191-112"><a href="model-comparison-in-cognitive-science.html#cb191-112" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb191-113"><a href="model-comparison-in-cognitive-science.html#cb191-113" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb191-114"><a href="model-comparison-in-cognitive-science.html#cb191-114" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb191-115"><a href="model-comparison-in-cognitive-science.html#cb191-115" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb191-116"><a href="model-comparison-in-cognitive-science.html#cb191-116" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb191-117"><a href="model-comparison-in-cognitive-science.html#cb191-117" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb191-118"><a href="model-comparison-in-cognitive-science.html#cb191-118" tabindex="-1"></a></span>
+<span id="cb191-119"><a href="model-comparison-in-cognitive-science.html#cb191-119" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb191-120"><a href="model-comparison-in-cognitive-science.html#cb191-120" tabindex="-1"></a>  stan_multilevelMixture_model,</span>
+<span id="cb191-121"><a href="model-comparison-in-cognitive-science.html#cb191-121" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb191-122"><a href="model-comparison-in-cognitive-science.html#cb191-122" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureMultilevel.stan&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W6_MixtureMultilevel.stan&quot;</code></pre>
+<div class="sourceCode" id="cb193"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb193-1"><a href="model-comparison-in-cognitive-science.html#cb193-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureMultilevel.stan&quot;</span>)</span>
+<span id="cb193-2"><a href="model-comparison-in-cognitive-science.html#cb193-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb193-3"><a href="model-comparison-in-cognitive-science.html#cb193-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb193-4"><a href="model-comparison-in-cognitive-science.html#cb193-4" tabindex="-1"></a></span>
+<span id="cb193-5"><a href="model-comparison-in-cognitive-science.html#cb193-5" tabindex="-1"></a></span>
+<span id="cb193-6"><a href="model-comparison-in-cognitive-science.html#cb193-6" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod_mixture<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb193-7"><a href="model-comparison-in-cognitive-science.html#cb193-7" tabindex="-1"></a>  <span class="at">data =</span> data_biased,</span>
+<span id="cb193-8"><a href="model-comparison-in-cognitive-science.html#cb193-8" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb193-9"><a href="model-comparison-in-cognitive-science.html#cb193-9" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>,</span>
+<span id="cb193-10"><a href="model-comparison-in-cognitive-science.html#cb193-10" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb193-11"><a href="model-comparison-in-cognitive-science.html#cb193-11" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb193-12"><a href="model-comparison-in-cognitive-science.html#cb193-12" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">2000</span>,</span>
+<span id="cb193-13"><a href="model-comparison-in-cognitive-science.html#cb193-13" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
+<span id="cb193-14"><a href="model-comparison-in-cognitive-science.html#cb193-14" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">500</span>,</span>
+<span id="cb193-15"><a href="model-comparison-in-cognitive-science.html#cb193-15" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb193-16"><a href="model-comparison-in-cognitive-science.html#cb193-16" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb193-17"><a href="model-comparison-in-cognitive-science.html#cb193-17" tabindex="-1"></a>)</span></code></pre></div>
+<pre><code>## Running MCMC with 2 parallel chains, with 2 thread(s) per chain...
+## 
+## Chain 1 Iteration:    1 / 4000 [  0%]  (Warmup) 
+## Chain 2 Iteration:    1 / 4000 [  0%]  (Warmup)</code></pre>
+<pre><code>## Chain 1 Iteration:  500 / 4000 [ 12%]  (Warmup) 
+## Chain 2 Iteration:  500 / 4000 [ 12%]  (Warmup) 
+## Chain 1 Iteration: 1000 / 4000 [ 25%]  (Warmup) 
+## Chain 2 Iteration: 1000 / 4000 [ 25%]  (Warmup) 
+## Chain 1 Iteration: 1500 / 4000 [ 37%]  (Warmup) 
+## Chain 2 Iteration: 1500 / 4000 [ 37%]  (Warmup) 
+## Chain 1 Iteration: 2000 / 4000 [ 50%]  (Warmup) 
+## Chain 1 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
+## Chain 2 Iteration: 2000 / 4000 [ 50%]  (Warmup) 
+## Chain 2 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
+## Chain 1 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
+## Chain 2 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
+## Chain 1 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
+## Chain 2 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
+## Chain 1 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
+## Chain 2 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
+## Chain 1 Iteration: 4000 / 4000 [100%]  (Sampling) 
+## Chain 1 finished in 128.2 seconds.
+## Chain 2 Iteration: 4000 / 4000 [100%]  (Sampling) 
+## Chain 2 finished in 131.7 seconds.
+## 
+## Both chains finished successfully.
+## Mean chain execution time: 129.9 seconds.
+## Total execution time: 131.9 seconds.</code></pre>
+<div class="sourceCode" id="cb196"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb196-1"><a href="model-comparison-in-cognitive-science.html#cb196-1" tabindex="-1"></a><span class="fu">save</span>(samples, data, </span>
+<span id="cb196-2"><a href="model-comparison-in-cognitive-science.html#cb196-2" tabindex="-1"></a>          <span class="at">file =</span> <span class="st">&quot;simmodels/W7_multimixture.RData&quot;</span>) </span>
+<span id="cb196-3"><a href="model-comparison-in-cognitive-science.html#cb196-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_object</span>(<span class="at">file =</span> <span class="st">&quot;simmodels/W7_multimixture.RDS&quot;</span>)</span>
+<span id="cb196-4"><a href="model-comparison-in-cognitive-science.html#cb196-4" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_output_files</span>(<span class="at">dir =</span> <span class="st">&quot;simmodels&quot;</span>, <span class="at">basename =</span> <span class="st">&quot;W7_multimixture&quot;</span>)</span></code></pre></div>
+<p>[MISSING: EVALUATION]</p>
+<div class="sourceCode" id="cb197"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb197-1"><a href="model-comparison-in-cognitive-science.html#cb197-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
+<pre><code>## # A tibble: 60,417 × 10
+##    variable         mean     median      sd     mad         q5       q95  rhat ess_bulk ess_tail
+##    &lt;chr&gt;           &lt;dbl&gt;      &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt;      &lt;dbl&gt;     &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 lp__       -6282.     -6281.     13.2    13.1    -6305.     -6260.     1.00     737.    1528.
+##  2 thetaM         1.41       1.41    0.0650  0.0637     1.31       1.52   1.00    1497.    2051.
+##  3 noiseM        -2.34      -2.34    0.315   0.308     -2.86      -1.84   1.00    3639.    2055.
+##  4 tau[1]         0.568      0.565   0.0530  0.0522     0.484      0.659  1.00    1077.    2007.
+##  5 tau[2]         0.204      0.173   0.151   0.150      0.0193     0.497  1.00    3862.    2391.
+##  6 z_IDs[1,1]     0.143      0.138   0.380   0.375     -0.473      0.786  1.00    6420.    2779.
+##  7 z_IDs[2,1]    -0.0209    -0.0159  1.01    1.03      -1.69       1.64   1.00   10804.    2755.
+##  8 z_IDs[1,2]     0.228      0.225   0.407   0.397     -0.442      0.896  1.00    7772.    2630.
+##  9 z_IDs[2,2]    -0.0185    -0.0375  0.982   0.986     -1.65       1.58   1.00    9849.    2787.
+## 10 z_IDs[1,3]     1.93       1.91    0.527   0.521      1.11       2.83   1.00    7475.    2623.
+## # ℹ 60,407 more rows</code></pre>
+<div class="sourceCode" id="cb199"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb199-1"><a href="model-comparison-in-cognitive-science.html#cb199-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">loo</span>()</span></code></pre></div>
+<pre><code>## 
+## Computed from 4000 by 12000 log-likelihood matrix.
+## 
+##          Estimate    SE
+## elpd_loo  -6150.3  53.4
+## p_loo       131.8   2.9
+## looic     12300.5 106.8
+## ------
+## MCSE of elpd_loo is NA.
+## MCSE and ESS estimates assume MCMC draws (r_eff in [0.2, 3.0]).
+## 
+## Pareto k diagnostic values:
+##                          Count Pct.    Min. ESS
+## (-Inf, 0.7]   (good)     11909 99.2%   659     
+##    (0.7, 1]   (bad)         91  0.8%   &lt;NA&gt;    
+##    (1, Inf)   (very bad)     0  0.0%   &lt;NA&gt;    
+## See help(&#39;pareto-k-diagnostic&#39;) for details.</code></pre>
+<p>[MISSING: PARAMETER RECOVERY]</p>
+<p>[MISSING: BIASED VS. MEMORY?]</p>
+<p>Mixture models represent a crucial step forward in our cognitive modeling toolkit, allowing us to capture the complexity and variability inherent in human behavior. Through this chapter, we’ve seen how combining multiple cognitive strategies within a single model can provide richer and more realistic accounts of decision-making processes.</p>
+<p>Several key insights emerge from our exploration of mixture models:</p>
+<p>First, mixture models allow us to move beyond the false choice between oversimplified single-strategy models and intractably complex specifications. By combining a small number of interpretable components, we can capture substantial behavioral complexity while maintaining mathematical and computational tractability.</p>
+<p>Second, the Bayesian implementation of mixture models in Stan provides powerful tools for inference. We can estimate not only the parameters of different cognitive strategies but also their relative contributions to behavior. This allows us to quantify the importance of different processes and how they might vary across individuals or conditions.</p>
+<p>Third, mixture models require careful attention to identifiability and validation. Through parameter recovery studies and posterior predictive checks, we’ve seen how to verify that our mixture specifications can reliably recover true parameter values and generate realistic behavioral patterns.
+As we move forward in the course, mixture models will continue to play an important role in our modeling toolkit. They provide a bridge between simple theoretical models and complex empirical data, allowing us to build increasingly sophisticated accounts of cognitive processes while maintaining scientific rigor and interpretability.</p>
+<p>The next chapters will build on these foundations as we explore hierarchical models that can capture individual differences, and more complex cognitive architectures that combine multiple processing stages. The principles we’ve learned about specifying, fitting, and validating mixture models will serve as essential tools in these more advanced applications.</p>
 
 </div>
 </div>

@@ -6,6 +6,20 @@ date: "2023-03-13"
 
 ## Mixture models
 
+Mixture models are another powerful tool to compare the fit of different models to the data or to different portions of the data. This feature makes mixture models also a great tool to explore the possibility of multiple strategies involved in the mechanisms generating the data.
+
+Indeed, human behaviors rarely follow a single, simple strategy. People may switch between different approaches, combine multiple strategies, or show inconsistent behavior due to factors like attention and fatigue. This creates a significant challenge for cognitive modeling - how can we account for this complexity while maintaining models that are tractable and interpretable?
+
+Mixture models offer a powerful solution to this challenge. Rather than assuming behavior follows a single process, mixture models allow us to combine multiple cognitive strategies within a unified framework. For example, a participant in a decision-making task might sometimes respond based on careful deliberation and other times rely on quick heuristics or even random guessing; or different participants might be using different strategies. Mixture models let us estimate not only the parameters of these different strategies but also their relative frequencies.
+In this chapter, we'll explore how to implement mixture models using Stan, beginning with a simple case that combines a biased choice strategy with random responses. We'll then extend this to more sophisticated models that can capture multiple cognitive strategies. Through this process, we'll learn:
+
+* How to formally specify mixture models in Stan
+* Techniques for estimating mixture proportions and component parameters
+* Methods for validating mixture models through posterior predictive checks
+* Approaches for comparing different mixture specifications
+
+Understanding mixture models is crucial for cognitive modeling as they bridge the gap between simplified theoretical models and the messy reality of human behavior. Let's begin by examining how we can combine two simple decision strategies in a mixture model framework.
+
 ### Load the dataset
 
 We load the data set from chapter NN, where we loop through possible rates and noise levels, and pick one agent to build up the model progressively.
@@ -237,27 +251,29 @@ mod_mixture <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
 
 
-samples <- mod_mixture$sample(
-  data = data_biased,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 500,
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
-
-save(samples, data, 
-          file = "simmodels/W7_multimixture.RData") 
-samples$save_object(file = "simmodels/W7_multimixture.RDS")
-samples$save_output_files(dir = "simmodels", basename = "W7_multimixture")
+# samples <- mod_mixture$sample(
+#   data = data_biased,
+#   seed = 123,
+#   chains = 2,
+#   parallel_chains = 2,
+#   threads_per_chain = 2,
+#   iter_warmup = 2000,
+#   iter_sampling = 2000,
+#   refresh = 500,
+#   max_treedepth = 20,
+#   adapt_delta = 0.99,
+# )
+# 
+# save(samples, data, 
+#           file = "simmodels/W7_multimixture.RData") 
+# samples$save_object(file = "simmodels/W7_multimixture.RDS")
+# samples$save_output_files(dir = "simmodels", basename = "W7_multimixture")
 ```
 
 [MISSING: EVALUATION]
 ```{r}
+samples <- readRDS("simmodels/W7_multimixture.RDS")
+
 samples$summary()
 
 samples$loo()
@@ -267,4 +283,17 @@ samples$loo()
 [MISSING: PARAMETER RECOVERY]
 
 [MISSING: BIASED VS. MEMORY?]
+
+Mixture models represent a crucial step forward in our cognitive modeling toolkit, allowing us to capture the complexity and variability inherent in human behavior. Through this chapter, we've seen how combining multiple cognitive strategies within a single model can provide richer and more realistic accounts of decision-making processes.
+
+Several key insights emerge from our exploration of mixture models:
+
+First, mixture models allow us to move beyond the false choice between oversimplified single-strategy models and intractably complex specifications. By combining a small number of interpretable components, we can capture substantial behavioral complexity while maintaining mathematical and computational tractability.
+
+Second, the Bayesian implementation of mixture models in Stan provides powerful tools for inference. We can estimate not only the parameters of different cognitive strategies but also their relative contributions to behavior. This allows us to quantify the importance of different processes and how they might vary across individuals or conditions.
+
+Third, mixture models require careful attention to identifiability and validation. Through parameter recovery studies and posterior predictive checks, we've seen how to verify that our mixture specifications can reliably recover true parameter values and generate realistic behavioral patterns.
+As we move forward in the course, mixture models will continue to play an important role in our modeling toolkit. They provide a bridge between simple theoretical models and complex empirical data, allowing us to build increasingly sophisticated accounts of cognitive processes while maintaining scientific rigor and interpretability.
+
+The next chapters will build on these foundations as we explore hierarchical models that can capture individual differences, and more complex cognitive architectures that combine multiple processing stages. The principles we've learned about specifying, fitting, and validating mixture models will serve as essential tools in these more advanced applications.
 

@@ -19,7 +19,11 @@ pacman::p_load(
 
 # Reinforcement Learning
 
-In this module the course covers reinforcement learning. In particular, here we implement a version of the Rescorla-Wagner model. [Missing additional RL models]
+Reinforcement learning (RL) represents one of the most fundamental ways that organisms and artificial agents learn from experience. RL provides a nuanced framework for updating behavior based on feedback, which subsumes both biased random agents and the Win-Stay-Lose-Shift strategies we explored previously. In other words, extreme values of the model parameters (learning rate) are mathematically equivalent to the previous models. Rather than simply switching after failures, RL agents gradually adjust their expectations and behavior based on the difference between what they expected and what actually happened.
+This approach closely mirrors how humans and animals learn in many situations. When we try a new restaurant, we don't just categorize it as "good" or "bad" - we develop a sense of how good it is compared to our expectations, and this shapes how likely we are to return. Similarly, when playing games or sports, we develop nuanced preferences for different strategies based on their history of success.
+In this chapter, we'll implement a version of the Rescorla-Wagner model, one of the most influential RL models in cognitive science. This model, originally developed to explain animal learning, has proven remarkably useful in understanding human learning and decision-making across many domains. 
+
+[Missing additional RL models]
 
 ```{r Functions}
 
@@ -41,6 +45,16 @@ ValueUpdate = function(value, alpha, choice, feedback) {
   return(updatedValue)
 }
 ```
+
+This softmax function converts raw value differences into choice probabilities. The tau parameter controls how deterministically the agent chooses the higher-valued option - high values of tau lead to more deterministic choice, while low values lead to more random exploration.
+
+The ValueUpdate function implements the core learning mechanism. Let's break down how it works:
+
+* It calculates the prediction error (PE) - the difference between what happened (feedback) and what was expected (value)
+
+* It updates the value estimates using this PE, weighted by the learning rate (alpha)
+
+* Only the chosen option's value gets updated, since we don't learn about options we didn't choose
 
 ## Defining parameters
 
@@ -531,6 +545,75 @@ samples$save_object("simmodels/W11_RL_multilevel.rds")
 
 ```
 
-[Missing discussion of alternative models of RL: counterfactual learning, sequential learning, etc.]
+## Alternative Models of Reinforcement Learning
 
-[Discussion of how RL assumes different landscapes to be optimal: low rate: noisy environment with slow to no change; high rate: volatile environment. In both cases, a constant learning rate, which might not be optimal e.g. in seasonal changes]
+The basic Rescorla-Wagner model we've implemented represents just one approach to reinforcement learning. Several important variations capture different aspects of how organisms learn:
+
+### Counterfactual Learning
+
+In many situations, we learn not just from what happened, but also from what could have happened. For example, after choosing a restaurant and having a mediocre meal, we might see a friend's photos of delicious dishes from another restaurant they ate at. Counterfactual learning models capture how we update our preferences based on both experienced and foregone outcomes.
+
+In computational terms, counterfactual learning models modify the basic value update equation to include learning from unchosen options:
+
+CopyV(chosen) = V(chosen) + α(R(chosen) - V(chosen))
+V(unchosen) = V(unchosen) + α'(R(unchosen) - V(unchosen))
+
+Here, α' represents a potentially different learning rate for counterfactual outcomes, often smaller than α since indirect feedback may be less reliable or salient than direct experience.
+
+### Sequential Learning
+
+While our basic model treats each trial as independent, real-world learning often involves sequences of related decisions. Sequential learning models account for how previous choices and outcomes influence not just value estimates but also the learning process itself. For instance, after several successful choices in a row, we might become more confident and therefore less influenced by a single failure.
+These models often incorporate additional parameters to capture sequence effects:
+
+* Momentum terms that make agents more likely to repeat recent successful strategies
+
+* Pattern detection mechanisms that look for regularities in outcome sequences
+
+* Meta-learning processes that adjust learning rates based on recent experience
+
+### Model-Based Learning
+
+Perhaps the most sophisticated extension involves agents that build internal models of how their environment works, rather than just tracking reward statistics. These agents can simulate potential outcomes and plan sequences of actions, similar to how humans might mentally rehearse different strategies in a game. [Missing: details and refs]
+
+
+## Adapting Learning Rates to Environmental Dynamics
+
+A crucial limitation of basic reinforcement learning models is their use of fixed learning rates. Different environments call for different learning strategies:
+
+### Stable vs Volatile Environments
+
+In highly stable environments where true reward probabilities change rarely or never, optimal learning involves:
+
+* Initially high learning rates to quickly acquire accurate value estimates
+
+* Gradually decreasing learning rates as estimates become more reliable
+
+* Eventually very low learning rates to avoid being misled by random variation
+
+Conversely, volatile environments where reward probabilities change frequently require:
+
+* Consistently higher learning rates to track changing conditions
+
+* Greater willingness to update beliefs based on recent outcomes
+
+* Some mechanism to detect and respond to change points
+
+### Seasonal or Cyclic Changes
+
+Many real-world environments show systematic patterns of change. Consider foraging for food throughout the year - certain locations might be reliably better in summer than winter. Fixed learning rates struggle with such environments because they:
+
+* Can't capitalize on knowledge of seasonal patterns
+* Either learn too slowly to track changes or too quickly to maintain stable long-term knowledge
+* Miss opportunities to prepare for predictable changes
+
+More sophisticated models address this by incorporating:
+
+* Multiple timescales of learning (fast learning for current conditions, slow learning for general patterns)
+
+* Explicit representation of environmental structure (like seasonality)
+
+* Context-dependent learning rates that adapt to recognized patterns
+
+These considerations highlight how reinforcement learning models, while powerful, represent significant simplifications of real learning processes. Understanding their limitations helps us both interpret their results more carefully and develop more sophisticated models that better capture the complexity of human and animal learning.
+
+Reinforcement learning provides a powerful framework for understanding how agents learn from experience. Our implementation highlights both the elegance of the basic mechanism and the rich dynamics it can produce. While more sophisticated models exist, the core principles we've explored here - prediction errors, value updating, and the exploration-exploitation tradeoff - remain fundamental to understanding learning and decision-making.
