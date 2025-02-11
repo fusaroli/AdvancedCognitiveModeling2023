@@ -1,61 +1,47 @@
 
-//
-// This STAN model infers a random bias from a sequences of 1s and 0s (right and left). Now multilevel
-//
-
-functions{
-  real normal_lb_rng(real mu, real sigma, real lb) { // normal distribution with a lower bound
-    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
+/* Multilevel Bernoulli Model
+ * This model infers agent-specific choice biases from sequences of binary choices (0/1)
+ * The model assumes each agent has their own bias (theta) drawn from a population distribution
+ */
+functions {
+  // Generate random numbers from truncated normal distribution
+  real normal_lb_rng(real mu, real sigma, real lb) {
+    real p = normal_cdf(lb | mu, sigma);
     real u = uniform_rng(p, 1);
-    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value
+    return (sigma * inv_Phi(u)) + mu;
   }
 }
-
-// The input (data) for the model. n of trials and h of hands
 data {
- int<lower = 1> trials;
- int<lower = 1> agents;
- array[trials, agents] int h;
+  int<lower=1> trials;  // Number of trials per agent
+  int<lower=1> agents;  // Number of agents
+  array[trials, agents] int<lower=0, upper=1> h;  // Choice data: 0 or 1 for each trial/agent
 }
-
-// The parameters accepted by the model. 
 parameters {
-  real thetaM;
-  real<lower = 0> thetaSD;
-  array[agents] real theta;
+  real thetaM;                // Population-level mean bias (log-odds scale)
+  real<lower=0> thetaSD;      // Population-level SD of bias
+  array[agents] real theta;    // Agent-specific biases (log-odds scale)
 }
-
-// The model to be estimated. 
 model {
-  target += normal_lpdf(thetaM | 0, 1);
-  target += normal_lpdf(thetaSD | 0, .3)  -
-    normal_lccdf(0 | 0, .3);
-
-  // The prior for theta is a uniform distribution between 0 and 1
-  target += normal_lpdf(theta | thetaM, thetaSD); 
- 
-  for (i in 1:agents)
-    target += bernoulli_logit_lpmf(h[,i] | theta[i]);
-  
+  // Population-level priors
+  target += normal_lpdf(thetaM | 0, 1);        // Prior for population mean 
+  target += normal_lpdf(thetaSD | 0, 0.3)      // Half-normal prior for population SD
+    - normal_lccdf(0 | 0, 0.3);
+  // Agent-level model
+  target += normal_lpdf(theta | thetaM, thetaSD);    // Agent biases drawn from population
+  // Likelihood
+  for (i in 1:agents) {
+    target += bernoulli_logit_lpmf(h[,i] | theta[i]);  // Choice likelihood
+  }
 }
-
-
-generated quantities{
-   real thetaM_prior;
-   real<lower=0> thetaSD_prior;
-   real<lower=0, upper=1> theta_prior;
-   real<lower=0, upper=1> theta_posterior;
-   
-   int<lower=0, upper = trials> prior_preds;
-   int<lower=0, upper = trials> posterior_preds;
-   
-   thetaM_prior = normal_rng(0,1);
-   thetaSD_prior = normal_lb_rng(0,0.3,0);
-   theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));
-   theta_posterior = inv_logit(normal_rng(thetaM, thetaSD));
-   
-   prior_preds = binomial_rng(trials, inv_logit(thetaM_prior));
-   posterior_preds = binomial_rng(trials, inv_logit(thetaM));
-  
+generated quantities {
+  // Prior predictive samples
+  real thetaM_prior = normal_rng(0, 1);
+  real<lower=0> thetaSD_prior = normal_lb_rng(0, 0.3, 0);
+  real<lower=0, upper=1> theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));
+  // Posterior predictive samples 
+  real<lower=0, upper=1> theta_posterior = inv_logit(normal_rng(thetaM, thetaSD));
+  // Predictive simulations
+  int<lower=0, upper=trials> prior_preds = binomial_rng(trials, inv_logit(thetaM_prior));
+  int<lower=0, upper=trials> posterior_preds = binomial_rng(trials, inv_logit(thetaM));
 }
 
