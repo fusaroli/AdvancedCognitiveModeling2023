@@ -4,9 +4,33 @@ output: html_document
 date: "2023-03-10"
 ---
 
-# Model comparison
+# Model Comparison in Cognitive Science
 
-[MISSING INTRO]
+Understanding human cognition often involves choosing between competing theoretical explanations. When faced with behavioral data - whether from matching pennies games, learning tasks, or decision-making scenarios - we can implement different theories of the underlying cognitive processes, or switch on and off specific cognitive components. Model comparison is the set of procedure that allows allows us to determine which cognitive model best explains the observed patterns. But remember, model comparison is not a fail-safe procedure to determine which model embodies the truth, as always we need to be careful, tentative and open about the probabilistic and fallible nature of our inference.
+
+## Learning Objectives 
+
+After completing this chapter, you will be able to:
+
+* Implement cross-validation techniques for comparing cognitive models using Stan
+* Calculate and interpret expected log predictive density (ELPD) scores
+* Assess model predictions through posterior and prior predictive checks
+* Understand the strengths and limitations of different model comparison approaches
+* Apply these techniques to compare competing cognitive models using real data
+
+## Why Compare Models?
+
+Model comparison serves multiple purposes in cognitive science. Some examples:
+
+1. Theory Testing: Different models often represent competing theoretical accounts of cognitive processes. Comparing their fit to data helps evaluate these theories.
+
+2. Parsimony: When multiple models can explain the data, one of the reason to prefer more complex models is if they are justified by better predictive performance.
+
+3. Generalization: By assessing how well different models predict new data, we can evaluate their ability to capture general patterns rather than just fitting to specific samples.
+
+4. Individual Differences: Model comparison can reveal whether different individuals or groups are better described by different cognitive strategies.
+
+This chapter demonstrates these principles using our matching pennies models as concrete examples. We'll compare simple random choice models against more sophisticated memory-based approaches, showing how to rigorously evaluate which better explains observed behavior.
 
 Imagine having several models of what might be going on and want to know which is the best explanation of the data. E.g. Are people more likely to use a memory strategy, or a win stay lose shift strategy? Or are we justified in assuming that people react differently to losses than to wins (e.g. by being more likely to shift when losing, than to stay when winning)? Or would we be justified in assuming that capuchin monkeys and cognitive science students use the same model?
 
@@ -365,79 +389,100 @@ mod_memory <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
 ## Fitting the models to the data
 
 ```{r, 06 fitting models, eval = F}
-# Fitting biased agent model to biased agent data
-fit_biased2biased <- mod_biased$sample(
-  data = data_biased,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 4,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-fit_biased2biased$save_object(file = "simmodels/W6_fit_biased2biased.RDS")
-
-
-# Fitting biased agent model to memory agent data
-fit_biased2memory <- mod_biased$sample(
-  data = data_memory,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 4,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-fit_biased2memory$save_object(file = "simmodels/W6_fit_biased2memory.RDS")
-
-fit_memory2biased <- mod_memory$sample(
-  data = data_biased,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 4,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-fit_memory2biased$save_object(file = "simmodels/W6_fit_memory2biased.RDS")
-
-fit_memory2memory <- mod_memory$sample(
-  data = data_memory,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 4,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-fit_memory2memory$save_object(file = "simmodels/W6_fit_memory2memory.RDS")
+# # Fitting biased agent model to biased agent data
+# fit_biased2biased <- mod_biased$sample(
+#   data = data_biased,
+#   seed = 123,
+#   chains = 1,
+#   parallel_chains = 1,
+#   threads_per_chain = 1,
+#   iter_warmup = 2000,
+#   iter_sampling = 2000,
+#   refresh = 0,
+#   output_dir = "simmodels",
+#   max_treedepth = 20,
+#   adapt_delta = 0.99
+# )
+# 
+# fit_biased2biased$save_object(file = "simmodels/W6_fit_biased2biased.RDS")
+# 
+# 
+# # Fitting biased agent model to memory agent data
+# fit_biased2memory <- mod_biased$sample(
+#   data = data_memory,
+#   seed = 123,
+#   chains = 1,
+#   parallel_chains = 1,
+#   threads_per_chain = 1,
+#   iter_warmup = 2000,
+#   iter_sampling = 2000,
+#   refresh = 0,
+#   output_dir = "simmodels",
+#   max_treedepth = 20,
+#   adapt_delta = 0.99
+# )
+# 
+# fit_biased2memory$save_object(file = "simmodels/W6_fit_biased2memory.RDS")
+# 
+# fit_memory2biased <- mod_memory$sample(
+#   data = data_biased,
+#   seed = 123,
+#   chains = 1,
+#   parallel_chains = 1,
+#   threads_per_chain = 4,
+#   iter_warmup = 2000,
+#   iter_sampling = 2000,
+#   refresh = 0,
+#   output_dir = "simmodels",
+#   max_treedepth = 20,
+#   adapt_delta = 0.99
+# )
+# 
+# fit_memory2biased$save_object(file = "simmodels/W6_fit_memory2biased.RDS")
+# 
+# fit_memory2memory <- mod_memory$sample(
+#   data = data_memory,
+#   seed = 123,
+#   chains = 1,
+#   parallel_chains = 1,
+#   threads_per_chain = 4,
+#   iter_warmup = 2000,
+#   iter_sampling = 2000,
+#   refresh = 0,
+#   output_dir = "simmodels",
+#   max_treedepth = 20,
+#   adapt_delta = 0.99
+# )
+# 
+# fit_memory2memory$save_object(file = "simmodels/W6_fit_memory2memory.RDS")
 ```
+
+
+
 
 ## Calculating the expected log predictive density of a model
 
 In the previous section, we fitted each model (biased and memory) to each dataset (biased and memory), and calculated and saved the log-posterior likelihood distributions for each data point. However, as we know from previous courses, calculating the goodness of fit of a model on the actual data it has been trained/fitted on is a bad idea. Models - expecially complex models - tend to overfit to the data. The multilevel implementation we have used is a bit skeptical of the data (it pools information across agents and combines it with the data from any given agent, thus de facto regularizing the estimates). Still overfitting is a serious risk.
 
-Machine learning has made common practices of validation, that is, of keeping parts of the dataset out of the training/fitting process, in order to then see how well the trained model can predict those untouched data, and get an *out of sample error*. [RANT ON INTERNAL VS. EXTERNAL TEST SET: HOW WELL DOES IT GENERALIZE TO DIVERSE CONTEXTS?].
+Machine learning has made common practices of validation, that is, of keeping parts of the dataset out of the training/fitting process, in order to then see how well the trained model can predict those untouched data, and get an out of sample error. 
+
+***
+### Rant on internal vs external validity
+However, we need to think carefully about what we mean by "out of sample." There are actually two distinct types of test sets we might consider: internal and external.
+Internal test sets come from the same data collection effort as our training data - for example, we might randomly set aside 20% of our matching pennies games to test on. While this approach helps us detect overfitting to specific participants or trials, it cannot tell us how well our model generalizes to truly new contexts. Our test set participants were recruited from the same population, played the game under the same conditions, and were influenced by the same experimental setup as our training participants.
+External test sets, in contrast, come from genuinely different contexts. For our matching pennies model, this might mean testing on games played:
+
+* In different cultures or age groups
+* Under time pressure versus relaxed conditions
+* For real money versus just for fun
+* Against human opponents versus computer agents
+* In laboratory versus online settings
+
+The distinction matters because cognitive models often capture not just universal mental processes, but also specific strategies that people adopt in particular contexts. A model that perfectly predicts behavior in laboratory matching pennies games might fail entirely when applied to high-stakes poker games, even though both involve similar strategic thinking.
+This raises deeper questions about what kind of generalization we want our models to achieve. Are we trying to build models that capture universal cognitive processes, or are we content with models that work well within specific contexts? The answer affects not just how we evaluate our models, but how we design them in the first place.
+In practice, truly external test sets are rare in cognitive science - they require additional data collection under different conditions, which is often impractical. This means we must be humble about our claims of generalization. When we talk about a model's predictive accuracy, we should be clear that we're usually measuring its ability to generalize within a specific experimental context, not its ability to capture human cognition in all its diversity.
+This limitation of internal test sets is one reason why cognitive scientists often complement predictive accuracy metrics with other forms of model evaluation, such as testing theoretical predictions on new tasks or examining whether model parameters correlate sensibly with individual differences. These approaches help us build confidence that our models capture meaningful cognitive processes rather than just statistical patterns specific to our experimental setup.
+***
 
 When the datasets are small, as it is often the case in cognitive science, keeping a substantial portion of the data out - substantial enough to be representative of a more general population - is problematic as it risks starving the model of data: there might not be enough data for reliable estimation of the parameter values. This is where the notion of cross-validation comes in: we can split the dataset in k folds, let's say k = 10. Then each fold is in turn kept aside as validation set, the model is fitted on the other folds, and its predictive performance tested on the validation set. Repeat this operation of each of the folds. This operation ensures that all the data can be used for training as well as for validation, and is in its own terms quite genial. However, this does not mean it is free of shortcomings. First, small validation folds might not be representative of the diversity of true out-of-sample populations - and there is a tendency to set k equal to the number of datapoints (leave-one-out cross validation). Second, there are many ways in which information could leak or contaminate across folds if the pipeline is not very careful (e.g. via data preprocessing scaling the full dataset, or hyper-parameter estimation). Third, and crucial for our case here, cross validation implies refitting the model k times, which for Bayesian models might be very cumbersome (I once had a model that took 6 weeks to run).
 
