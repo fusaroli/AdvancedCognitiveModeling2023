@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+<head>
+
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Chapter 9 Mixture models | 07-MixtureModels</title>
+  <meta name="description" content="My notes for the advanced cognitive modeling course - 2025" />
+  <meta name="generator" content="bookdown 0.42 and GitBook 2.6.7" />
+
+  <meta property="og:title" content="Chapter 9 Mixture models | 07-MixtureModels" />
+  <meta property="og:type" content="book" />
+  
+  <meta property="og:description" content="My notes for the advanced cognitive modeling course - 2025" />
+  <meta name="github-repo" content="openscapes/series" />
+
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Chapter 9 Mixture models | 07-MixtureModels" />
+  
+  <meta name="twitter:description" content="My notes for the advanced cognitive modeling course - 2025" />
+  
+
+<meta name="author" content="Riccardo Fusaroli" />
+
+
+<meta name="date" content="2023-03-13" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  
+  
+<link rel="prev" href="model-comparison-in-cognitive-science.html"/>
+
+<script src="libs/jquery-3.6.0/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fuse.js@6.4.6/dist/fuse.min.js"></script>
+<link href="libs/gitbook-2.6.7/css/style.css" rel="stylesheet" />
+<link href="libs/gitbook-2.6.7/css/plugin-table.css" rel="stylesheet" />
+<link href="libs/gitbook-2.6.7/css/plugin-bookdown.css" rel="stylesheet" />
+<link href="libs/gitbook-2.6.7/css/plugin-highlight.css" rel="stylesheet" />
+<link href="libs/gitbook-2.6.7/css/plugin-search.css" rel="stylesheet" />
+<link href="libs/gitbook-2.6.7/css/plugin-fontsettings.css" rel="stylesheet" />
+<link href="libs/gitbook-2.6.7/css/plugin-clipboard.css" rel="stylesheet" />
+
+
+
+
+
+
+
+
+<link href="libs/anchor-sections-1.1.0/anchor-sections.css" rel="stylesheet" />
+<link href="libs/anchor-sections-1.1.0/anchor-sections-hash.css" rel="stylesheet" />
+<script src="libs/anchor-sections-1.1.0/anchor-sections.js"></script>
+
+
+<style type="text/css">
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+    color: #aaaaaa;
+  }
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+code span.at { color: #7d9029; } /* Attribute */
+code span.bn { color: #40a070; } /* BaseN */
+code span.bu { color: #008000; } /* BuiltIn */
+code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+code span.ch { color: #4070a0; } /* Char */
+code span.cn { color: #880000; } /* Constant */
+code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+code span.dt { color: #902000; } /* DataType */
+code span.dv { color: #40a070; } /* DecVal */
+code span.er { color: #ff0000; font-weight: bold; } /* Error */
+code span.ex { } /* Extension */
+code span.fl { color: #40a070; } /* Float */
+code span.fu { color: #06287e; } /* Function */
+code span.im { color: #008000; font-weight: bold; } /* Import */
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+code span.op { color: #666666; } /* Operator */
+code span.ot { color: #007020; } /* Other */
+code span.pp { color: #bc7a00; } /* Preprocessor */
+code span.sc { color: #4070a0; } /* SpecialChar */
+code span.ss { color: #bb6688; } /* SpecialString */
+code span.st { color: #4070a0; } /* String */
+code span.va { color: #19177c; } /* Variable */
+code span.vs { color: #4070a0; } /* VerbatimString */
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+</style>
+
+<style type="text/css">
+  
+  div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+</style>
+
+<link rel="stylesheet" href="lib/css/bootstrap.min.css" type="text/css" />
+<link rel="stylesheet" href="lib/css/style.css" type="text/css" />
+<link rel="stylesheet" href="lib/css/lesson.css" type="text/css" />
+</head>
+
+<body>
+
+
+
+  <div class="book without-animation with-summary font-size-2 font-family-1" data-basepath=".">
+
+    <div class="book-summary">
+      <nav role="navigation">
+
+<ul class="summary">
+<li><a href="./">Advanced Cognitive Modeling</a></li>
+
+<li class="divider"></li>
+<li class="chapter" data-level="1" data-path="index.html"><a href="index.html"><i class="fa fa-check"></i><b>1</b> Advanced Cognitive Modeling</a>
+<ul>
+<li class="chapter" data-level="1.1" data-path="index.html"><a href="index.html#course-philosophy-and-approach"><i class="fa fa-check"></i><b>1.1</b> Course Philosophy and Approach</a></li>
+<li class="chapter" data-level="1.2" data-path="index.html"><a href="index.html#course-structure-and-learning-path"><i class="fa fa-check"></i><b>1.2</b> Course Structure and Learning Path</a></li>
+<li class="chapter" data-level="1.3" data-path="index.html"><a href="index.html#prerequisites-and-preparation"><i class="fa fa-check"></i><b>1.3</b> Prerequisites and Preparation</a></li>
+<li class="chapter" data-level="1.4" data-path="index.html"><a href="index.html#course-resources"><i class="fa fa-check"></i><b>1.4</b> Course Resources</a></li>
+<li class="chapter" data-level="1.5" data-path="index.html"><a href="index.html#about-these-notes"><i class="fa fa-check"></i><b>1.5</b> About These Notes</a></li>
+</ul></li>
+<li class="chapter" data-level="2" data-path="foundations.html"><a href="foundations.html"><i class="fa fa-check"></i><b>2</b> Foundations</a>
+<ul>
+<li class="chapter" data-level="2.1" data-path="foundations.html"><a href="foundations.html#from-pizza-to-cognitive-models-an-introduction"><i class="fa fa-check"></i><b>2.1</b> From Pizza to Cognitive Models: An Introduction</a></li>
+<li class="chapter" data-level="2.2" data-path="foundations.html"><a href="foundations.html#why-start-with-pizza"><i class="fa fa-check"></i><b>2.2</b> Why Start with Pizza?</a></li>
+<li class="chapter" data-level="2.3" data-path="foundations.html"><a href="foundations.html#learning-objectives"><i class="fa fa-check"></i><b>2.3</b> Learning Objectives</a></li>
+<li class="chapter" data-level="2.4" data-path="foundations.html"><a href="foundations.html#part-1-exploring-the-pizza-stone-temperature-data"><i class="fa fa-check"></i><b>2.4</b> Part 1: Exploring the Pizza Stone Temperature Data</a>
+<ul>
+<li class="chapter" data-level="2.4.1" data-path="foundations.html"><a href="foundations.html#initial-data-visualization"><i class="fa fa-check"></i><b>2.4.1</b> Initial Data Visualization</a></li>
+<li class="chapter" data-level="2.4.2" data-path="foundations.html"><a href="foundations.html#key-observations"><i class="fa fa-check"></i><b>2.4.2</b> Key Observations</a></li>
+</ul></li>
+<li class="chapter" data-level="2.5" data-path="foundations.html"><a href="foundations.html#part-2-initial-statistical-modeling"><i class="fa fa-check"></i><b>2.5</b> Part 2: Initial Statistical Modeling</a>
+<ul>
+<li class="chapter" data-level="2.5.1" data-path="foundations.html"><a href="foundations.html#model-setup-and-priors"><i class="fa fa-check"></i><b>2.5.1</b> Model Setup and Priors</a></li>
+<li class="chapter" data-level="2.5.2" data-path="foundations.html"><a href="foundations.html#linear-mixed-effects-model"><i class="fa fa-check"></i><b>2.5.2</b> Linear Mixed-Effects Model</a></li>
+<li class="chapter" data-level="2.5.3" data-path="foundations.html"><a href="foundations.html#lognormal-mixed-effects-model"><i class="fa fa-check"></i><b>2.5.3</b> Lognormal Mixed-Effects Model</a></li>
+<li class="chapter" data-level="2.5.4" data-path="foundations.html"><a href="foundations.html#model-comparison-and-visualization"><i class="fa fa-check"></i><b>2.5.4</b> Model Comparison and Visualization</a></li>
+<li class="chapter" data-level="2.5.5" data-path="foundations.html"><a href="foundations.html#model-assessment"><i class="fa fa-check"></i><b>2.5.5</b> Model Assessment</a></li>
+</ul></li>
+<li class="chapter" data-level="2.6" data-path="foundations.html"><a href="foundations.html#part-3-understanding-the-physics-model"><i class="fa fa-check"></i><b>2.6</b> Part 3: Understanding the Physics Model</a>
+<ul>
+<li class="chapter" data-level="2.6.1" data-path="foundations.html"><a href="foundations.html#the-basic-temperature-evolution-equation"><i class="fa fa-check"></i><b>2.6.1</b> The Basic Temperature Evolution Equation</a></li>
+</ul></li>
+<li class="chapter" data-level="2.7" data-path="foundations.html"><a href="foundations.html#part-4-implementing-the-physics-based-model"><i class="fa fa-check"></i><b>2.7</b> Part 4: Implementing the Physics-Based Model</a></li>
+<li class="chapter" data-level="2.8" data-path="foundations.html"><a href="foundations.html#part-5-model-analysis-and-practical-applications"><i class="fa fa-check"></i><b>2.8</b> Part 5: Model Analysis and Practical Applications</a></li>
+<li class="chapter" data-level="2.9" data-path="foundations.html"><a href="foundations.html#conclusion-from-pizza-to-principles"><i class="fa fa-check"></i><b>2.9</b> Conclusion: From Pizza to Principles</a></li>
+</ul></li>
+<li class="chapter" data-level="3" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html"><i class="fa fa-check"></i><b>3</b> Building Models of Strategic Decision-Making</a>
+<ul>
+<li class="chapter" data-level="3.1" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#learning-goals"><i class="fa fa-check"></i><b>3.1</b> Learning goals</a></li>
+<li class="chapter" data-level="3.2" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#introduction"><i class="fa fa-check"></i><b>3.2</b> Introduction</a></li>
+<li class="chapter" data-level="3.3" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#the-matching-pennies-game"><i class="fa fa-check"></i><b>3.3</b> The Matching Pennies Game</a></li>
+<li class="chapter" data-level="3.4" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#game-structure"><i class="fa fa-check"></i><b>3.4</b> Game Structure</a></li>
+<li class="chapter" data-level="3.5" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#empirical-investigation"><i class="fa fa-check"></i><b>3.5</b> Empirical Investigation</a>
+<ul>
+<li class="chapter" data-level="3.5.1" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#data-collection-protocol"><i class="fa fa-check"></i><b>3.5.1</b> Data Collection Protocol</a></li>
+<li class="chapter" data-level="3.5.2" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#initial-observations"><i class="fa fa-check"></i><b>3.5.2</b> Initial Observations</a></li>
+</ul></li>
+<li class="chapter" data-level="3.6" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#empirical-explorations"><i class="fa fa-check"></i><b>3.6</b> Empirical explorations</a></li>
+<li class="chapter" data-level="3.7" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#notes-from-previous-years"><i class="fa fa-check"></i><b>3.7</b> Notes from previous years</a>
+<ul>
+<li class="chapter" data-level="3.7.1" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#from-observation-to-theory"><i class="fa fa-check"></i><b>3.7.1</b> From Observation to Theory</a></li>
+<li class="chapter" data-level="3.7.2" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#core-modeling-considerations"><i class="fa fa-check"></i><b>3.7.2</b> Core Modeling Considerations</a></li>
+<li class="chapter" data-level="3.7.3" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#the-distinction-between-participant-and-researcher-perspectives"><i class="fa fa-check"></i><b>3.7.3</b> The distinction between participant and researcher perspectives</a></li>
+</ul></li>
+<li class="chapter" data-level="3.8" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#building-formal-models"><i class="fa fa-check"></i><b>3.8</b> Building Formal Models</a>
+<ul>
+<li class="chapter" data-level="3.8.1" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#random-choice-model"><i class="fa fa-check"></i><b>3.8.1</b> Random Choice Model</a></li>
+<li class="chapter" data-level="3.8.2" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#immediate-reaction-win-stay-lose-shift"><i class="fa fa-check"></i><b>3.8.2</b> Immediate reaction (Win-Stay-Lose-Shift)</a></li>
+<li class="chapter" data-level="3.8.3" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#keep-track-of-the-bias-perfect-memory"><i class="fa fa-check"></i><b>3.8.3</b> Keep track of the bias (perfect memory)</a></li>
+<li class="chapter" data-level="3.8.4" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#keep-track-of-the-bias-imperfect-memory"><i class="fa fa-check"></i><b>3.8.4</b> Keep track of the bias (imperfect memory)</a></li>
+<li class="chapter" data-level="3.8.5" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#reinforcement-learning"><i class="fa fa-check"></i><b>3.8.5</b> Reinforcement learning</a></li>
+<li class="chapter" data-level="3.8.6" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#k-tom"><i class="fa fa-check"></i><b>3.8.6</b> k-ToM</a></li>
+<li class="chapter" data-level="3.8.7" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#other-possible-strategies"><i class="fa fa-check"></i><b>3.8.7</b> Other possible strategies</a></li>
+</ul></li>
+<li class="chapter" data-level="3.9" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#cognitive-constraints"><i class="fa fa-check"></i><b>3.9</b> Cognitive constraints</a>
+<ul>
+<li class="chapter" data-level="3.9.1" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#memory"><i class="fa fa-check"></i><b>3.9.1</b> Memory</a></li>
+<li class="chapter" data-level="3.9.2" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#perseveration"><i class="fa fa-check"></i><b>3.9.2</b> Perseveration</a></li>
+<li class="chapter" data-level="3.9.3" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#errors"><i class="fa fa-check"></i><b>3.9.3</b> Errors</a></li>
+</ul></li>
+<li class="chapter" data-level="3.10" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#continuity-between-models"><i class="fa fa-check"></i><b>3.10</b> Continuity between models</a></li>
+<li class="chapter" data-level="3.11" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#mixture-of-strategies"><i class="fa fa-check"></i><b>3.11</b> Mixture of strategies</a></li>
+<li class="chapter" data-level="3.12" data-path="building-models-of-strategic-decision-making.html"><a href="building-models-of-strategic-decision-making.html#differences-from-more-traditional-general-linear-model-based-approaches"><i class="fa fa-check"></i><b>3.12</b> Differences from more traditional (general linear model-based) approaches</a></li>
+</ul></li>
+<li class="chapter" data-level="4" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html"><i class="fa fa-check"></i><b>4</b> From verbal descriptions to formal models</a>
+<ul>
+<li class="chapter" data-level="4.1" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#learning-goals-1"><i class="fa fa-check"></i><b>4.1</b> Learning Goals</a></li>
+<li class="chapter" data-level="4.2" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#the-value-of-formalization"><i class="fa fa-check"></i><b>4.2</b> The Value of Formalization</a></li>
+<li class="chapter" data-level="4.3" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#defining-general-conditions"><i class="fa fa-check"></i><b>4.3</b> Defining general conditions</a></li>
+<li class="chapter" data-level="4.4" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#implementing-a-random-agent"><i class="fa fa-check"></i><b>4.4</b> Implementing a random agent</a></li>
+<li class="chapter" data-level="4.5" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#implementing-a-win-stay-lose-shift-agent"><i class="fa fa-check"></i><b>4.5</b> Implementing a Win-Stay-Lose-Shift agent</a></li>
+<li class="chapter" data-level="4.6" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#now-we-scale-it-up"><i class="fa fa-check"></i><b>4.6</b> Now we scale it up</a>
+<ul>
+<li class="chapter" data-level="4.6.1" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#and-we-visualize-it"><i class="fa fa-check"></i><b>4.6.1</b> And we visualize it</a></li>
+</ul></li>
+<li class="chapter" data-level="4.7" data-path="from-verbal-descriptions-to-formal-models.html"><a href="from-verbal-descriptions-to-formal-models.html#conclusion"><i class="fa fa-check"></i><b>4.7</b> Conclusion</a></li>
+</ul></li>
+<li class="chapter" data-level="5" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html"><i class="fa fa-check"></i><b>5</b> From simulation to model fitting</a>
+<ul>
+<li class="chapter" data-level="5.1" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#learning-goals-2"><i class="fa fa-check"></i><b>5.1</b> Learning Goals</a></li>
+<li class="chapter" data-level="5.2" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#the-challenge-of-model-fitting"><i class="fa fa-check"></i><b>5.2</b> The Challenge of Model Fitting</a></li>
+<li class="chapter" data-level="5.3" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#simulating-data"><i class="fa fa-check"></i><b>5.3</b> Simulating data</a></li>
+<li class="chapter" data-level="5.4" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#building-our-basic-model-in-stan"><i class="fa fa-check"></i><b>5.4</b> Building our basic model in Stan</a>
+<ul>
+<li class="chapter" data-level="5.4.1" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#data"><i class="fa fa-check"></i><b>5.4.1</b> Data</a></li>
+<li class="chapter" data-level="5.4.2" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#model"><i class="fa fa-check"></i><b>5.4.2</b> Model</a></li>
+<li class="chapter" data-level="5.4.3" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#compiling-and-fitting-the-model"><i class="fa fa-check"></i><b>5.4.3</b> Compiling and fitting the model</a></li>
+<li class="chapter" data-level="5.4.4" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#summarizing-the-model"><i class="fa fa-check"></i><b>5.4.4</b> Summarizing the model</a></li>
+<li class="chapter" data-level="5.4.5" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#assessing-model-quality"><i class="fa fa-check"></i><b>5.4.5</b> Assessing model quality</a></li>
+<li class="chapter" data-level="5.4.6" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#summarizing-the-results"><i class="fa fa-check"></i><b>5.4.6</b> Summarizing the results</a></li>
+</ul></li>
+<li class="chapter" data-level="5.5" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#parameter-recovery"><i class="fa fa-check"></i><b>5.5</b> Parameter recovery</a></li>
+<li class="chapter" data-level="5.6" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#the-memory-model-conditioning-theta"><i class="fa fa-check"></i><b>5.6</b> The memory model: conditioning theta</a>
+<ul>
+<li class="chapter" data-level="5.6.1" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#summarizing-the-results-1"><i class="fa fa-check"></i><b>5.6.1</b> Summarizing the results</a></li>
+</ul></li>
+<li class="chapter" data-level="5.7" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#memory-agent-with-internal-parameter"><i class="fa fa-check"></i><b>5.7</b> Memory agent with internal parameter</a>
+<ul>
+<li class="chapter" data-level="5.7.1" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#trying-out-a-more-complex-memory-model-with-a-rate-of-forgetting-that-exponentially-discounts-the-past"><i class="fa fa-check"></i><b>5.7.1</b> Trying out a more complex memory model, with a rate of forgetting that exponentially discounts the past</a></li>
+</ul></li>
+<li class="chapter" data-level="5.8" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#conclusion-from-simple-models-to-complex-cognitive-processes"><i class="fa fa-check"></i><b>5.8</b> Conclusion: From Simple Models to Complex Cognitive Processes</a></li>
+</ul></li>
+<li class="chapter" data-level="6" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html"><i class="fa fa-check"></i><b>6</b> Model Quality Assessment</a>
+<ul>
+<li class="chapter" data-level="6.1" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#introduction-1"><i class="fa fa-check"></i><b>6.1</b> Introduction</a></li>
+<li class="chapter" data-level="6.2" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#generating-and-plotting-additional-variables"><i class="fa fa-check"></i><b>6.2</b> Generating and plotting additional variables</a></li>
+<li class="chapter" data-level="6.3" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#assessing-priors"><i class="fa fa-check"></i><b>6.3</b> Assessing priors</a></li>
+<li class="chapter" data-level="6.4" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#prior-predictive-checks"><i class="fa fa-check"></i><b>6.4</b> Prior Predictive Checks</a></li>
+<li class="chapter" data-level="6.5" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#posterior-predictive-checks"><i class="fa fa-check"></i><b>6.5</b> Posterior Predictive Checks</a></li>
+<li class="chapter" data-level="6.6" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#prior-sensitivity-analysis"><i class="fa fa-check"></i><b>6.6</b> Prior sensitivity analysis</a></li>
+<li class="chapter" data-level="6.7" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#the-memory-model"><i class="fa fa-check"></i><b>6.7</b> The memory model</a></li>
+<li class="chapter" data-level="6.8" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#prior-sensitivity-check-for-the-memory-model"><i class="fa fa-check"></i><b>6.8</b> Prior sensitivity check for the memory model</a></li>
+<li class="chapter" data-level="6.9" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html#conclusion-1"><i class="fa fa-check"></i><b>6.9</b> Conclusion</a></li>
+</ul></li>
+<li class="chapter" data-level="7" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><i class="fa fa-check"></i><b>7</b> Individual Differences in Cognitive Strategies (Multilevel modeling)</a>
+<ul>
+<li class="chapter" data-level="7.1" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#introduction-2"><i class="fa fa-check"></i><b>7.1</b> Introduction</a></li>
+<li class="chapter" data-level="7.2" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#learning-objectives-1"><i class="fa fa-check"></i><b>7.2</b> Learning Objectives</a></li>
+<li class="chapter" data-level="7.3" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#the-value-of-multilevel-modeling"><i class="fa fa-check"></i><b>7.3</b> The Value of Multilevel Modeling</a></li>
+<li class="chapter" data-level="7.4" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#a-multilevel-version-of-the-biased-agent-and-of-the-simple-memory-agent"><i class="fa fa-check"></i><b>7.4</b> A multilevel version of the biased agent and of the simple memory agent</a></li>
+<li class="chapter" data-level="7.5" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#generating-the-agents"><i class="fa fa-check"></i><b>7.5</b> Generating the agents</a></li>
+<li class="chapter" data-level="7.6" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#plotting-the-agents"><i class="fa fa-check"></i><b>7.6</b> Plotting the agents</a></li>
+<li class="chapter" data-level="7.7" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#coding-the-multilevel-agents"><i class="fa fa-check"></i><b>7.7</b> Coding the multilevel agents</a>
+<ul>
+<li class="chapter" data-level="7.7.1" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#multilevel-random"><i class="fa fa-check"></i><b>7.7.1</b> Multilevel random</a></li>
+<li class="chapter" data-level="7.7.2" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#assessing-multilevel-random-agents"><i class="fa fa-check"></i><b>7.7.2</b> Assessing multilevel random agents</a></li>
+<li class="chapter" data-level="7.7.3" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#multilevel-memory"><i class="fa fa-check"></i><b>7.7.3</b> Multilevel memory</a></li>
+<li class="chapter" data-level="7.7.4" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#assessing-multilevel-memory"><i class="fa fa-check"></i><b>7.7.4</b> Assessing multilevel memory</a></li>
+<li class="chapter" data-level="7.7.5" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#multilevel-memory-with-non-centered-parameterization"><i class="fa fa-check"></i><b>7.7.5</b> Multilevel memory with non centered parameterization</a></li>
+<li class="chapter" data-level="7.7.6" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#assessing-multilevel-memory-1"><i class="fa fa-check"></i><b>7.7.6</b> Assessing multilevel memory</a></li>
+<li class="chapter" data-level="7.7.7" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#multilevel-memory-with-correlation-between-parameters"><i class="fa fa-check"></i><b>7.7.7</b> Multilevel memory with correlation between parameters</a></li>
+<li class="chapter" data-level="7.7.8" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#assessing-multilevel-memory-2"><i class="fa fa-check"></i><b>7.7.8</b> Assessing multilevel memory</a></li>
+<li class="chapter" data-level="7.7.9" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#multilevel-memory-no-pooling"><i class="fa fa-check"></i><b>7.7.9</b> Multilevel memory no pooling</a></li>
+</ul></li>
+<li class="chapter" data-level="7.8" data-path="individual-differences-in-cognitive-strategies-multilevel-modeling.html"><a href="individual-differences-in-cognitive-strategies-multilevel-modeling.html#multilevel-full-pooling"><i class="fa fa-check"></i><b>7.8</b> Multilevel full pooling</a></li>
+</ul></li>
+<li class="chapter" data-level="8" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html"><i class="fa fa-check"></i><b>8</b> Model Comparison in Cognitive Science</a>
+<ul>
+<li class="chapter" data-level="8.1" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#learning-objectives-2"><i class="fa fa-check"></i><b>8.1</b> Learning Objectives</a></li>
+<li class="chapter" data-level="8.2" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#why-compare-models"><i class="fa fa-check"></i><b>8.2</b> Why Compare Models?</a></li>
+<li class="chapter" data-level="8.3" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#define-parameters"><i class="fa fa-check"></i><b>8.3</b> Define parameters</a></li>
+<li class="chapter" data-level="8.4" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#define-biased-and-memory-agents"><i class="fa fa-check"></i><b>8.4</b> Define biased and memory agents</a></li>
+<li class="chapter" data-level="8.5" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#generating-the-agents-1"><i class="fa fa-check"></i><b>8.5</b> Generating the agents</a></li>
+<li class="chapter" data-level="8.6" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#prep-the-data"><i class="fa fa-check"></i><b>8.6</b> Prep the data</a></li>
+<li class="chapter" data-level="8.7" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#log-posterior-likelihood"><i class="fa fa-check"></i><b>8.7</b> Log posterior likelihood</a></li>
+<li class="chapter" data-level="8.8" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#create-the-models-multilevel-biased-agents"><i class="fa fa-check"></i><b>8.8</b> Create the models: multilevel biased agents</a></li>
+<li class="chapter" data-level="8.9" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#multilevel-memory-model"><i class="fa fa-check"></i><b>8.9</b> Multilevel memory model</a></li>
+<li class="chapter" data-level="8.10" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#fitting-the-models-to-the-data"><i class="fa fa-check"></i><b>8.10</b> Fitting the models to the data</a></li>
+<li class="chapter" data-level="8.11" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#calculating-the-expected-log-predictive-density-of-a-model"><i class="fa fa-check"></i><b>8.11</b> Calculating the expected log predictive density of a model</a>
+<ul>
+<li class="chapter" data-level="8.11.1" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#rant-on-internal-vs-external-validity"><i class="fa fa-check"></i><b>8.11.1</b> Rant on internal vs external validity</a></li>
+</ul></li>
+<li class="chapter" data-level="8.12" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#implementing-cross-validation"><i class="fa fa-check"></i><b>8.12</b> Implementing Cross-Validation</a>
+<ul>
+<li class="chapter" data-level="8.12.1" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#create-cross-validation-ready-stan-model-for-biased-agents"><i class="fa fa-check"></i><b>8.12.1</b> Create cross-validation ready stan model for biased agents</a></li>
+<li class="chapter" data-level="8.12.2" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#create-cross-validation-ready-stan-model-for-memory-agents"><i class="fa fa-check"></i><b>8.12.2</b> Create cross-validation ready stan model for memory agents</a></li>
+</ul></li>
+<li class="chapter" data-level="8.13" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#calculating-elpd-and-comparing"><i class="fa fa-check"></i><b>8.13</b> Calculating elpd and comparing</a></li>
+<li class="chapter" data-level="8.14" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#limitations-of-model-comparison-techniques"><i class="fa fa-check"></i><b>8.14</b> Limitations of model comparison techniques</a></li>
+</ul></li>
+<li class="chapter" data-level="9" data-path="mixture-models.html"><a href="mixture-models.html"><i class="fa fa-check"></i><b>9</b> Mixture models</a>
+<ul>
+<li class="chapter" data-level="9.0.1" data-path="mixture-models.html"><a href="mixture-models.html#load-the-dataset"><i class="fa fa-check"></i><b>9.0.1</b> Load the dataset</a></li>
+<li class="chapter" data-level="9.1" data-path="mixture-models.html"><a href="mixture-models.html#stan-model-mixing-biased-and-noise"><i class="fa fa-check"></i><b>9.1</b> Stan model mixing biased and noise</a></li>
+<li class="chapter" data-level="9.2" data-path="mixture-models.html"><a href="mixture-models.html#fitting-and-assessing-the-model"><i class="fa fa-check"></i><b>9.2</b> Fitting and assessing the model</a></li>
+<li class="chapter" data-level="9.3" data-path="mixture-models.html"><a href="mixture-models.html#basic-evaluation"><i class="fa fa-check"></i><b>9.3</b> Basic evaluation</a></li>
+<li class="chapter" data-level="9.4" data-path="mixture-models.html"><a href="mixture-models.html#multilevel-mixture-model"><i class="fa fa-check"></i><b>9.4</b> Multilevel mixture model</a></li>
+</ul></li>
+<li class="divider"></li>
+<li><a href="https://bookdown.org" target="blank">Published with bookdown</a></li>
+
+</ul>
+
+      </nav>
+    </div>
+
+    <div class="book-body">
+      <div class="body-inner">
+        <div class="book-header" role="navigation">
+          <h1>
+            <i class="fa fa-circle-o-notch fa-spin"></i><a href="./">07-MixtureModels</a>
+          </h1>
+        </div>
+
+        <div class="page-wrapper" tabindex="-1" role="main">
+          <div class="page-inner">
+
+            <section class="normal" id="section-">
+<div id="mixture-models" class="section level1 hasAnchor" number="9">
+<h1><span class="header-section-number">Chapter 9</span> Mixture models<a href="mixture-models.html#mixture-models" class="anchor-section" aria-label="Anchor link to header"></a></h1>
+<p>Mixture models are another powerful tool to compare the fit of different models to the data or to different portions of the data. This feature makes mixture models also a great tool to explore the possibility of multiple strategies involved in the mechanisms generating the data.</p>
+<p>Indeed, human behaviors rarely follow a single, simple strategy. People may switch between different approaches, combine multiple strategies, or show inconsistent behavior due to factors like attention and fatigue. This creates a significant challenge for cognitive modeling - how can we account for this complexity while maintaining models that are tractable and interpretable?</p>
+<p>Mixture models offer a powerful solution to this challenge. Rather than assuming behavior follows a single process, mixture models allow us to combine multiple cognitive strategies within a unified framework. For example, a participant in a decision-making task might sometimes respond based on careful deliberation and other times rely on quick heuristics or even random guessing; or different participants might be using different strategies. Mixture models let us estimate not only the parameters of these different strategies but also their relative frequencies.
+In this chapter, we’ll explore how to implement mixture models using Stan, beginning with a simple case that combines a biased choice strategy with random responses. We’ll then extend this to more sophisticated models that can capture multiple cognitive strategies. Through this process, we’ll learn:</p>
+<ul>
+<li>How to formally specify mixture models in Stan</li>
+<li>Techniques for estimating mixture proportions and component parameters</li>
+<li>Methods for validating mixture models through posterior predictive checks</li>
+<li>Approaches for comparing different mixture specifications</li>
+</ul>
+<p>Understanding mixture models is crucial for cognitive modeling as they bridge the gap between simplified theoretical models and the messy reality of human behavior. Let’s begin by examining how we can combine two simple decision strategies in a mixture model framework.</p>
+<div id="load-the-dataset" class="section level3 hasAnchor" number="9.0.1">
+<h3><span class="header-section-number">9.0.1</span> Load the dataset<a href="mixture-models.html#load-the-dataset" class="anchor-section" aria-label="Anchor link to header"></a></h3>
+<p>We load the data set from chapter NN, where we loop through possible rates and noise levels, and pick one agent to build up the model progressively.</p>
+<div class="sourceCode" id="cb192"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb192-1"><a href="mixture-models.html#cb192-1" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span>
+<span id="cb192-2"><a href="mixture-models.html#cb192-2" tabindex="-1"></a></span>
+<span id="cb192-3"><a href="mixture-models.html#cb192-3" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(rate <span class="sc">==</span> <span class="fl">0.8</span> <span class="sc">&amp;</span> noise <span class="sc">==</span> <span class="fl">0.1</span>)</span>
+<span id="cb192-4"><a href="mixture-models.html#cb192-4" tabindex="-1"></a></span>
+<span id="cb192-5"><a href="mixture-models.html#cb192-5" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb192-6"><a href="mixture-models.html#cb192-6" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
+<span id="cb192-7"><a href="mixture-models.html#cb192-7" tabindex="-1"></a>  <span class="at">h =</span> dd<span class="sc">$</span>choice</span>
+<span id="cb192-8"><a href="mixture-models.html#cb192-8" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div id="stan-model-mixing-biased-and-noise" class="section level2 hasAnchor" number="9.1">
+<h2><span class="header-section-number">9.1</span> Stan model mixing biased and noise<a href="mixture-models.html#stan-model-mixing-biased-and-noise" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>We then build a Stan model with the noise parameter</p>
+<div class="sourceCode" id="cb193"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb193-1"><a href="mixture-models.html#cb193-1" tabindex="-1"></a>stan_mixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb193-2"><a href="mixture-models.html#cb193-2" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
+<span id="cb193-3"><a href="mixture-models.html#cb193-3" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb193-4"><a href="mixture-models.html#cb193-4" tabindex="-1"></a></span>
+<span id="cb193-5"><a href="mixture-models.html#cb193-5" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
+<span id="cb193-6"><a href="mixture-models.html#cb193-6" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb193-7"><a href="mixture-models.html#cb193-7" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
+<span id="cb193-8"><a href="mixture-models.html#cb193-8" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
+<span id="cb193-9"><a href="mixture-models.html#cb193-9" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb193-10"><a href="mixture-models.html#cb193-10" tabindex="-1"></a></span>
+<span id="cb193-11"><a href="mixture-models.html#cb193-11" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb193-12"><a href="mixture-models.html#cb193-12" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb193-13"><a href="mixture-models.html#cb193-13" tabindex="-1"></a><span class="st">  real bias;</span></span>
+<span id="cb193-14"><a href="mixture-models.html#cb193-14" tabindex="-1"></a><span class="st">  real noise;</span></span>
+<span id="cb193-15"><a href="mixture-models.html#cb193-15" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb193-16"><a href="mixture-models.html#cb193-16" tabindex="-1"></a></span>
+<span id="cb193-17"><a href="mixture-models.html#cb193-17" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb193-18"><a href="mixture-models.html#cb193-18" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb193-19"><a href="mixture-models.html#cb193-19" tabindex="-1"></a><span class="st">  // The prior for theta is a uniform distribution between 0 and 1</span></span>
+<span id="cb193-20"><a href="mixture-models.html#cb193-20" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, 1);</span></span>
+<span id="cb193-21"><a href="mixture-models.html#cb193-21" tabindex="-1"></a><span class="st">  target += normal_lpdf(noise | 0, 1);</span></span>
+<span id="cb193-22"><a href="mixture-models.html#cb193-22" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb193-23"><a href="mixture-models.html#cb193-23" tabindex="-1"></a><span class="st">  // The model consists of a binomial distributions with a rate theta</span></span>
+<span id="cb193-24"><a href="mixture-models.html#cb193-24" tabindex="-1"></a><span class="st">  target += log_sum_exp(log(inv_logit(noise)) +</span></span>
+<span id="cb193-25"><a href="mixture-models.html#cb193-25" tabindex="-1"></a><span class="st">            bernoulli_logit_lpmf(h | 0),</span></span>
+<span id="cb193-26"><a href="mixture-models.html#cb193-26" tabindex="-1"></a><span class="st">            log1m(inv_logit(noise)) +  bernoulli_logit_lpmf(h | bias));</span></span>
+<span id="cb193-27"><a href="mixture-models.html#cb193-27" tabindex="-1"></a><span class="st">            </span></span>
+<span id="cb193-28"><a href="mixture-models.html#cb193-28" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb193-29"><a href="mixture-models.html#cb193-29" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb193-30"><a href="mixture-models.html#cb193-30" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_p;</span></span>
+<span id="cb193-31"><a href="mixture-models.html#cb193-31" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; bias_p;</span></span>
+<span id="cb193-32"><a href="mixture-models.html#cb193-32" tabindex="-1"></a><span class="st">  noise_p = inv_logit(noise);</span></span>
+<span id="cb193-33"><a href="mixture-models.html#cb193-33" tabindex="-1"></a><span class="st">  bias_p = inv_logit(bias);</span></span>
+<span id="cb193-34"><a href="mixture-models.html#cb193-34" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb193-35"><a href="mixture-models.html#cb193-35" tabindex="-1"></a></span>
+<span id="cb193-36"><a href="mixture-models.html#cb193-36" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb193-37"><a href="mixture-models.html#cb193-37" tabindex="-1"></a></span>
+<span id="cb193-38"><a href="mixture-models.html#cb193-38" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb193-39"><a href="mixture-models.html#cb193-39" tabindex="-1"></a>  stan_mixture_model,</span>
+<span id="cb193-40"><a href="mixture-models.html#cb193-40" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb193-41"><a href="mixture-models.html#cb193-41" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureSingle.stan&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W6_MixtureSingle.stan&quot;</code></pre>
+<div class="sourceCode" id="cb195"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb195-1"><a href="mixture-models.html#cb195-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureSingle.stan&quot;</span>)</span>
+<span id="cb195-2"><a href="mixture-models.html#cb195-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb195-3"><a href="mixture-models.html#cb195-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span></code></pre></div>
+</div>
+<div id="fitting-and-assessing-the-model" class="section level2 hasAnchor" number="9.2">
+<h2><span class="header-section-number">9.2</span> Fitting and assessing the model<a href="mixture-models.html#fitting-and-assessing-the-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<div class="sourceCode" id="cb196"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb196-1"><a href="mixture-models.html#cb196-1" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod_mixture<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb196-2"><a href="mixture-models.html#cb196-2" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb196-3"><a href="mixture-models.html#cb196-3" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb196-4"><a href="mixture-models.html#cb196-4" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>,</span>
+<span id="cb196-5"><a href="mixture-models.html#cb196-5" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb196-6"><a href="mixture-models.html#cb196-6" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb196-7"><a href="mixture-models.html#cb196-7" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">2000</span>,</span>
+<span id="cb196-8"><a href="mixture-models.html#cb196-8" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
+<span id="cb196-9"><a href="mixture-models.html#cb196-9" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">500</span>,</span>
+<span id="cb196-10"><a href="mixture-models.html#cb196-10" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb196-11"><a href="mixture-models.html#cb196-11" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb196-12"><a href="mixture-models.html#cb196-12" tabindex="-1"></a>)</span></code></pre></div>
+<pre><code>## Running MCMC with 2 parallel chains, with 2 thread(s) per chain...
+## 
+## Chain 1 Iteration:    1 / 4000 [  0%]  (Warmup) 
+## Chain 1 Iteration:  500 / 4000 [ 12%]  (Warmup) 
+## Chain 1 Iteration: 1000 / 4000 [ 25%]  (Warmup) 
+## Chain 1 Iteration: 1500 / 4000 [ 37%]  (Warmup) 
+## Chain 1 Iteration: 2000 / 4000 [ 50%]  (Warmup) 
+## Chain 1 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
+## Chain 1 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
+## Chain 1 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
+## Chain 2 Iteration:    1 / 4000 [  0%]  (Warmup) 
+## Chain 2 Iteration:  500 / 4000 [ 12%]  (Warmup) 
+## Chain 2 Iteration: 1000 / 4000 [ 25%]  (Warmup) 
+## Chain 2 Iteration: 1500 / 4000 [ 37%]  (Warmup) 
+## Chain 2 Iteration: 2000 / 4000 [ 50%]  (Warmup) 
+## Chain 2 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
+## Chain 2 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
+## Chain 2 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
+## Chain 1 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
+## Chain 1 Iteration: 4000 / 4000 [100%]  (Sampling) 
+## Chain 2 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
+## Chain 2 Iteration: 4000 / 4000 [100%]  (Sampling) 
+## Chain 1 finished in 0.2 seconds.
+## Chain 2 finished in 0.1 seconds.
+## 
+## Both chains finished successfully.
+## Mean chain execution time: 0.2 seconds.
+## Total execution time: 0.3 seconds.</code></pre>
+<div class="sourceCode" id="cb198"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb198-1"><a href="mixture-models.html#cb198-1" tabindex="-1"></a><span class="fu">save</span>(samples, data, </span>
+<span id="cb198-2"><a href="mixture-models.html#cb198-2" tabindex="-1"></a>          <span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RData&quot;</span>) </span>
+<span id="cb198-3"><a href="mixture-models.html#cb198-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_object</span>(<span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RDS&quot;</span>)</span>
+<span id="cb198-4"><a href="mixture-models.html#cb198-4" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_output_files</span>(<span class="at">dir =</span> <span class="st">&quot;simmodels&quot;</span>, <span class="at">basename =</span> <span class="st">&quot;W7_singlemixture&quot;</span>)</span></code></pre></div>
+<p>[MISSING: EVALUATION]</p>
+</div>
+<div id="basic-evaluation" class="section level2 hasAnchor" number="9.3">
+<h2><span class="header-section-number">9.3</span> Basic evaluation<a href="mixture-models.html#basic-evaluation" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<div class="sourceCode" id="cb199"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb199-1"><a href="mixture-models.html#cb199-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
+<pre><code>## # A tibble: 5 × 10
+##   variable    mean  median     sd    mad      q5     q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;      &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__     -70.4   -70.1   1.00   0.719  -72.4   -69.5    1.00    1509.    1773.
+## 2 bias       1.10    1.10  0.207  0.201    0.769   1.46   1.00    2425.    2021.
+## 3 noise     -0.413  -0.398 0.904  0.894   -1.91    1.05   1.00    2555.    2220.
+## 4 noise_p    0.413   0.402 0.188  0.208    0.130   0.740  1.00    2555.    2220.
+## 5 bias_p     0.749   0.750 0.0386 0.0375   0.683   0.811  1.00    2425.    2021.</code></pre>
+</div>
+<div id="multilevel-mixture-model" class="section level2 hasAnchor" number="9.4">
+<h2><span class="header-section-number">9.4</span> Multilevel mixture model<a href="mixture-models.html#multilevel-mixture-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<div class="sourceCode" id="cb201"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb201-1"><a href="mixture-models.html#cb201-1" tabindex="-1"></a><span class="do">### Multilevel mixture</span></span>
+<span id="cb201-2"><a href="mixture-models.html#cb201-2" tabindex="-1"></a>stan_multilevelMixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb201-3"><a href="mixture-models.html#cb201-3" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb201-4"><a href="mixture-models.html#cb201-4" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
+<span id="cb201-5"><a href="mixture-models.html#cb201-5" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb201-6"><a href="mixture-models.html#cb201-6" tabindex="-1"></a><span class="st">functions{</span></span>
+<span id="cb201-7"><a href="mixture-models.html#cb201-7" tabindex="-1"></a><span class="st">  real normal_lb_rng(real mu, real sigma, real lb) {</span></span>
+<span id="cb201-8"><a href="mixture-models.html#cb201-8" tabindex="-1"></a><span class="st">    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds</span></span>
+<span id="cb201-9"><a href="mixture-models.html#cb201-9" tabindex="-1"></a><span class="st">    real u = uniform_rng(p, 1);</span></span>
+<span id="cb201-10"><a href="mixture-models.html#cb201-10" tabindex="-1"></a><span class="st">    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value</span></span>
+<span id="cb201-11"><a href="mixture-models.html#cb201-11" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb201-12"><a href="mixture-models.html#cb201-12" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb201-13"><a href="mixture-models.html#cb201-13" tabindex="-1"></a></span>
+<span id="cb201-14"><a href="mixture-models.html#cb201-14" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
+<span id="cb201-15"><a href="mixture-models.html#cb201-15" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb201-16"><a href="mixture-models.html#cb201-16" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; trials;</span></span>
+<span id="cb201-17"><a href="mixture-models.html#cb201-17" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; agents;</span></span>
+<span id="cb201-18"><a href="mixture-models.html#cb201-18" tabindex="-1"></a><span class="st"> array[trials, agents] int h;</span></span>
+<span id="cb201-19"><a href="mixture-models.html#cb201-19" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb201-20"><a href="mixture-models.html#cb201-20" tabindex="-1"></a></span>
+<span id="cb201-21"><a href="mixture-models.html#cb201-21" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb201-22"><a href="mixture-models.html#cb201-22" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb201-23"><a href="mixture-models.html#cb201-23" tabindex="-1"></a><span class="st">  real thetaM;</span></span>
+<span id="cb201-24"><a href="mixture-models.html#cb201-24" tabindex="-1"></a><span class="st">  real noiseM; // p of noise</span></span>
+<span id="cb201-25"><a href="mixture-models.html#cb201-25" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb201-26"><a href="mixture-models.html#cb201-26" tabindex="-1"></a><span class="st">  vector&lt;lower = 0&gt;[2] tau;</span></span>
+<span id="cb201-27"><a href="mixture-models.html#cb201-27" tabindex="-1"></a><span class="st">  matrix[2, agents] z_IDs;</span></span>
+<span id="cb201-28"><a href="mixture-models.html#cb201-28" tabindex="-1"></a><span class="st">  cholesky_factor_corr[2] L_u;</span></span>
+<span id="cb201-29"><a href="mixture-models.html#cb201-29" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb201-30"><a href="mixture-models.html#cb201-30" tabindex="-1"></a></span>
+<span id="cb201-31"><a href="mixture-models.html#cb201-31" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
+<span id="cb201-32"><a href="mixture-models.html#cb201-32" tabindex="-1"></a><span class="st">  matrix[agents,2] IDs;</span></span>
+<span id="cb201-33"><a href="mixture-models.html#cb201-33" tabindex="-1"></a><span class="st">  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)&#39;;</span></span>
+<span id="cb201-34"><a href="mixture-models.html#cb201-34" tabindex="-1"></a><span class="st"> }</span></span>
+<span id="cb201-35"><a href="mixture-models.html#cb201-35" tabindex="-1"></a></span>
+<span id="cb201-36"><a href="mixture-models.html#cb201-36" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb201-37"><a href="mixture-models.html#cb201-37" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb201-38"><a href="mixture-models.html#cb201-38" tabindex="-1"></a><span class="st">  target += normal_lpdf(thetaM | 0, 1);</span></span>
+<span id="cb201-39"><a href="mixture-models.html#cb201-39" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[1] | 0, .3)  -</span></span>
+<span id="cb201-40"><a href="mixture-models.html#cb201-40" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
+<span id="cb201-41"><a href="mixture-models.html#cb201-41" tabindex="-1"></a></span>
+<span id="cb201-42"><a href="mixture-models.html#cb201-42" tabindex="-1"></a><span class="st">  target += normal_lpdf(noiseM | -1, .5);</span></span>
+<span id="cb201-43"><a href="mixture-models.html#cb201-43" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[2] | 0, .3)  -</span></span>
+<span id="cb201-44"><a href="mixture-models.html#cb201-44" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
+<span id="cb201-45"><a href="mixture-models.html#cb201-45" tabindex="-1"></a><span class="st">    </span></span>
+<span id="cb201-46"><a href="mixture-models.html#cb201-46" tabindex="-1"></a><span class="st">  target += lkj_corr_cholesky_lpdf(L_u | 2);</span></span>
+<span id="cb201-47"><a href="mixture-models.html#cb201-47" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb201-48"><a href="mixture-models.html#cb201-48" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(to_vector(z_IDs));</span></span>
+<span id="cb201-49"><a href="mixture-models.html#cb201-49" tabindex="-1"></a></span>
+<span id="cb201-50"><a href="mixture-models.html#cb201-50" tabindex="-1"></a><span class="st">  for (i in 1:agents)</span></span>
+<span id="cb201-51"><a href="mixture-models.html#cb201-51" tabindex="-1"></a><span class="st">    target += log_sum_exp(</span></span>
+<span id="cb201-52"><a href="mixture-models.html#cb201-52" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
+<span id="cb201-53"><a href="mixture-models.html#cb201-53" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | 0), // times post likelihood of the noise model</span></span>
+<span id="cb201-54"><a href="mixture-models.html#cb201-54" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
+<span id="cb201-55"><a href="mixture-models.html#cb201-55" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
+<span id="cb201-56"><a href="mixture-models.html#cb201-56" tabindex="-1"></a><span class="st">                    </span></span>
+<span id="cb201-57"><a href="mixture-models.html#cb201-57" tabindex="-1"></a></span>
+<span id="cb201-58"><a href="mixture-models.html#cb201-58" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb201-59"><a href="mixture-models.html#cb201-59" tabindex="-1"></a></span>
+<span id="cb201-60"><a href="mixture-models.html#cb201-60" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb201-61"><a href="mixture-models.html#cb201-61" tabindex="-1"></a><span class="st">  real thetaM_prior;</span></span>
+<span id="cb201-62"><a href="mixture-models.html#cb201-62" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; thetaSD_prior;</span></span>
+<span id="cb201-63"><a href="mixture-models.html#cb201-63" tabindex="-1"></a><span class="st">  real noiseM_prior;</span></span>
+<span id="cb201-64"><a href="mixture-models.html#cb201-64" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; noiseSD_prior;</span></span>
+<span id="cb201-65"><a href="mixture-models.html#cb201-65" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;</span></span>
+<span id="cb201-66"><a href="mixture-models.html#cb201-66" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_prior;</span></span>
+<span id="cb201-67"><a href="mixture-models.html#cb201-67" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior;</span></span>
+<span id="cb201-68"><a href="mixture-models.html#cb201-68" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_posterior;</span></span>
+<span id="cb201-69"><a href="mixture-models.html#cb201-69" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb201-70"><a href="mixture-models.html#cb201-70" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_noise;</span></span>
+<span id="cb201-71"><a href="mixture-models.html#cb201-71" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_noise;</span></span>
+<span id="cb201-72"><a href="mixture-models.html#cb201-72" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_preds;</span></span>
+<span id="cb201-73"><a href="mixture-models.html#cb201-73" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_preds;</span></span>
+<span id="cb201-74"><a href="mixture-models.html#cb201-74" tabindex="-1"></a></span>
+<span id="cb201-75"><a href="mixture-models.html#cb201-75" tabindex="-1"></a><span class="st">  array[trials, agents] real log_lik;</span></span>
+<span id="cb201-76"><a href="mixture-models.html#cb201-76" tabindex="-1"></a></span>
+<span id="cb201-77"><a href="mixture-models.html#cb201-77" tabindex="-1"></a><span class="st">  thetaM_prior = normal_rng(0,1);</span></span>
+<span id="cb201-78"><a href="mixture-models.html#cb201-78" tabindex="-1"></a><span class="st">  thetaSD_prior = normal_lb_rng(0,0.3,0);</span></span>
+<span id="cb201-79"><a href="mixture-models.html#cb201-79" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));</span></span>
+<span id="cb201-80"><a href="mixture-models.html#cb201-80" tabindex="-1"></a><span class="st">  noiseM_prior = normal_rng(-1,.5);</span></span>
+<span id="cb201-81"><a href="mixture-models.html#cb201-81" tabindex="-1"></a><span class="st">  noiseSD_prior = normal_lb_rng(0,0.3,0);</span></span>
+<span id="cb201-82"><a href="mixture-models.html#cb201-82" tabindex="-1"></a><span class="st">  noise_prior = inv_logit(normal_rng(noiseM_prior, noiseSD_prior));</span></span>
+<span id="cb201-83"><a href="mixture-models.html#cb201-83" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb201-84"><a href="mixture-models.html#cb201-84" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(normal_rng(thetaM, tau[1]));</span></span>
+<span id="cb201-85"><a href="mixture-models.html#cb201-85" tabindex="-1"></a><span class="st">  noise_posterior = inv_logit(normal_rng(noiseM, tau[2]));</span></span>
+<span id="cb201-86"><a href="mixture-models.html#cb201-86" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb201-87"><a href="mixture-models.html#cb201-87" tabindex="-1"></a><span class="st">   </span></span>
+<span id="cb201-88"><a href="mixture-models.html#cb201-88" tabindex="-1"></a><span class="st">   for (i in 1:agents){</span></span>
+<span id="cb201-89"><a href="mixture-models.html#cb201-89" tabindex="-1"></a><span class="st">     </span></span>
+<span id="cb201-90"><a href="mixture-models.html#cb201-90" tabindex="-1"></a><span class="st">    for (t in 1:trials){</span></span>
+<span id="cb201-91"><a href="mixture-models.html#cb201-91" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb201-92"><a href="mixture-models.html#cb201-92" tabindex="-1"></a><span class="st">      prior_noise[t,i] = bernoulli_rng(noise_prior);</span></span>
+<span id="cb201-93"><a href="mixture-models.html#cb201-93" tabindex="-1"></a><span class="st">      posterior_noise[t,i] = bernoulli_rng(inv_logit(noiseM + IDs[i,2]));</span></span>
+<span id="cb201-94"><a href="mixture-models.html#cb201-94" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb201-95"><a href="mixture-models.html#cb201-95" tabindex="-1"></a><span class="st">      if(prior_noise[t,i]==1){</span></span>
+<span id="cb201-96"><a href="mixture-models.html#cb201-96" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(theta_prior);</span></span>
+<span id="cb201-97"><a href="mixture-models.html#cb201-97" tabindex="-1"></a><span class="st">      } else{</span></span>
+<span id="cb201-98"><a href="mixture-models.html#cb201-98" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(0.5);</span></span>
+<span id="cb201-99"><a href="mixture-models.html#cb201-99" tabindex="-1"></a><span class="st">      }</span></span>
+<span id="cb201-100"><a href="mixture-models.html#cb201-100" tabindex="-1"></a><span class="st">      if(posterior_noise[t,i]==1){</span></span>
+<span id="cb201-101"><a href="mixture-models.html#cb201-101" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(inv_logit(thetaM + IDs[i,1]));</span></span>
+<span id="cb201-102"><a href="mixture-models.html#cb201-102" tabindex="-1"></a><span class="st">      } else{</span></span>
+<span id="cb201-103"><a href="mixture-models.html#cb201-103" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(0.5);</span></span>
+<span id="cb201-104"><a href="mixture-models.html#cb201-104" tabindex="-1"></a><span class="st">      }</span></span>
+<span id="cb201-105"><a href="mixture-models.html#cb201-105" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb201-106"><a href="mixture-models.html#cb201-106" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb201-107"><a href="mixture-models.html#cb201-107" tabindex="-1"></a><span class="st">      log_lik[t,i] = log_sum_exp(</span></span>
+<span id="cb201-108"><a href="mixture-models.html#cb201-108" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
+<span id="cb201-109"><a href="mixture-models.html#cb201-109" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | 0), // times post likelihood of the noise model</span></span>
+<span id="cb201-110"><a href="mixture-models.html#cb201-110" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
+<span id="cb201-111"><a href="mixture-models.html#cb201-111" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
+<span id="cb201-112"><a href="mixture-models.html#cb201-112" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb201-113"><a href="mixture-models.html#cb201-113" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb201-114"><a href="mixture-models.html#cb201-114" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb201-115"><a href="mixture-models.html#cb201-115" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb201-116"><a href="mixture-models.html#cb201-116" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb201-117"><a href="mixture-models.html#cb201-117" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb201-118"><a href="mixture-models.html#cb201-118" tabindex="-1"></a></span>
+<span id="cb201-119"><a href="mixture-models.html#cb201-119" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb201-120"><a href="mixture-models.html#cb201-120" tabindex="-1"></a>  stan_multilevelMixture_model,</span>
+<span id="cb201-121"><a href="mixture-models.html#cb201-121" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb201-122"><a href="mixture-models.html#cb201-122" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureMultilevel.stan&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W6_MixtureMultilevel.stan&quot;</code></pre>
+<div class="sourceCode" id="cb203"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb203-1"><a href="mixture-models.html#cb203-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureMultilevel.stan&quot;</span>)</span>
+<span id="cb203-2"><a href="mixture-models.html#cb203-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb203-3"><a href="mixture-models.html#cb203-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb203-4"><a href="mixture-models.html#cb203-4" tabindex="-1"></a></span>
+<span id="cb203-5"><a href="mixture-models.html#cb203-5" tabindex="-1"></a></span>
+<span id="cb203-6"><a href="mixture-models.html#cb203-6" tabindex="-1"></a><span class="co"># samples &lt;- mod_mixture$sample(</span></span>
+<span id="cb203-7"><a href="mixture-models.html#cb203-7" tabindex="-1"></a><span class="co">#   data = data_biased,</span></span>
+<span id="cb203-8"><a href="mixture-models.html#cb203-8" tabindex="-1"></a><span class="co">#   seed = 123,</span></span>
+<span id="cb203-9"><a href="mixture-models.html#cb203-9" tabindex="-1"></a><span class="co">#   chains = 2,</span></span>
+<span id="cb203-10"><a href="mixture-models.html#cb203-10" tabindex="-1"></a><span class="co">#   parallel_chains = 2,</span></span>
+<span id="cb203-11"><a href="mixture-models.html#cb203-11" tabindex="-1"></a><span class="co">#   threads_per_chain = 2,</span></span>
+<span id="cb203-12"><a href="mixture-models.html#cb203-12" tabindex="-1"></a><span class="co">#   iter_warmup = 2000,</span></span>
+<span id="cb203-13"><a href="mixture-models.html#cb203-13" tabindex="-1"></a><span class="co">#   iter_sampling = 2000,</span></span>
+<span id="cb203-14"><a href="mixture-models.html#cb203-14" tabindex="-1"></a><span class="co">#   refresh = 500,</span></span>
+<span id="cb203-15"><a href="mixture-models.html#cb203-15" tabindex="-1"></a><span class="co">#   max_treedepth = 20,</span></span>
+<span id="cb203-16"><a href="mixture-models.html#cb203-16" tabindex="-1"></a><span class="co">#   adapt_delta = 0.99,</span></span>
+<span id="cb203-17"><a href="mixture-models.html#cb203-17" tabindex="-1"></a><span class="co"># )</span></span>
+<span id="cb203-18"><a href="mixture-models.html#cb203-18" tabindex="-1"></a><span class="co"># </span></span>
+<span id="cb203-19"><a href="mixture-models.html#cb203-19" tabindex="-1"></a><span class="co"># save(samples, data, </span></span>
+<span id="cb203-20"><a href="mixture-models.html#cb203-20" tabindex="-1"></a><span class="co">#           file = &quot;simmodels/W7_multimixture.RData&quot;) </span></span>
+<span id="cb203-21"><a href="mixture-models.html#cb203-21" tabindex="-1"></a><span class="co"># samples$save_object(file = &quot;simmodels/W7_multimixture.RDS&quot;)</span></span>
+<span id="cb203-22"><a href="mixture-models.html#cb203-22" tabindex="-1"></a><span class="co"># samples$save_output_files(dir = &quot;simmodels&quot;, basename = &quot;W7_multimixture&quot;)</span></span></code></pre></div>
+<p>[MISSING: EVALUATION]</p>
+<div class="sourceCode" id="cb204"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb204-1"><a href="mixture-models.html#cb204-1" tabindex="-1"></a>samples <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(<span class="st">&quot;simmodels/W7_multimixture.RDS&quot;</span>)</span>
+<span id="cb204-2"><a href="mixture-models.html#cb204-2" tabindex="-1"></a></span>
+<span id="cb204-3"><a href="mixture-models.html#cb204-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
+<pre><code>## # A tibble: 60,417 × 10
+##    variable         mean     median      sd     mad         q5       q95  rhat ess_bulk ess_tail
+##    &lt;chr&gt;           &lt;dbl&gt;      &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt;      &lt;dbl&gt;     &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 lp__       -6282.     -6281.     13.2    13.1    -6305.     -6260.     1.00     737.    1528.
+##  2 thetaM         1.41       1.41    0.0650  0.0637     1.31       1.52   1.00    1497.    2051.
+##  3 noiseM        -2.34      -2.34    0.315   0.308     -2.86      -1.84   1.00    3639.    2055.
+##  4 tau[1]         0.568      0.565   0.0530  0.0522     0.484      0.659  1.00    1077.    2007.
+##  5 tau[2]         0.204      0.173   0.151   0.150      0.0193     0.497  1.00    3862.    2391.
+##  6 z_IDs[1,1]     0.143      0.138   0.380   0.375     -0.473      0.786  1.00    6420.    2779.
+##  7 z_IDs[2,1]    -0.0209    -0.0159  1.01    1.03      -1.69       1.64   1.00   10804.    2755.
+##  8 z_IDs[1,2]     0.228      0.225   0.407   0.397     -0.442      0.896  1.00    7772.    2630.
+##  9 z_IDs[2,2]    -0.0185    -0.0375  0.982   0.986     -1.65       1.58   1.00    9849.    2787.
+## 10 z_IDs[1,3]     1.93       1.91    0.527   0.521      1.11       2.83   1.00    7475.    2623.
+## # ℹ 60,407 more rows</code></pre>
+<div class="sourceCode" id="cb206"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb206-1"><a href="mixture-models.html#cb206-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">loo</span>()</span></code></pre></div>
+<pre><code>## 
+## Computed from 4000 by 12000 log-likelihood matrix.
+## 
+##          Estimate    SE
+## elpd_loo  -6150.3  53.4
+## p_loo       131.8   2.9
+## looic     12300.5 106.8
+## ------
+## MCSE of elpd_loo is NA.
+## MCSE and ESS estimates assume MCMC draws (r_eff in [0.2, 3.0]).
+## 
+## Pareto k diagnostic values:
+##                          Count Pct.    Min. ESS
+## (-Inf, 0.7]   (good)     11909 99.2%   659     
+##    (0.7, 1]   (bad)         91  0.8%   &lt;NA&gt;    
+##    (1, Inf)   (very bad)     0  0.0%   &lt;NA&gt;    
+## See help(&#39;pareto-k-diagnostic&#39;) for details.</code></pre>
+<p>[MISSING: PARAMETER RECOVERY]</p>
+<p>[MISSING: BIASED VS. MEMORY?]</p>
+<p>Mixture models represent a crucial step forward in our cognitive modeling toolkit, allowing us to capture the complexity and variability inherent in human behavior. Through this chapter, we’ve seen how combining multiple cognitive strategies within a single model can provide richer and more realistic accounts of decision-making processes.</p>
+<p>Several key insights emerge from our exploration of mixture models:</p>
+<p>First, mixture models allow us to move beyond the false choice between oversimplified single-strategy models and intractably complex specifications. By combining a small number of interpretable components, we can capture substantial behavioral complexity while maintaining mathematical and computational tractability.</p>
+<p>Second, the Bayesian implementation of mixture models in Stan provides powerful tools for inference. We can estimate not only the parameters of different cognitive strategies but also their relative contributions to behavior. This allows us to quantify the importance of different processes and how they might vary across individuals or conditions.</p>
+<p>Third, mixture models require careful attention to identifiability and validation. Through parameter recovery studies and posterior predictive checks, we’ve seen how to verify that our mixture specifications can reliably recover true parameter values and generate realistic behavioral patterns.
+As we move forward in the course, mixture models will continue to play an important role in our modeling toolkit. They provide a bridge between simple theoretical models and complex empirical data, allowing us to build increasingly sophisticated accounts of cognitive processes while maintaining scientific rigor and interpretability.</p>
+<p>The next chapters will build on these foundations as we explore hierarchical models that can capture individual differences, and more complex cognitive architectures that combine multiple processing stages. The principles we’ve learned about specifying, fitting, and validating mixture models will serve as essential tools in these more advanced applications.</p>
+
+</div>
+</div>
+            </section>
+
+          </div>
+        </div>
+      </div>
+<a href="model-comparison-in-cognitive-science.html" class="navigation navigation-prev navigation-unique" aria-label="Previous page"><i class="fa fa-angle-left"></i></a>
+
+    </div>
+  </div>
+<script src="libs/gitbook-2.6.7/js/app.min.js"></script>
+<script src="libs/gitbook-2.6.7/js/clipboard.min.js"></script>
+<script src="libs/gitbook-2.6.7/js/plugin-search.js"></script>
+<script src="libs/gitbook-2.6.7/js/plugin-sharing.js"></script>
+<script src="libs/gitbook-2.6.7/js/plugin-fontsettings.js"></script>
+<script src="libs/gitbook-2.6.7/js/plugin-bookdown.js"></script>
+<script src="libs/gitbook-2.6.7/js/jquery.highlight.js"></script>
+<script src="libs/gitbook-2.6.7/js/plugin-clipboard.js"></script>
+<script>
+gitbook.require(["gitbook"], function(gitbook) {
+gitbook.start({
+"sharing": {
+"github": false,
+"facebook": true,
+"twitter": true,
+"linkedin": false,
+"weibo": false,
+"instapaper": false,
+"vk": false,
+"whatsapp": false,
+"all": ["facebook", "twitter", "linkedin", "weibo", "instapaper"]
+},
+"fontsettings": {
+"theme": "white",
+"family": "sans",
+"size": 2
+},
+"edit": {
+"link": "https://github.com/fusaroli/AdvancedCognitiveModeling/edit/master/08-MixtureModels.Rmd",
+"text": "Edit"
+},
+"history": {
+"link": null,
+"text": null
+},
+"view": {
+"link": null,
+"text": null
+},
+"download": ["series.pdf"],
+"search": {
+"engine": "fuse",
+"options": null
+},
+"toc": {
+"collapse": "subsection"
+}
+});
+});
+</script>
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    var src = "true";
+    if (src === "" || src === "true") src = "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/latest.js?config=TeX-MML-AM_CHTML";
+    if (location.protocol !== "file:")
+      if (/^https?:/.test(src))
+        src = src.replace(/^https?:/, '');
+    script.src = src;
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+</body>
+
+</html>

@@ -309,14 +309,14 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 </ul></li>
 <li class="chapter" data-level="8.13" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#calculating-elpd-and-comparing"><i class="fa fa-check"></i><b>8.13</b> Calculating elpd and comparing</a></li>
 <li class="chapter" data-level="8.14" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#limitations-of-model-comparison-techniques"><i class="fa fa-check"></i><b>8.14</b> Limitations of model comparison techniques</a></li>
-<li class="chapter" data-level="8.15" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#mixture-models"><i class="fa fa-check"></i><b>8.15</b> Mixture models</a>
-<ul>
-<li class="chapter" data-level="8.15.1" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#load-the-dataset"><i class="fa fa-check"></i><b>8.15.1</b> Load the dataset</a></li>
 </ul></li>
-<li class="chapter" data-level="8.16" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#stan-model-mixing-biased-and-noise"><i class="fa fa-check"></i><b>8.16</b> Stan model mixing biased and noise</a></li>
-<li class="chapter" data-level="8.17" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#fitting-and-assessing-the-model"><i class="fa fa-check"></i><b>8.17</b> Fitting and assessing the model</a></li>
-<li class="chapter" data-level="8.18" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#basic-evaluation"><i class="fa fa-check"></i><b>8.18</b> Basic evaluation</a></li>
-<li class="chapter" data-level="8.19" data-path="model-comparison-in-cognitive-science.html"><a href="model-comparison-in-cognitive-science.html#multilevel-mixture-model"><i class="fa fa-check"></i><b>8.19</b> Multilevel mixture model</a></li>
+<li class="chapter" data-level="9" data-path="mixture-models.html"><a href="mixture-models.html"><i class="fa fa-check"></i><b>9</b> Mixture models</a>
+<ul>
+<li class="chapter" data-level="9.0.1" data-path="mixture-models.html"><a href="mixture-models.html#load-the-dataset"><i class="fa fa-check"></i><b>9.0.1</b> Load the dataset</a></li>
+<li class="chapter" data-level="9.1" data-path="mixture-models.html"><a href="mixture-models.html#stan-model-mixing-biased-and-noise"><i class="fa fa-check"></i><b>9.1</b> Stan model mixing biased and noise</a></li>
+<li class="chapter" data-level="9.2" data-path="mixture-models.html"><a href="mixture-models.html#fitting-and-assessing-the-model"><i class="fa fa-check"></i><b>9.2</b> Fitting and assessing the model</a></li>
+<li class="chapter" data-level="9.3" data-path="mixture-models.html"><a href="mixture-models.html#basic-evaluation"><i class="fa fa-check"></i><b>9.3</b> Basic evaluation</a></li>
+<li class="chapter" data-level="9.4" data-path="mixture-models.html"><a href="mixture-models.html#multilevel-mixture-model"><i class="fa fa-check"></i><b>9.4</b> Multilevel mixture model</a></li>
 </ul></li>
 <li class="divider"></li>
 <li><a href="https://bookdown.org" target="blank">Published with bookdown</a></li>
@@ -357,109 +357,109 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 We can then generate theta according to the prior in generated quantities. While we are at this, we can also generate a nicer version of the posterior estimate for the theta parameter, now in probability scale (instead of log odds).</p>
 <p>However, prior and posterior estimates are not always the most immediate thing to understand. For instance, we might have trouble having a good grasp for how the uncertainty in the estimate will play out on 120 trials, or 6 trials, or however many trials we are planning for our experiment. Luckily, we can ask Stan to run predictions from either priors or posteriors, or both: given the priors how many trials will have “right hand” choice? and given the posterior estimates?</p>
 <p>As we use complex models, the relation between prior/posterior estimates and predictions becomes less and less intuitive. Simulating their implications for the outcomes - also called prior/posterior predictive checks - becomes a very useful tool to adjust our priors and their uncertainty so that they reflect what we know of the outcome scale; as well as to assess whether the model (and its posterior estimates) can appropriately describe the data we observe, or there’s some bias there. More discussion of this can be found at <a href="https://4ccoxau.github.io/PriorsWorkshop/" class="uri">https://4ccoxau.github.io/PriorsWorkshop/</a>.</p>
-<div class="sourceCode" id="cb85"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb85-1"><a href="model-quality-assessment.html#cb85-1" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(tidyverse,</span>
-<span id="cb85-2"><a href="model-quality-assessment.html#cb85-2" tabindex="-1"></a>        here,</span>
-<span id="cb85-3"><a href="model-quality-assessment.html#cb85-3" tabindex="-1"></a>        posterior,</span>
-<span id="cb85-4"><a href="model-quality-assessment.html#cb85-4" tabindex="-1"></a>        cmdstanr,</span>
-<span id="cb85-5"><a href="model-quality-assessment.html#cb85-5" tabindex="-1"></a>        brms, tidybayes)</span>
-<span id="cb85-6"><a href="model-quality-assessment.html#cb85-6" tabindex="-1"></a></span>
-<span id="cb85-7"><a href="model-quality-assessment.html#cb85-7" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span>
-<span id="cb85-8"><a href="model-quality-assessment.html#cb85-8" tabindex="-1"></a></span>
-<span id="cb85-9"><a href="model-quality-assessment.html#cb85-9" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
-<span id="cb85-10"><a href="model-quality-assessment.html#cb85-10" tabindex="-1"></a><span class="st">// This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)</span></span>
-<span id="cb85-11"><a href="model-quality-assessment.html#cb85-11" tabindex="-1"></a></span>
-<span id="cb85-12"><a href="model-quality-assessment.html#cb85-12" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and the sequence of choices (right as 1, left as 0)</span></span>
-<span id="cb85-13"><a href="model-quality-assessment.html#cb85-13" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb85-14"><a href="model-quality-assessment.html#cb85-14" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n; // n of trials</span></span>
-<span id="cb85-15"><a href="model-quality-assessment.html#cb85-15" tabindex="-1"></a><span class="st"> array[n] int h; // sequence of choices (right as 1, left as 0) as long as n</span></span>
-<span id="cb85-16"><a href="model-quality-assessment.html#cb85-16" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb85-17"><a href="model-quality-assessment.html#cb85-17" tabindex="-1"></a></span>
-<span id="cb85-18"><a href="model-quality-assessment.html#cb85-18" tabindex="-1"></a><span class="st">// The parameters that the model needs to estimate (theta)</span></span>
-<span id="cb85-19"><a href="model-quality-assessment.html#cb85-19" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb85-20"><a href="model-quality-assessment.html#cb85-20" tabindex="-1"></a><span class="st">    real theta; // note it is unbounded as we now work on log odds</span></span>
-<span id="cb85-21"><a href="model-quality-assessment.html#cb85-21" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb85-22"><a href="model-quality-assessment.html#cb85-22" tabindex="-1"></a></span>
-<span id="cb85-23"><a href="model-quality-assessment.html#cb85-23" tabindex="-1"></a><span class="st">// The model to be estimated (a bernoulli, parameter theta, prior on the theta)</span></span>
-<span id="cb85-24"><a href="model-quality-assessment.html#cb85-24" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb85-25"><a href="model-quality-assessment.html#cb85-25" tabindex="-1"></a><span class="st">  // The prior for theta on a log odds scale is a normal distribution with a mean of 0 and a sd of 1.</span></span>
-<span id="cb85-26"><a href="model-quality-assessment.html#cb85-26" tabindex="-1"></a><span class="st">  // This covers most of the probability space between 0 and 1, after being converted to probability.</span></span>
-<span id="cb85-27"><a href="model-quality-assessment.html#cb85-27" tabindex="-1"></a><span class="st">  target += normal_lpdf(theta | 0, 1);</span></span>
-<span id="cb85-28"><a href="model-quality-assessment.html#cb85-28" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb85-29"><a href="model-quality-assessment.html#cb85-29" tabindex="-1"></a><span class="st">  // The model consists of a bernoulli distribution (binomial w 1 trial only) with a rate theta,</span></span>
-<span id="cb85-30"><a href="model-quality-assessment.html#cb85-30" tabindex="-1"></a><span class="st">  // note we specify it uses a logit link (theta is in logodds)</span></span>
-<span id="cb85-31"><a href="model-quality-assessment.html#cb85-31" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | theta);</span></span>
-<span id="cb85-32"><a href="model-quality-assessment.html#cb85-32" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb85-33"><a href="model-quality-assessment.html#cb85-33" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb85-34"><a href="model-quality-assessment.html#cb85-34" tabindex="-1"></a></span>
-<span id="cb85-35"><a href="model-quality-assessment.html#cb85-35" tabindex="-1"></a><span class="st">generated quantities{</span></span>
-<span id="cb85-36"><a href="model-quality-assessment.html#cb85-36" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;  // theta prior parameter, on a prob scale (0-1)</span></span>
-<span id="cb85-37"><a href="model-quality-assessment.html#cb85-37" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior; // theta posterior parameter, on a prob scale (0-1)</span></span>
-<span id="cb85-38"><a href="model-quality-assessment.html#cb85-38" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds;  // distribution of right hand choices according to the prior</span></span>
-<span id="cb85-39"><a href="model-quality-assessment.html#cb85-39" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; posterior_preds; // distribution of right hand choices according to the posterior</span></span>
-<span id="cb85-40"><a href="model-quality-assessment.html#cb85-40" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb85-41"><a href="model-quality-assessment.html#cb85-41" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(0,1)); // generating the prior on a log odds scale and converting</span></span>
-<span id="cb85-42"><a href="model-quality-assessment.html#cb85-42" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(theta);  // converting the posterior estimate from log odds to prob.</span></span>
-<span id="cb85-43"><a href="model-quality-assessment.html#cb85-43" tabindex="-1"></a><span class="st">  prior_preds = binomial_rng(n, theta_prior);</span></span>
-<span id="cb85-44"><a href="model-quality-assessment.html#cb85-44" tabindex="-1"></a><span class="st">  posterior_preds = binomial_rng(n, inv_logit(theta));</span></span>
-<span id="cb85-45"><a href="model-quality-assessment.html#cb85-45" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb85-46"><a href="model-quality-assessment.html#cb85-46" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb85-47"><a href="model-quality-assessment.html#cb85-47" tabindex="-1"></a></span>
-<span id="cb85-48"><a href="model-quality-assessment.html#cb85-48" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb85-49"><a href="model-quality-assessment.html#cb85-49" tabindex="-1"></a>  stan_model,</span>
-<span id="cb85-50"><a href="model-quality-assessment.html#cb85-50" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb85-51"><a href="model-quality-assessment.html#cb85-51" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_SimpleBernoulli_logodds.stan&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb95"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb95-1"><a href="model-quality-assessment.html#cb95-1" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(tidyverse,</span>
+<span id="cb95-2"><a href="model-quality-assessment.html#cb95-2" tabindex="-1"></a>        here,</span>
+<span id="cb95-3"><a href="model-quality-assessment.html#cb95-3" tabindex="-1"></a>        posterior,</span>
+<span id="cb95-4"><a href="model-quality-assessment.html#cb95-4" tabindex="-1"></a>        cmdstanr,</span>
+<span id="cb95-5"><a href="model-quality-assessment.html#cb95-5" tabindex="-1"></a>        brms, tidybayes)</span>
+<span id="cb95-6"><a href="model-quality-assessment.html#cb95-6" tabindex="-1"></a></span>
+<span id="cb95-7"><a href="model-quality-assessment.html#cb95-7" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span>
+<span id="cb95-8"><a href="model-quality-assessment.html#cb95-8" tabindex="-1"></a></span>
+<span id="cb95-9"><a href="model-quality-assessment.html#cb95-9" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb95-10"><a href="model-quality-assessment.html#cb95-10" tabindex="-1"></a><span class="st">// This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)</span></span>
+<span id="cb95-11"><a href="model-quality-assessment.html#cb95-11" tabindex="-1"></a></span>
+<span id="cb95-12"><a href="model-quality-assessment.html#cb95-12" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and the sequence of choices (right as 1, left as 0)</span></span>
+<span id="cb95-13"><a href="model-quality-assessment.html#cb95-13" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb95-14"><a href="model-quality-assessment.html#cb95-14" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n; // n of trials</span></span>
+<span id="cb95-15"><a href="model-quality-assessment.html#cb95-15" tabindex="-1"></a><span class="st"> array[n] int h; // sequence of choices (right as 1, left as 0) as long as n</span></span>
+<span id="cb95-16"><a href="model-quality-assessment.html#cb95-16" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-17"><a href="model-quality-assessment.html#cb95-17" tabindex="-1"></a></span>
+<span id="cb95-18"><a href="model-quality-assessment.html#cb95-18" tabindex="-1"></a><span class="st">// The parameters that the model needs to estimate (theta)</span></span>
+<span id="cb95-19"><a href="model-quality-assessment.html#cb95-19" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb95-20"><a href="model-quality-assessment.html#cb95-20" tabindex="-1"></a><span class="st">    real theta; // note it is unbounded as we now work on log odds</span></span>
+<span id="cb95-21"><a href="model-quality-assessment.html#cb95-21" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-22"><a href="model-quality-assessment.html#cb95-22" tabindex="-1"></a></span>
+<span id="cb95-23"><a href="model-quality-assessment.html#cb95-23" tabindex="-1"></a><span class="st">// The model to be estimated (a bernoulli, parameter theta, prior on the theta)</span></span>
+<span id="cb95-24"><a href="model-quality-assessment.html#cb95-24" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb95-25"><a href="model-quality-assessment.html#cb95-25" tabindex="-1"></a><span class="st">  // The prior for theta on a log odds scale is a normal distribution with a mean of 0 and a sd of 1.</span></span>
+<span id="cb95-26"><a href="model-quality-assessment.html#cb95-26" tabindex="-1"></a><span class="st">  // This covers most of the probability space between 0 and 1, after being converted to probability.</span></span>
+<span id="cb95-27"><a href="model-quality-assessment.html#cb95-27" tabindex="-1"></a><span class="st">  target += normal_lpdf(theta | 0, 1);</span></span>
+<span id="cb95-28"><a href="model-quality-assessment.html#cb95-28" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-29"><a href="model-quality-assessment.html#cb95-29" tabindex="-1"></a><span class="st">  // The model consists of a bernoulli distribution (binomial w 1 trial only) with a rate theta,</span></span>
+<span id="cb95-30"><a href="model-quality-assessment.html#cb95-30" tabindex="-1"></a><span class="st">  // note we specify it uses a logit link (theta is in logodds)</span></span>
+<span id="cb95-31"><a href="model-quality-assessment.html#cb95-31" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | theta);</span></span>
+<span id="cb95-32"><a href="model-quality-assessment.html#cb95-32" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-33"><a href="model-quality-assessment.html#cb95-33" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-34"><a href="model-quality-assessment.html#cb95-34" tabindex="-1"></a></span>
+<span id="cb95-35"><a href="model-quality-assessment.html#cb95-35" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb95-36"><a href="model-quality-assessment.html#cb95-36" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;  // theta prior parameter, on a prob scale (0-1)</span></span>
+<span id="cb95-37"><a href="model-quality-assessment.html#cb95-37" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior; // theta posterior parameter, on a prob scale (0-1)</span></span>
+<span id="cb95-38"><a href="model-quality-assessment.html#cb95-38" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds;  // distribution of right hand choices according to the prior</span></span>
+<span id="cb95-39"><a href="model-quality-assessment.html#cb95-39" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; posterior_preds; // distribution of right hand choices according to the posterior</span></span>
+<span id="cb95-40"><a href="model-quality-assessment.html#cb95-40" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-41"><a href="model-quality-assessment.html#cb95-41" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(0,1)); // generating the prior on a log odds scale and converting</span></span>
+<span id="cb95-42"><a href="model-quality-assessment.html#cb95-42" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(theta);  // converting the posterior estimate from log odds to prob.</span></span>
+<span id="cb95-43"><a href="model-quality-assessment.html#cb95-43" tabindex="-1"></a><span class="st">  prior_preds = binomial_rng(n, theta_prior);</span></span>
+<span id="cb95-44"><a href="model-quality-assessment.html#cb95-44" tabindex="-1"></a><span class="st">  posterior_preds = binomial_rng(n, inv_logit(theta));</span></span>
+<span id="cb95-45"><a href="model-quality-assessment.html#cb95-45" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-46"><a href="model-quality-assessment.html#cb95-46" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb95-47"><a href="model-quality-assessment.html#cb95-47" tabindex="-1"></a></span>
+<span id="cb95-48"><a href="model-quality-assessment.html#cb95-48" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb95-49"><a href="model-quality-assessment.html#cb95-49" tabindex="-1"></a>  stan_model,</span>
+<span id="cb95-50"><a href="model-quality-assessment.html#cb95-50" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb95-51"><a href="model-quality-assessment.html#cb95-51" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_SimpleBernoulli_logodds.stan&quot;</span>)</span></code></pre></div>
 <pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W4_SimpleBernoulli_logodds.stan&quot;</code></pre>
-<div class="sourceCode" id="cb87"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb87-1"><a href="model-quality-assessment.html#cb87-1" tabindex="-1"></a><span class="do">## With the logit format</span></span>
-<span id="cb87-2"><a href="model-quality-assessment.html#cb87-2" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
-<span id="cb87-3"><a href="model-quality-assessment.html#cb87-3" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_SimpleBernoulli_logodds.stan&quot;</span>)</span>
-<span id="cb87-4"><a href="model-quality-assessment.html#cb87-4" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, </span>
-<span id="cb87-5"><a href="model-quality-assessment.html#cb87-5" tabindex="-1"></a>                     <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb87-6"><a href="model-quality-assessment.html#cb87-6" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
-<span id="cb87-7"><a href="model-quality-assessment.html#cb87-7" tabindex="-1"></a></span>
-<span id="cb87-8"><a href="model-quality-assessment.html#cb87-8" tabindex="-1"></a></span>
-<span id="cb87-9"><a href="model-quality-assessment.html#cb87-9" tabindex="-1"></a></span>
-<span id="cb87-10"><a href="model-quality-assessment.html#cb87-10" tabindex="-1"></a></span>
-<span id="cb87-11"><a href="model-quality-assessment.html#cb87-11" tabindex="-1"></a>d1 <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="dv">0</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>)</span>
-<span id="cb87-12"><a href="model-quality-assessment.html#cb87-12" tabindex="-1"></a></span>
-<span id="cb87-13"><a href="model-quality-assessment.html#cb87-13" tabindex="-1"></a><span class="do">## Create the data. N.B. note the two variables have different lengths: 1 for n, n for h.</span></span>
-<span id="cb87-14"><a href="model-quality-assessment.html#cb87-14" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb87-15"><a href="model-quality-assessment.html#cb87-15" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,  <span class="co"># n of trials</span></span>
-<span id="cb87-16"><a href="model-quality-assessment.html#cb87-16" tabindex="-1"></a>  <span class="at">h =</span> d1<span class="sc">$</span>choice <span class="co"># sequence of choices (h stands for hand)</span></span>
-<span id="cb87-17"><a href="model-quality-assessment.html#cb87-17" tabindex="-1"></a>)</span>
-<span id="cb87-18"><a href="model-quality-assessment.html#cb87-18" tabindex="-1"></a></span>
-<span id="cb87-19"><a href="model-quality-assessment.html#cb87-19" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
-<span id="cb87-20"><a href="model-quality-assessment.html#cb87-20" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
-<span id="cb87-21"><a href="model-quality-assessment.html#cb87-21" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
-<span id="cb87-22"><a href="model-quality-assessment.html#cb87-22" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
-<span id="cb87-23"><a href="model-quality-assessment.html#cb87-23" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>,</span>
-<span id="cb87-24"><a href="model-quality-assessment.html#cb87-24" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
-<span id="cb87-25"><a href="model-quality-assessment.html#cb87-25" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
-<span id="cb87-26"><a href="model-quality-assessment.html#cb87-26" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
-<span id="cb87-27"><a href="model-quality-assessment.html#cb87-27" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
-<span id="cb87-28"><a href="model-quality-assessment.html#cb87-28" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
-<span id="cb87-29"><a href="model-quality-assessment.html#cb87-29" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
-<span id="cb87-30"><a href="model-quality-assessment.html#cb87-30" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
-<span id="cb87-31"><a href="model-quality-assessment.html#cb87-31" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb97"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb97-1"><a href="model-quality-assessment.html#cb97-1" tabindex="-1"></a><span class="do">## With the logit format</span></span>
+<span id="cb97-2"><a href="model-quality-assessment.html#cb97-2" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
+<span id="cb97-3"><a href="model-quality-assessment.html#cb97-3" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_SimpleBernoulli_logodds.stan&quot;</span>)</span>
+<span id="cb97-4"><a href="model-quality-assessment.html#cb97-4" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, </span>
+<span id="cb97-5"><a href="model-quality-assessment.html#cb97-5" tabindex="-1"></a>                     <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb97-6"><a href="model-quality-assessment.html#cb97-6" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb97-7"><a href="model-quality-assessment.html#cb97-7" tabindex="-1"></a></span>
+<span id="cb97-8"><a href="model-quality-assessment.html#cb97-8" tabindex="-1"></a></span>
+<span id="cb97-9"><a href="model-quality-assessment.html#cb97-9" tabindex="-1"></a></span>
+<span id="cb97-10"><a href="model-quality-assessment.html#cb97-10" tabindex="-1"></a></span>
+<span id="cb97-11"><a href="model-quality-assessment.html#cb97-11" tabindex="-1"></a>d1 <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="dv">0</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>)</span>
+<span id="cb97-12"><a href="model-quality-assessment.html#cb97-12" tabindex="-1"></a></span>
+<span id="cb97-13"><a href="model-quality-assessment.html#cb97-13" tabindex="-1"></a><span class="do">## Create the data. N.B. note the two variables have different lengths: 1 for n, n for h.</span></span>
+<span id="cb97-14"><a href="model-quality-assessment.html#cb97-14" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb97-15"><a href="model-quality-assessment.html#cb97-15" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,  <span class="co"># n of trials</span></span>
+<span id="cb97-16"><a href="model-quality-assessment.html#cb97-16" tabindex="-1"></a>  <span class="at">h =</span> d1<span class="sc">$</span>choice <span class="co"># sequence of choices (h stands for hand)</span></span>
+<span id="cb97-17"><a href="model-quality-assessment.html#cb97-17" tabindex="-1"></a>)</span>
+<span id="cb97-18"><a href="model-quality-assessment.html#cb97-18" tabindex="-1"></a></span>
+<span id="cb97-19"><a href="model-quality-assessment.html#cb97-19" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
+<span id="cb97-20"><a href="model-quality-assessment.html#cb97-20" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb97-21"><a href="model-quality-assessment.html#cb97-21" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb97-22"><a href="model-quality-assessment.html#cb97-22" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb97-23"><a href="model-quality-assessment.html#cb97-23" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>,</span>
+<span id="cb97-24"><a href="model-quality-assessment.html#cb97-24" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb97-25"><a href="model-quality-assessment.html#cb97-25" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb97-26"><a href="model-quality-assessment.html#cb97-26" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
+<span id="cb97-27"><a href="model-quality-assessment.html#cb97-27" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
+<span id="cb97-28"><a href="model-quality-assessment.html#cb97-28" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
+<span id="cb97-29"><a href="model-quality-assessment.html#cb97-29" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb97-30"><a href="model-quality-assessment.html#cb97-30" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb97-31"><a href="model-quality-assessment.html#cb97-31" tabindex="-1"></a>)</span></code></pre></div>
 <pre><code>## Running MCMC with 2 parallel chains, with 2 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.1 seconds.
-## Chain 2 finished in 0.1 seconds.
+## Chain 2 finished in 0.0 seconds.
 ## 
 ## Both chains finished successfully.
-## Mean chain execution time: 0.1 seconds.
-## Total execution time: 0.3 seconds.</code></pre>
-<div class="sourceCode" id="cb89"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb89-1"><a href="model-quality-assessment.html#cb89-1" tabindex="-1"></a>draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>()) </span></code></pre></div>
+## Mean chain execution time: 0.0 seconds.
+## Total execution time: 0.2 seconds.</code></pre>
+<div class="sourceCode" id="cb99"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb99-1"><a href="model-quality-assessment.html#cb99-1" tabindex="-1"></a>draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>()) </span></code></pre></div>
 </div>
 <div id="assessing-priors" class="section level2 hasAnchor" number="6.3">
 <h2><span class="header-section-number">6.3</span> Assessing priors<a href="model-quality-assessment.html#assessing-priors" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<div class="sourceCode" id="cb90"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb90-1"><a href="model-quality-assessment.html#cb90-1" tabindex="-1"></a><span class="co"># Now let&#39;s plot the density for theta (prior and posterior)</span></span>
-<span id="cb90-2"><a href="model-quality-assessment.html#cb90-2" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb90-3"><a href="model-quality-assessment.html#cb90-3" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(theta_posterior), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb90-4"><a href="model-quality-assessment.html#cb90-4" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(theta_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb90-5"><a href="model-quality-assessment.html#cb90-5" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="fl">0.8</span>, <span class="at">linetype =</span> <span class="st">&quot;dashed&quot;</span>, <span class="at">color =</span> <span class="st">&quot;black&quot;</span>, <span class="at">size =</span> <span class="fl">1.5</span>) <span class="sc">+</span></span>
-<span id="cb90-6"><a href="model-quality-assessment.html#cb90-6" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Rate&quot;</span>) <span class="sc">+</span></span>
-<span id="cb90-7"><a href="model-quality-assessment.html#cb90-7" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Estimate Densities&quot;</span>) <span class="sc">+</span></span>
-<span id="cb90-8"><a href="model-quality-assessment.html#cb90-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb100"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb100-1"><a href="model-quality-assessment.html#cb100-1" tabindex="-1"></a><span class="co"># Now let&#39;s plot the density for theta (prior and posterior)</span></span>
+<span id="cb100-2"><a href="model-quality-assessment.html#cb100-2" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb100-3"><a href="model-quality-assessment.html#cb100-3" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(theta_posterior), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb100-4"><a href="model-quality-assessment.html#cb100-4" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(theta_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb100-5"><a href="model-quality-assessment.html#cb100-5" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="fl">0.8</span>, <span class="at">linetype =</span> <span class="st">&quot;dashed&quot;</span>, <span class="at">color =</span> <span class="st">&quot;black&quot;</span>, <span class="at">size =</span> <span class="fl">1.5</span>) <span class="sc">+</span></span>
+<span id="cb100-6"><a href="model-quality-assessment.html#cb100-6" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Rate&quot;</span>) <span class="sc">+</span></span>
+<span id="cb100-7"><a href="model-quality-assessment.html#cb100-7" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Estimate Densities&quot;</span>) <span class="sc">+</span></span>
+<span id="cb100-8"><a href="model-quality-assessment.html#cb100-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/assessing%20priors-1.png" width="80%" style="display: block; margin: auto;" /></p>
 </div>
 <div id="prior-predictive-checks" class="section level2 hasAnchor" number="6.4">
@@ -484,472 +484,472 @@ For decision-making models, important patterns to check include:</p>
 <li>Response to feedback</li>
 <li>Individual differences in strategies</li>
 </ul>
-<div class="sourceCode" id="cb91"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb91-1"><a href="model-quality-assessment.html#cb91-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb91-2"><a href="model-quality-assessment.html#cb91-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(prior_preds), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb91-3"><a href="model-quality-assessment.html#cb91-3" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
-<span id="cb91-4"><a href="model-quality-assessment.html#cb91-4" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb91-5"><a href="model-quality-assessment.html#cb91-5" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb101"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb101-1"><a href="model-quality-assessment.html#cb101-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb101-2"><a href="model-quality-assessment.html#cb101-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(prior_preds), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb101-3"><a href="model-quality-assessment.html#cb101-3" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
+<span id="cb101-4"><a href="model-quality-assessment.html#cb101-4" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb101-5"><a href="model-quality-assessment.html#cb101-5" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/predictive%20checks-1.png" width="80%" style="display: block; margin: auto;" /></p>
-<div class="sourceCode" id="cb92"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb92-1"><a href="model-quality-assessment.html#cb92-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb92-2"><a href="model-quality-assessment.html#cb92-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(posterior_preds), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb92-3"><a href="model-quality-assessment.html#cb92-3" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">x =</span> <span class="fu">sum</span>(data<span class="sc">$</span>h), <span class="at">y =</span> <span class="dv">0</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>, <span class="at">shape =</span> <span class="dv">17</span>, <span class="at">size =</span> <span class="dv">5</span>) <span class="sc">+</span></span>
-<span id="cb92-4"><a href="model-quality-assessment.html#cb92-4" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
-<span id="cb92-5"><a href="model-quality-assessment.html#cb92-5" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb92-6"><a href="model-quality-assessment.html#cb92-6" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb102"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb102-1"><a href="model-quality-assessment.html#cb102-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb102-2"><a href="model-quality-assessment.html#cb102-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(posterior_preds), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb102-3"><a href="model-quality-assessment.html#cb102-3" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">x =</span> <span class="fu">sum</span>(data<span class="sc">$</span>h), <span class="at">y =</span> <span class="dv">0</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>, <span class="at">shape =</span> <span class="dv">17</span>, <span class="at">size =</span> <span class="dv">5</span>) <span class="sc">+</span></span>
+<span id="cb102-4"><a href="model-quality-assessment.html#cb102-4" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
+<span id="cb102-5"><a href="model-quality-assessment.html#cb102-5" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb102-6"><a href="model-quality-assessment.html#cb102-6" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/predictive%20checks-2.png" width="80%" style="display: block; margin: auto;" /></p>
-<div class="sourceCode" id="cb93"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb93-1"><a href="model-quality-assessment.html#cb93-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb93-2"><a href="model-quality-assessment.html#cb93-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(prior_preds), <span class="at">color =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb93-3"><a href="model-quality-assessment.html#cb93-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(posterior_preds), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb93-4"><a href="model-quality-assessment.html#cb93-4" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">x =</span> <span class="fu">sum</span>(data<span class="sc">$</span>h), <span class="at">y =</span> <span class="dv">0</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>, <span class="at">shape =</span> <span class="dv">17</span>, <span class="at">size =</span> <span class="dv">5</span>) <span class="sc">+</span></span>
-<span id="cb93-5"><a href="model-quality-assessment.html#cb93-5" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
-<span id="cb93-6"><a href="model-quality-assessment.html#cb93-6" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb93-7"><a href="model-quality-assessment.html#cb93-7" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb103"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb103-1"><a href="model-quality-assessment.html#cb103-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb103-2"><a href="model-quality-assessment.html#cb103-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(prior_preds), <span class="at">color =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb103-3"><a href="model-quality-assessment.html#cb103-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(posterior_preds), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb103-4"><a href="model-quality-assessment.html#cb103-4" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">x =</span> <span class="fu">sum</span>(data<span class="sc">$</span>h), <span class="at">y =</span> <span class="dv">0</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>, <span class="at">shape =</span> <span class="dv">17</span>, <span class="at">size =</span> <span class="dv">5</span>) <span class="sc">+</span></span>
+<span id="cb103-5"><a href="model-quality-assessment.html#cb103-5" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
+<span id="cb103-6"><a href="model-quality-assessment.html#cb103-6" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb103-7"><a href="model-quality-assessment.html#cb103-7" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/predictive%20checks-3.png" width="80%" style="display: block; margin: auto;" /></p>
 </div>
 <div id="prior-sensitivity-analysis" class="section level2 hasAnchor" number="6.6">
 <h2><span class="header-section-number">6.6</span> Prior sensitivity analysis<a href="model-quality-assessment.html#prior-sensitivity-analysis" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<div class="sourceCode" id="cb94"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb94-1"><a href="model-quality-assessment.html#cb94-1" tabindex="-1"></a><span class="do">## Now we adding different priors for theta</span></span>
-<span id="cb94-2"><a href="model-quality-assessment.html#cb94-2" tabindex="-1"></a>prior_mean <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="sc">-</span><span class="dv">3</span>, <span class="dv">3</span>, .<span class="dv">5</span>)</span>
-<span id="cb94-3"><a href="model-quality-assessment.html#cb94-3" tabindex="-1"></a>prior_sd <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="dv">1</span>, <span class="fl">0.1</span>)</span>
-<span id="cb94-4"><a href="model-quality-assessment.html#cb94-4" tabindex="-1"></a>priors <span class="ot">&lt;-</span>  <span class="fu">expand.grid</span>(prior_mean, prior_sd)</span>
-<span id="cb94-5"><a href="model-quality-assessment.html#cb94-5" tabindex="-1"></a>priors <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">prior_mean =</span> priors<span class="sc">$</span>Var1, <span class="at">prior_sd =</span> priors<span class="sc">$</span>Var2)</span>
-<span id="cb94-6"><a href="model-quality-assessment.html#cb94-6" tabindex="-1"></a></span>
-<span id="cb94-7"><a href="model-quality-assessment.html#cb94-7" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
-<span id="cb94-8"><a href="model-quality-assessment.html#cb94-8" tabindex="-1"></a><span class="st">  // The input (data) for the model</span></span>
-<span id="cb94-9"><a href="model-quality-assessment.html#cb94-9" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb94-10"><a href="model-quality-assessment.html#cb94-10" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n;</span></span>
-<span id="cb94-11"><a href="model-quality-assessment.html#cb94-11" tabindex="-1"></a><span class="st">  array[n] int h;</span></span>
-<span id="cb94-12"><a href="model-quality-assessment.html#cb94-12" tabindex="-1"></a><span class="st">  real prior_mean;</span></span>
-<span id="cb94-13"><a href="model-quality-assessment.html#cb94-13" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sd;</span></span>
-<span id="cb94-14"><a href="model-quality-assessment.html#cb94-14" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb94-15"><a href="model-quality-assessment.html#cb94-15" tabindex="-1"></a></span>
-<span id="cb94-16"><a href="model-quality-assessment.html#cb94-16" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
-<span id="cb94-17"><a href="model-quality-assessment.html#cb94-17" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb94-18"><a href="model-quality-assessment.html#cb94-18" tabindex="-1"></a><span class="st">  real theta;</span></span>
-<span id="cb94-19"><a href="model-quality-assessment.html#cb94-19" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb94-20"><a href="model-quality-assessment.html#cb94-20" tabindex="-1"></a></span>
-<span id="cb94-21"><a href="model-quality-assessment.html#cb94-21" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
-<span id="cb94-22"><a href="model-quality-assessment.html#cb94-22" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb94-23"><a href="model-quality-assessment.html#cb94-23" tabindex="-1"></a><span class="st">  // Prior</span></span>
-<span id="cb94-24"><a href="model-quality-assessment.html#cb94-24" tabindex="-1"></a><span class="st">  target += normal_lpdf(theta | prior_mean, prior_sd);</span></span>
-<span id="cb94-25"><a href="model-quality-assessment.html#cb94-25" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb94-26"><a href="model-quality-assessment.html#cb94-26" tabindex="-1"></a><span class="st">  // Model</span></span>
-<span id="cb94-27"><a href="model-quality-assessment.html#cb94-27" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | theta);</span></span>
-<span id="cb94-28"><a href="model-quality-assessment.html#cb94-28" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb94-29"><a href="model-quality-assessment.html#cb94-29" tabindex="-1"></a></span>
-<span id="cb94-30"><a href="model-quality-assessment.html#cb94-30" tabindex="-1"></a><span class="st">generated quantities{</span></span>
-<span id="cb94-31"><a href="model-quality-assessment.html#cb94-31" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;</span></span>
-<span id="cb94-32"><a href="model-quality-assessment.html#cb94-32" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior;</span></span>
-<span id="cb94-33"><a href="model-quality-assessment.html#cb94-33" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds;</span></span>
-<span id="cb94-34"><a href="model-quality-assessment.html#cb94-34" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; posterior_preds;</span></span>
-<span id="cb94-35"><a href="model-quality-assessment.html#cb94-35" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb94-36"><a href="model-quality-assessment.html#cb94-36" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(0,1));</span></span>
-<span id="cb94-37"><a href="model-quality-assessment.html#cb94-37" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(theta);</span></span>
-<span id="cb94-38"><a href="model-quality-assessment.html#cb94-38" tabindex="-1"></a><span class="st">  prior_preds = binomial_rng(n, theta_prior);</span></span>
-<span id="cb94-39"><a href="model-quality-assessment.html#cb94-39" tabindex="-1"></a><span class="st">  posterior_preds = binomial_rng(n, inv_logit(theta));</span></span>
-<span id="cb94-40"><a href="model-quality-assessment.html#cb94-40" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb94-41"><a href="model-quality-assessment.html#cb94-41" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb94-42"><a href="model-quality-assessment.html#cb94-42" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb94-43"><a href="model-quality-assessment.html#cb94-43" tabindex="-1"></a></span>
-<span id="cb94-44"><a href="model-quality-assessment.html#cb94-44" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb94-45"><a href="model-quality-assessment.html#cb94-45" tabindex="-1"></a>  stan_model,</span>
-<span id="cb94-46"><a href="model-quality-assessment.html#cb94-46" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb94-47"><a href="model-quality-assessment.html#cb94-47" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_PriorBernoulli.stan&quot;</span>)</span>
-<span id="cb94-48"><a href="model-quality-assessment.html#cb94-48" tabindex="-1"></a></span>
-<span id="cb94-49"><a href="model-quality-assessment.html#cb94-49" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_PriorBernoulli.stan&quot;</span>)</span>
-<span id="cb94-50"><a href="model-quality-assessment.html#cb94-50" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, </span>
-<span id="cb94-51"><a href="model-quality-assessment.html#cb94-51" tabindex="-1"></a>                     <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb94-52"><a href="model-quality-assessment.html#cb94-52" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
-<span id="cb94-53"><a href="model-quality-assessment.html#cb94-53" tabindex="-1"></a></span>
-<span id="cb94-54"><a href="model-quality-assessment.html#cb94-54" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="fl">0.1</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>)</span>
-<span id="cb94-55"><a href="model-quality-assessment.html#cb94-55" tabindex="-1"></a></span>
-<span id="cb94-56"><a href="model-quality-assessment.html#cb94-56" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(future, purrr, furrr)</span>
-<span id="cb94-57"><a href="model-quality-assessment.html#cb94-57" tabindex="-1"></a><span class="fu">plan</span>(multisession, <span class="at">workers =</span> <span class="dv">4</span>)</span>
-<span id="cb94-58"><a href="model-quality-assessment.html#cb94-58" tabindex="-1"></a></span>
-<span id="cb94-59"><a href="model-quality-assessment.html#cb94-59" tabindex="-1"></a>sim_d_and_fit <span class="ot">&lt;-</span> <span class="cf">function</span>(prior_mean, prior_sd) {</span>
-<span id="cb94-60"><a href="model-quality-assessment.html#cb94-60" tabindex="-1"></a>  </span>
-<span id="cb94-61"><a href="model-quality-assessment.html#cb94-61" tabindex="-1"></a>    data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb94-62"><a href="model-quality-assessment.html#cb94-62" tabindex="-1"></a>        <span class="at">n =</span> <span class="fu">nrow</span>(dd),</span>
-<span id="cb94-63"><a href="model-quality-assessment.html#cb94-63" tabindex="-1"></a>        <span class="at">h =</span> dd<span class="sc">$</span>choice,</span>
-<span id="cb94-64"><a href="model-quality-assessment.html#cb94-64" tabindex="-1"></a>        <span class="at">prior_mean =</span> prior_mean,</span>
-<span id="cb94-65"><a href="model-quality-assessment.html#cb94-65" tabindex="-1"></a>        <span class="at">prior_sd =</span> prior_sd</span>
-<span id="cb94-66"><a href="model-quality-assessment.html#cb94-66" tabindex="-1"></a>      )</span>
-<span id="cb94-67"><a href="model-quality-assessment.html#cb94-67" tabindex="-1"></a>    </span>
-<span id="cb94-68"><a href="model-quality-assessment.html#cb94-68" tabindex="-1"></a>    samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
-<span id="cb94-69"><a href="model-quality-assessment.html#cb94-69" tabindex="-1"></a>      <span class="at">data =</span> data,</span>
-<span id="cb94-70"><a href="model-quality-assessment.html#cb94-70" tabindex="-1"></a>      <span class="at">seed =</span> <span class="dv">1000</span>,</span>
-<span id="cb94-71"><a href="model-quality-assessment.html#cb94-71" tabindex="-1"></a>      <span class="at">chains =</span> <span class="dv">1</span>,</span>
-<span id="cb94-72"><a href="model-quality-assessment.html#cb94-72" tabindex="-1"></a>      <span class="at">parallel_chains =</span> <span class="dv">1</span>,</span>
-<span id="cb94-73"><a href="model-quality-assessment.html#cb94-73" tabindex="-1"></a>      <span class="at">threads_per_chain =</span> <span class="dv">1</span>,</span>
-<span id="cb94-74"><a href="model-quality-assessment.html#cb94-74" tabindex="-1"></a>      <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
-<span id="cb94-75"><a href="model-quality-assessment.html#cb94-75" tabindex="-1"></a>      <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
-<span id="cb94-76"><a href="model-quality-assessment.html#cb94-76" tabindex="-1"></a>      <span class="at">refresh =</span> <span class="dv">0</span>,</span>
-<span id="cb94-77"><a href="model-quality-assessment.html#cb94-77" tabindex="-1"></a>      <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
-<span id="cb94-78"><a href="model-quality-assessment.html#cb94-78" tabindex="-1"></a>      <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
-<span id="cb94-79"><a href="model-quality-assessment.html#cb94-79" tabindex="-1"></a>    )</span>
-<span id="cb94-80"><a href="model-quality-assessment.html#cb94-80" tabindex="-1"></a>    </span>
-<span id="cb94-81"><a href="model-quality-assessment.html#cb94-81" tabindex="-1"></a>    draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>()) </span>
-<span id="cb94-82"><a href="model-quality-assessment.html#cb94-82" tabindex="-1"></a>      temp <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">theta_prior =</span> draws_df<span class="sc">$</span>theta_prior, </span>
-<span id="cb94-83"><a href="model-quality-assessment.html#cb94-83" tabindex="-1"></a>                     <span class="at">theta_posterior =</span> draws_df<span class="sc">$</span>theta_posterior, </span>
-<span id="cb94-84"><a href="model-quality-assessment.html#cb94-84" tabindex="-1"></a>                     <span class="at">prior_preds =</span> draws_df<span class="sc">$</span>prior_preds, </span>
-<span id="cb94-85"><a href="model-quality-assessment.html#cb94-85" tabindex="-1"></a>                     <span class="at">posterior_preds =</span> draws_df<span class="sc">$</span>posterior_preds, </span>
-<span id="cb94-86"><a href="model-quality-assessment.html#cb94-86" tabindex="-1"></a>                     <span class="at">prior_mean =</span> prior_mean,</span>
-<span id="cb94-87"><a href="model-quality-assessment.html#cb94-87" tabindex="-1"></a>                     <span class="at">prior_sd =</span> prior_sd)</span>
-<span id="cb94-88"><a href="model-quality-assessment.html#cb94-88" tabindex="-1"></a>    </span>
-<span id="cb94-89"><a href="model-quality-assessment.html#cb94-89" tabindex="-1"></a>    <span class="fu">return</span>(temp)</span>
-<span id="cb94-90"><a href="model-quality-assessment.html#cb94-90" tabindex="-1"></a>  </span>
-<span id="cb94-91"><a href="model-quality-assessment.html#cb94-91" tabindex="-1"></a>}</span>
-<span id="cb94-92"><a href="model-quality-assessment.html#cb94-92" tabindex="-1"></a></span>
-<span id="cb94-93"><a href="model-quality-assessment.html#cb94-93" tabindex="-1"></a></span>
-<span id="cb94-94"><a href="model-quality-assessment.html#cb94-94" tabindex="-1"></a></span>
-<span id="cb94-95"><a href="model-quality-assessment.html#cb94-95" tabindex="-1"></a><span class="co"># Commenting this out to ensure faster compiling time for the book. Uncomment to run the code</span></span>
-<span id="cb94-96"><a href="model-quality-assessment.html#cb94-96" tabindex="-1"></a><span class="co"># recovery_df &lt;- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))</span></span>
-<span id="cb94-97"><a href="model-quality-assessment.html#cb94-97" tabindex="-1"></a><span class="co"># write_csv(recovery_df, &quot;simdata/W4_priorSensitivityRecovery.csv&quot;)</span></span></code></pre></div>
+<div class="sourceCode" id="cb104"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb104-1"><a href="model-quality-assessment.html#cb104-1" tabindex="-1"></a><span class="do">## Now we adding different priors for theta</span></span>
+<span id="cb104-2"><a href="model-quality-assessment.html#cb104-2" tabindex="-1"></a>prior_mean <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="sc">-</span><span class="dv">3</span>, <span class="dv">3</span>, .<span class="dv">5</span>)</span>
+<span id="cb104-3"><a href="model-quality-assessment.html#cb104-3" tabindex="-1"></a>prior_sd <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="dv">1</span>, <span class="fl">0.1</span>)</span>
+<span id="cb104-4"><a href="model-quality-assessment.html#cb104-4" tabindex="-1"></a>priors <span class="ot">&lt;-</span>  <span class="fu">expand.grid</span>(prior_mean, prior_sd)</span>
+<span id="cb104-5"><a href="model-quality-assessment.html#cb104-5" tabindex="-1"></a>priors <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">prior_mean =</span> priors<span class="sc">$</span>Var1, <span class="at">prior_sd =</span> priors<span class="sc">$</span>Var2)</span>
+<span id="cb104-6"><a href="model-quality-assessment.html#cb104-6" tabindex="-1"></a></span>
+<span id="cb104-7"><a href="model-quality-assessment.html#cb104-7" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb104-8"><a href="model-quality-assessment.html#cb104-8" tabindex="-1"></a><span class="st">  // The input (data) for the model</span></span>
+<span id="cb104-9"><a href="model-quality-assessment.html#cb104-9" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb104-10"><a href="model-quality-assessment.html#cb104-10" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n;</span></span>
+<span id="cb104-11"><a href="model-quality-assessment.html#cb104-11" tabindex="-1"></a><span class="st">  array[n] int h;</span></span>
+<span id="cb104-12"><a href="model-quality-assessment.html#cb104-12" tabindex="-1"></a><span class="st">  real prior_mean;</span></span>
+<span id="cb104-13"><a href="model-quality-assessment.html#cb104-13" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sd;</span></span>
+<span id="cb104-14"><a href="model-quality-assessment.html#cb104-14" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb104-15"><a href="model-quality-assessment.html#cb104-15" tabindex="-1"></a></span>
+<span id="cb104-16"><a href="model-quality-assessment.html#cb104-16" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb104-17"><a href="model-quality-assessment.html#cb104-17" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb104-18"><a href="model-quality-assessment.html#cb104-18" tabindex="-1"></a><span class="st">  real theta;</span></span>
+<span id="cb104-19"><a href="model-quality-assessment.html#cb104-19" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb104-20"><a href="model-quality-assessment.html#cb104-20" tabindex="-1"></a></span>
+<span id="cb104-21"><a href="model-quality-assessment.html#cb104-21" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb104-22"><a href="model-quality-assessment.html#cb104-22" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb104-23"><a href="model-quality-assessment.html#cb104-23" tabindex="-1"></a><span class="st">  // Prior</span></span>
+<span id="cb104-24"><a href="model-quality-assessment.html#cb104-24" tabindex="-1"></a><span class="st">  target += normal_lpdf(theta | prior_mean, prior_sd);</span></span>
+<span id="cb104-25"><a href="model-quality-assessment.html#cb104-25" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb104-26"><a href="model-quality-assessment.html#cb104-26" tabindex="-1"></a><span class="st">  // Model</span></span>
+<span id="cb104-27"><a href="model-quality-assessment.html#cb104-27" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | theta);</span></span>
+<span id="cb104-28"><a href="model-quality-assessment.html#cb104-28" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb104-29"><a href="model-quality-assessment.html#cb104-29" tabindex="-1"></a></span>
+<span id="cb104-30"><a href="model-quality-assessment.html#cb104-30" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb104-31"><a href="model-quality-assessment.html#cb104-31" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;</span></span>
+<span id="cb104-32"><a href="model-quality-assessment.html#cb104-32" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior;</span></span>
+<span id="cb104-33"><a href="model-quality-assessment.html#cb104-33" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds;</span></span>
+<span id="cb104-34"><a href="model-quality-assessment.html#cb104-34" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; posterior_preds;</span></span>
+<span id="cb104-35"><a href="model-quality-assessment.html#cb104-35" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb104-36"><a href="model-quality-assessment.html#cb104-36" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(0,1));</span></span>
+<span id="cb104-37"><a href="model-quality-assessment.html#cb104-37" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(theta);</span></span>
+<span id="cb104-38"><a href="model-quality-assessment.html#cb104-38" tabindex="-1"></a><span class="st">  prior_preds = binomial_rng(n, theta_prior);</span></span>
+<span id="cb104-39"><a href="model-quality-assessment.html#cb104-39" tabindex="-1"></a><span class="st">  posterior_preds = binomial_rng(n, inv_logit(theta));</span></span>
+<span id="cb104-40"><a href="model-quality-assessment.html#cb104-40" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb104-41"><a href="model-quality-assessment.html#cb104-41" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb104-42"><a href="model-quality-assessment.html#cb104-42" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb104-43"><a href="model-quality-assessment.html#cb104-43" tabindex="-1"></a></span>
+<span id="cb104-44"><a href="model-quality-assessment.html#cb104-44" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb104-45"><a href="model-quality-assessment.html#cb104-45" tabindex="-1"></a>  stan_model,</span>
+<span id="cb104-46"><a href="model-quality-assessment.html#cb104-46" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb104-47"><a href="model-quality-assessment.html#cb104-47" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_PriorBernoulli.stan&quot;</span>)</span>
+<span id="cb104-48"><a href="model-quality-assessment.html#cb104-48" tabindex="-1"></a></span>
+<span id="cb104-49"><a href="model-quality-assessment.html#cb104-49" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_PriorBernoulli.stan&quot;</span>)</span>
+<span id="cb104-50"><a href="model-quality-assessment.html#cb104-50" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, </span>
+<span id="cb104-51"><a href="model-quality-assessment.html#cb104-51" tabindex="-1"></a>                     <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb104-52"><a href="model-quality-assessment.html#cb104-52" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb104-53"><a href="model-quality-assessment.html#cb104-53" tabindex="-1"></a></span>
+<span id="cb104-54"><a href="model-quality-assessment.html#cb104-54" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="fl">0.1</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>)</span>
+<span id="cb104-55"><a href="model-quality-assessment.html#cb104-55" tabindex="-1"></a></span>
+<span id="cb104-56"><a href="model-quality-assessment.html#cb104-56" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(future, purrr, furrr)</span>
+<span id="cb104-57"><a href="model-quality-assessment.html#cb104-57" tabindex="-1"></a><span class="fu">plan</span>(multisession, <span class="at">workers =</span> <span class="dv">4</span>)</span>
+<span id="cb104-58"><a href="model-quality-assessment.html#cb104-58" tabindex="-1"></a></span>
+<span id="cb104-59"><a href="model-quality-assessment.html#cb104-59" tabindex="-1"></a>sim_d_and_fit <span class="ot">&lt;-</span> <span class="cf">function</span>(prior_mean, prior_sd) {</span>
+<span id="cb104-60"><a href="model-quality-assessment.html#cb104-60" tabindex="-1"></a>  </span>
+<span id="cb104-61"><a href="model-quality-assessment.html#cb104-61" tabindex="-1"></a>    data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb104-62"><a href="model-quality-assessment.html#cb104-62" tabindex="-1"></a>        <span class="at">n =</span> <span class="fu">nrow</span>(dd),</span>
+<span id="cb104-63"><a href="model-quality-assessment.html#cb104-63" tabindex="-1"></a>        <span class="at">h =</span> dd<span class="sc">$</span>choice,</span>
+<span id="cb104-64"><a href="model-quality-assessment.html#cb104-64" tabindex="-1"></a>        <span class="at">prior_mean =</span> prior_mean,</span>
+<span id="cb104-65"><a href="model-quality-assessment.html#cb104-65" tabindex="-1"></a>        <span class="at">prior_sd =</span> prior_sd</span>
+<span id="cb104-66"><a href="model-quality-assessment.html#cb104-66" tabindex="-1"></a>      )</span>
+<span id="cb104-67"><a href="model-quality-assessment.html#cb104-67" tabindex="-1"></a>    </span>
+<span id="cb104-68"><a href="model-quality-assessment.html#cb104-68" tabindex="-1"></a>    samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb104-69"><a href="model-quality-assessment.html#cb104-69" tabindex="-1"></a>      <span class="at">data =</span> data,</span>
+<span id="cb104-70"><a href="model-quality-assessment.html#cb104-70" tabindex="-1"></a>      <span class="at">seed =</span> <span class="dv">1000</span>,</span>
+<span id="cb104-71"><a href="model-quality-assessment.html#cb104-71" tabindex="-1"></a>      <span class="at">chains =</span> <span class="dv">1</span>,</span>
+<span id="cb104-72"><a href="model-quality-assessment.html#cb104-72" tabindex="-1"></a>      <span class="at">parallel_chains =</span> <span class="dv">1</span>,</span>
+<span id="cb104-73"><a href="model-quality-assessment.html#cb104-73" tabindex="-1"></a>      <span class="at">threads_per_chain =</span> <span class="dv">1</span>,</span>
+<span id="cb104-74"><a href="model-quality-assessment.html#cb104-74" tabindex="-1"></a>      <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
+<span id="cb104-75"><a href="model-quality-assessment.html#cb104-75" tabindex="-1"></a>      <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
+<span id="cb104-76"><a href="model-quality-assessment.html#cb104-76" tabindex="-1"></a>      <span class="at">refresh =</span> <span class="dv">0</span>,</span>
+<span id="cb104-77"><a href="model-quality-assessment.html#cb104-77" tabindex="-1"></a>      <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb104-78"><a href="model-quality-assessment.html#cb104-78" tabindex="-1"></a>      <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb104-79"><a href="model-quality-assessment.html#cb104-79" tabindex="-1"></a>    )</span>
+<span id="cb104-80"><a href="model-quality-assessment.html#cb104-80" tabindex="-1"></a>    </span>
+<span id="cb104-81"><a href="model-quality-assessment.html#cb104-81" tabindex="-1"></a>    draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>()) </span>
+<span id="cb104-82"><a href="model-quality-assessment.html#cb104-82" tabindex="-1"></a>      temp <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">theta_prior =</span> draws_df<span class="sc">$</span>theta_prior, </span>
+<span id="cb104-83"><a href="model-quality-assessment.html#cb104-83" tabindex="-1"></a>                     <span class="at">theta_posterior =</span> draws_df<span class="sc">$</span>theta_posterior, </span>
+<span id="cb104-84"><a href="model-quality-assessment.html#cb104-84" tabindex="-1"></a>                     <span class="at">prior_preds =</span> draws_df<span class="sc">$</span>prior_preds, </span>
+<span id="cb104-85"><a href="model-quality-assessment.html#cb104-85" tabindex="-1"></a>                     <span class="at">posterior_preds =</span> draws_df<span class="sc">$</span>posterior_preds, </span>
+<span id="cb104-86"><a href="model-quality-assessment.html#cb104-86" tabindex="-1"></a>                     <span class="at">prior_mean =</span> prior_mean,</span>
+<span id="cb104-87"><a href="model-quality-assessment.html#cb104-87" tabindex="-1"></a>                     <span class="at">prior_sd =</span> prior_sd)</span>
+<span id="cb104-88"><a href="model-quality-assessment.html#cb104-88" tabindex="-1"></a>    </span>
+<span id="cb104-89"><a href="model-quality-assessment.html#cb104-89" tabindex="-1"></a>    <span class="fu">return</span>(temp)</span>
+<span id="cb104-90"><a href="model-quality-assessment.html#cb104-90" tabindex="-1"></a>  </span>
+<span id="cb104-91"><a href="model-quality-assessment.html#cb104-91" tabindex="-1"></a>}</span>
+<span id="cb104-92"><a href="model-quality-assessment.html#cb104-92" tabindex="-1"></a></span>
+<span id="cb104-93"><a href="model-quality-assessment.html#cb104-93" tabindex="-1"></a></span>
+<span id="cb104-94"><a href="model-quality-assessment.html#cb104-94" tabindex="-1"></a></span>
+<span id="cb104-95"><a href="model-quality-assessment.html#cb104-95" tabindex="-1"></a><span class="co"># Commenting this out to ensure faster compiling time for the book. Uncomment to run the code</span></span>
+<span id="cb104-96"><a href="model-quality-assessment.html#cb104-96" tabindex="-1"></a><span class="co"># recovery_df &lt;- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))</span></span>
+<span id="cb104-97"><a href="model-quality-assessment.html#cb104-97" tabindex="-1"></a><span class="co"># write_csv(recovery_df, &quot;simdata/W4_priorSensitivityRecovery.csv&quot;)</span></span></code></pre></div>
 <p>Now we load the data and plot it</p>
-<div class="sourceCode" id="cb95"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb95-1"><a href="model-quality-assessment.html#cb95-1" tabindex="-1"></a>recovery_df <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W4_priorSensitivityRecovery.csv&quot;</span>)</span>
-<span id="cb95-2"><a href="model-quality-assessment.html#cb95-2" tabindex="-1"></a></span>
-<span id="cb95-3"><a href="model-quality-assessment.html#cb95-3" tabindex="-1"></a><span class="fu">ggplot</span>(recovery_df, <span class="fu">aes</span>(prior_mean, theta_posterior)) <span class="sc">+</span></span>
-<span id="cb95-4"><a href="model-quality-assessment.html#cb95-4" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">alpha =</span> <span class="fl">0.1</span>) <span class="sc">+</span></span>
-<span id="cb95-5"><a href="model-quality-assessment.html#cb95-5" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> <span class="fl">0.8</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>) <span class="sc">+</span></span>
-<span id="cb95-6"><a href="model-quality-assessment.html#cb95-6" tabindex="-1"></a>  <span class="fu">geom_smooth</span>() <span class="sc">+</span></span>
-<span id="cb95-7"><a href="model-quality-assessment.html#cb95-7" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(.<span class="sc">~</span>prior_sd) <span class="sc">+</span></span>
-<span id="cb95-8"><a href="model-quality-assessment.html#cb95-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb105"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb105-1"><a href="model-quality-assessment.html#cb105-1" tabindex="-1"></a>recovery_df <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W4_priorSensitivityRecovery.csv&quot;</span>)</span>
+<span id="cb105-2"><a href="model-quality-assessment.html#cb105-2" tabindex="-1"></a></span>
+<span id="cb105-3"><a href="model-quality-assessment.html#cb105-3" tabindex="-1"></a><span class="fu">ggplot</span>(recovery_df, <span class="fu">aes</span>(prior_mean, theta_posterior)) <span class="sc">+</span></span>
+<span id="cb105-4"><a href="model-quality-assessment.html#cb105-4" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">alpha =</span> <span class="fl">0.1</span>) <span class="sc">+</span></span>
+<span id="cb105-5"><a href="model-quality-assessment.html#cb105-5" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> <span class="fl">0.8</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>) <span class="sc">+</span></span>
+<span id="cb105-6"><a href="model-quality-assessment.html#cb105-6" tabindex="-1"></a>  <span class="fu">geom_smooth</span>() <span class="sc">+</span></span>
+<span id="cb105-7"><a href="model-quality-assessment.html#cb105-7" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(.<span class="sc">~</span>prior_sd) <span class="sc">+</span></span>
+<span id="cb105-8"><a href="model-quality-assessment.html#cb105-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/unnamed-chunk-16-1.png" width="80%" style="display: block; margin: auto;" /></p>
 </div>
 <div id="the-memory-model" class="section level2 hasAnchor" number="6.7">
 <h2><span class="header-section-number">6.7</span> The memory model<a href="model-quality-assessment.html#the-memory-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
 <p>We can do the same for the memory model: generate prior distributions to overlay to the posteriors (prior-posterior update checks), generate predicted outcomes based on the priors (prior predictive checks) and on the posteriors (posterior predictive checks).
 N.B. prior and posterior predictions now depend on the value on memory. I identified 3 meaningful values for the memory value (e.g. 0.5, 0.7, 0.9) and used those to generate 3 prior and posterior predictive checks.</p>
-<div class="sourceCode" id="cb96"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb96-1"><a href="model-quality-assessment.html#cb96-1" tabindex="-1"></a><span class="co"># We subset to only include no noise and a specific rate</span></span>
-<span id="cb96-2"><a href="model-quality-assessment.html#cb96-2" tabindex="-1"></a>d1 <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> </span>
-<span id="cb96-3"><a href="model-quality-assessment.html#cb96-3" tabindex="-1"></a>  <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="dv">0</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>) <span class="sc">%&gt;%</span> </span>
-<span id="cb96-4"><a href="model-quality-assessment.html#cb96-4" tabindex="-1"></a>  <span class="fu">rename</span>(<span class="at">Other =</span> choice) <span class="sc">%&gt;%</span> </span>
-<span id="cb96-5"><a href="model-quality-assessment.html#cb96-5" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">cumulativerate =</span> <span class="fu">lag</span>(cumulativerate, <span class="dv">1</span>))</span>
-<span id="cb96-6"><a href="model-quality-assessment.html#cb96-6" tabindex="-1"></a></span>
-<span id="cb96-7"><a href="model-quality-assessment.html#cb96-7" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.5</span> <span class="co"># no prior info at first trial</span></span>
-<span id="cb96-8"><a href="model-quality-assessment.html#cb96-8" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">0</span>] <span class="ot">&lt;-</span> <span class="fl">0.01</span></span>
-<span id="cb96-9"><a href="model-quality-assessment.html#cb96-9" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.99</span></span>
-<span id="cb96-10"><a href="model-quality-assessment.html#cb96-10" tabindex="-1"></a></span>
-<span id="cb96-11"><a href="model-quality-assessment.html#cb96-11" tabindex="-1"></a><span class="co"># Now we create the memory agent with a coefficient of 0.9</span></span>
-<span id="cb96-12"><a href="model-quality-assessment.html#cb96-12" tabindex="-1"></a>bias <span class="ot">=</span> <span class="dv">0</span></span>
-<span id="cb96-13"><a href="model-quality-assessment.html#cb96-13" tabindex="-1"></a>beta <span class="ot">=</span> <span class="fl">0.9</span></span>
-<span id="cb96-14"><a href="model-quality-assessment.html#cb96-14" tabindex="-1"></a></span>
-<span id="cb96-15"><a href="model-quality-assessment.html#cb96-15" tabindex="-1"></a>MemoryAgent_f <span class="ot">&lt;-</span> <span class="cf">function</span>(bias, beta, cumulativerate){</span>
-<span id="cb96-16"><a href="model-quality-assessment.html#cb96-16" tabindex="-1"></a>    choice <span class="ot">=</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="fu">inv_logit_scaled</span>(bias <span class="sc">+</span> beta <span class="sc">*</span> <span class="fu">logit_scaled</span>(cumulativerate)))</span>
-<span id="cb96-17"><a href="model-quality-assessment.html#cb96-17" tabindex="-1"></a>  <span class="fu">return</span>(choice)</span>
-<span id="cb96-18"><a href="model-quality-assessment.html#cb96-18" tabindex="-1"></a>}</span>
-<span id="cb96-19"><a href="model-quality-assessment.html#cb96-19" tabindex="-1"></a></span>
-<span id="cb96-20"><a href="model-quality-assessment.html#cb96-20" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span>trials) {</span>
-<span id="cb96-21"><a href="model-quality-assessment.html#cb96-21" tabindex="-1"></a>  d1<span class="sc">$</span>Self[i] <span class="ot">&lt;-</span> <span class="fu">MemoryAgent_f</span>(bias, beta, d1<span class="sc">$</span>cumulativerate[i])</span>
-<span id="cb96-22"><a href="model-quality-assessment.html#cb96-22" tabindex="-1"></a>}</span>
-<span id="cb96-23"><a href="model-quality-assessment.html#cb96-23" tabindex="-1"></a></span>
-<span id="cb96-24"><a href="model-quality-assessment.html#cb96-24" tabindex="-1"></a></span>
-<span id="cb96-25"><a href="model-quality-assessment.html#cb96-25" tabindex="-1"></a><span class="do">## Create the data. </span></span>
-<span id="cb96-26"><a href="model-quality-assessment.html#cb96-26" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb96-27"><a href="model-quality-assessment.html#cb96-27" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
-<span id="cb96-28"><a href="model-quality-assessment.html#cb96-28" tabindex="-1"></a>  <span class="at">h =</span> d1<span class="sc">$</span>Self,</span>
-<span id="cb96-29"><a href="model-quality-assessment.html#cb96-29" tabindex="-1"></a>  <span class="at">other =</span> d1<span class="sc">$</span>Other</span>
-<span id="cb96-30"><a href="model-quality-assessment.html#cb96-30" tabindex="-1"></a>)</span>
-<span id="cb96-31"><a href="model-quality-assessment.html#cb96-31" tabindex="-1"></a></span>
-<span id="cb96-32"><a href="model-quality-assessment.html#cb96-32" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
-<span id="cb96-33"><a href="model-quality-assessment.html#cb96-33" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h for (right and left) hand</span></span>
-<span id="cb96-34"><a href="model-quality-assessment.html#cb96-34" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb96-35"><a href="model-quality-assessment.html#cb96-35" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
-<span id="cb96-36"><a href="model-quality-assessment.html#cb96-36" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
-<span id="cb96-37"><a href="model-quality-assessment.html#cb96-37" tabindex="-1"></a><span class="st"> array[n] int other;</span></span>
-<span id="cb96-38"><a href="model-quality-assessment.html#cb96-38" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb96-39"><a href="model-quality-assessment.html#cb96-39" tabindex="-1"></a></span>
-<span id="cb96-40"><a href="model-quality-assessment.html#cb96-40" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
-<span id="cb96-41"><a href="model-quality-assessment.html#cb96-41" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb96-42"><a href="model-quality-assessment.html#cb96-42" tabindex="-1"></a><span class="st">  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?</span></span>
-<span id="cb96-43"><a href="model-quality-assessment.html#cb96-43" tabindex="-1"></a><span class="st">  real beta; // how strongly is previous rate impacting the decision?</span></span>
-<span id="cb96-44"><a href="model-quality-assessment.html#cb96-44" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb96-45"><a href="model-quality-assessment.html#cb96-45" tabindex="-1"></a></span>
-<span id="cb96-46"><a href="model-quality-assessment.html#cb96-46" tabindex="-1"></a><span class="st">transformed parameters{</span></span>
-<span id="cb96-47"><a href="model-quality-assessment.html#cb96-47" tabindex="-1"></a><span class="st">  vector[n] memory;</span></span>
-<span id="cb96-48"><a href="model-quality-assessment.html#cb96-48" tabindex="-1"></a></span>
-<span id="cb96-49"><a href="model-quality-assessment.html#cb96-49" tabindex="-1"></a><span class="st">  for (trial in 1:n){</span></span>
-<span id="cb96-50"><a href="model-quality-assessment.html#cb96-50" tabindex="-1"></a><span class="st">  if (trial == 1) {</span></span>
-<span id="cb96-51"><a href="model-quality-assessment.html#cb96-51" tabindex="-1"></a><span class="st">    memory[trial] = 0.5;</span></span>
-<span id="cb96-52"><a href="model-quality-assessment.html#cb96-52" tabindex="-1"></a><span class="st">  } </span></span>
-<span id="cb96-53"><a href="model-quality-assessment.html#cb96-53" tabindex="-1"></a><span class="st">  if (trial &lt; n){</span></span>
-<span id="cb96-54"><a href="model-quality-assessment.html#cb96-54" tabindex="-1"></a><span class="st">      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);</span></span>
-<span id="cb96-55"><a href="model-quality-assessment.html#cb96-55" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}</span></span>
-<span id="cb96-56"><a href="model-quality-assessment.html#cb96-56" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}</span></span>
-<span id="cb96-57"><a href="model-quality-assessment.html#cb96-57" tabindex="-1"></a><span class="st">    }</span></span>
-<span id="cb96-58"><a href="model-quality-assessment.html#cb96-58" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb96-59"><a href="model-quality-assessment.html#cb96-59" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb96-60"><a href="model-quality-assessment.html#cb96-60" tabindex="-1"></a></span>
-<span id="cb96-61"><a href="model-quality-assessment.html#cb96-61" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
-<span id="cb96-62"><a href="model-quality-assessment.html#cb96-62" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb96-63"><a href="model-quality-assessment.html#cb96-63" tabindex="-1"></a><span class="st">  // Priors</span></span>
-<span id="cb96-64"><a href="model-quality-assessment.html#cb96-64" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, .3);</span></span>
-<span id="cb96-65"><a href="model-quality-assessment.html#cb96-65" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | 0, .5);</span></span>
-<span id="cb96-66"><a href="model-quality-assessment.html#cb96-66" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb96-67"><a href="model-quality-assessment.html#cb96-67" tabindex="-1"></a><span class="st">  // Model, looping to keep track of memory</span></span>
-<span id="cb96-68"><a href="model-quality-assessment.html#cb96-68" tabindex="-1"></a><span class="st">  for (trial in 1:n) {</span></span>
-<span id="cb96-69"><a href="model-quality-assessment.html#cb96-69" tabindex="-1"></a><span class="st">    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));</span></span>
-<span id="cb96-70"><a href="model-quality-assessment.html#cb96-70" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb96-71"><a href="model-quality-assessment.html#cb96-71" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb96-72"><a href="model-quality-assessment.html#cb96-72" tabindex="-1"></a></span>
-<span id="cb96-73"><a href="model-quality-assessment.html#cb96-73" tabindex="-1"></a><span class="st">generated quantities{</span></span>
-<span id="cb96-74"><a href="model-quality-assessment.html#cb96-74" tabindex="-1"></a><span class="st">  real bias_prior;</span></span>
-<span id="cb96-75"><a href="model-quality-assessment.html#cb96-75" tabindex="-1"></a><span class="st">  real beta_prior;</span></span>
-<span id="cb96-76"><a href="model-quality-assessment.html#cb96-76" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds5;</span></span>
-<span id="cb96-77"><a href="model-quality-assessment.html#cb96-77" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds5;</span></span>
-<span id="cb96-78"><a href="model-quality-assessment.html#cb96-78" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds7;</span></span>
-<span id="cb96-79"><a href="model-quality-assessment.html#cb96-79" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds7;</span></span>
-<span id="cb96-80"><a href="model-quality-assessment.html#cb96-80" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds9;</span></span>
-<span id="cb96-81"><a href="model-quality-assessment.html#cb96-81" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds9;</span></span>
-<span id="cb96-82"><a href="model-quality-assessment.html#cb96-82" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb96-83"><a href="model-quality-assessment.html#cb96-83" tabindex="-1"></a><span class="st">  bias_prior = normal_rng(0, 0.3);</span></span>
-<span id="cb96-84"><a href="model-quality-assessment.html#cb96-84" tabindex="-1"></a><span class="st">  beta_prior = normal_rng(0, 0.5);</span></span>
-<span id="cb96-85"><a href="model-quality-assessment.html#cb96-85" tabindex="-1"></a><span class="st">  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.5)));</span></span>
-<span id="cb96-86"><a href="model-quality-assessment.html#cb96-86" tabindex="-1"></a><span class="st">  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.7)));</span></span>
-<span id="cb96-87"><a href="model-quality-assessment.html#cb96-87" tabindex="-1"></a><span class="st">  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.9)));</span></span>
-<span id="cb96-88"><a href="model-quality-assessment.html#cb96-88" tabindex="-1"></a><span class="st">  post_preds5 = binomial_rng(n, inv_logit(bias + beta * logit(0.5)));</span></span>
-<span id="cb96-89"><a href="model-quality-assessment.html#cb96-89" tabindex="-1"></a><span class="st">  post_preds7 = binomial_rng(n, inv_logit(bias + beta * logit(0.7)));</span></span>
-<span id="cb96-90"><a href="model-quality-assessment.html#cb96-90" tabindex="-1"></a><span class="st">  post_preds9 = binomial_rng(n, inv_logit(bias + beta * logit(0.9)));</span></span>
-<span id="cb96-91"><a href="model-quality-assessment.html#cb96-91" tabindex="-1"></a></span>
-<span id="cb96-92"><a href="model-quality-assessment.html#cb96-92" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb96-93"><a href="model-quality-assessment.html#cb96-93" tabindex="-1"></a></span>
-<span id="cb96-94"><a href="model-quality-assessment.html#cb96-94" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb96-95"><a href="model-quality-assessment.html#cb96-95" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb96-96"><a href="model-quality-assessment.html#cb96-96" tabindex="-1"></a>  stan_model,</span>
-<span id="cb96-97"><a href="model-quality-assessment.html#cb96-97" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb96-98"><a href="model-quality-assessment.html#cb96-98" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_MemoryBernoulli.stan&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb106"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb106-1"><a href="model-quality-assessment.html#cb106-1" tabindex="-1"></a><span class="co"># We subset to only include no noise and a specific rate</span></span>
+<span id="cb106-2"><a href="model-quality-assessment.html#cb106-2" tabindex="-1"></a>d1 <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> </span>
+<span id="cb106-3"><a href="model-quality-assessment.html#cb106-3" tabindex="-1"></a>  <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="dv">0</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb106-4"><a href="model-quality-assessment.html#cb106-4" tabindex="-1"></a>  <span class="fu">rename</span>(<span class="at">Other =</span> choice) <span class="sc">%&gt;%</span> </span>
+<span id="cb106-5"><a href="model-quality-assessment.html#cb106-5" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">cumulativerate =</span> <span class="fu">lag</span>(cumulativerate, <span class="dv">1</span>))</span>
+<span id="cb106-6"><a href="model-quality-assessment.html#cb106-6" tabindex="-1"></a></span>
+<span id="cb106-7"><a href="model-quality-assessment.html#cb106-7" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.5</span> <span class="co"># no prior info at first trial</span></span>
+<span id="cb106-8"><a href="model-quality-assessment.html#cb106-8" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">0</span>] <span class="ot">&lt;-</span> <span class="fl">0.01</span></span>
+<span id="cb106-9"><a href="model-quality-assessment.html#cb106-9" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.99</span></span>
+<span id="cb106-10"><a href="model-quality-assessment.html#cb106-10" tabindex="-1"></a></span>
+<span id="cb106-11"><a href="model-quality-assessment.html#cb106-11" tabindex="-1"></a><span class="co"># Now we create the memory agent with a coefficient of 0.9</span></span>
+<span id="cb106-12"><a href="model-quality-assessment.html#cb106-12" tabindex="-1"></a>bias <span class="ot">=</span> <span class="dv">0</span></span>
+<span id="cb106-13"><a href="model-quality-assessment.html#cb106-13" tabindex="-1"></a>beta <span class="ot">=</span> <span class="fl">0.9</span></span>
+<span id="cb106-14"><a href="model-quality-assessment.html#cb106-14" tabindex="-1"></a></span>
+<span id="cb106-15"><a href="model-quality-assessment.html#cb106-15" tabindex="-1"></a>MemoryAgent_f <span class="ot">&lt;-</span> <span class="cf">function</span>(bias, beta, cumulativerate){</span>
+<span id="cb106-16"><a href="model-quality-assessment.html#cb106-16" tabindex="-1"></a>    choice <span class="ot">=</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="fu">inv_logit_scaled</span>(bias <span class="sc">+</span> beta <span class="sc">*</span> <span class="fu">logit_scaled</span>(cumulativerate)))</span>
+<span id="cb106-17"><a href="model-quality-assessment.html#cb106-17" tabindex="-1"></a>  <span class="fu">return</span>(choice)</span>
+<span id="cb106-18"><a href="model-quality-assessment.html#cb106-18" tabindex="-1"></a>}</span>
+<span id="cb106-19"><a href="model-quality-assessment.html#cb106-19" tabindex="-1"></a></span>
+<span id="cb106-20"><a href="model-quality-assessment.html#cb106-20" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span>trials) {</span>
+<span id="cb106-21"><a href="model-quality-assessment.html#cb106-21" tabindex="-1"></a>  d1<span class="sc">$</span>Self[i] <span class="ot">&lt;-</span> <span class="fu">MemoryAgent_f</span>(bias, beta, d1<span class="sc">$</span>cumulativerate[i])</span>
+<span id="cb106-22"><a href="model-quality-assessment.html#cb106-22" tabindex="-1"></a>}</span>
+<span id="cb106-23"><a href="model-quality-assessment.html#cb106-23" tabindex="-1"></a></span>
+<span id="cb106-24"><a href="model-quality-assessment.html#cb106-24" tabindex="-1"></a></span>
+<span id="cb106-25"><a href="model-quality-assessment.html#cb106-25" tabindex="-1"></a><span class="do">## Create the data. </span></span>
+<span id="cb106-26"><a href="model-quality-assessment.html#cb106-26" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb106-27"><a href="model-quality-assessment.html#cb106-27" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
+<span id="cb106-28"><a href="model-quality-assessment.html#cb106-28" tabindex="-1"></a>  <span class="at">h =</span> d1<span class="sc">$</span>Self,</span>
+<span id="cb106-29"><a href="model-quality-assessment.html#cb106-29" tabindex="-1"></a>  <span class="at">other =</span> d1<span class="sc">$</span>Other</span>
+<span id="cb106-30"><a href="model-quality-assessment.html#cb106-30" tabindex="-1"></a>)</span>
+<span id="cb106-31"><a href="model-quality-assessment.html#cb106-31" tabindex="-1"></a></span>
+<span id="cb106-32"><a href="model-quality-assessment.html#cb106-32" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb106-33"><a href="model-quality-assessment.html#cb106-33" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h for (right and left) hand</span></span>
+<span id="cb106-34"><a href="model-quality-assessment.html#cb106-34" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb106-35"><a href="model-quality-assessment.html#cb106-35" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
+<span id="cb106-36"><a href="model-quality-assessment.html#cb106-36" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
+<span id="cb106-37"><a href="model-quality-assessment.html#cb106-37" tabindex="-1"></a><span class="st"> array[n] int other;</span></span>
+<span id="cb106-38"><a href="model-quality-assessment.html#cb106-38" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb106-39"><a href="model-quality-assessment.html#cb106-39" tabindex="-1"></a></span>
+<span id="cb106-40"><a href="model-quality-assessment.html#cb106-40" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb106-41"><a href="model-quality-assessment.html#cb106-41" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb106-42"><a href="model-quality-assessment.html#cb106-42" tabindex="-1"></a><span class="st">  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?</span></span>
+<span id="cb106-43"><a href="model-quality-assessment.html#cb106-43" tabindex="-1"></a><span class="st">  real beta; // how strongly is previous rate impacting the decision?</span></span>
+<span id="cb106-44"><a href="model-quality-assessment.html#cb106-44" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb106-45"><a href="model-quality-assessment.html#cb106-45" tabindex="-1"></a></span>
+<span id="cb106-46"><a href="model-quality-assessment.html#cb106-46" tabindex="-1"></a><span class="st">transformed parameters{</span></span>
+<span id="cb106-47"><a href="model-quality-assessment.html#cb106-47" tabindex="-1"></a><span class="st">  vector[n] memory;</span></span>
+<span id="cb106-48"><a href="model-quality-assessment.html#cb106-48" tabindex="-1"></a></span>
+<span id="cb106-49"><a href="model-quality-assessment.html#cb106-49" tabindex="-1"></a><span class="st">  for (trial in 1:n){</span></span>
+<span id="cb106-50"><a href="model-quality-assessment.html#cb106-50" tabindex="-1"></a><span class="st">  if (trial == 1) {</span></span>
+<span id="cb106-51"><a href="model-quality-assessment.html#cb106-51" tabindex="-1"></a><span class="st">    memory[trial] = 0.5;</span></span>
+<span id="cb106-52"><a href="model-quality-assessment.html#cb106-52" tabindex="-1"></a><span class="st">  } </span></span>
+<span id="cb106-53"><a href="model-quality-assessment.html#cb106-53" tabindex="-1"></a><span class="st">  if (trial &lt; n){</span></span>
+<span id="cb106-54"><a href="model-quality-assessment.html#cb106-54" tabindex="-1"></a><span class="st">      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);</span></span>
+<span id="cb106-55"><a href="model-quality-assessment.html#cb106-55" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}</span></span>
+<span id="cb106-56"><a href="model-quality-assessment.html#cb106-56" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}</span></span>
+<span id="cb106-57"><a href="model-quality-assessment.html#cb106-57" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb106-58"><a href="model-quality-assessment.html#cb106-58" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb106-59"><a href="model-quality-assessment.html#cb106-59" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb106-60"><a href="model-quality-assessment.html#cb106-60" tabindex="-1"></a></span>
+<span id="cb106-61"><a href="model-quality-assessment.html#cb106-61" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb106-62"><a href="model-quality-assessment.html#cb106-62" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb106-63"><a href="model-quality-assessment.html#cb106-63" tabindex="-1"></a><span class="st">  // Priors</span></span>
+<span id="cb106-64"><a href="model-quality-assessment.html#cb106-64" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, .3);</span></span>
+<span id="cb106-65"><a href="model-quality-assessment.html#cb106-65" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | 0, .5);</span></span>
+<span id="cb106-66"><a href="model-quality-assessment.html#cb106-66" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb106-67"><a href="model-quality-assessment.html#cb106-67" tabindex="-1"></a><span class="st">  // Model, looping to keep track of memory</span></span>
+<span id="cb106-68"><a href="model-quality-assessment.html#cb106-68" tabindex="-1"></a><span class="st">  for (trial in 1:n) {</span></span>
+<span id="cb106-69"><a href="model-quality-assessment.html#cb106-69" tabindex="-1"></a><span class="st">    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));</span></span>
+<span id="cb106-70"><a href="model-quality-assessment.html#cb106-70" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb106-71"><a href="model-quality-assessment.html#cb106-71" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb106-72"><a href="model-quality-assessment.html#cb106-72" tabindex="-1"></a></span>
+<span id="cb106-73"><a href="model-quality-assessment.html#cb106-73" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb106-74"><a href="model-quality-assessment.html#cb106-74" tabindex="-1"></a><span class="st">  real bias_prior;</span></span>
+<span id="cb106-75"><a href="model-quality-assessment.html#cb106-75" tabindex="-1"></a><span class="st">  real beta_prior;</span></span>
+<span id="cb106-76"><a href="model-quality-assessment.html#cb106-76" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds5;</span></span>
+<span id="cb106-77"><a href="model-quality-assessment.html#cb106-77" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds5;</span></span>
+<span id="cb106-78"><a href="model-quality-assessment.html#cb106-78" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds7;</span></span>
+<span id="cb106-79"><a href="model-quality-assessment.html#cb106-79" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds7;</span></span>
+<span id="cb106-80"><a href="model-quality-assessment.html#cb106-80" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds9;</span></span>
+<span id="cb106-81"><a href="model-quality-assessment.html#cb106-81" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds9;</span></span>
+<span id="cb106-82"><a href="model-quality-assessment.html#cb106-82" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb106-83"><a href="model-quality-assessment.html#cb106-83" tabindex="-1"></a><span class="st">  bias_prior = normal_rng(0, 0.3);</span></span>
+<span id="cb106-84"><a href="model-quality-assessment.html#cb106-84" tabindex="-1"></a><span class="st">  beta_prior = normal_rng(0, 0.5);</span></span>
+<span id="cb106-85"><a href="model-quality-assessment.html#cb106-85" tabindex="-1"></a><span class="st">  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.5)));</span></span>
+<span id="cb106-86"><a href="model-quality-assessment.html#cb106-86" tabindex="-1"></a><span class="st">  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.7)));</span></span>
+<span id="cb106-87"><a href="model-quality-assessment.html#cb106-87" tabindex="-1"></a><span class="st">  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.9)));</span></span>
+<span id="cb106-88"><a href="model-quality-assessment.html#cb106-88" tabindex="-1"></a><span class="st">  post_preds5 = binomial_rng(n, inv_logit(bias + beta * logit(0.5)));</span></span>
+<span id="cb106-89"><a href="model-quality-assessment.html#cb106-89" tabindex="-1"></a><span class="st">  post_preds7 = binomial_rng(n, inv_logit(bias + beta * logit(0.7)));</span></span>
+<span id="cb106-90"><a href="model-quality-assessment.html#cb106-90" tabindex="-1"></a><span class="st">  post_preds9 = binomial_rng(n, inv_logit(bias + beta * logit(0.9)));</span></span>
+<span id="cb106-91"><a href="model-quality-assessment.html#cb106-91" tabindex="-1"></a></span>
+<span id="cb106-92"><a href="model-quality-assessment.html#cb106-92" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb106-93"><a href="model-quality-assessment.html#cb106-93" tabindex="-1"></a></span>
+<span id="cb106-94"><a href="model-quality-assessment.html#cb106-94" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb106-95"><a href="model-quality-assessment.html#cb106-95" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb106-96"><a href="model-quality-assessment.html#cb106-96" tabindex="-1"></a>  stan_model,</span>
+<span id="cb106-97"><a href="model-quality-assessment.html#cb106-97" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb106-98"><a href="model-quality-assessment.html#cb106-98" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_MemoryBernoulli.stan&quot;</span>)</span></code></pre></div>
 <pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W4_MemoryBernoulli.stan&quot;</code></pre>
-<div class="sourceCode" id="cb98"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb98-1"><a href="model-quality-assessment.html#cb98-1" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
-<span id="cb98-2"><a href="model-quality-assessment.html#cb98-2" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_MemoryBernoulli.stan&quot;</span>)</span>
-<span id="cb98-3"><a href="model-quality-assessment.html#cb98-3" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, </span>
-<span id="cb98-4"><a href="model-quality-assessment.html#cb98-4" tabindex="-1"></a>                     <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb98-5"><a href="model-quality-assessment.html#cb98-5" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
-<span id="cb98-6"><a href="model-quality-assessment.html#cb98-6" tabindex="-1"></a></span>
-<span id="cb98-7"><a href="model-quality-assessment.html#cb98-7" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
-<span id="cb98-8"><a href="model-quality-assessment.html#cb98-8" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
-<span id="cb98-9"><a href="model-quality-assessment.html#cb98-9" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
-<span id="cb98-10"><a href="model-quality-assessment.html#cb98-10" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
-<span id="cb98-11"><a href="model-quality-assessment.html#cb98-11" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>,</span>
-<span id="cb98-12"><a href="model-quality-assessment.html#cb98-12" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
-<span id="cb98-13"><a href="model-quality-assessment.html#cb98-13" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
-<span id="cb98-14"><a href="model-quality-assessment.html#cb98-14" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
-<span id="cb98-15"><a href="model-quality-assessment.html#cb98-15" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">1000</span>,</span>
-<span id="cb98-16"><a href="model-quality-assessment.html#cb98-16" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
-<span id="cb98-17"><a href="model-quality-assessment.html#cb98-17" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
-<span id="cb98-18"><a href="model-quality-assessment.html#cb98-18" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
-<span id="cb98-19"><a href="model-quality-assessment.html#cb98-19" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb108"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb108-1"><a href="model-quality-assessment.html#cb108-1" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
+<span id="cb108-2"><a href="model-quality-assessment.html#cb108-2" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_MemoryBernoulli.stan&quot;</span>)</span>
+<span id="cb108-3"><a href="model-quality-assessment.html#cb108-3" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, </span>
+<span id="cb108-4"><a href="model-quality-assessment.html#cb108-4" tabindex="-1"></a>                     <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb108-5"><a href="model-quality-assessment.html#cb108-5" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb108-6"><a href="model-quality-assessment.html#cb108-6" tabindex="-1"></a></span>
+<span id="cb108-7"><a href="model-quality-assessment.html#cb108-7" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
+<span id="cb108-8"><a href="model-quality-assessment.html#cb108-8" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb108-9"><a href="model-quality-assessment.html#cb108-9" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb108-10"><a href="model-quality-assessment.html#cb108-10" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb108-11"><a href="model-quality-assessment.html#cb108-11" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>,</span>
+<span id="cb108-12"><a href="model-quality-assessment.html#cb108-12" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb108-13"><a href="model-quality-assessment.html#cb108-13" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb108-14"><a href="model-quality-assessment.html#cb108-14" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
+<span id="cb108-15"><a href="model-quality-assessment.html#cb108-15" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">1000</span>,</span>
+<span id="cb108-16"><a href="model-quality-assessment.html#cb108-16" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
+<span id="cb108-17"><a href="model-quality-assessment.html#cb108-17" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb108-18"><a href="model-quality-assessment.html#cb108-18" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb108-19"><a href="model-quality-assessment.html#cb108-19" tabindex="-1"></a>)</span></code></pre></div>
 <pre><code>## Running MCMC with 1 chain, with 2 thread(s) per chain...
 ## 
 ## Chain 1 finished in 0.5 seconds.</code></pre>
-<div class="sourceCode" id="cb100"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb100-1"><a href="model-quality-assessment.html#cb100-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
+<div class="sourceCode" id="cb110"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb110-1"><a href="model-quality-assessment.html#cb110-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 131 × 10
-##    variable      mean   median    sd   mad      q5     q95   rhat ess_bulk ess_tail
-##    &lt;chr&gt;        &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-##  1 lp__      -46.6    -46.3    0.954 0.705 -48.4   -45.7    1.00      408.     528.
-##  2 bias        0.0789   0.0747 0.265 0.266  -0.361   0.496  0.999     410.     380.
-##  3 beta        1.02     1.01   0.200 0.193   0.688   1.34   1.00      395.     373.
-##  4 memory[1]   0.5      0.5    0     0       0.5     0.5   NA          NA       NA 
-##  5 memory[2]   0.01     0.01   0     0       0.01    0.01  NA          NA       NA 
-##  6 memory[3]   0.505    0.505  0     0       0.505   0.505 NA          NA       NA 
-##  7 memory[4]   0.67     0.67   0     0       0.67    0.67  NA          NA       NA 
-##  8 memory[5]   0.752    0.752  0     0       0.752   0.752 NA          NA       NA 
-##  9 memory[6]   0.802    0.802  0     0       0.802   0.802 NA          NA       NA 
-## 10 memory[7]   0.835    0.835  0     0       0.835   0.835 NA          NA       NA 
+##    variable     mean  median    sd   mad      q5     q95  rhat ess_bulk ess_tail
+##    &lt;chr&gt;       &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 lp__      -65.2   -64.8   0.991 0.709 -67.1   -64.2    1.01     266.     423.
+##  2 bias        0.132   0.131 0.278 0.285  -0.332   0.597  1.00     206.     264.
+##  3 beta        0.609   0.599 0.180 0.178   0.309   0.903  1.01     219.     222.
+##  4 memory[1]   0.5     0.5   0     0       0.5     0.5   NA         NA       NA 
+##  5 memory[2]   0.01    0.01  0     0       0.01    0.01  NA         NA       NA 
+##  6 memory[3]   0.505   0.505 0     0       0.505   0.505 NA         NA       NA 
+##  7 memory[4]   0.67    0.67  0     0       0.67    0.67  NA         NA       NA 
+##  8 memory[5]   0.752   0.752 0     0       0.752   0.752 NA         NA       NA 
+##  9 memory[6]   0.602   0.602 0     0       0.602   0.602 NA         NA       NA 
+## 10 memory[7]   0.668   0.668 0     0       0.668   0.668 NA         NA       NA 
 ## # ℹ 121 more rows</code></pre>
-<div class="sourceCode" id="cb102"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb102-1"><a href="model-quality-assessment.html#cb102-1" tabindex="-1"></a><span class="co"># Extract posterior samples and include sampling of the prior:</span></span>
-<span id="cb102-2"><a href="model-quality-assessment.html#cb102-2" tabindex="-1"></a>draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>())</span>
-<span id="cb102-3"><a href="model-quality-assessment.html#cb102-3" tabindex="-1"></a></span>
-<span id="cb102-4"><a href="model-quality-assessment.html#cb102-4" tabindex="-1"></a></span>
-<span id="cb102-5"><a href="model-quality-assessment.html#cb102-5" tabindex="-1"></a><span class="co"># Now let&#39;s plot the density for bias (prior and posterior)</span></span>
-<span id="cb102-6"><a href="model-quality-assessment.html#cb102-6" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb102-7"><a href="model-quality-assessment.html#cb102-7" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(bias), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb102-8"><a href="model-quality-assessment.html#cb102-8" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(bias_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb102-9"><a href="model-quality-assessment.html#cb102-9" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="dv">0</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span></span>
-<span id="cb102-10"><a href="model-quality-assessment.html#cb102-10" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Bias&quot;</span>) <span class="sc">+</span></span>
-<span id="cb102-11"><a href="model-quality-assessment.html#cb102-11" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb102-12"><a href="model-quality-assessment.html#cb102-12" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb112"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb112-1"><a href="model-quality-assessment.html#cb112-1" tabindex="-1"></a><span class="co"># Extract posterior samples and include sampling of the prior:</span></span>
+<span id="cb112-2"><a href="model-quality-assessment.html#cb112-2" tabindex="-1"></a>draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>())</span>
+<span id="cb112-3"><a href="model-quality-assessment.html#cb112-3" tabindex="-1"></a></span>
+<span id="cb112-4"><a href="model-quality-assessment.html#cb112-4" tabindex="-1"></a></span>
+<span id="cb112-5"><a href="model-quality-assessment.html#cb112-5" tabindex="-1"></a><span class="co"># Now let&#39;s plot the density for bias (prior and posterior)</span></span>
+<span id="cb112-6"><a href="model-quality-assessment.html#cb112-6" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb112-7"><a href="model-quality-assessment.html#cb112-7" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(bias), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb112-8"><a href="model-quality-assessment.html#cb112-8" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(bias_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb112-9"><a href="model-quality-assessment.html#cb112-9" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="dv">0</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span></span>
+<span id="cb112-10"><a href="model-quality-assessment.html#cb112-10" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Bias&quot;</span>) <span class="sc">+</span></span>
+<span id="cb112-11"><a href="model-quality-assessment.html#cb112-11" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb112-12"><a href="model-quality-assessment.html#cb112-12" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/memory%20model-1.png" width="80%" style="display: block; margin: auto;" /></p>
-<div class="sourceCode" id="cb103"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb103-1"><a href="model-quality-assessment.html#cb103-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb103-2"><a href="model-quality-assessment.html#cb103-2" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(beta), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb103-3"><a href="model-quality-assessment.html#cb103-3" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(beta_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb103-4"><a href="model-quality-assessment.html#cb103-4" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="fl">0.9</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span></span>
-<span id="cb103-5"><a href="model-quality-assessment.html#cb103-5" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;MemoryBeta&quot;</span>) <span class="sc">+</span></span>
-<span id="cb103-6"><a href="model-quality-assessment.html#cb103-6" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb103-7"><a href="model-quality-assessment.html#cb103-7" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb113"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb113-1"><a href="model-quality-assessment.html#cb113-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb113-2"><a href="model-quality-assessment.html#cb113-2" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(beta), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb113-3"><a href="model-quality-assessment.html#cb113-3" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(beta_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb113-4"><a href="model-quality-assessment.html#cb113-4" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="fl">0.9</span>, <span class="at">size =</span> <span class="dv">2</span>) <span class="sc">+</span></span>
+<span id="cb113-5"><a href="model-quality-assessment.html#cb113-5" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;MemoryBeta&quot;</span>) <span class="sc">+</span></span>
+<span id="cb113-6"><a href="model-quality-assessment.html#cb113-6" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb113-7"><a href="model-quality-assessment.html#cb113-7" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/memory%20model-2.png" width="80%" style="display: block; margin: auto;" /></p>
-<div class="sourceCode" id="cb104"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb104-1"><a href="model-quality-assessment.html#cb104-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb104-2"><a href="model-quality-assessment.html#cb104-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;yellow&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightyellow&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.2</span>) <span class="sc">+</span></span>
-<span id="cb104-3"><a href="model-quality-assessment.html#cb104-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds7</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;green&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightgreen&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.2</span>) <span class="sc">+</span></span>
-<span id="cb104-4"><a href="model-quality-assessment.html#cb104-4" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds9</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.2</span>) <span class="sc">+</span></span>
-<span id="cb104-5"><a href="model-quality-assessment.html#cb104-5" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
-<span id="cb104-6"><a href="model-quality-assessment.html#cb104-6" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb104-7"><a href="model-quality-assessment.html#cb104-7" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb114"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb114-1"><a href="model-quality-assessment.html#cb114-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb114-2"><a href="model-quality-assessment.html#cb114-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;yellow&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightyellow&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.2</span>) <span class="sc">+</span></span>
+<span id="cb114-3"><a href="model-quality-assessment.html#cb114-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds7</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;green&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightgreen&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.2</span>) <span class="sc">+</span></span>
+<span id="cb114-4"><a href="model-quality-assessment.html#cb114-4" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds9</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.2</span>) <span class="sc">+</span></span>
+<span id="cb114-5"><a href="model-quality-assessment.html#cb114-5" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
+<span id="cb114-6"><a href="model-quality-assessment.html#cb114-6" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb114-7"><a href="model-quality-assessment.html#cb114-7" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/memory%20model-3.png" width="80%" style="display: block; margin: auto;" /></p>
-<div class="sourceCode" id="cb105"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb105-1"><a href="model-quality-assessment.html#cb105-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb105-2"><a href="model-quality-assessment.html#cb105-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;yellow&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightyellow&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb105-3"><a href="model-quality-assessment.html#cb105-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds7</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;green&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightgreen&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb105-4"><a href="model-quality-assessment.html#cb105-4" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds9</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb105-5"><a href="model-quality-assessment.html#cb105-5" tabindex="-1"></a>  <span class="co">#geom_point(x = sum(data$h), y = 0, color = &quot;red&quot;, shape = 17, size = 5) +</span></span>
-<span id="cb105-6"><a href="model-quality-assessment.html#cb105-6" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
-<span id="cb105-7"><a href="model-quality-assessment.html#cb105-7" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb105-8"><a href="model-quality-assessment.html#cb105-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb115"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb115-1"><a href="model-quality-assessment.html#cb115-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb115-2"><a href="model-quality-assessment.html#cb115-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;yellow&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightyellow&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb115-3"><a href="model-quality-assessment.html#cb115-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds7</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;green&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightgreen&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb115-4"><a href="model-quality-assessment.html#cb115-4" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds9</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb115-5"><a href="model-quality-assessment.html#cb115-5" tabindex="-1"></a>  <span class="co">#geom_point(x = sum(data$h), y = 0, color = &quot;red&quot;, shape = 17, size = 5) +</span></span>
+<span id="cb115-6"><a href="model-quality-assessment.html#cb115-6" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
+<span id="cb115-7"><a href="model-quality-assessment.html#cb115-7" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb115-8"><a href="model-quality-assessment.html#cb115-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/memory%20model-4.png" width="80%" style="display: block; margin: auto;" /></p>
-<div class="sourceCode" id="cb106"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb106-1"><a href="model-quality-assessment.html#cb106-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
-<span id="cb106-2"><a href="model-quality-assessment.html#cb106-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb106-3"><a href="model-quality-assessment.html#cb106-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
-<span id="cb106-4"><a href="model-quality-assessment.html#cb106-4" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
-<span id="cb106-5"><a href="model-quality-assessment.html#cb106-5" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
-<span id="cb106-6"><a href="model-quality-assessment.html#cb106-6" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb116"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb116-1"><a href="model-quality-assessment.html#cb116-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb116-2"><a href="model-quality-assessment.html#cb116-2" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">prior_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;lightblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb116-3"><a href="model-quality-assessment.html#cb116-3" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="fu">aes</span>(<span class="st">`</span><span class="at">post_preds5</span><span class="st">`</span>), <span class="at">color =</span> <span class="st">&quot;darkblue&quot;</span>, <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>, <span class="at">bins =</span> <span class="dv">90</span>) <span class="sc">+</span></span>
+<span id="cb116-4"><a href="model-quality-assessment.html#cb116-4" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Predicted heads out of 120 trials&quot;</span>) <span class="sc">+</span></span>
+<span id="cb116-5"><a href="model-quality-assessment.html#cb116-5" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
+<span id="cb116-6"><a href="model-quality-assessment.html#cb116-6" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/memory%20model-5.png" width="80%" style="display: block; margin: auto;" /></p>
 </div>
 <div id="prior-sensitivity-check-for-the-memory-model" class="section level2 hasAnchor" number="6.8">
 <h2><span class="header-section-number">6.8</span> Prior sensitivity check for the memory model<a href="model-quality-assessment.html#prior-sensitivity-check-for-the-memory-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<div class="sourceCode" id="cb107"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb107-1"><a href="model-quality-assessment.html#cb107-1" tabindex="-1"></a><span class="do">## Now we adding different priors for theta</span></span>
-<span id="cb107-2"><a href="model-quality-assessment.html#cb107-2" tabindex="-1"></a>prior_mean_bias <span class="ot">&lt;-</span> <span class="dv">0</span></span>
-<span id="cb107-3"><a href="model-quality-assessment.html#cb107-3" tabindex="-1"></a>prior_sd_bias <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="fl">0.5</span>, <span class="fl">0.1</span>)</span>
-<span id="cb107-4"><a href="model-quality-assessment.html#cb107-4" tabindex="-1"></a>prior_mean_beta <span class="ot">&lt;-</span> <span class="dv">0</span></span>
-<span id="cb107-5"><a href="model-quality-assessment.html#cb107-5" tabindex="-1"></a>prior_sd_beta <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="fl">0.5</span>, <span class="fl">0.1</span>)</span>
-<span id="cb107-6"><a href="model-quality-assessment.html#cb107-6" tabindex="-1"></a>priors <span class="ot">&lt;-</span>  <span class="fu">tibble</span>(<span class="fu">expand.grid</span>(<span class="fu">tibble</span>(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior_sd_beta)))</span>
-<span id="cb107-7"><a href="model-quality-assessment.html#cb107-7" tabindex="-1"></a></span>
-<span id="cb107-8"><a href="model-quality-assessment.html#cb107-8" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
-<span id="cb107-9"><a href="model-quality-assessment.html#cb107-9" tabindex="-1"></a><span class="st">  // The input (data) for the model</span></span>
-<span id="cb107-10"><a href="model-quality-assessment.html#cb107-10" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb107-11"><a href="model-quality-assessment.html#cb107-11" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n;</span></span>
-<span id="cb107-12"><a href="model-quality-assessment.html#cb107-12" tabindex="-1"></a><span class="st">  array[n] int h;</span></span>
-<span id="cb107-13"><a href="model-quality-assessment.html#cb107-13" tabindex="-1"></a><span class="st">  array[n] int other;</span></span>
-<span id="cb107-14"><a href="model-quality-assessment.html#cb107-14" tabindex="-1"></a><span class="st">  real prior_mean_bias;</span></span>
-<span id="cb107-15"><a href="model-quality-assessment.html#cb107-15" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sd_bias;</span></span>
-<span id="cb107-16"><a href="model-quality-assessment.html#cb107-16" tabindex="-1"></a><span class="st">  real prior_mean_beta;</span></span>
-<span id="cb107-17"><a href="model-quality-assessment.html#cb107-17" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sd_beta;</span></span>
-<span id="cb107-18"><a href="model-quality-assessment.html#cb107-18" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb107-19"><a href="model-quality-assessment.html#cb107-19" tabindex="-1"></a></span>
-<span id="cb107-20"><a href="model-quality-assessment.html#cb107-20" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
-<span id="cb107-21"><a href="model-quality-assessment.html#cb107-21" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb107-22"><a href="model-quality-assessment.html#cb107-22" tabindex="-1"></a><span class="st">  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?</span></span>
-<span id="cb107-23"><a href="model-quality-assessment.html#cb107-23" tabindex="-1"></a><span class="st">  real beta; // how strongly is previous rate impacting the decision?</span></span>
-<span id="cb107-24"><a href="model-quality-assessment.html#cb107-24" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb107-25"><a href="model-quality-assessment.html#cb107-25" tabindex="-1"></a></span>
-<span id="cb107-26"><a href="model-quality-assessment.html#cb107-26" tabindex="-1"></a><span class="st">transformed parameters{</span></span>
-<span id="cb107-27"><a href="model-quality-assessment.html#cb107-27" tabindex="-1"></a><span class="st">  vector[n] memory;</span></span>
-<span id="cb107-28"><a href="model-quality-assessment.html#cb107-28" tabindex="-1"></a></span>
-<span id="cb107-29"><a href="model-quality-assessment.html#cb107-29" tabindex="-1"></a><span class="st">  for (trial in 1:n){</span></span>
-<span id="cb107-30"><a href="model-quality-assessment.html#cb107-30" tabindex="-1"></a><span class="st">  if (trial == 1) {</span></span>
-<span id="cb107-31"><a href="model-quality-assessment.html#cb107-31" tabindex="-1"></a><span class="st">    memory[trial] = 0.5;</span></span>
-<span id="cb107-32"><a href="model-quality-assessment.html#cb107-32" tabindex="-1"></a><span class="st">  } </span></span>
-<span id="cb107-33"><a href="model-quality-assessment.html#cb107-33" tabindex="-1"></a><span class="st">  if (trial &lt; n){</span></span>
-<span id="cb107-34"><a href="model-quality-assessment.html#cb107-34" tabindex="-1"></a><span class="st">      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);</span></span>
-<span id="cb107-35"><a href="model-quality-assessment.html#cb107-35" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}</span></span>
-<span id="cb107-36"><a href="model-quality-assessment.html#cb107-36" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}</span></span>
-<span id="cb107-37"><a href="model-quality-assessment.html#cb107-37" tabindex="-1"></a><span class="st">    }</span></span>
-<span id="cb107-38"><a href="model-quality-assessment.html#cb107-38" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb107-39"><a href="model-quality-assessment.html#cb107-39" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb107-40"><a href="model-quality-assessment.html#cb107-40" tabindex="-1"></a></span>
-<span id="cb107-41"><a href="model-quality-assessment.html#cb107-41" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
-<span id="cb107-42"><a href="model-quality-assessment.html#cb107-42" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb107-43"><a href="model-quality-assessment.html#cb107-43" tabindex="-1"></a><span class="st">  // The priors </span></span>
-<span id="cb107-44"><a href="model-quality-assessment.html#cb107-44" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | prior_mean_bias, prior_sd_bias);</span></span>
-<span id="cb107-45"><a href="model-quality-assessment.html#cb107-45" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | prior_mean_beta, prior_sd_beta);</span></span>
-<span id="cb107-46"><a href="model-quality-assessment.html#cb107-46" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb107-47"><a href="model-quality-assessment.html#cb107-47" tabindex="-1"></a><span class="st">  // The model</span></span>
-<span id="cb107-48"><a href="model-quality-assessment.html#cb107-48" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));</span></span>
-<span id="cb107-49"><a href="model-quality-assessment.html#cb107-49" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb107-50"><a href="model-quality-assessment.html#cb107-50" tabindex="-1"></a></span>
-<span id="cb107-51"><a href="model-quality-assessment.html#cb107-51" tabindex="-1"></a><span class="st">generated quantities{</span></span>
-<span id="cb107-52"><a href="model-quality-assessment.html#cb107-52" tabindex="-1"></a><span class="st">  real bias_prior;</span></span>
-<span id="cb107-53"><a href="model-quality-assessment.html#cb107-53" tabindex="-1"></a><span class="st">  real beta_prior;</span></span>
-<span id="cb107-54"><a href="model-quality-assessment.html#cb107-54" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds5;</span></span>
-<span id="cb107-55"><a href="model-quality-assessment.html#cb107-55" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds5;</span></span>
-<span id="cb107-56"><a href="model-quality-assessment.html#cb107-56" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds7;</span></span>
-<span id="cb107-57"><a href="model-quality-assessment.html#cb107-57" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds7;</span></span>
-<span id="cb107-58"><a href="model-quality-assessment.html#cb107-58" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds9;</span></span>
-<span id="cb107-59"><a href="model-quality-assessment.html#cb107-59" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds9;</span></span>
-<span id="cb107-60"><a href="model-quality-assessment.html#cb107-60" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb107-61"><a href="model-quality-assessment.html#cb107-61" tabindex="-1"></a><span class="st">  bias_prior = normal_rng(prior_mean_bias, prior_sd_bias);</span></span>
-<span id="cb107-62"><a href="model-quality-assessment.html#cb107-62" tabindex="-1"></a><span class="st">  beta_prior = normal_rng(prior_mean_beta, prior_sd_beta);</span></span>
-<span id="cb107-63"><a href="model-quality-assessment.html#cb107-63" tabindex="-1"></a><span class="st">  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.5)));</span></span>
-<span id="cb107-64"><a href="model-quality-assessment.html#cb107-64" tabindex="-1"></a><span class="st">  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.7)));</span></span>
-<span id="cb107-65"><a href="model-quality-assessment.html#cb107-65" tabindex="-1"></a><span class="st">  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.9)));</span></span>
-<span id="cb107-66"><a href="model-quality-assessment.html#cb107-66" tabindex="-1"></a><span class="st">  post_preds5 = binomial_rng(n, inv_logit(bias + beta * logit(0.5)));</span></span>
-<span id="cb107-67"><a href="model-quality-assessment.html#cb107-67" tabindex="-1"></a><span class="st">  post_preds7 = binomial_rng(n, inv_logit(bias + beta * logit(0.7)));</span></span>
-<span id="cb107-68"><a href="model-quality-assessment.html#cb107-68" tabindex="-1"></a><span class="st">  post_preds9 = binomial_rng(n, inv_logit(bias + beta * logit(0.9)));</span></span>
-<span id="cb107-69"><a href="model-quality-assessment.html#cb107-69" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb107-70"><a href="model-quality-assessment.html#cb107-70" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb107-71"><a href="model-quality-assessment.html#cb107-71" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb107-72"><a href="model-quality-assessment.html#cb107-72" tabindex="-1"></a></span>
-<span id="cb107-73"><a href="model-quality-assessment.html#cb107-73" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb107-74"><a href="model-quality-assessment.html#cb107-74" tabindex="-1"></a>  stan_model,</span>
-<span id="cb107-75"><a href="model-quality-assessment.html#cb107-75" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb107-76"><a href="model-quality-assessment.html#cb107-76" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_PriorMemory.stan&quot;</span>)</span>
-<span id="cb107-77"><a href="model-quality-assessment.html#cb107-77" tabindex="-1"></a></span>
-<span id="cb107-78"><a href="model-quality-assessment.html#cb107-78" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_PriorMemory.stan&quot;</span>)</span>
-<span id="cb107-79"><a href="model-quality-assessment.html#cb107-79" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>))</span>
-<span id="cb107-80"><a href="model-quality-assessment.html#cb107-80" tabindex="-1"></a></span>
-<span id="cb107-81"><a href="model-quality-assessment.html#cb107-81" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="fl">0.1</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>) <span class="sc">%&gt;%</span></span>
-<span id="cb107-82"><a href="model-quality-assessment.html#cb107-82" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">memory =</span> <span class="fu">lag</span>(cumulativerate, <span class="dv">1</span>))</span>
-<span id="cb107-83"><a href="model-quality-assessment.html#cb107-83" tabindex="-1"></a></span>
-<span id="cb107-84"><a href="model-quality-assessment.html#cb107-84" tabindex="-1"></a>dd<span class="sc">$</span>memory[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.5</span></span>
-<span id="cb107-85"><a href="model-quality-assessment.html#cb107-85" tabindex="-1"></a></span>
-<span id="cb107-86"><a href="model-quality-assessment.html#cb107-86" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(future, purrr, furrr)</span>
-<span id="cb107-87"><a href="model-quality-assessment.html#cb107-87" tabindex="-1"></a><span class="fu">plan</span>(multisession, <span class="at">workers =</span> <span class="dv">4</span>)</span>
-<span id="cb107-88"><a href="model-quality-assessment.html#cb107-88" tabindex="-1"></a></span>
-<span id="cb107-89"><a href="model-quality-assessment.html#cb107-89" tabindex="-1"></a>sim_d_and_fit <span class="ot">&lt;-</span> <span class="cf">function</span>(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior_sd_beta) {</span>
-<span id="cb107-90"><a href="model-quality-assessment.html#cb107-90" tabindex="-1"></a>  </span>
-<span id="cb107-91"><a href="model-quality-assessment.html#cb107-91" tabindex="-1"></a>    data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb107-92"><a href="model-quality-assessment.html#cb107-92" tabindex="-1"></a>        <span class="at">n =</span> <span class="fu">nrow</span>(dd),</span>
-<span id="cb107-93"><a href="model-quality-assessment.html#cb107-93" tabindex="-1"></a>        <span class="at">h =</span> dd<span class="sc">$</span>choice,</span>
-<span id="cb107-94"><a href="model-quality-assessment.html#cb107-94" tabindex="-1"></a>        <span class="at">memory =</span> dd<span class="sc">$</span>memory,</span>
-<span id="cb107-95"><a href="model-quality-assessment.html#cb107-95" tabindex="-1"></a>        <span class="at">prior_mean_bias =</span> prior_mean_bias,</span>
-<span id="cb107-96"><a href="model-quality-assessment.html#cb107-96" tabindex="-1"></a>        <span class="at">prior_sd_bias =</span> prior_sd_bias,</span>
-<span id="cb107-97"><a href="model-quality-assessment.html#cb107-97" tabindex="-1"></a>        <span class="at">prior_mean_beta =</span> prior_mean_beta,</span>
-<span id="cb107-98"><a href="model-quality-assessment.html#cb107-98" tabindex="-1"></a>        <span class="at">prior_sd_beta =</span> prior_sd_beta</span>
-<span id="cb107-99"><a href="model-quality-assessment.html#cb107-99" tabindex="-1"></a>      )</span>
-<span id="cb107-100"><a href="model-quality-assessment.html#cb107-100" tabindex="-1"></a>    </span>
-<span id="cb107-101"><a href="model-quality-assessment.html#cb107-101" tabindex="-1"></a>    samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
-<span id="cb107-102"><a href="model-quality-assessment.html#cb107-102" tabindex="-1"></a>      <span class="at">data =</span> data,</span>
-<span id="cb107-103"><a href="model-quality-assessment.html#cb107-103" tabindex="-1"></a>      <span class="at">seed =</span> <span class="dv">1000</span>,</span>
-<span id="cb107-104"><a href="model-quality-assessment.html#cb107-104" tabindex="-1"></a>      <span class="at">chains =</span> <span class="dv">1</span>,</span>
-<span id="cb107-105"><a href="model-quality-assessment.html#cb107-105" tabindex="-1"></a>      <span class="at">parallel_chains =</span> <span class="dv">1</span>,</span>
-<span id="cb107-106"><a href="model-quality-assessment.html#cb107-106" tabindex="-1"></a>      <span class="at">threads_per_chain =</span> <span class="dv">1</span>,</span>
-<span id="cb107-107"><a href="model-quality-assessment.html#cb107-107" tabindex="-1"></a>      <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
-<span id="cb107-108"><a href="model-quality-assessment.html#cb107-108" tabindex="-1"></a>      <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
-<span id="cb107-109"><a href="model-quality-assessment.html#cb107-109" tabindex="-1"></a>      <span class="at">refresh =</span> <span class="dv">0</span>,</span>
-<span id="cb107-110"><a href="model-quality-assessment.html#cb107-110" tabindex="-1"></a>      <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
-<span id="cb107-111"><a href="model-quality-assessment.html#cb107-111" tabindex="-1"></a>      <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
-<span id="cb107-112"><a href="model-quality-assessment.html#cb107-112" tabindex="-1"></a>    )</span>
-<span id="cb107-113"><a href="model-quality-assessment.html#cb107-113" tabindex="-1"></a>    </span>
-<span id="cb107-114"><a href="model-quality-assessment.html#cb107-114" tabindex="-1"></a>    draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>()) </span>
-<span id="cb107-115"><a href="model-quality-assessment.html#cb107-115" tabindex="-1"></a>      temp <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">bias_prior =</span> draws_df<span class="sc">$</span>bias_prior, </span>
-<span id="cb107-116"><a href="model-quality-assessment.html#cb107-116" tabindex="-1"></a>                     <span class="at">beta_prior =</span> draws_df<span class="sc">$</span>beta_prior, </span>
-<span id="cb107-117"><a href="model-quality-assessment.html#cb107-117" tabindex="-1"></a>                     <span class="at">bias_posterior =</span> draws_df<span class="sc">$</span>bias, </span>
-<span id="cb107-118"><a href="model-quality-assessment.html#cb107-118" tabindex="-1"></a>                     <span class="at">beta_posterior =</span> draws_df<span class="sc">$</span>beta, </span>
-<span id="cb107-119"><a href="model-quality-assessment.html#cb107-119" tabindex="-1"></a>                     <span class="at">prior_preds5 =</span> draws_df<span class="sc">$</span>prior_preds5, </span>
-<span id="cb107-120"><a href="model-quality-assessment.html#cb107-120" tabindex="-1"></a>                     <span class="at">prior_preds7 =</span> draws_df<span class="sc">$</span>prior_preds7, </span>
-<span id="cb107-121"><a href="model-quality-assessment.html#cb107-121" tabindex="-1"></a>                     <span class="at">prior_preds9 =</span> draws_df<span class="sc">$</span>prior_preds9, </span>
-<span id="cb107-122"><a href="model-quality-assessment.html#cb107-122" tabindex="-1"></a>                     <span class="at">posterior_preds5 =</span> draws_df<span class="sc">$</span>post_preds5,</span>
-<span id="cb107-123"><a href="model-quality-assessment.html#cb107-123" tabindex="-1"></a>                     <span class="at">posterior_preds7 =</span> draws_df<span class="sc">$</span>post_preds7,</span>
-<span id="cb107-124"><a href="model-quality-assessment.html#cb107-124" tabindex="-1"></a>                     <span class="at">posterior_preds9 =</span> draws_df<span class="sc">$</span>post_preds9, </span>
-<span id="cb107-125"><a href="model-quality-assessment.html#cb107-125" tabindex="-1"></a>                     <span class="at">prior_mean_bias =</span> prior_mean_bias,</span>
-<span id="cb107-126"><a href="model-quality-assessment.html#cb107-126" tabindex="-1"></a>                     <span class="at">prior_sd_bias =</span> prior_sd_bias, </span>
-<span id="cb107-127"><a href="model-quality-assessment.html#cb107-127" tabindex="-1"></a>                     <span class="at">prior_mean_beta =</span> prior_mean_beta,</span>
-<span id="cb107-128"><a href="model-quality-assessment.html#cb107-128" tabindex="-1"></a>                     <span class="at">prior_sd_beta =</span> prior_sd_beta)</span>
-<span id="cb107-129"><a href="model-quality-assessment.html#cb107-129" tabindex="-1"></a>    </span>
-<span id="cb107-130"><a href="model-quality-assessment.html#cb107-130" tabindex="-1"></a>    <span class="fu">return</span>(temp)</span>
-<span id="cb107-131"><a href="model-quality-assessment.html#cb107-131" tabindex="-1"></a>  </span>
-<span id="cb107-132"><a href="model-quality-assessment.html#cb107-132" tabindex="-1"></a>}</span>
-<span id="cb107-133"><a href="model-quality-assessment.html#cb107-133" tabindex="-1"></a></span>
-<span id="cb107-134"><a href="model-quality-assessment.html#cb107-134" tabindex="-1"></a></span>
-<span id="cb107-135"><a href="model-quality-assessment.html#cb107-135" tabindex="-1"></a></span>
-<span id="cb107-136"><a href="model-quality-assessment.html#cb107-136" tabindex="-1"></a><span class="co"># Commenting this out to ensure the book compiles faster. Uncomment to run the code.</span></span>
-<span id="cb107-137"><a href="model-quality-assessment.html#cb107-137" tabindex="-1"></a><span class="co">#recovery_df &lt;- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))</span></span>
-<span id="cb107-138"><a href="model-quality-assessment.html#cb107-138" tabindex="-1"></a><span class="co">#write_csv(recovery_df, &quot;simdata/W4_MemoryPriorSensitivity.csv&quot;)</span></span></code></pre></div>
-<div class="sourceCode" id="cb108"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb108-1"><a href="model-quality-assessment.html#cb108-1" tabindex="-1"></a>recovery_df <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W4_MemoryPriorSensitivity.csv&quot;</span>)</span>
-<span id="cb108-2"><a href="model-quality-assessment.html#cb108-2" tabindex="-1"></a></span>
-<span id="cb108-3"><a href="model-quality-assessment.html#cb108-3" tabindex="-1"></a><span class="fu">ggplot</span>(recovery_df, <span class="fu">aes</span>(prior_sd_beta, beta_posterior)) <span class="sc">+</span></span>
-<span id="cb108-4"><a href="model-quality-assessment.html#cb108-4" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">alpha =</span> <span class="fl">0.1</span>) <span class="sc">+</span></span>
-<span id="cb108-5"><a href="model-quality-assessment.html#cb108-5" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> <span class="fl">0.8</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>) <span class="sc">+</span></span>
-<span id="cb108-6"><a href="model-quality-assessment.html#cb108-6" tabindex="-1"></a>  <span class="fu">geom_smooth</span>(<span class="at">method =</span> lm) <span class="sc">+</span></span>
-<span id="cb108-7"><a href="model-quality-assessment.html#cb108-7" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(.<span class="sc">~</span>prior_sd_bias) <span class="sc">+</span></span>
-<span id="cb108-8"><a href="model-quality-assessment.html#cb108-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb117"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb117-1"><a href="model-quality-assessment.html#cb117-1" tabindex="-1"></a><span class="do">## Now we adding different priors for theta</span></span>
+<span id="cb117-2"><a href="model-quality-assessment.html#cb117-2" tabindex="-1"></a>prior_mean_bias <span class="ot">&lt;-</span> <span class="dv">0</span></span>
+<span id="cb117-3"><a href="model-quality-assessment.html#cb117-3" tabindex="-1"></a>prior_sd_bias <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="fl">0.5</span>, <span class="fl">0.1</span>)</span>
+<span id="cb117-4"><a href="model-quality-assessment.html#cb117-4" tabindex="-1"></a>prior_mean_beta <span class="ot">&lt;-</span> <span class="dv">0</span></span>
+<span id="cb117-5"><a href="model-quality-assessment.html#cb117-5" tabindex="-1"></a>prior_sd_beta <span class="ot">&lt;-</span> <span class="fu">seq</span>(<span class="fl">0.1</span>, <span class="fl">0.5</span>, <span class="fl">0.1</span>)</span>
+<span id="cb117-6"><a href="model-quality-assessment.html#cb117-6" tabindex="-1"></a>priors <span class="ot">&lt;-</span>  <span class="fu">tibble</span>(<span class="fu">expand.grid</span>(<span class="fu">tibble</span>(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior_sd_beta)))</span>
+<span id="cb117-7"><a href="model-quality-assessment.html#cb117-7" tabindex="-1"></a></span>
+<span id="cb117-8"><a href="model-quality-assessment.html#cb117-8" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb117-9"><a href="model-quality-assessment.html#cb117-9" tabindex="-1"></a><span class="st">  // The input (data) for the model</span></span>
+<span id="cb117-10"><a href="model-quality-assessment.html#cb117-10" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb117-11"><a href="model-quality-assessment.html#cb117-11" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n;</span></span>
+<span id="cb117-12"><a href="model-quality-assessment.html#cb117-12" tabindex="-1"></a><span class="st">  array[n] int h;</span></span>
+<span id="cb117-13"><a href="model-quality-assessment.html#cb117-13" tabindex="-1"></a><span class="st">  array[n] int other;</span></span>
+<span id="cb117-14"><a href="model-quality-assessment.html#cb117-14" tabindex="-1"></a><span class="st">  real prior_mean_bias;</span></span>
+<span id="cb117-15"><a href="model-quality-assessment.html#cb117-15" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sd_bias;</span></span>
+<span id="cb117-16"><a href="model-quality-assessment.html#cb117-16" tabindex="-1"></a><span class="st">  real prior_mean_beta;</span></span>
+<span id="cb117-17"><a href="model-quality-assessment.html#cb117-17" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sd_beta;</span></span>
+<span id="cb117-18"><a href="model-quality-assessment.html#cb117-18" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb117-19"><a href="model-quality-assessment.html#cb117-19" tabindex="-1"></a></span>
+<span id="cb117-20"><a href="model-quality-assessment.html#cb117-20" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb117-21"><a href="model-quality-assessment.html#cb117-21" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb117-22"><a href="model-quality-assessment.html#cb117-22" tabindex="-1"></a><span class="st">  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?</span></span>
+<span id="cb117-23"><a href="model-quality-assessment.html#cb117-23" tabindex="-1"></a><span class="st">  real beta; // how strongly is previous rate impacting the decision?</span></span>
+<span id="cb117-24"><a href="model-quality-assessment.html#cb117-24" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb117-25"><a href="model-quality-assessment.html#cb117-25" tabindex="-1"></a></span>
+<span id="cb117-26"><a href="model-quality-assessment.html#cb117-26" tabindex="-1"></a><span class="st">transformed parameters{</span></span>
+<span id="cb117-27"><a href="model-quality-assessment.html#cb117-27" tabindex="-1"></a><span class="st">  vector[n] memory;</span></span>
+<span id="cb117-28"><a href="model-quality-assessment.html#cb117-28" tabindex="-1"></a></span>
+<span id="cb117-29"><a href="model-quality-assessment.html#cb117-29" tabindex="-1"></a><span class="st">  for (trial in 1:n){</span></span>
+<span id="cb117-30"><a href="model-quality-assessment.html#cb117-30" tabindex="-1"></a><span class="st">  if (trial == 1) {</span></span>
+<span id="cb117-31"><a href="model-quality-assessment.html#cb117-31" tabindex="-1"></a><span class="st">    memory[trial] = 0.5;</span></span>
+<span id="cb117-32"><a href="model-quality-assessment.html#cb117-32" tabindex="-1"></a><span class="st">  } </span></span>
+<span id="cb117-33"><a href="model-quality-assessment.html#cb117-33" tabindex="-1"></a><span class="st">  if (trial &lt; n){</span></span>
+<span id="cb117-34"><a href="model-quality-assessment.html#cb117-34" tabindex="-1"></a><span class="st">      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);</span></span>
+<span id="cb117-35"><a href="model-quality-assessment.html#cb117-35" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}</span></span>
+<span id="cb117-36"><a href="model-quality-assessment.html#cb117-36" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}</span></span>
+<span id="cb117-37"><a href="model-quality-assessment.html#cb117-37" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb117-38"><a href="model-quality-assessment.html#cb117-38" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb117-39"><a href="model-quality-assessment.html#cb117-39" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb117-40"><a href="model-quality-assessment.html#cb117-40" tabindex="-1"></a></span>
+<span id="cb117-41"><a href="model-quality-assessment.html#cb117-41" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb117-42"><a href="model-quality-assessment.html#cb117-42" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb117-43"><a href="model-quality-assessment.html#cb117-43" tabindex="-1"></a><span class="st">  // The priors </span></span>
+<span id="cb117-44"><a href="model-quality-assessment.html#cb117-44" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | prior_mean_bias, prior_sd_bias);</span></span>
+<span id="cb117-45"><a href="model-quality-assessment.html#cb117-45" tabindex="-1"></a><span class="st">  target += normal_lpdf(beta | prior_mean_beta, prior_sd_beta);</span></span>
+<span id="cb117-46"><a href="model-quality-assessment.html#cb117-46" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb117-47"><a href="model-quality-assessment.html#cb117-47" tabindex="-1"></a><span class="st">  // The model</span></span>
+<span id="cb117-48"><a href="model-quality-assessment.html#cb117-48" tabindex="-1"></a><span class="st">  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));</span></span>
+<span id="cb117-49"><a href="model-quality-assessment.html#cb117-49" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb117-50"><a href="model-quality-assessment.html#cb117-50" tabindex="-1"></a></span>
+<span id="cb117-51"><a href="model-quality-assessment.html#cb117-51" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb117-52"><a href="model-quality-assessment.html#cb117-52" tabindex="-1"></a><span class="st">  real bias_prior;</span></span>
+<span id="cb117-53"><a href="model-quality-assessment.html#cb117-53" tabindex="-1"></a><span class="st">  real beta_prior;</span></span>
+<span id="cb117-54"><a href="model-quality-assessment.html#cb117-54" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds5;</span></span>
+<span id="cb117-55"><a href="model-quality-assessment.html#cb117-55" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds5;</span></span>
+<span id="cb117-56"><a href="model-quality-assessment.html#cb117-56" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds7;</span></span>
+<span id="cb117-57"><a href="model-quality-assessment.html#cb117-57" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds7;</span></span>
+<span id="cb117-58"><a href="model-quality-assessment.html#cb117-58" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; prior_preds9;</span></span>
+<span id="cb117-59"><a href="model-quality-assessment.html#cb117-59" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=n&gt; post_preds9;</span></span>
+<span id="cb117-60"><a href="model-quality-assessment.html#cb117-60" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb117-61"><a href="model-quality-assessment.html#cb117-61" tabindex="-1"></a><span class="st">  bias_prior = normal_rng(prior_mean_bias, prior_sd_bias);</span></span>
+<span id="cb117-62"><a href="model-quality-assessment.html#cb117-62" tabindex="-1"></a><span class="st">  beta_prior = normal_rng(prior_mean_beta, prior_sd_beta);</span></span>
+<span id="cb117-63"><a href="model-quality-assessment.html#cb117-63" tabindex="-1"></a><span class="st">  prior_preds5 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.5)));</span></span>
+<span id="cb117-64"><a href="model-quality-assessment.html#cb117-64" tabindex="-1"></a><span class="st">  prior_preds7 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.7)));</span></span>
+<span id="cb117-65"><a href="model-quality-assessment.html#cb117-65" tabindex="-1"></a><span class="st">  prior_preds9 = binomial_rng(n, inv_logit(bias_prior + beta_prior * logit(0.9)));</span></span>
+<span id="cb117-66"><a href="model-quality-assessment.html#cb117-66" tabindex="-1"></a><span class="st">  post_preds5 = binomial_rng(n, inv_logit(bias + beta * logit(0.5)));</span></span>
+<span id="cb117-67"><a href="model-quality-assessment.html#cb117-67" tabindex="-1"></a><span class="st">  post_preds7 = binomial_rng(n, inv_logit(bias + beta * logit(0.7)));</span></span>
+<span id="cb117-68"><a href="model-quality-assessment.html#cb117-68" tabindex="-1"></a><span class="st">  post_preds9 = binomial_rng(n, inv_logit(bias + beta * logit(0.9)));</span></span>
+<span id="cb117-69"><a href="model-quality-assessment.html#cb117-69" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb117-70"><a href="model-quality-assessment.html#cb117-70" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb117-71"><a href="model-quality-assessment.html#cb117-71" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb117-72"><a href="model-quality-assessment.html#cb117-72" tabindex="-1"></a></span>
+<span id="cb117-73"><a href="model-quality-assessment.html#cb117-73" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb117-74"><a href="model-quality-assessment.html#cb117-74" tabindex="-1"></a>  stan_model,</span>
+<span id="cb117-75"><a href="model-quality-assessment.html#cb117-75" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb117-76"><a href="model-quality-assessment.html#cb117-76" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W4_PriorMemory.stan&quot;</span>)</span>
+<span id="cb117-77"><a href="model-quality-assessment.html#cb117-77" tabindex="-1"></a></span>
+<span id="cb117-78"><a href="model-quality-assessment.html#cb117-78" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W4_PriorMemory.stan&quot;</span>)</span>
+<span id="cb117-79"><a href="model-quality-assessment.html#cb117-79" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>))</span>
+<span id="cb117-80"><a href="model-quality-assessment.html#cb117-80" tabindex="-1"></a></span>
+<span id="cb117-81"><a href="model-quality-assessment.html#cb117-81" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(noise <span class="sc">==</span> <span class="fl">0.1</span> <span class="sc">&amp;</span> rate <span class="sc">==</span> <span class="fl">0.8</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb117-82"><a href="model-quality-assessment.html#cb117-82" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">memory =</span> <span class="fu">lag</span>(cumulativerate, <span class="dv">1</span>))</span>
+<span id="cb117-83"><a href="model-quality-assessment.html#cb117-83" tabindex="-1"></a></span>
+<span id="cb117-84"><a href="model-quality-assessment.html#cb117-84" tabindex="-1"></a>dd<span class="sc">$</span>memory[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.5</span></span>
+<span id="cb117-85"><a href="model-quality-assessment.html#cb117-85" tabindex="-1"></a></span>
+<span id="cb117-86"><a href="model-quality-assessment.html#cb117-86" tabindex="-1"></a>pacman<span class="sc">::</span><span class="fu">p_load</span>(future, purrr, furrr)</span>
+<span id="cb117-87"><a href="model-quality-assessment.html#cb117-87" tabindex="-1"></a><span class="fu">plan</span>(multisession, <span class="at">workers =</span> <span class="dv">4</span>)</span>
+<span id="cb117-88"><a href="model-quality-assessment.html#cb117-88" tabindex="-1"></a></span>
+<span id="cb117-89"><a href="model-quality-assessment.html#cb117-89" tabindex="-1"></a>sim_d_and_fit <span class="ot">&lt;-</span> <span class="cf">function</span>(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior_sd_beta) {</span>
+<span id="cb117-90"><a href="model-quality-assessment.html#cb117-90" tabindex="-1"></a>  </span>
+<span id="cb117-91"><a href="model-quality-assessment.html#cb117-91" tabindex="-1"></a>    data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb117-92"><a href="model-quality-assessment.html#cb117-92" tabindex="-1"></a>        <span class="at">n =</span> <span class="fu">nrow</span>(dd),</span>
+<span id="cb117-93"><a href="model-quality-assessment.html#cb117-93" tabindex="-1"></a>        <span class="at">h =</span> dd<span class="sc">$</span>choice,</span>
+<span id="cb117-94"><a href="model-quality-assessment.html#cb117-94" tabindex="-1"></a>        <span class="at">memory =</span> dd<span class="sc">$</span>memory,</span>
+<span id="cb117-95"><a href="model-quality-assessment.html#cb117-95" tabindex="-1"></a>        <span class="at">prior_mean_bias =</span> prior_mean_bias,</span>
+<span id="cb117-96"><a href="model-quality-assessment.html#cb117-96" tabindex="-1"></a>        <span class="at">prior_sd_bias =</span> prior_sd_bias,</span>
+<span id="cb117-97"><a href="model-quality-assessment.html#cb117-97" tabindex="-1"></a>        <span class="at">prior_mean_beta =</span> prior_mean_beta,</span>
+<span id="cb117-98"><a href="model-quality-assessment.html#cb117-98" tabindex="-1"></a>        <span class="at">prior_sd_beta =</span> prior_sd_beta</span>
+<span id="cb117-99"><a href="model-quality-assessment.html#cb117-99" tabindex="-1"></a>      )</span>
+<span id="cb117-100"><a href="model-quality-assessment.html#cb117-100" tabindex="-1"></a>    </span>
+<span id="cb117-101"><a href="model-quality-assessment.html#cb117-101" tabindex="-1"></a>    samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb117-102"><a href="model-quality-assessment.html#cb117-102" tabindex="-1"></a>      <span class="at">data =</span> data,</span>
+<span id="cb117-103"><a href="model-quality-assessment.html#cb117-103" tabindex="-1"></a>      <span class="at">seed =</span> <span class="dv">1000</span>,</span>
+<span id="cb117-104"><a href="model-quality-assessment.html#cb117-104" tabindex="-1"></a>      <span class="at">chains =</span> <span class="dv">1</span>,</span>
+<span id="cb117-105"><a href="model-quality-assessment.html#cb117-105" tabindex="-1"></a>      <span class="at">parallel_chains =</span> <span class="dv">1</span>,</span>
+<span id="cb117-106"><a href="model-quality-assessment.html#cb117-106" tabindex="-1"></a>      <span class="at">threads_per_chain =</span> <span class="dv">1</span>,</span>
+<span id="cb117-107"><a href="model-quality-assessment.html#cb117-107" tabindex="-1"></a>      <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
+<span id="cb117-108"><a href="model-quality-assessment.html#cb117-108" tabindex="-1"></a>      <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
+<span id="cb117-109"><a href="model-quality-assessment.html#cb117-109" tabindex="-1"></a>      <span class="at">refresh =</span> <span class="dv">0</span>,</span>
+<span id="cb117-110"><a href="model-quality-assessment.html#cb117-110" tabindex="-1"></a>      <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb117-111"><a href="model-quality-assessment.html#cb117-111" tabindex="-1"></a>      <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb117-112"><a href="model-quality-assessment.html#cb117-112" tabindex="-1"></a>    )</span>
+<span id="cb117-113"><a href="model-quality-assessment.html#cb117-113" tabindex="-1"></a>    </span>
+<span id="cb117-114"><a href="model-quality-assessment.html#cb117-114" tabindex="-1"></a>    draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>()) </span>
+<span id="cb117-115"><a href="model-quality-assessment.html#cb117-115" tabindex="-1"></a>      temp <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">bias_prior =</span> draws_df<span class="sc">$</span>bias_prior, </span>
+<span id="cb117-116"><a href="model-quality-assessment.html#cb117-116" tabindex="-1"></a>                     <span class="at">beta_prior =</span> draws_df<span class="sc">$</span>beta_prior, </span>
+<span id="cb117-117"><a href="model-quality-assessment.html#cb117-117" tabindex="-1"></a>                     <span class="at">bias_posterior =</span> draws_df<span class="sc">$</span>bias, </span>
+<span id="cb117-118"><a href="model-quality-assessment.html#cb117-118" tabindex="-1"></a>                     <span class="at">beta_posterior =</span> draws_df<span class="sc">$</span>beta, </span>
+<span id="cb117-119"><a href="model-quality-assessment.html#cb117-119" tabindex="-1"></a>                     <span class="at">prior_preds5 =</span> draws_df<span class="sc">$</span>prior_preds5, </span>
+<span id="cb117-120"><a href="model-quality-assessment.html#cb117-120" tabindex="-1"></a>                     <span class="at">prior_preds7 =</span> draws_df<span class="sc">$</span>prior_preds7, </span>
+<span id="cb117-121"><a href="model-quality-assessment.html#cb117-121" tabindex="-1"></a>                     <span class="at">prior_preds9 =</span> draws_df<span class="sc">$</span>prior_preds9, </span>
+<span id="cb117-122"><a href="model-quality-assessment.html#cb117-122" tabindex="-1"></a>                     <span class="at">posterior_preds5 =</span> draws_df<span class="sc">$</span>post_preds5,</span>
+<span id="cb117-123"><a href="model-quality-assessment.html#cb117-123" tabindex="-1"></a>                     <span class="at">posterior_preds7 =</span> draws_df<span class="sc">$</span>post_preds7,</span>
+<span id="cb117-124"><a href="model-quality-assessment.html#cb117-124" tabindex="-1"></a>                     <span class="at">posterior_preds9 =</span> draws_df<span class="sc">$</span>post_preds9, </span>
+<span id="cb117-125"><a href="model-quality-assessment.html#cb117-125" tabindex="-1"></a>                     <span class="at">prior_mean_bias =</span> prior_mean_bias,</span>
+<span id="cb117-126"><a href="model-quality-assessment.html#cb117-126" tabindex="-1"></a>                     <span class="at">prior_sd_bias =</span> prior_sd_bias, </span>
+<span id="cb117-127"><a href="model-quality-assessment.html#cb117-127" tabindex="-1"></a>                     <span class="at">prior_mean_beta =</span> prior_mean_beta,</span>
+<span id="cb117-128"><a href="model-quality-assessment.html#cb117-128" tabindex="-1"></a>                     <span class="at">prior_sd_beta =</span> prior_sd_beta)</span>
+<span id="cb117-129"><a href="model-quality-assessment.html#cb117-129" tabindex="-1"></a>    </span>
+<span id="cb117-130"><a href="model-quality-assessment.html#cb117-130" tabindex="-1"></a>    <span class="fu">return</span>(temp)</span>
+<span id="cb117-131"><a href="model-quality-assessment.html#cb117-131" tabindex="-1"></a>  </span>
+<span id="cb117-132"><a href="model-quality-assessment.html#cb117-132" tabindex="-1"></a>}</span>
+<span id="cb117-133"><a href="model-quality-assessment.html#cb117-133" tabindex="-1"></a></span>
+<span id="cb117-134"><a href="model-quality-assessment.html#cb117-134" tabindex="-1"></a></span>
+<span id="cb117-135"><a href="model-quality-assessment.html#cb117-135" tabindex="-1"></a></span>
+<span id="cb117-136"><a href="model-quality-assessment.html#cb117-136" tabindex="-1"></a><span class="co"># Commenting this out to ensure the book compiles faster. Uncomment to run the code.</span></span>
+<span id="cb117-137"><a href="model-quality-assessment.html#cb117-137" tabindex="-1"></a><span class="co">#recovery_df &lt;- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))</span></span>
+<span id="cb117-138"><a href="model-quality-assessment.html#cb117-138" tabindex="-1"></a><span class="co">#write_csv(recovery_df, &quot;simdata/W4_MemoryPriorSensitivity.csv&quot;)</span></span></code></pre></div>
+<div class="sourceCode" id="cb118"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb118-1"><a href="model-quality-assessment.html#cb118-1" tabindex="-1"></a>recovery_df <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W4_MemoryPriorSensitivity.csv&quot;</span>)</span>
+<span id="cb118-2"><a href="model-quality-assessment.html#cb118-2" tabindex="-1"></a></span>
+<span id="cb118-3"><a href="model-quality-assessment.html#cb118-3" tabindex="-1"></a><span class="fu">ggplot</span>(recovery_df, <span class="fu">aes</span>(prior_sd_beta, beta_posterior)) <span class="sc">+</span></span>
+<span id="cb118-4"><a href="model-quality-assessment.html#cb118-4" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">alpha =</span> <span class="fl">0.1</span>) <span class="sc">+</span></span>
+<span id="cb118-5"><a href="model-quality-assessment.html#cb118-5" tabindex="-1"></a>  <span class="fu">geom_hline</span>(<span class="at">yintercept =</span> <span class="fl">0.8</span>, <span class="at">color =</span> <span class="st">&quot;red&quot;</span>) <span class="sc">+</span></span>
+<span id="cb118-6"><a href="model-quality-assessment.html#cb118-6" tabindex="-1"></a>  <span class="fu">geom_smooth</span>(<span class="at">method =</span> lm) <span class="sc">+</span></span>
+<span id="cb118-7"><a href="model-quality-assessment.html#cb118-7" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(.<span class="sc">~</span>prior_sd_bias) <span class="sc">+</span></span>
+<span id="cb118-8"><a href="model-quality-assessment.html#cb118-8" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/unnamed-chunk-17-1.png" width="80%" style="display: block; margin: auto;" /></p>
 </div>
 <div id="conclusion-1" class="section level2 hasAnchor" number="6.9">
