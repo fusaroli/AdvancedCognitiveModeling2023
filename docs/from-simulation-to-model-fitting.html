@@ -249,8 +249,15 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <li class="chapter" data-level="5.7" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#memory-agent-with-internal-parameter"><i class="fa fa-check"></i><b>5.7</b> Memory agent with internal parameter</a>
 <ul>
 <li class="chapter" data-level="5.7.1" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#trying-out-a-more-complex-memory-model-with-a-rate-of-forgetting-that-exponentially-discounts-the-past"><i class="fa fa-check"></i><b>5.7.1</b> Trying out a more complex memory model, with a rate of forgetting that exponentially discounts the past</a></li>
+<li class="chapter" data-level="5.7.2" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#connection-to-kalman-filters"><i class="fa fa-check"></i><b>5.7.2</b> Connection to Kalman Filters</a></li>
 </ul></li>
-<li class="chapter" data-level="5.8" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#conclusion-from-simple-models-to-complex-cognitive-processes"><i class="fa fa-check"></i><b>5.8</b> Conclusion: From Simple Models to Complex Cognitive Processes</a></li>
+<li class="chapter" data-level="5.8" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#relationship-to-rescorla-wagner"><i class="fa fa-check"></i><b>5.8</b> Relationship to Rescorla-Wagner</a>
+<ul>
+<li class="chapter" data-level="5.8.1" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#connection-to-hierarchical-gaussian-filter-hgf"><i class="fa fa-check"></i><b>5.8.1</b> Connection to Hierarchical Gaussian Filter (HGF)</a></li>
+<li class="chapter" data-level="5.8.2" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#implications-for-model-development"><i class="fa fa-check"></i><b>5.8.2</b> Implications for Model Development</a></li>
+</ul></li>
+<li class="chapter" data-level="5.9" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#bayesian-memory-agent"><i class="fa fa-check"></i><b>5.9</b> Bayesian memory agent</a></li>
+<li class="chapter" data-level="5.10" data-path="from-simulation-to-model-fitting.html"><a href="from-simulation-to-model-fitting.html#conclusion-from-simple-models-to-complex-cognitive-processes"><i class="fa fa-check"></i><b>5.10</b> Conclusion: From Simple Models to Complex Cognitive Processes</a></li>
 </ul></li>
 <li class="chapter" data-level="6" data-path="model-quality-assessment.html"><a href="model-quality-assessment.html"><i class="fa fa-check"></i><b>6</b> Model Quality Assessment</a>
 <ul>
@@ -598,8 +605,8 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 ## Chain 2 finished in 0.0 seconds.
 ## 
 ## Both chains finished successfully.
-## Mean chain execution time: 0.0 seconds.
-## Total execution time: 0.2 seconds.</code></pre>
+## Mean chain execution time: 0.1 seconds.
+## Total execution time: 0.3 seconds.</code></pre>
 <div class="sourceCode" id="cb62"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb62-1"><a href="from-simulation-to-model-fitting.html#cb62-1" tabindex="-1"></a><span class="co"># Same the fitted model</span></span>
 <span id="cb62-2"><a href="from-simulation-to-model-fitting.html#cb62-2" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_object</span>(<span class="st">&quot;simmodels/W3_SimpleBernoulli_logodds.rds&quot;</span>)</span></code></pre></div>
 </div>
@@ -648,8 +655,8 @@ We make it into the right format for Stan, build the Stan model, and fit it.</p>
 <pre><code>## # A tibble: 2 × 10
 ##   variable   mean median    sd   mad     q5    q95  rhat ess_bulk ess_tail
 ##   &lt;chr&gt;     &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -48.4  -48.1  0.654 0.289 -49.7  -47.9   1.00    1320.    1135.
-## 2 theta      1.84   1.84 0.246 0.247   1.45   2.26  1.00    1194.    1094.</code></pre>
+## 1 lp__     -58.2  -57.9  0.647 0.307 -59.4  -57.7   1.00    1081.    1226.
+## 2 theta      1.47   1.46 0.221 0.225   1.13   1.85  1.00    1127.    1179.</code></pre>
 <p>We can see that the results are very similar.</p>
 </div>
 </div>
@@ -780,16 +787,16 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 <span id="cb73-8"><a href="from-simulation-to-model-fitting.html#cb73-8" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">0</span>] <span class="ot">&lt;-</span> <span class="fl">0.01</span></span>
 <span id="cb73-9"><a href="from-simulation-to-model-fitting.html#cb73-9" tabindex="-1"></a>d1<span class="sc">$</span>cumulativerate[d1<span class="sc">$</span>cumulativerate <span class="sc">==</span> <span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fl">0.99</span></span>
 <span id="cb73-10"><a href="from-simulation-to-model-fitting.html#cb73-10" tabindex="-1"></a></span>
-<span id="cb73-11"><a href="from-simulation-to-model-fitting.html#cb73-11" tabindex="-1"></a><span class="co"># Now we create the memory agent with a coefficient of 0.9</span></span>
+<span id="cb73-11"><a href="from-simulation-to-model-fitting.html#cb73-11" tabindex="-1"></a><span class="co"># Now we create the memory agent with a coefficient of 1 (in log odds)</span></span>
 <span id="cb73-12"><a href="from-simulation-to-model-fitting.html#cb73-12" tabindex="-1"></a>MemoryAgent_f <span class="ot">&lt;-</span> <span class="cf">function</span>(bias, beta, cumulativerate){</span>
-<span id="cb73-13"><a href="from-simulation-to-model-fitting.html#cb73-13" tabindex="-1"></a>    choice <span class="ot">=</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="fu">inv_logit_scaled</span>(bias <span class="sc">+</span> beta <span class="sc">*</span> cumulativerate))</span>
+<span id="cb73-13"><a href="from-simulation-to-model-fitting.html#cb73-13" tabindex="-1"></a>    choice <span class="ot">=</span> <span class="fu">rbinom</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="fu">inv_logit_scaled</span>(bias <span class="sc">+</span> beta <span class="sc">*</span> <span class="fu">logit_scaled</span>(cumulativerate)))</span>
 <span id="cb73-14"><a href="from-simulation-to-model-fitting.html#cb73-14" tabindex="-1"></a>  <span class="fu">return</span>(choice)</span>
 <span id="cb73-15"><a href="from-simulation-to-model-fitting.html#cb73-15" tabindex="-1"></a>}</span>
 <span id="cb73-16"><a href="from-simulation-to-model-fitting.html#cb73-16" tabindex="-1"></a></span>
 <span id="cb73-17"><a href="from-simulation-to-model-fitting.html#cb73-17" tabindex="-1"></a>d1<span class="sc">$</span>Self[<span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="fu">RandomAgentNoise_f</span>(<span class="fl">0.5</span>, <span class="dv">0</span>)</span>
 <span id="cb73-18"><a href="from-simulation-to-model-fitting.html#cb73-18" tabindex="-1"></a></span>
 <span id="cb73-19"><a href="from-simulation-to-model-fitting.html#cb73-19" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">2</span><span class="sc">:</span>trials) {</span>
-<span id="cb73-20"><a href="from-simulation-to-model-fitting.html#cb73-20" tabindex="-1"></a>  d1<span class="sc">$</span>Self[i] <span class="ot">&lt;-</span> <span class="fu">MemoryAgent_f</span>(<span class="at">bias =</span> <span class="dv">0</span>, <span class="at">beta =</span> <span class="fl">0.8</span>, d1<span class="sc">$</span>cumulativerate[i])</span>
+<span id="cb73-20"><a href="from-simulation-to-model-fitting.html#cb73-20" tabindex="-1"></a>  d1<span class="sc">$</span>Self[i] <span class="ot">&lt;-</span> <span class="fu">MemoryAgent_f</span>(<span class="at">bias =</span> <span class="dv">0</span>, <span class="at">beta =</span> <span class="dv">1</span>, d1<span class="sc">$</span>cumulativerate[i])</span>
 <span id="cb73-21"><a href="from-simulation-to-model-fitting.html#cb73-21" tabindex="-1"></a>}</span>
 <span id="cb73-22"><a href="from-simulation-to-model-fitting.html#cb73-22" tabindex="-1"></a></span>
 <span id="cb73-23"><a href="from-simulation-to-model-fitting.html#cb73-23" tabindex="-1"></a><span class="do">## Create the data</span></span>
@@ -902,19 +909,19 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 <div class="sourceCode" id="cb80"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb80-1"><a href="from-simulation-to-model-fitting.html#cb80-1" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
 <span id="cb80-2"><a href="from-simulation-to-model-fitting.html#cb80-2" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(beta), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
 <span id="cb80-3"><a href="from-simulation-to-model-fitting.html#cb80-3" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(beta_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
-<span id="cb80-4"><a href="from-simulation-to-model-fitting.html#cb80-4" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="fl">0.8</span>, <span class="at">linetype =</span> <span class="st">&quot;dashed&quot;</span>, <span class="at">color =</span> <span class="st">&quot;black&quot;</span>, <span class="at">size =</span> <span class="fl">1.5</span>) <span class="sc">+</span></span>
+<span id="cb80-4"><a href="from-simulation-to-model-fitting.html#cb80-4" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="dv">1</span>, <span class="at">linetype =</span> <span class="st">&quot;dashed&quot;</span>, <span class="at">color =</span> <span class="st">&quot;black&quot;</span>, <span class="at">size =</span> <span class="fl">1.5</span>) <span class="sc">+</span></span>
 <span id="cb80-5"><a href="from-simulation-to-model-fitting.html#cb80-5" tabindex="-1"></a>  <span class="fu">xlab</span>(<span class="st">&quot;Beta&quot;</span>) <span class="sc">+</span></span>
 <span id="cb80-6"><a href="from-simulation-to-model-fitting.html#cb80-6" tabindex="-1"></a>  <span class="fu">ylab</span>(<span class="st">&quot;Posterior Density&quot;</span>) <span class="sc">+</span></span>
 <span id="cb80-7"><a href="from-simulation-to-model-fitting.html#cb80-7" tabindex="-1"></a>  <span class="fu">theme_classic</span>()</span></code></pre></div>
 <p><img src="series_files/figure-html/03%20memory%20model%20log-odds%20quality%20assessment-4.png" width="80%" style="display: block; margin: auto;" /></p>
 <div class="sourceCode" id="cb81"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb81-1"><a href="from-simulation-to-model-fitting.html#cb81-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 3 × 10
-##   variable     mean   median    sd   mad       q5     q95  rhat ess_bulk ess_tail
-##   &lt;chr&gt;       &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -80.3    -80.0    1.00  0.761 -82.2    -79.3    1.00     636.     750.
-## 2 bias       0.0569   0.0578 0.261 0.268  -0.363    0.487  1.00     491.     478.
-## 3 beta       0.333    0.332  0.220 0.229  -0.0308   0.685  1.00     440.     481.</code></pre>
-<p>We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 0.8). More on the quality checks of the models in the next chapter.</p>
+##   variable    mean  median    sd   mad      q5     q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;      &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__     -47.4   -47.1   0.964 0.706 -49.4   -46.5    1.01     719.     918.
+## 2 bias       0.230   0.222 0.270 0.268  -0.202   0.682  1.00     610.     904.
+## 3 beta       0.926   0.920 0.203 0.201   0.597   1.26   1.00     567.     763.</code></pre>
+<p>We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 1). More on the quality checks of the models in the next chapter.</p>
 </div>
 </div>
 <div id="memory-agent-with-internal-parameter" class="section level2 hasAnchor" number="5.7">
@@ -950,7 +957,7 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 <span id="cb83-27"><a href="from-simulation-to-model-fitting.html#cb83-27" tabindex="-1"></a><span class="st">    memory[trial] = 0.5;</span></span>
 <span id="cb83-28"><a href="from-simulation-to-model-fitting.html#cb83-28" tabindex="-1"></a><span class="st">  } </span></span>
 <span id="cb83-29"><a href="from-simulation-to-model-fitting.html#cb83-29" tabindex="-1"></a><span class="st">  if (trial &lt; n){</span></span>
-<span id="cb83-30"><a href="from-simulation-to-model-fitting.html#cb83-30" tabindex="-1"></a><span class="st">      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);</span></span>
+<span id="cb83-30"><a href="from-simulation-to-model-fitting.html#cb83-30" tabindex="-1"></a><span class="st">      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));</span></span>
 <span id="cb83-31"><a href="from-simulation-to-model-fitting.html#cb83-31" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}</span></span>
 <span id="cb83-32"><a href="from-simulation-to-model-fitting.html#cb83-32" tabindex="-1"></a><span class="st">      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}</span></span>
 <span id="cb83-33"><a href="from-simulation-to-model-fitting.html#cb83-33" tabindex="-1"></a><span class="st">    }</span></span>
@@ -998,18 +1005,18 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 ## Chain 1 finished in 0.5 seconds.</code></pre>
 <div class="sourceCode" id="cb87"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb87-1"><a href="from-simulation-to-model-fitting.html#cb87-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 123 × 10
-##    variable      mean   median    sd   mad      q5     q95  rhat ess_bulk ess_tail
-##    &lt;chr&gt;        &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-##  1 lp__      -77.4    -77.1    1.00  0.716 -79.6   -76.4    1.00     409.     591.
-##  2 bias       -0.0463  -0.0480 0.244 0.238  -0.446   0.365  1.00     254.     397.
-##  3 beta        0.406    0.403  0.166 0.158   0.136   0.686  1.00     293.     292.
-##  4 memory[1]   0.5      0.5    0     0       0.5     0.5   NA         NA       NA 
-##  5 memory[2]   0.01     0.01   0     0       0.01    0.01  NA         NA       NA 
-##  6 memory[3]   0.505    0.505  0     0       0.505   0.505 NA         NA       NA 
-##  7 memory[4]   0.67     0.67   0     0       0.67    0.67  NA         NA       NA 
-##  8 memory[5]   0.752    0.752  0     0       0.752   0.752 NA         NA       NA 
-##  9 memory[6]   0.602    0.602  0     0       0.602   0.602 NA         NA       NA 
-## 10 memory[7]   0.668    0.668  0     0       0.668   0.668 NA         NA       NA 
+##    variable     mean  median    sd   mad      q5     q95  rhat ess_bulk ess_tail
+##    &lt;chr&gt;       &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 lp__      -44.6   -44.3   0.973 0.703 -46.5   -43.7    1.01     265.     517.
+##  2 bias        0.155   0.161 0.268 0.265  -0.305   0.601  1.00     344.     296.
+##  3 beta        1.02    1.02  0.212 0.218   0.670   1.37   1.00     290.     370.
+##  4 memory[1]   0.5     0.5   0     0       0.5     0.5   NA         NA       NA 
+##  5 memory[2]   0.75    0.75  0     0       0.75    0.75  NA         NA       NA 
+##  6 memory[3]   0.833   0.833 0     0       0.833   0.833 NA         NA       NA 
+##  7 memory[4]   0.875   0.875 0     0       0.875   0.875 NA         NA       NA 
+##  8 memory[5]   0.9     0.9   0     0       0.9     0.9   NA         NA       NA 
+##  9 memory[6]   0.917   0.917 0     0       0.917   0.917 NA         NA       NA 
+## 10 memory[7]   0.786   0.786 0     0       0.786   0.786 NA         NA       NA 
 ## # ℹ 113 more rows</code></pre>
 <p>Now that we know how to model memory as an internal state, we can play with making the update discount the past, setting a parameter that indicates after how many trials memory is lost, etc.</p>
 <div id="trying-out-a-more-complex-memory-model-with-a-rate-of-forgetting-that-exponentially-discounts-the-past" class="section level3 hasAnchor" number="5.7.1">
@@ -1078,19 +1085,236 @@ Third, we use future_pmap_dfr to run the function on each row of the tibble abov
 <span id="cb91-18"><a href="from-simulation-to-model-fitting.html#cb91-18" tabindex="-1"></a>)</span></code></pre></div>
 <pre><code>## Running MCMC with 1 chain, with 2 thread(s) per chain...
 ## 
-## Chain 1 finished in 1.8 seconds.</code></pre>
+## Chain 1 finished in 0.8 seconds.</code></pre>
 <div class="sourceCode" id="cb93"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb93-1"><a href="from-simulation-to-model-fitting.html#cb93-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
 <pre><code>## # A tibble: 4 × 10
-##   variable       mean   median    sd    mad       q5     q95  rhat ess_bulk ess_tail
-##   &lt;chr&gt;         &lt;dbl&gt;    &lt;dbl&gt; &lt;dbl&gt;  &lt;dbl&gt;    &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__       -80.5    -80.0    1.46  1.01   -83.6    -79.1    1.00     263.     292.
-## 2 bias         0.0949   0.0991 0.244 0.237   -0.323    0.496  1.00     289.     371.
-## 3 beta         0.271    0.241  0.184 0.177    0.0341   0.609  1.00     275.     358.
-## 4 forgetting   0.152    0.105  0.143 0.0879   0.0137   0.474  1.01     294.     217.</code></pre>
+##   variable      mean  median    sd    mad        q5     q95  rhat ess_bulk ess_tail
+##   &lt;chr&gt;        &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;  &lt;dbl&gt;     &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+## 1 lp__       -48.8   -48.5   1.08  0.981  -50.9     -47.5    1.00     309.     495.
+## 2 bias         0.431   0.415 0.259 0.250   -0.00662   0.860  1.00     302.     307.
+## 3 beta         0.906   0.903 0.288 0.295    0.439     1.37   1.00     262.     356.
+## 4 forgetting   0.179   0.154 0.110 0.0750   0.0604    0.385  1.00     402.     288.</code></pre>
+<p>The memory model we’ve implemented can be seen as part of a broader family of models that track and update beliefs based on incoming evidence. Let’s explore how it relates to some key frameworks.</p>
+</div>
+<div id="connection-to-kalman-filters" class="section level3 hasAnchor" number="5.7.2">
+<h3><span class="header-section-number">5.7.2</span> Connection to Kalman Filters<a href="from-simulation-to-model-fitting.html#connection-to-kalman-filters" class="anchor-section" aria-label="Anchor link to header"></a></h3>
+<p>Our memory model updates beliefs about the probability of right-hand choices using a weighted average of past observations. This is conceptually similar to how a Kalman filter works, though simpler:</p>
+<ul>
+<li><p>Kalman filters maintain both an estimate and uncertainty about that estimate</p></li>
+<li><p>They optimally weight new evidence based on relative uncertainty</p></li>
+<li><p>Our model uses a fixed weighting scheme (1/trial or the forgetting parameter)</p></li>
+</ul>
+<p>The key difference is that Kalman filters dynamically adjust how much they learn from new evidence based on uncertainty, while our model uses a fixed learning scheme.</p>
 </div>
 </div>
-<div id="conclusion-from-simple-models-to-complex-cognitive-processes" class="section level2 hasAnchor" number="5.8">
-<h2><span class="header-section-number">5.8</span> Conclusion: From Simple Models to Complex Cognitive Processes<a href="from-simulation-to-model-fitting.html#conclusion-from-simple-models-to-complex-cognitive-processes" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<div id="relationship-to-rescorla-wagner" class="section level2 hasAnchor" number="5.8">
+<h2><span class="header-section-number">5.8</span> Relationship to Rescorla-Wagner<a href="from-simulation-to-model-fitting.html#relationship-to-rescorla-wagner" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>The Rescorla-Wagner model of learning follows the form:</p>
+<p>V(t+1) = V(t) + α(λ - V(t))</p>
+<p>where:</p>
+<ul>
+<li><p>V(t) is the current estimate</p></li>
+<li><p>α is the learning rate</p></li>
+<li><p>λ is the observed outcome</p></li>
+<li><p>(λ - V(t)) is the prediction error</p></li>
+</ul>
+<p>Our memory model with forgetting parameter follows a very similar structure:</p>
+<p>memory(t+1) = (1-forgetting) * memory(t) + forgetting * outcome(t)</p>
+<p>This can be rewritten as:</p>
+<p>memory(t+1) = memory(t) + forgetting * (outcome(t) - memory(t))</p>
+<p>Making the parallel clear: our forgetting parameter acts as the learning rate α in Rescorla-Wagner.</p>
+<div id="connection-to-hierarchical-gaussian-filter-hgf" class="section level3 hasAnchor" number="5.8.1">
+<h3><span class="header-section-number">5.8.1</span> Connection to Hierarchical Gaussian Filter (HGF)<a href="from-simulation-to-model-fitting.html#connection-to-hierarchical-gaussian-filter-hgf" class="anchor-section" aria-label="Anchor link to header"></a></h3>
+<p>The HGF extends these ideas by:</p>
+<ul>
+<li><p>Tracking beliefs at multiple levels</p></li>
+<li><p>Allowing learning rates to vary over time</p></li>
+<li><p>Explicitly modeling environmental volatility</p></li>
+</ul>
+<p>Our model could be seen as the simplest case of an HGF where:</p>
+<ul>
+<li><p>We only track one level (probability of right-hand choice)</p></li>
+<li><p>Have a fixed learning rate (forgetting parameter)</p></li>
+<li><p>Don’t explicitly model environmental volatility</p></li>
+</ul>
+</div>
+<div id="implications-for-model-development" class="section level3 hasAnchor" number="5.8.2">
+<h3><span class="header-section-number">5.8.2</span> Implications for Model Development<a href="from-simulation-to-model-fitting.html#implications-for-model-development" class="anchor-section" aria-label="Anchor link to header"></a></h3>
+<p>Understanding these relationships helps us think about how models relate to each other and to extend our model:</p>
+<ul>
+<li><p>We could add uncertainty estimates to get Kalman-like behavior</p></li>
+<li><p>We could make the forgetting parameter dynamic to capture changing learning rates</p></li>
+<li><p>We could add multiple levels to track both immediate probabilities and longer-term trends</p></li>
+</ul>
+<p>Each extension would make the model more flexible but also more complex to fit to data. The choice depends on our specific research questions and available data.</p>
+</div>
+</div>
+<div id="bayesian-memory-agent" class="section level2 hasAnchor" number="5.9">
+<h2><span class="header-section-number">5.9</span> Bayesian memory agent<a href="from-simulation-to-model-fitting.html#bayesian-memory-agent" class="anchor-section" aria-label="Anchor link to header"></a></h2>
+<p>We can also model the memory agent in a Bayesian framework. This allows us to model the agent as (optimally) estimating a possible distribution of rates from the other’s behavior and keep all the uncertainty.</p>
+<div class="sourceCode" id="cb95"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb95-1"><a href="from-simulation-to-model-fitting.html#cb95-1" tabindex="-1"></a>stan_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb95-2"><a href="from-simulation-to-model-fitting.html#cb95-2" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb95-3"><a href="from-simulation-to-model-fitting.html#cb95-3" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; n;  // number of trials</span></span>
+<span id="cb95-4"><a href="from-simulation-to-model-fitting.html#cb95-4" tabindex="-1"></a><span class="st">  array[n] int h;  // agent&#39;s choices (0 or 1)</span></span>
+<span id="cb95-5"><a href="from-simulation-to-model-fitting.html#cb95-5" tabindex="-1"></a><span class="st">  array[n] int other;  // other player&#39;s choices (0 or 1)</span></span>
+<span id="cb95-6"><a href="from-simulation-to-model-fitting.html#cb95-6" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-7"><a href="from-simulation-to-model-fitting.html#cb95-7" tabindex="-1"></a></span>
+<span id="cb95-8"><a href="from-simulation-to-model-fitting.html#cb95-8" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb95-9"><a href="from-simulation-to-model-fitting.html#cb95-9" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; alpha_prior;  // Prior alpha parameter</span></span>
+<span id="cb95-10"><a href="from-simulation-to-model-fitting.html#cb95-10" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; beta_prior;   // Prior beta parameter</span></span>
+<span id="cb95-11"><a href="from-simulation-to-model-fitting.html#cb95-11" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-12"><a href="from-simulation-to-model-fitting.html#cb95-12" tabindex="-1"></a></span>
+<span id="cb95-13"><a href="from-simulation-to-model-fitting.html#cb95-13" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
+<span id="cb95-14"><a href="from-simulation-to-model-fitting.html#cb95-14" tabindex="-1"></a><span class="st">  vector[n] alpha;  // Alpha parameter at each trial</span></span>
+<span id="cb95-15"><a href="from-simulation-to-model-fitting.html#cb95-15" tabindex="-1"></a><span class="st">  vector[n] beta;   // Beta parameter at each trial</span></span>
+<span id="cb95-16"><a href="from-simulation-to-model-fitting.html#cb95-16" tabindex="-1"></a><span class="st">  vector[n] rate;   // Expected rate at each trial</span></span>
+<span id="cb95-17"><a href="from-simulation-to-model-fitting.html#cb95-17" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-18"><a href="from-simulation-to-model-fitting.html#cb95-18" tabindex="-1"></a><span class="st">  // Initialize with prior</span></span>
+<span id="cb95-19"><a href="from-simulation-to-model-fitting.html#cb95-19" tabindex="-1"></a><span class="st">  alpha[1] = alpha_prior;</span></span>
+<span id="cb95-20"><a href="from-simulation-to-model-fitting.html#cb95-20" tabindex="-1"></a><span class="st">  beta[1] = beta_prior;</span></span>
+<span id="cb95-21"><a href="from-simulation-to-model-fitting.html#cb95-21" tabindex="-1"></a><span class="st">  rate[1] = alpha[1] / (alpha[1] + beta[1]);</span></span>
+<span id="cb95-22"><a href="from-simulation-to-model-fitting.html#cb95-22" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-23"><a href="from-simulation-to-model-fitting.html#cb95-23" tabindex="-1"></a><span class="st">  // Sequential updating of Beta distribution</span></span>
+<span id="cb95-24"><a href="from-simulation-to-model-fitting.html#cb95-24" tabindex="-1"></a><span class="st">  for(t in 2:n) {</span></span>
+<span id="cb95-25"><a href="from-simulation-to-model-fitting.html#cb95-25" tabindex="-1"></a><span class="st">    // Update Beta parameters based on previous observation</span></span>
+<span id="cb95-26"><a href="from-simulation-to-model-fitting.html#cb95-26" tabindex="-1"></a><span class="st">    alpha[t] = alpha[t-1] + other[t-1];</span></span>
+<span id="cb95-27"><a href="from-simulation-to-model-fitting.html#cb95-27" tabindex="-1"></a><span class="st">    beta[t] = beta[t-1] + (1 - other[t-1]);</span></span>
+<span id="cb95-28"><a href="from-simulation-to-model-fitting.html#cb95-28" tabindex="-1"></a><span class="st">    </span></span>
+<span id="cb95-29"><a href="from-simulation-to-model-fitting.html#cb95-29" tabindex="-1"></a><span class="st">    // Calculate expected rate</span></span>
+<span id="cb95-30"><a href="from-simulation-to-model-fitting.html#cb95-30" tabindex="-1"></a><span class="st">    rate[t] = alpha[t] / (alpha[t] + beta[t]);</span></span>
+<span id="cb95-31"><a href="from-simulation-to-model-fitting.html#cb95-31" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb95-32"><a href="from-simulation-to-model-fitting.html#cb95-32" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-33"><a href="from-simulation-to-model-fitting.html#cb95-33" tabindex="-1"></a></span>
+<span id="cb95-34"><a href="from-simulation-to-model-fitting.html#cb95-34" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb95-35"><a href="from-simulation-to-model-fitting.html#cb95-35" tabindex="-1"></a><span class="st">  // Priors on hyperparameters</span></span>
+<span id="cb95-36"><a href="from-simulation-to-model-fitting.html#cb95-36" tabindex="-1"></a><span class="st">  target += gamma_lpdf(alpha_prior | 2, 1);</span></span>
+<span id="cb95-37"><a href="from-simulation-to-model-fitting.html#cb95-37" tabindex="-1"></a><span class="st">  target += gamma_lpdf(beta_prior | 2, 1);</span></span>
+<span id="cb95-38"><a href="from-simulation-to-model-fitting.html#cb95-38" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-39"><a href="from-simulation-to-model-fitting.html#cb95-39" tabindex="-1"></a><span class="st">  // Agent&#39;s choices follow current rate estimates</span></span>
+<span id="cb95-40"><a href="from-simulation-to-model-fitting.html#cb95-40" tabindex="-1"></a><span class="st">  for(t in 1:n) {</span></span>
+<span id="cb95-41"><a href="from-simulation-to-model-fitting.html#cb95-41" tabindex="-1"></a><span class="st">    target += bernoulli_lpmf(h[t] | rate[t]);</span></span>
+<span id="cb95-42"><a href="from-simulation-to-model-fitting.html#cb95-42" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb95-43"><a href="from-simulation-to-model-fitting.html#cb95-43" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-44"><a href="from-simulation-to-model-fitting.html#cb95-44" tabindex="-1"></a></span>
+<span id="cb95-45"><a href="from-simulation-to-model-fitting.html#cb95-45" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb95-46"><a href="from-simulation-to-model-fitting.html#cb95-46" tabindex="-1"></a><span class="st">  array[n] int prior_preds;</span></span>
+<span id="cb95-47"><a href="from-simulation-to-model-fitting.html#cb95-47" tabindex="-1"></a><span class="st">  array[n] int posterior_preds;</span></span>
+<span id="cb95-48"><a href="from-simulation-to-model-fitting.html#cb95-48" tabindex="-1"></a><span class="st">  real initial_rate = alpha_prior / (alpha_prior + beta_prior);</span></span>
+<span id="cb95-49"><a href="from-simulation-to-model-fitting.html#cb95-49" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-50"><a href="from-simulation-to-model-fitting.html#cb95-50" tabindex="-1"></a><span class="st">  // Prior predictions use initial rate</span></span>
+<span id="cb95-51"><a href="from-simulation-to-model-fitting.html#cb95-51" tabindex="-1"></a><span class="st">  for(t in 1:n) {</span></span>
+<span id="cb95-52"><a href="from-simulation-to-model-fitting.html#cb95-52" tabindex="-1"></a><span class="st">    prior_preds[t] = bernoulli_rng(initial_rate);</span></span>
+<span id="cb95-53"><a href="from-simulation-to-model-fitting.html#cb95-53" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb95-54"><a href="from-simulation-to-model-fitting.html#cb95-54" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-55"><a href="from-simulation-to-model-fitting.html#cb95-55" tabindex="-1"></a><span class="st">  // Posterior predictions use sequentially updated rates</span></span>
+<span id="cb95-56"><a href="from-simulation-to-model-fitting.html#cb95-56" tabindex="-1"></a><span class="st">  for(t in 1:n) {</span></span>
+<span id="cb95-57"><a href="from-simulation-to-model-fitting.html#cb95-57" tabindex="-1"></a><span class="st">    posterior_preds[t] = bernoulli_rng(rate[t]);</span></span>
+<span id="cb95-58"><a href="from-simulation-to-model-fitting.html#cb95-58" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb95-59"><a href="from-simulation-to-model-fitting.html#cb95-59" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-60"><a href="from-simulation-to-model-fitting.html#cb95-60" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb95-61"><a href="from-simulation-to-model-fitting.html#cb95-61" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb95-62"><a href="from-simulation-to-model-fitting.html#cb95-62" tabindex="-1"></a>  stan_model,</span>
+<span id="cb95-63"><a href="from-simulation-to-model-fitting.html#cb95-63" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb95-64"><a href="from-simulation-to-model-fitting.html#cb95-64" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W3_BayesianMemory.stan&quot;</span>)</span></code></pre></div>
+<pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W3_BayesianMemory.stan&quot;</code></pre>
+<div class="sourceCode" id="cb97"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb97-1"><a href="from-simulation-to-model-fitting.html#cb97-1" tabindex="-1"></a><span class="do">## Specify where the model is</span></span>
+<span id="cb97-2"><a href="from-simulation-to-model-fitting.html#cb97-2" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W3_BayesianMemory.stan&quot;</span>)</span>
+<span id="cb97-3"><a href="from-simulation-to-model-fitting.html#cb97-3" tabindex="-1"></a>mod <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb97-4"><a href="from-simulation-to-model-fitting.html#cb97-4" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb97-5"><a href="from-simulation-to-model-fitting.html#cb97-5" tabindex="-1"></a></span>
+<span id="cb97-6"><a href="from-simulation-to-model-fitting.html#cb97-6" tabindex="-1"></a><span class="co"># The following command calls Stan with specific options.</span></span>
+<span id="cb97-7"><a href="from-simulation-to-model-fitting.html#cb97-7" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb97-8"><a href="from-simulation-to-model-fitting.html#cb97-8" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb97-9"><a href="from-simulation-to-model-fitting.html#cb97-9" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb97-10"><a href="from-simulation-to-model-fitting.html#cb97-10" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>,</span>
+<span id="cb97-11"><a href="from-simulation-to-model-fitting.html#cb97-11" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb97-12"><a href="from-simulation-to-model-fitting.html#cb97-12" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb97-13"><a href="from-simulation-to-model-fitting.html#cb97-13" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">1000</span>,</span>
+<span id="cb97-14"><a href="from-simulation-to-model-fitting.html#cb97-14" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">1000</span>,</span>
+<span id="cb97-15"><a href="from-simulation-to-model-fitting.html#cb97-15" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">0</span>,</span>
+<span id="cb97-16"><a href="from-simulation-to-model-fitting.html#cb97-16" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb97-17"><a href="from-simulation-to-model-fitting.html#cb97-17" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb97-18"><a href="from-simulation-to-model-fitting.html#cb97-18" tabindex="-1"></a>)</span></code></pre></div>
+<pre><code>## Running MCMC with 1 chain, with 2 thread(s) per chain...
+## 
+## Chain 1 finished in 0.3 seconds.</code></pre>
+<div class="sourceCode" id="cb99"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb99-1"><a href="from-simulation-to-model-fitting.html#cb99-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>() </span></code></pre></div>
+<pre><code>## # A tibble: 604 × 10
+##    variable       mean  median    sd   mad      q5    q95  rhat ess_bulk ess_tail
+##    &lt;chr&gt;         &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 lp__        -45.4   -45.1   1.06  0.821 -47.5   -44.4  1.00      394.     474.
+##  2 alpha_prior   1.92    1.56  1.50  1.15    0.284   4.91 0.999     385.     324.
+##  3 beta_prior    0.999   0.900 0.613 0.520   0.250   2.18 1.00      470.     492.
+##  4 alpha[1]      1.92    1.56  1.50  1.15    0.284   4.91 0.999     385.     324.
+##  5 alpha[2]      2.92    2.56  1.50  1.15    1.28    5.91 0.999     385.     324.
+##  6 alpha[3]      3.92    3.56  1.50  1.15    2.28    6.91 0.999     385.     324.
+##  7 alpha[4]      4.92    4.56  1.50  1.15    3.28    7.91 0.999     385.     324.
+##  8 alpha[5]      5.92    5.56  1.50  1.15    4.28    8.91 0.999     385.     324.
+##  9 alpha[6]      6.92    6.56  1.50  1.15    5.28    9.91 0.999     385.     324.
+## 10 alpha[7]      6.92    6.56  1.50  1.15    5.28    9.91 0.999     385.     324.
+## # ℹ 594 more rows</code></pre>
+<div class="sourceCode" id="cb101"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb101-1"><a href="from-simulation-to-model-fitting.html#cb101-1" tabindex="-1"></a><span class="fu">library</span>(posterior)</span>
+<span id="cb101-2"><a href="from-simulation-to-model-fitting.html#cb101-2" tabindex="-1"></a><span class="fu">library</span>(bayesplot)</span>
+<span id="cb101-3"><a href="from-simulation-to-model-fitting.html#cb101-3" tabindex="-1"></a></span>
+<span id="cb101-4"><a href="from-simulation-to-model-fitting.html#cb101-4" tabindex="-1"></a><span class="co"># Extract draws</span></span>
+<span id="cb101-5"><a href="from-simulation-to-model-fitting.html#cb101-5" tabindex="-1"></a>draws_df <span class="ot">&lt;-</span> <span class="fu">as_draws_df</span>(samples<span class="sc">$</span><span class="fu">draws</span>())</span>
+<span id="cb101-6"><a href="from-simulation-to-model-fitting.html#cb101-6" tabindex="-1"></a></span>
+<span id="cb101-7"><a href="from-simulation-to-model-fitting.html#cb101-7" tabindex="-1"></a><span class="co"># First let&#39;s look at the priors</span></span>
+<span id="cb101-8"><a href="from-simulation-to-model-fitting.html#cb101-8" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb101-9"><a href="from-simulation-to-model-fitting.html#cb101-9" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(alpha_prior), <span class="at">fill =</span> <span class="st">&quot;blue&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb101-10"><a href="from-simulation-to-model-fitting.html#cb101-10" tabindex="-1"></a>  <span class="fu">geom_density</span>(<span class="fu">aes</span>(beta_prior), <span class="at">fill =</span> <span class="st">&quot;red&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.3</span>) <span class="sc">+</span></span>
+<span id="cb101-11"><a href="from-simulation-to-model-fitting.html#cb101-11" tabindex="-1"></a>  <span class="fu">theme_classic</span>() <span class="sc">+</span></span>
+<span id="cb101-12"><a href="from-simulation-to-model-fitting.html#cb101-12" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">title =</span> <span class="st">&quot;Prior Distributions&quot;</span>,</span>
+<span id="cb101-13"><a href="from-simulation-to-model-fitting.html#cb101-13" tabindex="-1"></a>       <span class="at">x =</span> <span class="st">&quot;Parameter Value&quot;</span>,</span>
+<span id="cb101-14"><a href="from-simulation-to-model-fitting.html#cb101-14" tabindex="-1"></a>       <span class="at">y =</span> <span class="st">&quot;Density&quot;</span>)</span></code></pre></div>
+<p><img src="series_files/figure-html/unnamed-chunk-16-1.png" width="80%" style="display: block; margin: auto;" /></p>
+<div class="sourceCode" id="cb102"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb102-1"><a href="from-simulation-to-model-fitting.html#cb102-1" tabindex="-1"></a><span class="co"># Now let&#39;s look at how the rate evolves over trials</span></span>
+<span id="cb102-2"><a href="from-simulation-to-model-fitting.html#cb102-2" tabindex="-1"></a><span class="co"># First melt the rate values across trials into long format</span></span>
+<span id="cb102-3"><a href="from-simulation-to-model-fitting.html#cb102-3" tabindex="-1"></a>rate_df <span class="ot">&lt;-</span> draws_df <span class="sc">%&gt;%</span></span>
+<span id="cb102-4"><a href="from-simulation-to-model-fitting.html#cb102-4" tabindex="-1"></a>  <span class="fu">select</span>(<span class="fu">starts_with</span>(<span class="st">&quot;rate[&quot;</span>)) <span class="sc">%&gt;%</span></span>
+<span id="cb102-5"><a href="from-simulation-to-model-fitting.html#cb102-5" tabindex="-1"></a>  <span class="fu">pivot_longer</span>(<span class="fu">everything</span>(), </span>
+<span id="cb102-6"><a href="from-simulation-to-model-fitting.html#cb102-6" tabindex="-1"></a>               <span class="at">names_to =</span> <span class="st">&quot;trial&quot;</span>,</span>
+<span id="cb102-7"><a href="from-simulation-to-model-fitting.html#cb102-7" tabindex="-1"></a>               <span class="at">values_to =</span> <span class="st">&quot;rate&quot;</span>,</span>
+<span id="cb102-8"><a href="from-simulation-to-model-fitting.html#cb102-8" tabindex="-1"></a>               <span class="at">names_pattern =</span> <span class="st">&quot;rate</span><span class="sc">\\</span><span class="st">[(</span><span class="sc">\\</span><span class="st">d+)</span><span class="sc">\\</span><span class="st">]&quot;</span>) <span class="sc">%&gt;%</span></span>
+<span id="cb102-9"><a href="from-simulation-to-model-fitting.html#cb102-9" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">trial =</span> <span class="fu">as.numeric</span>(trial))</span>
+<span id="cb102-10"><a href="from-simulation-to-model-fitting.html#cb102-10" tabindex="-1"></a></span>
+<span id="cb102-11"><a href="from-simulation-to-model-fitting.html#cb102-11" tabindex="-1"></a><span class="co"># Calculate summary statistics for each trial</span></span>
+<span id="cb102-12"><a href="from-simulation-to-model-fitting.html#cb102-12" tabindex="-1"></a>rate_summary <span class="ot">&lt;-</span> rate_df <span class="sc">%&gt;%</span></span>
+<span id="cb102-13"><a href="from-simulation-to-model-fitting.html#cb102-13" tabindex="-1"></a>  <span class="fu">group_by</span>(trial) <span class="sc">%&gt;%</span></span>
+<span id="cb102-14"><a href="from-simulation-to-model-fitting.html#cb102-14" tabindex="-1"></a>  <span class="fu">summarise</span>(</span>
+<span id="cb102-15"><a href="from-simulation-to-model-fitting.html#cb102-15" tabindex="-1"></a>    <span class="at">mean_rate =</span> <span class="fu">mean</span>(rate),</span>
+<span id="cb102-16"><a href="from-simulation-to-model-fitting.html#cb102-16" tabindex="-1"></a>    <span class="at">lower =</span> <span class="fu">quantile</span>(rate, <span class="fl">0.025</span>),</span>
+<span id="cb102-17"><a href="from-simulation-to-model-fitting.html#cb102-17" tabindex="-1"></a>    <span class="at">upper =</span> <span class="fu">quantile</span>(rate, <span class="fl">0.975</span>)</span>
+<span id="cb102-18"><a href="from-simulation-to-model-fitting.html#cb102-18" tabindex="-1"></a>  )</span>
+<span id="cb102-19"><a href="from-simulation-to-model-fitting.html#cb102-19" tabindex="-1"></a></span>
+<span id="cb102-20"><a href="from-simulation-to-model-fitting.html#cb102-20" tabindex="-1"></a></span>
+<span id="cb102-21"><a href="from-simulation-to-model-fitting.html#cb102-21" tabindex="-1"></a>plot_data <span class="ot">&lt;-</span> <span class="fu">tibble</span>(<span class="at">trial =</span> <span class="fu">seq</span>(<span class="dv">120</span>), <span class="at">choices =</span> data<span class="sc">$</span>other)</span>
+<span id="cb102-22"><a href="from-simulation-to-model-fitting.html#cb102-22" tabindex="-1"></a></span>
+<span id="cb102-23"><a href="from-simulation-to-model-fitting.html#cb102-23" tabindex="-1"></a><span class="co"># Plot the evolution of rate estimates</span></span>
+<span id="cb102-24"><a href="from-simulation-to-model-fitting.html#cb102-24" tabindex="-1"></a><span class="fu">ggplot</span>(rate_summary, <span class="fu">aes</span>(<span class="at">x =</span> trial)) <span class="sc">+</span></span>
+<span id="cb102-25"><a href="from-simulation-to-model-fitting.html#cb102-25" tabindex="-1"></a>  <span class="fu">geom_ribbon</span>(<span class="fu">aes</span>(<span class="at">ymin =</span> lower, <span class="at">ymax =</span> upper), <span class="at">alpha =</span> <span class="fl">0.2</span>) <span class="sc">+</span></span>
+<span id="cb102-26"><a href="from-simulation-to-model-fitting.html#cb102-26" tabindex="-1"></a>  <span class="fu">geom_line</span>(<span class="fu">aes</span>(<span class="at">y =</span> mean_rate), <span class="at">color =</span> <span class="st">&quot;blue&quot;</span>) <span class="sc">+</span></span>
+<span id="cb102-27"><a href="from-simulation-to-model-fitting.html#cb102-27" tabindex="-1"></a>  <span class="co"># Add true data points</span></span>
+<span id="cb102-28"><a href="from-simulation-to-model-fitting.html#cb102-28" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="at">data =</span> plot_data, </span>
+<span id="cb102-29"><a href="from-simulation-to-model-fitting.html#cb102-29" tabindex="-1"></a>             <span class="fu">aes</span>(<span class="at">x =</span> trial, <span class="at">y =</span> choices), <span class="at">color =</span> <span class="st">&quot;orange&quot;</span>, <span class="at">alpha =</span> <span class="fl">0.5</span>) <span class="sc">+</span></span>
+<span id="cb102-30"><a href="from-simulation-to-model-fitting.html#cb102-30" tabindex="-1"></a>  <span class="fu">theme_classic</span>() <span class="sc">+</span></span>
+<span id="cb102-31"><a href="from-simulation-to-model-fitting.html#cb102-31" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">title =</span> <span class="st">&quot;Evolution of Rate Estimates&quot;</span>,</span>
+<span id="cb102-32"><a href="from-simulation-to-model-fitting.html#cb102-32" tabindex="-1"></a>       <span class="at">x =</span> <span class="st">&quot;Trial&quot;</span>,</span>
+<span id="cb102-33"><a href="from-simulation-to-model-fitting.html#cb102-33" tabindex="-1"></a>       <span class="at">y =</span> <span class="st">&quot;Rate&quot;</span>,</span>
+<span id="cb102-34"><a href="from-simulation-to-model-fitting.html#cb102-34" tabindex="-1"></a>       <span class="at">subtitle =</span> <span class="st">&quot;Blue line: posterior mean, Gray band: 95% CI&quot;</span>) <span class="sc">+</span></span>
+<span id="cb102-35"><a href="from-simulation-to-model-fitting.html#cb102-35" tabindex="-1"></a>  <span class="fu">ylim</span>(<span class="dv">0</span>, <span class="dv">1</span>)</span></code></pre></div>
+<p><img src="series_files/figure-html/unnamed-chunk-16-2.png" width="80%" style="display: block; margin: auto;" /></p>
+<div class="sourceCode" id="cb103"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb103-1"><a href="from-simulation-to-model-fitting.html#cb103-1" tabindex="-1"></a><span class="co"># Let&#39;s also look at the correlation between alpha and beta parameters</span></span>
+<span id="cb103-2"><a href="from-simulation-to-model-fitting.html#cb103-2" tabindex="-1"></a><span class="fu">ggplot</span>(draws_df) <span class="sc">+</span></span>
+<span id="cb103-3"><a href="from-simulation-to-model-fitting.html#cb103-3" tabindex="-1"></a>  <span class="fu">geom_point</span>(<span class="fu">aes</span>(alpha_prior, beta_prior), <span class="at">alpha =</span> <span class="fl">0.1</span>) <span class="sc">+</span></span>
+<span id="cb103-4"><a href="from-simulation-to-model-fitting.html#cb103-4" tabindex="-1"></a>  <span class="fu">theme_classic</span>() <span class="sc">+</span></span>
+<span id="cb103-5"><a href="from-simulation-to-model-fitting.html#cb103-5" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">title =</span> <span class="st">&quot;Correlation between Alpha and Beta Parameters&quot;</span>,</span>
+<span id="cb103-6"><a href="from-simulation-to-model-fitting.html#cb103-6" tabindex="-1"></a>       <span class="at">x =</span> <span class="st">&quot;Alpha&quot;</span>,</span>
+<span id="cb103-7"><a href="from-simulation-to-model-fitting.html#cb103-7" tabindex="-1"></a>       <span class="at">y =</span> <span class="st">&quot;Beta&quot;</span>)</span></code></pre></div>
+<p><img src="series_files/figure-html/unnamed-chunk-16-3.png" width="80%" style="display: block; margin: auto;" /></p>
+</div>
+<div id="conclusion-from-simple-models-to-complex-cognitive-processes" class="section level2 hasAnchor" number="5.10">
+<h2><span class="header-section-number">5.10</span> Conclusion: From Simple Models to Complex Cognitive Processes<a href="from-simulation-to-model-fitting.html#conclusion-from-simple-models-to-complex-cognitive-processes" class="anchor-section" aria-label="Anchor link to header"></a></h2>
 <p>Throughout this chapter, we’ve progressed from basic parameter estimation to increasingly sophisticated models of decision-making. We began with a simple biased agent model, demonstrating how Bayesian inference allows us to recover underlying parameters from observed behavior. We saw how we can transform parameters from one scale to another - here from probability-scale to log-odds parameterizations -, thus gaining flexibility that will prove valuable for more complex models.</p>
 <p>The transition to memory-based models illustrated how we can incorporate psychological theory into our statistical framework. We explored different approaches to modeling memory - from treating it as an external predictor to implementing it as an internal state variable that evolves over time. The final exploration of exponential forgetting demonstrated how we can capture more nuanced cognitive processes while maintaining mathematical tractability. This progression sets the stage for Chapter 12, where we’ll explore how these memory updating mechanisms relate to reinforcement learning models. The exponential discounting of past events we implemented here represents a simplified version of the learning mechanisms we’ll encounter in reinforcement learning.</p>
 <p>Several key principles emerged that will guide our future modeling work:</p>
