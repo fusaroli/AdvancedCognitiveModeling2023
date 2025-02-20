@@ -482,16 +482,16 @@ d1$cumulativerate[1] <- 0.5 # no prior info at first trial
 d1$cumulativerate[d1$cumulativerate == 0] <- 0.01
 d1$cumulativerate[d1$cumulativerate == 1] <- 0.99
 
-# Now we create the memory agent with a coefficient of 0.9
+# Now we create the memory agent with a coefficient of 1 (in log odds)
 MemoryAgent_f <- function(bias, beta, cumulativerate){
-    choice = rbinom(1, 1, inv_logit_scaled(bias + beta * cumulativerate))
+    choice = rbinom(1, 1, inv_logit_scaled(bias + beta * logit_scaled(cumulativerate)))
   return(choice)
 }
 
 d1$Self[1] <- RandomAgentNoise_f(0.5, 0)
 
 for (i in 2:trials) {
-  d1$Self[i] <- MemoryAgent_f(bias = 0, beta = 0.8, d1$cumulativerate[i])
+  d1$Self[i] <- MemoryAgent_f(bias = 0, beta = 1, d1$cumulativerate[i])
 }
 
 ## Create the data
@@ -511,7 +511,7 @@ stan_model <- "
 data {
  int<lower=1> n;
  array[n] int h;
- vector[n] memory; // here we add the new parameter. N.B. Log odds
+ vector[n] memory; // here we add the new variable between 0.01 and .99
 }
 
 // The parameters accepted by the model. 
@@ -600,7 +600,7 @@ ggplot(draws_df) +
 ggplot(draws_df) +
   geom_density(aes(beta), fill = "blue", alpha = 0.3) +
   geom_density(aes(beta_prior), fill = "red", alpha = 0.3) +
-  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "black", size = 1.5) +
   xlab("Beta") +
   ylab("Posterior Density") +
   theme_classic()
@@ -609,7 +609,7 @@ samples$summary()
 ```
 
 
-We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 0.8). More on the quality checks of the models in the next chapter.
+We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 1). More on the quality checks of the models in the next chapter.
 
 ## Memory agent with internal parameter
 
@@ -647,7 +647,7 @@ transformed parameters{
     memory[trial] = 0.5;
   } 
   if (trial < n){
-      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);
+      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
       if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}
       if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}
     }
@@ -766,6 +766,232 @@ samples <- mod$sample(
 
 samples$summary() 
 ```
+
+The memory model we've implemented can be seen as part of a broader family of models that track and update beliefs based on incoming evidence. Let's explore how it relates to some key frameworks.
+
+### Connection to Kalman Filters
+
+Our memory model updates beliefs about the probability of right-hand choices using a weighted average of past observations. This is conceptually similar to how a Kalman filter works, though simpler:
+
+* Kalman filters maintain both an estimate and uncertainty about that estimate
+
+* They optimally weight new evidence based on relative uncertainty
+
+* Our model uses a fixed weighting scheme (1/trial or the forgetting parameter)
+
+The key difference is that Kalman filters dynamically adjust how much they learn from new evidence based on uncertainty, while our model uses a fixed learning scheme.
+
+
+## Relationship to Rescorla-Wagner
+
+The Rescorla-Wagner model of learning follows the form:
+
+V(t+1) = V(t) + α(λ - V(t))
+
+where:
+
+* V(t) is the current estimate
+
+* α is the learning rate
+
+* λ is the observed outcome
+
+* (λ - V(t)) is the prediction error
+
+Our memory model with forgetting parameter follows a very similar structure:
+
+memory(t+1) = (1-forgetting) * memory(t) + forgetting * outcome(t)
+
+This can be rewritten as:
+
+memory(t+1) = memory(t) + forgetting * (outcome(t) - memory(t))
+
+Making the parallel clear: our forgetting parameter acts as the learning rate α in Rescorla-Wagner.
+
+### Connection to Hierarchical Gaussian Filter (HGF)
+
+The HGF extends these ideas by:
+
+* Tracking beliefs at multiple levels
+
+* Allowing learning rates to vary over time
+
+* Explicitly modeling environmental volatility
+
+Our model could be seen as the simplest case of an HGF where:
+
+* We only track one level (probability of right-hand choice)
+
+* Have a fixed learning rate (forgetting parameter)
+
+* Don't explicitly model environmental volatility
+
+### Implications for Model Development
+
+Understanding these relationships helps us think about how models relate to each other and to extend our model:
+
+* We could add uncertainty estimates to get Kalman-like behavior
+
+* We could make the forgetting parameter dynamic to capture changing learning rates
+
+* We could add multiple levels to track both immediate probabilities and longer-term trends
+
+Each extension would make the model more flexible but also more complex to fit to data. The choice depends on our specific research questions and available data.
+
+## Bayesian memory agent
+
+We can also model the memory agent in a Bayesian framework. This allows us to model the agent as (optimally) estimating a possible distribution of rates from the other's behavior and keep all the uncertainty. 
+
+```{r}
+stan_model <- "
+data {
+  int<lower=1> n;  // number of trials
+  array[n] int h;  // agent's choices (0 or 1)
+  array[n] int other;  // other player's choices (0 or 1)
+}
+
+parameters {
+  real<lower=0> alpha_prior;  // Prior alpha parameter
+  real<lower=0> beta_prior;   // Prior beta parameter
+}
+
+transformed parameters {
+  vector[n] alpha;  // Alpha parameter at each trial
+  vector[n] beta;   // Beta parameter at each trial
+  vector[n] rate;   // Expected rate at each trial
+  
+  // Initialize with prior
+  alpha[1] = alpha_prior;
+  beta[1] = beta_prior;
+  rate[1] = alpha[1] / (alpha[1] + beta[1]);
+  
+  // Sequential updating of Beta distribution
+  for(t in 2:n) {
+    // Update Beta parameters based on previous observation
+    alpha[t] = alpha[t-1] + other[t-1];
+    beta[t] = beta[t-1] + (1 - other[t-1]);
+    
+    // Calculate expected rate
+    rate[t] = alpha[t] / (alpha[t] + beta[t]);
+  }
+}
+
+model {
+  // Priors on hyperparameters
+  target += gamma_lpdf(alpha_prior | 2, 1);
+  target += gamma_lpdf(beta_prior | 2, 1);
+  
+  // Agent's choices follow current rate estimates
+  for(t in 1:n) {
+    target += bernoulli_lpmf(h[t] | rate[t]);
+  }
+}
+
+generated quantities {
+  array[n] int prior_preds;
+  array[n] int posterior_preds;
+  real initial_rate = alpha_prior / (alpha_prior + beta_prior);
+  
+  // Prior predictions use initial rate
+  for(t in 1:n) {
+    prior_preds[t] = bernoulli_rng(initial_rate);
+  }
+  
+  // Posterior predictions use sequentially updated rates
+  for(t in 1:n) {
+    posterior_preds[t] = bernoulli_rng(rate[t]);
+  }
+}
+"
+write_stan_file(
+  stan_model,
+  dir = "stan/",
+  basename = "W3_BayesianMemory.stan")
+
+## Specify where the model is
+file <- file.path("stan/W3_BayesianMemory.stan")
+mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+# The following command calls Stan with specific options.
+samples <- mod$sample(
+  data = data,
+  seed = 123,
+  chains = 1,
+  parallel_chains = 2,
+  threads_per_chain = 2,
+  iter_warmup = 1000,
+  iter_sampling = 1000,
+  refresh = 0,
+  max_treedepth = 20,
+  adapt_delta = 0.99,
+)
+
+
+samples$summary() 
+
+library(posterior)
+library(bayesplot)
+
+# Extract draws
+draws_df <- as_draws_df(samples$draws())
+
+# First let's look at the priors
+ggplot(draws_df) +
+  geom_density(aes(alpha_prior), fill = "blue", alpha = 0.3) +
+  geom_density(aes(beta_prior), fill = "red", alpha = 0.3) +
+  theme_classic() +
+  labs(title = "Prior Distributions",
+       x = "Parameter Value",
+       y = "Density")
+
+# Now let's look at how the rate evolves over trials
+# First melt the rate values across trials into long format
+rate_df <- draws_df %>%
+  select(starts_with("rate[")) %>%
+  pivot_longer(everything(), 
+               names_to = "trial",
+               values_to = "rate",
+               names_pattern = "rate\\[(\\d+)\\]") %>%
+  mutate(trial = as.numeric(trial))
+
+# Calculate summary statistics for each trial
+rate_summary <- rate_df %>%
+  group_by(trial) %>%
+  summarise(
+    mean_rate = mean(rate),
+    lower = quantile(rate, 0.025),
+    upper = quantile(rate, 0.975)
+  )
+
+
+plot_data <- tibble(trial = seq(120), choices = data$other)
+
+# Plot the evolution of rate estimates
+ggplot(rate_summary, aes(x = trial)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2) +
+  geom_line(aes(y = mean_rate), color = "blue") +
+  # Add true data points
+  geom_point(data = plot_data, 
+             aes(x = trial, y = choices), color = "orange", alpha = 0.5) +
+  theme_classic() +
+  labs(title = "Evolution of Rate Estimates",
+       x = "Trial",
+       y = "Rate",
+       subtitle = "Blue line: posterior mean, Gray band: 95% CI") +
+  ylim(0, 1)
+
+# Let's also look at the correlation between alpha and beta parameters
+ggplot(draws_df) +
+  geom_point(aes(alpha_prior, beta_prior), alpha = 0.1) +
+  theme_classic() +
+  labs(title = "Correlation between Alpha and Beta Parameters",
+       x = "Alpha",
+       y = "Beta")
+
+```
+
+
 
 ## Conclusion: From Simple Models to Complex Cognitive Processes
 

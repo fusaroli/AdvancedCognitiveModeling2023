@@ -20,7 +20,7 @@ transformed parameters{
     memory[trial] = 0.5;
   } 
   if (trial < n){
-      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / trial);
+      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
       if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}
       if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}
     }
