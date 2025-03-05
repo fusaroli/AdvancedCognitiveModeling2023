@@ -615,8 +615,6 @@ We can see that the model has now estimated both the bias and the role of previo
 
 So far we behaved like in GLM: we keep feeding to the model an external variable of memory, but what if we coded memory as an internal parameter? This opens up to further possibilities to model how long memory is kept and weighted by distance from the current moment, etc.
 
-[Missing: discussion of the equation of the model, how it relates to Kalman filters, Rescorla-Wagner, and hierarchical gaussian filters]
-
 ```{r}
 ## Create the data
 data <- list(
@@ -626,47 +624,90 @@ data <- list(
 )
 
 stan_model <- "
-// The input (data) for the model. n of trials and h for (right and left) hand
+// Memory-based choice model with prior and posterior predictions
+
 data {
  int<lower=1> n;
  array[n] int h;
  array[n] int other;
 }
 
-// The parameters accepted by the model. 
 parameters {
-  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?
-  real beta; // how strongly is previous rate impacting the decision?
+  real bias;
+  real beta;
 }
 
-transformed parameters{
+transformed parameters {
   vector[n] memory;
-
-  for (trial in 1:n){
-  if (trial == 1) {
-    memory[trial] = 0.5;
-  } 
-  if (trial < n){
+  
+  for (trial in 1:n) {
+    if (trial == 1) {
+      memory[trial] = 0.5;
+    } 
+    if (trial < n) {
       memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
-      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}
-      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}
+      if (memory[trial + 1] == 0) { memory[trial + 1] = 0.01; }
+      if (memory[trial + 1] == 1) { memory[trial + 1] = 0.99; }
     }
   }
 }
 
-// The model to be estimated. 
 model {
   // Priors
   target += normal_lpdf(bias | 0, .3);
   target += normal_lpdf(beta | 0, .5);
   
-  // Model, looping to keep track of memory
+  // Likelihood
   for (trial in 1:n) {
     target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
   }
 }
 
+generated quantities {
+  // Generate prior samples
+  real bias_prior = normal_rng(0, .3);
+  real beta_prior = normal_rng(0, .5);
+  
+  // Variables for predictions
+  array[n] int prior_preds;
+  array[n] int posterior_preds;
+  vector[n] memory_prior;
+  vector[n] log_lik;
+  
+  // Generate predictions at different memory levels
+  array[3] real memory_levels = {0.2, 0.5, 0.8}; // Low, neutral, and high memory
+  array[3] int prior_preds_memory;
+  array[3] int posterior_preds_memory;
+  
+  // Generate predictions from prior for each memory level
+  for (i in 1:3) {
+    real logit_memory = logit(memory_levels[i]);
+    prior_preds_memory[i] = bernoulli_logit_rng(bias_prior + beta_prior * logit_memory);
+    posterior_preds_memory[i] = bernoulli_logit_rng(bias + beta * logit_memory);
+  }
+  
+  // Generate predictions from prior
+  memory_prior[1] = 0.5;
+  for (trial in 1:n) {
+    if (trial == 1) {
+      prior_preds[trial] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory_prior[trial]));
+    } else {
+      memory_prior[trial] = memory_prior[trial-1] + ((other[trial-1] - memory_prior[trial-1]) / trial);
+      if (memory_prior[trial] == 0) { memory_prior[trial] = 0.01; }
+      if (memory_prior[trial] == 1) { memory_prior[trial] = 0.99; }
+      prior_preds[trial] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory_prior[trial]));
+    }
+  }
+  
+  // Generate predictions from posterior
+  for (trial in 1:n) {
+    posterior_preds[trial] = bernoulli_logit_rng(bias + beta * logit(memory[trial]));
+    log_lik[trial] = bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
+  }
+}
+
 "
+
 write_stan_file(
   stan_model,
   dir = "stan/",
@@ -693,6 +734,294 @@ samples <- mod$sample(
 
 
 samples$summary() 
+
+library(tidyverse)
+library(bayesplot)
+
+draws_df <- as_draws_df(samples$draws())
+
+# 1. Check chain convergence
+# Plot traces for main parameters
+mcmc_trace(draws_df, pars = c("bias", "beta")) +
+  theme_minimal() +
+  ggtitle("Parameter Traces Across Chains")
+
+# Plot rank histograms to check mixing
+mcmc_rank_hist(draws_df, pars = c("bias", "beta"))
+
+# 2. Prior-Posterior Update Check
+p1 <- ggplot() +
+  geom_density(data = draws_df, aes(bias, fill = "Posterior"), alpha = 0.5) +
+  geom_density(data = draws_df, aes(bias_prior, fill = "Prior"), alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue")) +
+  theme_minimal() +
+  ggtitle("Prior-Posterior Update: Bias Parameter")
+
+p2 <- ggplot() +
+  geom_density(data = draws_df, aes(beta, fill = "Posterior"), alpha = 0.5) +
+  geom_density(data = draws_df, aes(beta_prior, fill = "Prior"), alpha = 0.5) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue")) +
+  theme_minimal() +
+  ggtitle("Prior-Posterior Update: Beta Parameter")
+
+p3 <- ggplot() +
+  geom_point(data = draws_df, aes(bias, beta), alpha = 0.5) +
+  theme_minimal() +
+  ggtitle("Correlation")
+
+p1 + p2 + p3
+
+# First let's properly extract and organize our posterior predictions
+posterior_predictions <- draws_df %>%
+  select(starts_with("posterior_preds[")) %>% # Select all posterior prediction columns
+  pivot_longer(everything(), 
+              names_to = "trial",
+              values_to = "prediction") %>%
+  # Clean up the trial number from the Stan array notation
+  mutate(trial = as.numeric(str_extract(trial, "\\d+")))
+
+# Calculate summary statistics for posterior predictions
+posterior_summary <- posterior_predictions %>%
+  group_by(trial) %>%
+  summarise(
+    mean = mean(prediction),
+    lower = quantile(prediction, 0.025),
+    upper = quantile(prediction, 0.975)
+  )
+
+# Do the same for prior predictions
+prior_predictions <- draws_df %>%
+  select(starts_with("prior_preds[")) %>%
+  pivot_longer(everything(), 
+              names_to = "trial",
+              values_to = "prediction") %>%
+  mutate(trial = as.numeric(str_extract(trial, "\\d+")))
+
+prior_summary <- prior_predictions %>%
+  group_by(trial) %>%
+  summarise(
+    mean = mean(prediction),
+    lower = quantile(prediction, 0.025),
+    upper = quantile(prediction, 0.975)
+  )
+
+# Now let's create our visualization
+# First the prior predictive check
+p4 <- ggplot() +
+  # Add prior prediction interval
+  geom_ribbon(data = prior_summary,
+              aes(x = trial, ymin = lower, ymax = upper),
+              alpha = 0.2, fill = "red") +
+  # Add mean prior prediction
+  geom_line(data = prior_summary,
+            aes(x = trial, y = mean),
+            color = "red") +
+  # Add actual data points
+  geom_point(data = tibble(trial = 1:length(data$h), 
+                          choice = data$h),
+             aes(x = trial, y = choice),
+             alpha = 0.5) +
+  labs(title = "Prior Predictive Check",
+       x = "Trial",
+       y = "Choice (0/1)") +
+  theme_minimal()
+
+# Then the posterior predictive check
+p5 <- ggplot() +
+  # Add posterior prediction interval
+  geom_ribbon(data = posterior_summary,
+              aes(x = trial, ymin = lower, ymax = upper),
+              alpha = 0.2, fill = "blue") +
+  # Add mean posterior prediction
+  geom_line(data = posterior_summary,
+            aes(x = trial, y = mean),
+            color = "blue") +
+  # Add actual data points
+  geom_point(data = tibble(trial = 1:length(data$h), 
+                          choice = data$h),
+             aes(x = trial, y = choice),
+             alpha = 0.5) +
+  labs(title = "Posterior Predictive Check",
+       x = "Trial",
+       y = "Choice (0/1)") +
+  theme_minimal()
+
+# Display plots side by side
+library(patchwork)
+p4 + p5
+
+
+# First, let's calculate the total number of 1s predicted in each posterior sample
+posterior_totals <- draws_df %>%
+  select(starts_with("posterior_preds[")) %>%
+  # Sum across rows to get total 1s per sample
+  mutate(total_ones = rowSums(.)) 
+
+# Do the same for prior predictions
+prior_totals <- draws_df %>%
+  select(starts_with("prior_preds[")) %>%
+  mutate(total_ones = rowSums(.))
+
+# Calculate actual number of 1s in the data
+actual_ones <- sum(data$h)
+
+# Create visualization comparing distributions
+ggplot() +
+  # Prior predictive distribution
+  geom_histogram(data = prior_totals, 
+              aes(x = total_ones, fill = "Prior"), 
+              alpha = 0.3) +
+  # Posterior predictive distribution
+  geom_histogram(data = posterior_totals, 
+              aes(x = total_ones, fill = "Posterior"), 
+              alpha = 0.3) +
+  # Vertical line for actual data
+  geom_vline(xintercept = actual_ones, 
+             linetype = "dashed", 
+             color = "black",
+             size = 1) +
+  # Aesthetics
+  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
+                   name = "Distribution") +
+  labs(title = "Distribution of Predicted Successes (1s) out of 120 Trials",
+       subtitle = "Comparing Prior, Posterior and Actual Data",
+       x = "Number of 1s",
+       y = "Density") +
+  theme_minimal() +
+  # Add annotation for actual value
+  annotate("text", 
+           x = actual_ones, 
+           y = 0, 
+           label = paste("Actual:", actual_ones),
+           vjust = -0.5)
+
+# Let's also print summary statistics
+prior_summary <- prior_totals %>%
+  summarise(
+    mean = mean(total_ones),
+    sd = sd(total_ones),
+    q025 = quantile(total_ones, 0.025),
+    q975 = quantile(total_ones, 0.975)
+  )
+
+posterior_summary <- posterior_totals %>%
+  summarise(
+    mean = mean(total_ones),
+    sd = sd(total_ones),
+    q025 = quantile(total_ones, 0.025),
+    q975 = quantile(total_ones, 0.975)
+  )
+
+print("Prior predictive summary:")
+print(prior_summary)
+print("Posterior predictive summary:")
+print(posterior_summary)
+
+
+# First let's calculate predicted probabilities for each draw and memory level
+predicted_probs <- draws_df %>%
+  mutate(
+    # Calculate probability of choosing right for each memory level
+    # using the logistic function on our parameter estimates
+    prob_low = inv_logit_scaled(bias + beta * logit_scaled(0.2)),
+    prob_mid = inv_logit_scaled(bias + beta * logit_scaled(0.5)),
+    prob_high = inv_logit_scaled(bias + beta * logit_scaled(0.8))
+  ) %>%
+  # Reshape to long format for easier plotting
+  pivot_longer(
+    cols = starts_with("prob_"),
+    names_to = "memory_level",
+    values_to = "probability"
+  ) %>%
+  mutate(
+    memory_value = case_when(
+      memory_level == "prob_low" ~ 0.2,
+      memory_level == "prob_mid" ~ 0.5,
+      memory_level == "prob_high" ~ 0.8
+    )
+  )
+
+# Do the same for prior predictions
+prior_probs <- draws_df %>%
+  mutate(
+    prob_low = inv_logit_scaled(bias_prior + beta_prior * logit_scaled(0.2)),
+    prob_mid = inv_logit_scaled(bias_prior + beta_prior * logit_scaled(0.5)),
+    prob_high = inv_logit_scaled(bias_prior + beta_prior * logit_scaled(0.8))
+  ) %>%
+  pivot_longer(
+    cols = starts_with("prob_"),
+    names_to = "memory_level",
+    values_to = "probability"
+  ) %>%
+  mutate(
+    memory_value = case_when(
+      memory_level == "prob_low" ~ 0.2,
+      memory_level == "prob_mid" ~ 0.5,
+      memory_level == "prob_high" ~ 0.8
+    )
+  )
+
+# Create visualization with density plots
+p1 <- ggplot() +
+  # Add prior distributions
+  geom_density(data = prior_probs,
+               aes(x = probability, fill = "Prior"),
+               alpha = 0.3) +
+  # Add posterior distributions
+  geom_density(data = predicted_probs,
+               aes(x = probability, fill = "Posterior"),
+               alpha = 0.3) +
+  # Separate by memory level
+  facet_wrap(~memory_value, 
+             labeller = labeller(memory_value = c(
+               "0.2" = "Low Memory (20% Right)",
+               "0.5" = "Neutral Memory (50% Right)",
+               "0.8" = "High Memory (80% Right)"
+             ))) +
+  # Aesthetics
+  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
+                   name = "Distribution") +
+  labs(title = "Distribution of Predicted Probabilities at Different Memory Levels",
+       x = "Probability of Choosing Right",
+       y = "Density") +
+  theme_minimal()
+
+# Alternative visualization using violin plots
+p2 <- ggplot() +
+  # Add prior distributions
+  geom_violin(data = prior_probs,
+              aes(x = factor(memory_value), y = probability, fill = "Prior"),
+              alpha = 0.3, position = position_dodge(width = 0.5)) +
+  # Add posterior distributions
+  geom_violin(data = predicted_probs,
+              aes(x = factor(memory_value), y = probability, fill = "Posterior"),
+              alpha = 0.3, position = position_dodge(width = 0.5)) +
+  # Aesthetics
+  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
+                   name = "Distribution") +
+  scale_x_discrete(labels = c("Low\n(20% Right)", "Neutral\n(50% Right)", "High\n(80% Right)")) +
+  labs(title = "Distribution of Predicted Probabilities by Memory Level",
+       x = "Memory Level",
+       y = "Probability of Choosing Right") +
+  theme_minimal()
+
+# Display both visualizations
+library(patchwork)
+p1 / p2
+
+# 4. Check for divergences
+# Extract divergent transitions
+n_div <- sum(draws_df$.divergent)
+print(paste("Number of divergent transitions:", n_div))
+
+# Plot divergent transitions in parameter space
+# ggplot(draws_df, aes(bias, beta)) +
+#   geom_point(aes(color = factor(.divergent)), alpha = 0.5) +
+#   scale_color_manual(values = c("black", "red")) +
+#   theme_minimal() +
+#   ggtitle("Divergent Transitions in Parameter Space")
 ```
 
 Now that we know how to model memory as an internal state, we can play with making the update discount the past, setting a parameter that indicates after how many trials memory is lost, etc. 
