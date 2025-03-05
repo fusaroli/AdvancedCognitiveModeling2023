@@ -387,78 +387,78 @@ In this chapter, we’ll explore how to implement mixture models using Stan, beg
 <div id="load-the-dataset" class="section level3 hasAnchor" number="9.0.1">
 <h3><span class="header-section-number">9.0.1</span> Load the dataset<a href="mixture-models.html#load-the-dataset" class="anchor-section" aria-label="Anchor link to header"></a></h3>
 <p>We load the data set from chapter NN, where we loop through possible rates and noise levels, and pick one agent to build up the model progressively.</p>
-<div class="sourceCode" id="cb266"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb266-1"><a href="mixture-models.html#cb266-1" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span>
-<span id="cb266-2"><a href="mixture-models.html#cb266-2" tabindex="-1"></a></span>
-<span id="cb266-3"><a href="mixture-models.html#cb266-3" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(rate <span class="sc">==</span> <span class="fl">0.8</span> <span class="sc">&amp;</span> noise <span class="sc">==</span> <span class="fl">0.1</span>)</span>
-<span id="cb266-4"><a href="mixture-models.html#cb266-4" tabindex="-1"></a></span>
-<span id="cb266-5"><a href="mixture-models.html#cb266-5" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb266-6"><a href="mixture-models.html#cb266-6" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
-<span id="cb266-7"><a href="mixture-models.html#cb266-7" tabindex="-1"></a>  <span class="at">h =</span> dd<span class="sc">$</span>choice</span>
-<span id="cb266-8"><a href="mixture-models.html#cb266-8" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb254"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb254-1"><a href="mixture-models.html#cb254-1" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(<span class="st">&quot;simdata/W3_randomnoise.csv&quot;</span>)</span>
+<span id="cb254-2"><a href="mixture-models.html#cb254-2" tabindex="-1"></a></span>
+<span id="cb254-3"><a href="mixture-models.html#cb254-3" tabindex="-1"></a>dd <span class="ot">&lt;-</span> d <span class="sc">%&gt;%</span> <span class="fu">subset</span>(rate <span class="sc">==</span> <span class="fl">0.8</span> <span class="sc">&amp;</span> noise <span class="sc">==</span> <span class="fl">0.1</span>)</span>
+<span id="cb254-4"><a href="mixture-models.html#cb254-4" tabindex="-1"></a></span>
+<span id="cb254-5"><a href="mixture-models.html#cb254-5" tabindex="-1"></a>data <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
+<span id="cb254-6"><a href="mixture-models.html#cb254-6" tabindex="-1"></a>  <span class="at">n =</span> <span class="dv">120</span>,</span>
+<span id="cb254-7"><a href="mixture-models.html#cb254-7" tabindex="-1"></a>  <span class="at">h =</span> dd<span class="sc">$</span>choice</span>
+<span id="cb254-8"><a href="mixture-models.html#cb254-8" tabindex="-1"></a>)</span></code></pre></div>
 </div>
 <div id="stan-model-mixing-biased-and-noise" class="section level2 hasAnchor" number="9.1">
 <h2><span class="header-section-number">9.1</span> Stan model mixing biased and noise<a href="mixture-models.html#stan-model-mixing-biased-and-noise" class="anchor-section" aria-label="Anchor link to header"></a></h2>
 <p>We then build a Stan model with the noise parameter</p>
-<div class="sourceCode" id="cb267"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb267-1"><a href="mixture-models.html#cb267-1" tabindex="-1"></a>stan_mixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
-<span id="cb267-2"><a href="mixture-models.html#cb267-2" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
-<span id="cb267-3"><a href="mixture-models.html#cb267-3" tabindex="-1"></a><span class="st">//</span></span>
-<span id="cb267-4"><a href="mixture-models.html#cb267-4" tabindex="-1"></a></span>
-<span id="cb267-5"><a href="mixture-models.html#cb267-5" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
-<span id="cb267-6"><a href="mixture-models.html#cb267-6" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb267-7"><a href="mixture-models.html#cb267-7" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
-<span id="cb267-8"><a href="mixture-models.html#cb267-8" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
-<span id="cb267-9"><a href="mixture-models.html#cb267-9" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb267-10"><a href="mixture-models.html#cb267-10" tabindex="-1"></a></span>
-<span id="cb267-11"><a href="mixture-models.html#cb267-11" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
-<span id="cb267-12"><a href="mixture-models.html#cb267-12" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb267-13"><a href="mixture-models.html#cb267-13" tabindex="-1"></a><span class="st">  real bias;</span></span>
-<span id="cb267-14"><a href="mixture-models.html#cb267-14" tabindex="-1"></a><span class="st">  real noise;</span></span>
-<span id="cb267-15"><a href="mixture-models.html#cb267-15" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb267-16"><a href="mixture-models.html#cb267-16" tabindex="-1"></a></span>
-<span id="cb267-17"><a href="mixture-models.html#cb267-17" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
-<span id="cb267-18"><a href="mixture-models.html#cb267-18" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb267-19"><a href="mixture-models.html#cb267-19" tabindex="-1"></a><span class="st">  // The prior for theta is a uniform distribution between 0 and 1</span></span>
-<span id="cb267-20"><a href="mixture-models.html#cb267-20" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, 1);</span></span>
-<span id="cb267-21"><a href="mixture-models.html#cb267-21" tabindex="-1"></a><span class="st">  target += normal_lpdf(noise | 0, 1);</span></span>
-<span id="cb267-22"><a href="mixture-models.html#cb267-22" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb267-23"><a href="mixture-models.html#cb267-23" tabindex="-1"></a><span class="st">  // The model consists of a binomial distributions with a rate theta</span></span>
-<span id="cb267-24"><a href="mixture-models.html#cb267-24" tabindex="-1"></a><span class="st">  target += log_sum_exp(log(inv_logit(noise)) +</span></span>
-<span id="cb267-25"><a href="mixture-models.html#cb267-25" tabindex="-1"></a><span class="st">            bernoulli_logit_lpmf(h | 0),</span></span>
-<span id="cb267-26"><a href="mixture-models.html#cb267-26" tabindex="-1"></a><span class="st">            log1m(inv_logit(noise)) +  bernoulli_logit_lpmf(h | bias));</span></span>
-<span id="cb267-27"><a href="mixture-models.html#cb267-27" tabindex="-1"></a><span class="st">            </span></span>
-<span id="cb267-28"><a href="mixture-models.html#cb267-28" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb267-29"><a href="mixture-models.html#cb267-29" tabindex="-1"></a><span class="st">generated quantities{</span></span>
-<span id="cb267-30"><a href="mixture-models.html#cb267-30" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_p;</span></span>
-<span id="cb267-31"><a href="mixture-models.html#cb267-31" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; bias_p;</span></span>
-<span id="cb267-32"><a href="mixture-models.html#cb267-32" tabindex="-1"></a><span class="st">  noise_p = inv_logit(noise);</span></span>
-<span id="cb267-33"><a href="mixture-models.html#cb267-33" tabindex="-1"></a><span class="st">  bias_p = inv_logit(bias);</span></span>
-<span id="cb267-34"><a href="mixture-models.html#cb267-34" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb267-35"><a href="mixture-models.html#cb267-35" tabindex="-1"></a></span>
-<span id="cb267-36"><a href="mixture-models.html#cb267-36" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb267-37"><a href="mixture-models.html#cb267-37" tabindex="-1"></a></span>
-<span id="cb267-38"><a href="mixture-models.html#cb267-38" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb267-39"><a href="mixture-models.html#cb267-39" tabindex="-1"></a>  stan_mixture_model,</span>
-<span id="cb267-40"><a href="mixture-models.html#cb267-40" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb267-41"><a href="mixture-models.html#cb267-41" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureSingle.stan&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb255"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb255-1"><a href="mixture-models.html#cb255-1" tabindex="-1"></a>stan_mixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb255-2"><a href="mixture-models.html#cb255-2" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
+<span id="cb255-3"><a href="mixture-models.html#cb255-3" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb255-4"><a href="mixture-models.html#cb255-4" tabindex="-1"></a></span>
+<span id="cb255-5"><a href="mixture-models.html#cb255-5" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
+<span id="cb255-6"><a href="mixture-models.html#cb255-6" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb255-7"><a href="mixture-models.html#cb255-7" tabindex="-1"></a><span class="st"> int&lt;lower=1&gt; n;</span></span>
+<span id="cb255-8"><a href="mixture-models.html#cb255-8" tabindex="-1"></a><span class="st"> array[n] int h;</span></span>
+<span id="cb255-9"><a href="mixture-models.html#cb255-9" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb255-10"><a href="mixture-models.html#cb255-10" tabindex="-1"></a></span>
+<span id="cb255-11"><a href="mixture-models.html#cb255-11" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb255-12"><a href="mixture-models.html#cb255-12" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb255-13"><a href="mixture-models.html#cb255-13" tabindex="-1"></a><span class="st">  real bias;</span></span>
+<span id="cb255-14"><a href="mixture-models.html#cb255-14" tabindex="-1"></a><span class="st">  real noise;</span></span>
+<span id="cb255-15"><a href="mixture-models.html#cb255-15" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb255-16"><a href="mixture-models.html#cb255-16" tabindex="-1"></a></span>
+<span id="cb255-17"><a href="mixture-models.html#cb255-17" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb255-18"><a href="mixture-models.html#cb255-18" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb255-19"><a href="mixture-models.html#cb255-19" tabindex="-1"></a><span class="st">  // The prior for theta is a uniform distribution between 0 and 1</span></span>
+<span id="cb255-20"><a href="mixture-models.html#cb255-20" tabindex="-1"></a><span class="st">  target += normal_lpdf(bias | 0, 1);</span></span>
+<span id="cb255-21"><a href="mixture-models.html#cb255-21" tabindex="-1"></a><span class="st">  target += normal_lpdf(noise | 0, 1);</span></span>
+<span id="cb255-22"><a href="mixture-models.html#cb255-22" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb255-23"><a href="mixture-models.html#cb255-23" tabindex="-1"></a><span class="st">  // The model consists of a binomial distributions with a rate theta</span></span>
+<span id="cb255-24"><a href="mixture-models.html#cb255-24" tabindex="-1"></a><span class="st">  target += log_sum_exp(log(inv_logit(noise)) +</span></span>
+<span id="cb255-25"><a href="mixture-models.html#cb255-25" tabindex="-1"></a><span class="st">            bernoulli_logit_lpmf(h | 0),</span></span>
+<span id="cb255-26"><a href="mixture-models.html#cb255-26" tabindex="-1"></a><span class="st">            log1m(inv_logit(noise)) +  bernoulli_logit_lpmf(h | bias));</span></span>
+<span id="cb255-27"><a href="mixture-models.html#cb255-27" tabindex="-1"></a><span class="st">            </span></span>
+<span id="cb255-28"><a href="mixture-models.html#cb255-28" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb255-29"><a href="mixture-models.html#cb255-29" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb255-30"><a href="mixture-models.html#cb255-30" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_p;</span></span>
+<span id="cb255-31"><a href="mixture-models.html#cb255-31" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; bias_p;</span></span>
+<span id="cb255-32"><a href="mixture-models.html#cb255-32" tabindex="-1"></a><span class="st">  noise_p = inv_logit(noise);</span></span>
+<span id="cb255-33"><a href="mixture-models.html#cb255-33" tabindex="-1"></a><span class="st">  bias_p = inv_logit(bias);</span></span>
+<span id="cb255-34"><a href="mixture-models.html#cb255-34" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb255-35"><a href="mixture-models.html#cb255-35" tabindex="-1"></a></span>
+<span id="cb255-36"><a href="mixture-models.html#cb255-36" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb255-37"><a href="mixture-models.html#cb255-37" tabindex="-1"></a></span>
+<span id="cb255-38"><a href="mixture-models.html#cb255-38" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb255-39"><a href="mixture-models.html#cb255-39" tabindex="-1"></a>  stan_mixture_model,</span>
+<span id="cb255-40"><a href="mixture-models.html#cb255-40" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb255-41"><a href="mixture-models.html#cb255-41" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureSingle.stan&quot;</span>)</span></code></pre></div>
 <pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W6_MixtureSingle.stan&quot;</code></pre>
-<div class="sourceCode" id="cb269"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb269-1"><a href="mixture-models.html#cb269-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureSingle.stan&quot;</span>)</span>
-<span id="cb269-2"><a href="mixture-models.html#cb269-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb269-3"><a href="mixture-models.html#cb269-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb257"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb257-1"><a href="mixture-models.html#cb257-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureSingle.stan&quot;</span>)</span>
+<span id="cb257-2"><a href="mixture-models.html#cb257-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb257-3"><a href="mixture-models.html#cb257-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span></code></pre></div>
 </div>
 <div id="fitting-and-assessing-the-model" class="section level2 hasAnchor" number="9.2">
 <h2><span class="header-section-number">9.2</span> Fitting and assessing the model<a href="mixture-models.html#fitting-and-assessing-the-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<div class="sourceCode" id="cb270"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb270-1"><a href="mixture-models.html#cb270-1" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod_mixture<span class="sc">$</span><span class="fu">sample</span>(</span>
-<span id="cb270-2"><a href="mixture-models.html#cb270-2" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
-<span id="cb270-3"><a href="mixture-models.html#cb270-3" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
-<span id="cb270-4"><a href="mixture-models.html#cb270-4" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>,</span>
-<span id="cb270-5"><a href="mixture-models.html#cb270-5" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
-<span id="cb270-6"><a href="mixture-models.html#cb270-6" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
-<span id="cb270-7"><a href="mixture-models.html#cb270-7" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">2000</span>,</span>
-<span id="cb270-8"><a href="mixture-models.html#cb270-8" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
-<span id="cb270-9"><a href="mixture-models.html#cb270-9" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">500</span>,</span>
-<span id="cb270-10"><a href="mixture-models.html#cb270-10" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
-<span id="cb270-11"><a href="mixture-models.html#cb270-11" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
-<span id="cb270-12"><a href="mixture-models.html#cb270-12" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb258"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb258-1"><a href="mixture-models.html#cb258-1" tabindex="-1"></a>samples <span class="ot">&lt;-</span> mod_mixture<span class="sc">$</span><span class="fu">sample</span>(</span>
+<span id="cb258-2"><a href="mixture-models.html#cb258-2" tabindex="-1"></a>  <span class="at">data =</span> data,</span>
+<span id="cb258-3"><a href="mixture-models.html#cb258-3" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">123</span>,</span>
+<span id="cb258-4"><a href="mixture-models.html#cb258-4" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">2</span>,</span>
+<span id="cb258-5"><a href="mixture-models.html#cb258-5" tabindex="-1"></a>  <span class="at">parallel_chains =</span> <span class="dv">2</span>,</span>
+<span id="cb258-6"><a href="mixture-models.html#cb258-6" tabindex="-1"></a>  <span class="at">threads_per_chain =</span> <span class="dv">2</span>,</span>
+<span id="cb258-7"><a href="mixture-models.html#cb258-7" tabindex="-1"></a>  <span class="at">iter_warmup =</span> <span class="dv">2000</span>,</span>
+<span id="cb258-8"><a href="mixture-models.html#cb258-8" tabindex="-1"></a>  <span class="at">iter_sampling =</span> <span class="dv">2000</span>,</span>
+<span id="cb258-9"><a href="mixture-models.html#cb258-9" tabindex="-1"></a>  <span class="at">refresh =</span> <span class="dv">500</span>,</span>
+<span id="cb258-10"><a href="mixture-models.html#cb258-10" tabindex="-1"></a>  <span class="at">max_treedepth =</span> <span class="dv">20</span>,</span>
+<span id="cb258-11"><a href="mixture-models.html#cb258-11" tabindex="-1"></a>  <span class="at">adapt_delta =</span> <span class="fl">0.99</span>,</span>
+<span id="cb258-12"><a href="mixture-models.html#cb258-12" tabindex="-1"></a>)</span></code></pre></div>
 <pre><code>## Running MCMC with 2 parallel chains, with 2 thread(s) per chain...
 ## 
 ## Chain 1 Iteration:    1 / 4000 [  0%]  (Warmup) 
@@ -469,7 +469,6 @@ In this chapter, we’ll explore how to implement mixture models using Stan, beg
 ## Chain 1 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
 ## Chain 1 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
 ## Chain 1 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
-## Chain 1 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
 ## Chain 2 Iteration:    1 / 4000 [  0%]  (Warmup) 
 ## Chain 2 Iteration:  500 / 4000 [ 12%]  (Warmup) 
 ## Chain 2 Iteration: 1000 / 4000 [ 25%]  (Warmup) 
@@ -477,185 +476,186 @@ In this chapter, we’ll explore how to implement mixture models using Stan, beg
 ## Chain 2 Iteration: 2000 / 4000 [ 50%]  (Warmup) 
 ## Chain 2 Iteration: 2001 / 4000 [ 50%]  (Sampling) 
 ## Chain 2 Iteration: 2500 / 4000 [ 62%]  (Sampling) 
+## Chain 1 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
 ## Chain 1 Iteration: 4000 / 4000 [100%]  (Sampling) 
-## Chain 1 finished in 0.2 seconds.
 ## Chain 2 Iteration: 3000 / 4000 [ 75%]  (Sampling) 
 ## Chain 2 Iteration: 3500 / 4000 [ 87%]  (Sampling) 
 ## Chain 2 Iteration: 4000 / 4000 [100%]  (Sampling) 
+## Chain 1 finished in 0.2 seconds.
 ## Chain 2 finished in 0.2 seconds.
 ## 
 ## Both chains finished successfully.
 ## Mean chain execution time: 0.2 seconds.
 ## Total execution time: 0.4 seconds.</code></pre>
-<div class="sourceCode" id="cb272"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb272-1"><a href="mixture-models.html#cb272-1" tabindex="-1"></a><span class="fu">save</span>(samples, data, </span>
-<span id="cb272-2"><a href="mixture-models.html#cb272-2" tabindex="-1"></a>          <span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RData&quot;</span>) </span>
-<span id="cb272-3"><a href="mixture-models.html#cb272-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_object</span>(<span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RDS&quot;</span>)</span>
-<span id="cb272-4"><a href="mixture-models.html#cb272-4" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_output_files</span>(<span class="at">dir =</span> <span class="st">&quot;simmodels&quot;</span>, <span class="at">basename =</span> <span class="st">&quot;W7_singlemixture&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb260"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb260-1"><a href="mixture-models.html#cb260-1" tabindex="-1"></a><span class="fu">save</span>(samples, data, </span>
+<span id="cb260-2"><a href="mixture-models.html#cb260-2" tabindex="-1"></a>          <span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RData&quot;</span>) </span>
+<span id="cb260-3"><a href="mixture-models.html#cb260-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_object</span>(<span class="at">file =</span> <span class="st">&quot;simmodels/W7_singlemixture.RDS&quot;</span>)</span>
+<span id="cb260-4"><a href="mixture-models.html#cb260-4" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">save_output_files</span>(<span class="at">dir =</span> <span class="st">&quot;simmodels&quot;</span>, <span class="at">basename =</span> <span class="st">&quot;W7_singlemixture&quot;</span>)</span></code></pre></div>
 <p>[MISSING: EVALUATION]</p>
 </div>
 <div id="basic-evaluation" class="section level2 hasAnchor" number="9.3">
 <h2><span class="header-section-number">9.3</span> Basic evaluation<a href="mixture-models.html#basic-evaluation" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<div class="sourceCode" id="cb273"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb273-1"><a href="mixture-models.html#cb273-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb261"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb261-1"><a href="mixture-models.html#cb261-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
 <pre><code>## # A tibble: 5 × 10
 ##   variable    mean  median     sd    mad      q5     q95  rhat ess_bulk ess_tail
 ##   &lt;chr&gt;      &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-## 1 lp__     -72.5   -72.2   0.999  0.697  -74.5   -71.6    1.00    1450.    1844.
-## 2 bias       1.02    1.02  0.206  0.205    0.690   1.36   1.00    1944.    1759.
-## 3 noise     -0.407  -0.400 0.893  0.902   -1.86    1.09   1.00    2303.    2185.
-## 4 noise_p    0.414   0.401 0.186  0.208    0.135   0.748  1.00    2303.    2185.
-## 5 bias_p     0.734   0.736 0.0398 0.0400   0.666   0.796  1.00    1944.    1759.</code></pre>
+## 1 lp__     -65.7   -65.4   1.03   0.713  -67.7   -64.7    1.00    1396.    1708.
+## 2 bias       1.28    1.28  0.216  0.212    0.942   1.65   1.00    1990.    1860.
+## 3 noise     -0.400  -0.408 0.928  0.941   -1.92    1.11   1.00    2054.    2137.
+## 4 noise_p    0.416   0.399 0.193  0.218    0.128   0.753  1.00    2054.    2137.
+## 5 bias_p     0.781   0.782 0.0364 0.0361   0.719   0.839  1.00    1990.    1860.</code></pre>
 </div>
 <div id="multilevel-mixture-model" class="section level2 hasAnchor" number="9.4">
 <h2><span class="header-section-number">9.4</span> Multilevel mixture model<a href="mixture-models.html#multilevel-mixture-model" class="anchor-section" aria-label="Anchor link to header"></a></h2>
-<div class="sourceCode" id="cb275"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb275-1"><a href="mixture-models.html#cb275-1" tabindex="-1"></a><span class="do">### Multilevel mixture</span></span>
-<span id="cb275-2"><a href="mixture-models.html#cb275-2" tabindex="-1"></a>stan_multilevelMixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
-<span id="cb275-3"><a href="mixture-models.html#cb275-3" tabindex="-1"></a><span class="st">//</span></span>
-<span id="cb275-4"><a href="mixture-models.html#cb275-4" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
-<span id="cb275-5"><a href="mixture-models.html#cb275-5" tabindex="-1"></a><span class="st">//</span></span>
-<span id="cb275-6"><a href="mixture-models.html#cb275-6" tabindex="-1"></a><span class="st">functions{</span></span>
-<span id="cb275-7"><a href="mixture-models.html#cb275-7" tabindex="-1"></a><span class="st">  real normal_lb_rng(real mu, real sigma, real lb) {</span></span>
-<span id="cb275-8"><a href="mixture-models.html#cb275-8" tabindex="-1"></a><span class="st">    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds</span></span>
-<span id="cb275-9"><a href="mixture-models.html#cb275-9" tabindex="-1"></a><span class="st">    real u = uniform_rng(p, 1);</span></span>
-<span id="cb275-10"><a href="mixture-models.html#cb275-10" tabindex="-1"></a><span class="st">    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value</span></span>
-<span id="cb275-11"><a href="mixture-models.html#cb275-11" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb275-12"><a href="mixture-models.html#cb275-12" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb275-13"><a href="mixture-models.html#cb275-13" tabindex="-1"></a></span>
-<span id="cb275-14"><a href="mixture-models.html#cb275-14" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
-<span id="cb275-15"><a href="mixture-models.html#cb275-15" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb275-16"><a href="mixture-models.html#cb275-16" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; trials;</span></span>
-<span id="cb275-17"><a href="mixture-models.html#cb275-17" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; agents;</span></span>
-<span id="cb275-18"><a href="mixture-models.html#cb275-18" tabindex="-1"></a><span class="st"> array[trials, agents] int h;</span></span>
-<span id="cb275-19"><a href="mixture-models.html#cb275-19" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb275-20"><a href="mixture-models.html#cb275-20" tabindex="-1"></a></span>
-<span id="cb275-21"><a href="mixture-models.html#cb275-21" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
-<span id="cb275-22"><a href="mixture-models.html#cb275-22" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb275-23"><a href="mixture-models.html#cb275-23" tabindex="-1"></a><span class="st">  real thetaM;</span></span>
-<span id="cb275-24"><a href="mixture-models.html#cb275-24" tabindex="-1"></a><span class="st">  real noiseM; // p of noise</span></span>
-<span id="cb275-25"><a href="mixture-models.html#cb275-25" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb275-26"><a href="mixture-models.html#cb275-26" tabindex="-1"></a><span class="st">  vector&lt;lower = 0&gt;[2] tau;</span></span>
-<span id="cb275-27"><a href="mixture-models.html#cb275-27" tabindex="-1"></a><span class="st">  matrix[2, agents] z_IDs;</span></span>
-<span id="cb275-28"><a href="mixture-models.html#cb275-28" tabindex="-1"></a><span class="st">  cholesky_factor_corr[2] L_u;</span></span>
-<span id="cb275-29"><a href="mixture-models.html#cb275-29" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb275-30"><a href="mixture-models.html#cb275-30" tabindex="-1"></a></span>
-<span id="cb275-31"><a href="mixture-models.html#cb275-31" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
-<span id="cb275-32"><a href="mixture-models.html#cb275-32" tabindex="-1"></a><span class="st">  matrix[agents,2] IDs;</span></span>
-<span id="cb275-33"><a href="mixture-models.html#cb275-33" tabindex="-1"></a><span class="st">  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)&#39;;</span></span>
-<span id="cb275-34"><a href="mixture-models.html#cb275-34" tabindex="-1"></a><span class="st"> }</span></span>
-<span id="cb275-35"><a href="mixture-models.html#cb275-35" tabindex="-1"></a></span>
-<span id="cb275-36"><a href="mixture-models.html#cb275-36" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
-<span id="cb275-37"><a href="mixture-models.html#cb275-37" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb275-38"><a href="mixture-models.html#cb275-38" tabindex="-1"></a><span class="st">  target += normal_lpdf(thetaM | 0, 1);</span></span>
-<span id="cb275-39"><a href="mixture-models.html#cb275-39" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[1] | 0, .3)  -</span></span>
-<span id="cb275-40"><a href="mixture-models.html#cb275-40" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
-<span id="cb275-41"><a href="mixture-models.html#cb275-41" tabindex="-1"></a></span>
-<span id="cb275-42"><a href="mixture-models.html#cb275-42" tabindex="-1"></a><span class="st">  target += normal_lpdf(noiseM | -1, .5);</span></span>
-<span id="cb275-43"><a href="mixture-models.html#cb275-43" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[2] | 0, .3)  -</span></span>
-<span id="cb275-44"><a href="mixture-models.html#cb275-44" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
-<span id="cb275-45"><a href="mixture-models.html#cb275-45" tabindex="-1"></a><span class="st">    </span></span>
-<span id="cb275-46"><a href="mixture-models.html#cb275-46" tabindex="-1"></a><span class="st">  target += lkj_corr_cholesky_lpdf(L_u | 2);</span></span>
-<span id="cb275-47"><a href="mixture-models.html#cb275-47" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb275-48"><a href="mixture-models.html#cb275-48" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(to_vector(z_IDs));</span></span>
-<span id="cb275-49"><a href="mixture-models.html#cb275-49" tabindex="-1"></a></span>
-<span id="cb275-50"><a href="mixture-models.html#cb275-50" tabindex="-1"></a><span class="st">  for (i in 1:agents)</span></span>
-<span id="cb275-51"><a href="mixture-models.html#cb275-51" tabindex="-1"></a><span class="st">    target += log_sum_exp(</span></span>
-<span id="cb275-52"><a href="mixture-models.html#cb275-52" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
-<span id="cb275-53"><a href="mixture-models.html#cb275-53" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | 0), // times post likelihood of the noise model</span></span>
-<span id="cb275-54"><a href="mixture-models.html#cb275-54" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
-<span id="cb275-55"><a href="mixture-models.html#cb275-55" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
-<span id="cb275-56"><a href="mixture-models.html#cb275-56" tabindex="-1"></a><span class="st">                    </span></span>
-<span id="cb275-57"><a href="mixture-models.html#cb275-57" tabindex="-1"></a></span>
-<span id="cb275-58"><a href="mixture-models.html#cb275-58" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb275-59"><a href="mixture-models.html#cb275-59" tabindex="-1"></a></span>
-<span id="cb275-60"><a href="mixture-models.html#cb275-60" tabindex="-1"></a><span class="st">generated quantities{</span></span>
-<span id="cb275-61"><a href="mixture-models.html#cb275-61" tabindex="-1"></a><span class="st">  real thetaM_prior;</span></span>
-<span id="cb275-62"><a href="mixture-models.html#cb275-62" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; thetaSD_prior;</span></span>
-<span id="cb275-63"><a href="mixture-models.html#cb275-63" tabindex="-1"></a><span class="st">  real noiseM_prior;</span></span>
-<span id="cb275-64"><a href="mixture-models.html#cb275-64" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; noiseSD_prior;</span></span>
-<span id="cb275-65"><a href="mixture-models.html#cb275-65" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;</span></span>
-<span id="cb275-66"><a href="mixture-models.html#cb275-66" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_prior;</span></span>
-<span id="cb275-67"><a href="mixture-models.html#cb275-67" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior;</span></span>
-<span id="cb275-68"><a href="mixture-models.html#cb275-68" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_posterior;</span></span>
-<span id="cb275-69"><a href="mixture-models.html#cb275-69" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb275-70"><a href="mixture-models.html#cb275-70" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_noise;</span></span>
-<span id="cb275-71"><a href="mixture-models.html#cb275-71" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_noise;</span></span>
-<span id="cb275-72"><a href="mixture-models.html#cb275-72" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_preds;</span></span>
-<span id="cb275-73"><a href="mixture-models.html#cb275-73" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_preds;</span></span>
-<span id="cb275-74"><a href="mixture-models.html#cb275-74" tabindex="-1"></a></span>
-<span id="cb275-75"><a href="mixture-models.html#cb275-75" tabindex="-1"></a><span class="st">  array[trials, agents] real log_lik;</span></span>
-<span id="cb275-76"><a href="mixture-models.html#cb275-76" tabindex="-1"></a></span>
-<span id="cb275-77"><a href="mixture-models.html#cb275-77" tabindex="-1"></a><span class="st">  thetaM_prior = normal_rng(0,1);</span></span>
-<span id="cb275-78"><a href="mixture-models.html#cb275-78" tabindex="-1"></a><span class="st">  thetaSD_prior = normal_lb_rng(0,0.3,0);</span></span>
-<span id="cb275-79"><a href="mixture-models.html#cb275-79" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));</span></span>
-<span id="cb275-80"><a href="mixture-models.html#cb275-80" tabindex="-1"></a><span class="st">  noiseM_prior = normal_rng(-1,.5);</span></span>
-<span id="cb275-81"><a href="mixture-models.html#cb275-81" tabindex="-1"></a><span class="st">  noiseSD_prior = normal_lb_rng(0,0.3,0);</span></span>
-<span id="cb275-82"><a href="mixture-models.html#cb275-82" tabindex="-1"></a><span class="st">  noise_prior = inv_logit(normal_rng(noiseM_prior, noiseSD_prior));</span></span>
-<span id="cb275-83"><a href="mixture-models.html#cb275-83" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb275-84"><a href="mixture-models.html#cb275-84" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(normal_rng(thetaM, tau[1]));</span></span>
-<span id="cb275-85"><a href="mixture-models.html#cb275-85" tabindex="-1"></a><span class="st">  noise_posterior = inv_logit(normal_rng(noiseM, tau[2]));</span></span>
-<span id="cb275-86"><a href="mixture-models.html#cb275-86" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb275-87"><a href="mixture-models.html#cb275-87" tabindex="-1"></a><span class="st">   </span></span>
-<span id="cb275-88"><a href="mixture-models.html#cb275-88" tabindex="-1"></a><span class="st">   for (i in 1:agents){</span></span>
-<span id="cb275-89"><a href="mixture-models.html#cb275-89" tabindex="-1"></a><span class="st">     </span></span>
-<span id="cb275-90"><a href="mixture-models.html#cb275-90" tabindex="-1"></a><span class="st">    for (t in 1:trials){</span></span>
-<span id="cb275-91"><a href="mixture-models.html#cb275-91" tabindex="-1"></a><span class="st">      </span></span>
-<span id="cb275-92"><a href="mixture-models.html#cb275-92" tabindex="-1"></a><span class="st">      prior_noise[t,i] = bernoulli_rng(noise_prior);</span></span>
-<span id="cb275-93"><a href="mixture-models.html#cb275-93" tabindex="-1"></a><span class="st">      posterior_noise[t,i] = bernoulli_rng(inv_logit(noiseM + IDs[i,2]));</span></span>
-<span id="cb275-94"><a href="mixture-models.html#cb275-94" tabindex="-1"></a><span class="st">      </span></span>
-<span id="cb275-95"><a href="mixture-models.html#cb275-95" tabindex="-1"></a><span class="st">      if(prior_noise[t,i]==1){</span></span>
-<span id="cb275-96"><a href="mixture-models.html#cb275-96" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(theta_prior);</span></span>
-<span id="cb275-97"><a href="mixture-models.html#cb275-97" tabindex="-1"></a><span class="st">      } else{</span></span>
-<span id="cb275-98"><a href="mixture-models.html#cb275-98" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(0.5);</span></span>
-<span id="cb275-99"><a href="mixture-models.html#cb275-99" tabindex="-1"></a><span class="st">      }</span></span>
-<span id="cb275-100"><a href="mixture-models.html#cb275-100" tabindex="-1"></a><span class="st">      if(posterior_noise[t,i]==1){</span></span>
-<span id="cb275-101"><a href="mixture-models.html#cb275-101" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(inv_logit(thetaM + IDs[i,1]));</span></span>
-<span id="cb275-102"><a href="mixture-models.html#cb275-102" tabindex="-1"></a><span class="st">      } else{</span></span>
-<span id="cb275-103"><a href="mixture-models.html#cb275-103" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(0.5);</span></span>
-<span id="cb275-104"><a href="mixture-models.html#cb275-104" tabindex="-1"></a><span class="st">      }</span></span>
-<span id="cb275-105"><a href="mixture-models.html#cb275-105" tabindex="-1"></a><span class="st">      </span></span>
-<span id="cb275-106"><a href="mixture-models.html#cb275-106" tabindex="-1"></a><span class="st">      </span></span>
-<span id="cb275-107"><a href="mixture-models.html#cb275-107" tabindex="-1"></a><span class="st">      log_lik[t,i] = log_sum_exp(</span></span>
-<span id="cb275-108"><a href="mixture-models.html#cb275-108" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
-<span id="cb275-109"><a href="mixture-models.html#cb275-109" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | 0), // times post likelihood of the noise model</span></span>
-<span id="cb275-110"><a href="mixture-models.html#cb275-110" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
-<span id="cb275-111"><a href="mixture-models.html#cb275-111" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
-<span id="cb275-112"><a href="mixture-models.html#cb275-112" tabindex="-1"></a><span class="st">      </span></span>
-<span id="cb275-113"><a href="mixture-models.html#cb275-113" tabindex="-1"></a><span class="st">    }</span></span>
-<span id="cb275-114"><a href="mixture-models.html#cb275-114" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb275-115"><a href="mixture-models.html#cb275-115" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb275-116"><a href="mixture-models.html#cb275-116" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb275-117"><a href="mixture-models.html#cb275-117" tabindex="-1"></a><span class="st">&quot;</span></span>
-<span id="cb275-118"><a href="mixture-models.html#cb275-118" tabindex="-1"></a></span>
-<span id="cb275-119"><a href="mixture-models.html#cb275-119" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
-<span id="cb275-120"><a href="mixture-models.html#cb275-120" tabindex="-1"></a>  stan_multilevelMixture_model,</span>
-<span id="cb275-121"><a href="mixture-models.html#cb275-121" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
-<span id="cb275-122"><a href="mixture-models.html#cb275-122" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureMultilevel.stan&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb263"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb263-1"><a href="mixture-models.html#cb263-1" tabindex="-1"></a><span class="do">### Multilevel mixture</span></span>
+<span id="cb263-2"><a href="mixture-models.html#cb263-2" tabindex="-1"></a>stan_multilevelMixture_model <span class="ot">&lt;-</span> <span class="st">&quot;</span></span>
+<span id="cb263-3"><a href="mixture-models.html#cb263-3" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb263-4"><a href="mixture-models.html#cb263-4" tabindex="-1"></a><span class="st">// This Stan model defines a mixture of bernoulli (random bias + noise)</span></span>
+<span id="cb263-5"><a href="mixture-models.html#cb263-5" tabindex="-1"></a><span class="st">//</span></span>
+<span id="cb263-6"><a href="mixture-models.html#cb263-6" tabindex="-1"></a><span class="st">functions{</span></span>
+<span id="cb263-7"><a href="mixture-models.html#cb263-7" tabindex="-1"></a><span class="st">  real normal_lb_rng(real mu, real sigma, real lb) {</span></span>
+<span id="cb263-8"><a href="mixture-models.html#cb263-8" tabindex="-1"></a><span class="st">    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds</span></span>
+<span id="cb263-9"><a href="mixture-models.html#cb263-9" tabindex="-1"></a><span class="st">    real u = uniform_rng(p, 1);</span></span>
+<span id="cb263-10"><a href="mixture-models.html#cb263-10" tabindex="-1"></a><span class="st">    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value</span></span>
+<span id="cb263-11"><a href="mixture-models.html#cb263-11" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb263-12"><a href="mixture-models.html#cb263-12" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb263-13"><a href="mixture-models.html#cb263-13" tabindex="-1"></a></span>
+<span id="cb263-14"><a href="mixture-models.html#cb263-14" tabindex="-1"></a><span class="st">// The input (data) for the model. n of trials and h of heads</span></span>
+<span id="cb263-15"><a href="mixture-models.html#cb263-15" tabindex="-1"></a><span class="st">data {</span></span>
+<span id="cb263-16"><a href="mixture-models.html#cb263-16" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; trials;</span></span>
+<span id="cb263-17"><a href="mixture-models.html#cb263-17" tabindex="-1"></a><span class="st"> int&lt;lower = 1&gt; agents;</span></span>
+<span id="cb263-18"><a href="mixture-models.html#cb263-18" tabindex="-1"></a><span class="st"> array[trials, agents] int h;</span></span>
+<span id="cb263-19"><a href="mixture-models.html#cb263-19" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb263-20"><a href="mixture-models.html#cb263-20" tabindex="-1"></a></span>
+<span id="cb263-21"><a href="mixture-models.html#cb263-21" tabindex="-1"></a><span class="st">// The parameters accepted by the model. </span></span>
+<span id="cb263-22"><a href="mixture-models.html#cb263-22" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb263-23"><a href="mixture-models.html#cb263-23" tabindex="-1"></a><span class="st">  real thetaM;</span></span>
+<span id="cb263-24"><a href="mixture-models.html#cb263-24" tabindex="-1"></a><span class="st">  real noiseM; // p of noise</span></span>
+<span id="cb263-25"><a href="mixture-models.html#cb263-25" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb263-26"><a href="mixture-models.html#cb263-26" tabindex="-1"></a><span class="st">  vector&lt;lower = 0&gt;[2] tau;</span></span>
+<span id="cb263-27"><a href="mixture-models.html#cb263-27" tabindex="-1"></a><span class="st">  matrix[2, agents] z_IDs;</span></span>
+<span id="cb263-28"><a href="mixture-models.html#cb263-28" tabindex="-1"></a><span class="st">  cholesky_factor_corr[2] L_u;</span></span>
+<span id="cb263-29"><a href="mixture-models.html#cb263-29" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb263-30"><a href="mixture-models.html#cb263-30" tabindex="-1"></a></span>
+<span id="cb263-31"><a href="mixture-models.html#cb263-31" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
+<span id="cb263-32"><a href="mixture-models.html#cb263-32" tabindex="-1"></a><span class="st">  matrix[agents,2] IDs;</span></span>
+<span id="cb263-33"><a href="mixture-models.html#cb263-33" tabindex="-1"></a><span class="st">  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)&#39;;</span></span>
+<span id="cb263-34"><a href="mixture-models.html#cb263-34" tabindex="-1"></a><span class="st"> }</span></span>
+<span id="cb263-35"><a href="mixture-models.html#cb263-35" tabindex="-1"></a></span>
+<span id="cb263-36"><a href="mixture-models.html#cb263-36" tabindex="-1"></a><span class="st">// The model to be estimated. </span></span>
+<span id="cb263-37"><a href="mixture-models.html#cb263-37" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb263-38"><a href="mixture-models.html#cb263-38" tabindex="-1"></a><span class="st">  target += normal_lpdf(thetaM | 0, 1);</span></span>
+<span id="cb263-39"><a href="mixture-models.html#cb263-39" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[1] | 0, .3)  -</span></span>
+<span id="cb263-40"><a href="mixture-models.html#cb263-40" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
+<span id="cb263-41"><a href="mixture-models.html#cb263-41" tabindex="-1"></a></span>
+<span id="cb263-42"><a href="mixture-models.html#cb263-42" tabindex="-1"></a><span class="st">  target += normal_lpdf(noiseM | -1, .5);</span></span>
+<span id="cb263-43"><a href="mixture-models.html#cb263-43" tabindex="-1"></a><span class="st">  target += normal_lpdf(tau[2] | 0, .3)  -</span></span>
+<span id="cb263-44"><a href="mixture-models.html#cb263-44" tabindex="-1"></a><span class="st">    normal_lccdf(0 | 0, .3);</span></span>
+<span id="cb263-45"><a href="mixture-models.html#cb263-45" tabindex="-1"></a><span class="st">    </span></span>
+<span id="cb263-46"><a href="mixture-models.html#cb263-46" tabindex="-1"></a><span class="st">  target += lkj_corr_cholesky_lpdf(L_u | 2);</span></span>
+<span id="cb263-47"><a href="mixture-models.html#cb263-47" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb263-48"><a href="mixture-models.html#cb263-48" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(to_vector(z_IDs));</span></span>
+<span id="cb263-49"><a href="mixture-models.html#cb263-49" tabindex="-1"></a></span>
+<span id="cb263-50"><a href="mixture-models.html#cb263-50" tabindex="-1"></a><span class="st">  for (i in 1:agents)</span></span>
+<span id="cb263-51"><a href="mixture-models.html#cb263-51" tabindex="-1"></a><span class="st">    target += log_sum_exp(</span></span>
+<span id="cb263-52"><a href="mixture-models.html#cb263-52" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
+<span id="cb263-53"><a href="mixture-models.html#cb263-53" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | 0), // times post likelihood of the noise model</span></span>
+<span id="cb263-54"><a href="mixture-models.html#cb263-54" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
+<span id="cb263-55"><a href="mixture-models.html#cb263-55" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
+<span id="cb263-56"><a href="mixture-models.html#cb263-56" tabindex="-1"></a><span class="st">                    </span></span>
+<span id="cb263-57"><a href="mixture-models.html#cb263-57" tabindex="-1"></a></span>
+<span id="cb263-58"><a href="mixture-models.html#cb263-58" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb263-59"><a href="mixture-models.html#cb263-59" tabindex="-1"></a></span>
+<span id="cb263-60"><a href="mixture-models.html#cb263-60" tabindex="-1"></a><span class="st">generated quantities{</span></span>
+<span id="cb263-61"><a href="mixture-models.html#cb263-61" tabindex="-1"></a><span class="st">  real thetaM_prior;</span></span>
+<span id="cb263-62"><a href="mixture-models.html#cb263-62" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; thetaSD_prior;</span></span>
+<span id="cb263-63"><a href="mixture-models.html#cb263-63" tabindex="-1"></a><span class="st">  real noiseM_prior;</span></span>
+<span id="cb263-64"><a href="mixture-models.html#cb263-64" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; noiseSD_prior;</span></span>
+<span id="cb263-65"><a href="mixture-models.html#cb263-65" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_prior;</span></span>
+<span id="cb263-66"><a href="mixture-models.html#cb263-66" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_prior;</span></span>
+<span id="cb263-67"><a href="mixture-models.html#cb263-67" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; theta_posterior;</span></span>
+<span id="cb263-68"><a href="mixture-models.html#cb263-68" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; noise_posterior;</span></span>
+<span id="cb263-69"><a href="mixture-models.html#cb263-69" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb263-70"><a href="mixture-models.html#cb263-70" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_noise;</span></span>
+<span id="cb263-71"><a href="mixture-models.html#cb263-71" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_noise;</span></span>
+<span id="cb263-72"><a href="mixture-models.html#cb263-72" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; prior_preds;</span></span>
+<span id="cb263-73"><a href="mixture-models.html#cb263-73" tabindex="-1"></a><span class="st">  array[trials,agents] int&lt;lower=0, upper = trials&gt; posterior_preds;</span></span>
+<span id="cb263-74"><a href="mixture-models.html#cb263-74" tabindex="-1"></a></span>
+<span id="cb263-75"><a href="mixture-models.html#cb263-75" tabindex="-1"></a><span class="st">  array[trials, agents] real log_lik;</span></span>
+<span id="cb263-76"><a href="mixture-models.html#cb263-76" tabindex="-1"></a></span>
+<span id="cb263-77"><a href="mixture-models.html#cb263-77" tabindex="-1"></a><span class="st">  thetaM_prior = normal_rng(0,1);</span></span>
+<span id="cb263-78"><a href="mixture-models.html#cb263-78" tabindex="-1"></a><span class="st">  thetaSD_prior = normal_lb_rng(0,0.3,0);</span></span>
+<span id="cb263-79"><a href="mixture-models.html#cb263-79" tabindex="-1"></a><span class="st">  theta_prior = inv_logit(normal_rng(thetaM_prior, thetaSD_prior));</span></span>
+<span id="cb263-80"><a href="mixture-models.html#cb263-80" tabindex="-1"></a><span class="st">  noiseM_prior = normal_rng(-1,.5);</span></span>
+<span id="cb263-81"><a href="mixture-models.html#cb263-81" tabindex="-1"></a><span class="st">  noiseSD_prior = normal_lb_rng(0,0.3,0);</span></span>
+<span id="cb263-82"><a href="mixture-models.html#cb263-82" tabindex="-1"></a><span class="st">  noise_prior = inv_logit(normal_rng(noiseM_prior, noiseSD_prior));</span></span>
+<span id="cb263-83"><a href="mixture-models.html#cb263-83" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb263-84"><a href="mixture-models.html#cb263-84" tabindex="-1"></a><span class="st">  theta_posterior = inv_logit(normal_rng(thetaM, tau[1]));</span></span>
+<span id="cb263-85"><a href="mixture-models.html#cb263-85" tabindex="-1"></a><span class="st">  noise_posterior = inv_logit(normal_rng(noiseM, tau[2]));</span></span>
+<span id="cb263-86"><a href="mixture-models.html#cb263-86" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb263-87"><a href="mixture-models.html#cb263-87" tabindex="-1"></a><span class="st">   </span></span>
+<span id="cb263-88"><a href="mixture-models.html#cb263-88" tabindex="-1"></a><span class="st">   for (i in 1:agents){</span></span>
+<span id="cb263-89"><a href="mixture-models.html#cb263-89" tabindex="-1"></a><span class="st">     </span></span>
+<span id="cb263-90"><a href="mixture-models.html#cb263-90" tabindex="-1"></a><span class="st">    for (t in 1:trials){</span></span>
+<span id="cb263-91"><a href="mixture-models.html#cb263-91" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb263-92"><a href="mixture-models.html#cb263-92" tabindex="-1"></a><span class="st">      prior_noise[t,i] = bernoulli_rng(noise_prior);</span></span>
+<span id="cb263-93"><a href="mixture-models.html#cb263-93" tabindex="-1"></a><span class="st">      posterior_noise[t,i] = bernoulli_rng(inv_logit(noiseM + IDs[i,2]));</span></span>
+<span id="cb263-94"><a href="mixture-models.html#cb263-94" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb263-95"><a href="mixture-models.html#cb263-95" tabindex="-1"></a><span class="st">      if(prior_noise[t,i]==1){</span></span>
+<span id="cb263-96"><a href="mixture-models.html#cb263-96" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(theta_prior);</span></span>
+<span id="cb263-97"><a href="mixture-models.html#cb263-97" tabindex="-1"></a><span class="st">      } else{</span></span>
+<span id="cb263-98"><a href="mixture-models.html#cb263-98" tabindex="-1"></a><span class="st">        prior_preds[t,i] = bernoulli_rng(0.5);</span></span>
+<span id="cb263-99"><a href="mixture-models.html#cb263-99" tabindex="-1"></a><span class="st">      }</span></span>
+<span id="cb263-100"><a href="mixture-models.html#cb263-100" tabindex="-1"></a><span class="st">      if(posterior_noise[t,i]==1){</span></span>
+<span id="cb263-101"><a href="mixture-models.html#cb263-101" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(inv_logit(thetaM + IDs[i,1]));</span></span>
+<span id="cb263-102"><a href="mixture-models.html#cb263-102" tabindex="-1"></a><span class="st">      } else{</span></span>
+<span id="cb263-103"><a href="mixture-models.html#cb263-103" tabindex="-1"></a><span class="st">        posterior_preds[t,i] = bernoulli_rng(0.5);</span></span>
+<span id="cb263-104"><a href="mixture-models.html#cb263-104" tabindex="-1"></a><span class="st">      }</span></span>
+<span id="cb263-105"><a href="mixture-models.html#cb263-105" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb263-106"><a href="mixture-models.html#cb263-106" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb263-107"><a href="mixture-models.html#cb263-107" tabindex="-1"></a><span class="st">      log_lik[t,i] = log_sum_exp(</span></span>
+<span id="cb263-108"><a href="mixture-models.html#cb263-108" tabindex="-1"></a><span class="st">            log(inv_logit(noiseM + IDs[i,2])) +  // p of noise</span></span>
+<span id="cb263-109"><a href="mixture-models.html#cb263-109" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | 0), // times post likelihood of the noise model</span></span>
+<span id="cb263-110"><a href="mixture-models.html#cb263-110" tabindex="-1"></a><span class="st">            log1m(inv_logit(noiseM + IDs[i,2])) + // 1 - p of noise</span></span>
+<span id="cb263-111"><a href="mixture-models.html#cb263-111" tabindex="-1"></a><span class="st">                    bernoulli_logit_lpmf(h[t,i] | thetaM + IDs[i,1])); // times post likelihood of the bias model</span></span>
+<span id="cb263-112"><a href="mixture-models.html#cb263-112" tabindex="-1"></a><span class="st">      </span></span>
+<span id="cb263-113"><a href="mixture-models.html#cb263-113" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb263-114"><a href="mixture-models.html#cb263-114" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb263-115"><a href="mixture-models.html#cb263-115" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb263-116"><a href="mixture-models.html#cb263-116" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb263-117"><a href="mixture-models.html#cb263-117" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb263-118"><a href="mixture-models.html#cb263-118" tabindex="-1"></a></span>
+<span id="cb263-119"><a href="mixture-models.html#cb263-119" tabindex="-1"></a><span class="fu">write_stan_file</span>(</span>
+<span id="cb263-120"><a href="mixture-models.html#cb263-120" tabindex="-1"></a>  stan_multilevelMixture_model,</span>
+<span id="cb263-121"><a href="mixture-models.html#cb263-121" tabindex="-1"></a>  <span class="at">dir =</span> <span class="st">&quot;stan/&quot;</span>,</span>
+<span id="cb263-122"><a href="mixture-models.html#cb263-122" tabindex="-1"></a>  <span class="at">basename =</span> <span class="st">&quot;W6_MixtureMultilevel.stan&quot;</span>)</span></code></pre></div>
 <pre><code>## [1] &quot;/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/W6_MixtureMultilevel.stan&quot;</code></pre>
-<div class="sourceCode" id="cb277"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb277-1"><a href="mixture-models.html#cb277-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureMultilevel.stan&quot;</span>)</span>
-<span id="cb277-2"><a href="mixture-models.html#cb277-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
-<span id="cb277-3"><a href="mixture-models.html#cb277-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
-<span id="cb277-4"><a href="mixture-models.html#cb277-4" tabindex="-1"></a></span>
-<span id="cb277-5"><a href="mixture-models.html#cb277-5" tabindex="-1"></a></span>
-<span id="cb277-6"><a href="mixture-models.html#cb277-6" tabindex="-1"></a><span class="co"># samples &lt;- mod_mixture$sample(</span></span>
-<span id="cb277-7"><a href="mixture-models.html#cb277-7" tabindex="-1"></a><span class="co">#   data = data_biased,</span></span>
-<span id="cb277-8"><a href="mixture-models.html#cb277-8" tabindex="-1"></a><span class="co">#   seed = 123,</span></span>
-<span id="cb277-9"><a href="mixture-models.html#cb277-9" tabindex="-1"></a><span class="co">#   chains = 2,</span></span>
-<span id="cb277-10"><a href="mixture-models.html#cb277-10" tabindex="-1"></a><span class="co">#   parallel_chains = 2,</span></span>
-<span id="cb277-11"><a href="mixture-models.html#cb277-11" tabindex="-1"></a><span class="co">#   threads_per_chain = 2,</span></span>
-<span id="cb277-12"><a href="mixture-models.html#cb277-12" tabindex="-1"></a><span class="co">#   iter_warmup = 2000,</span></span>
-<span id="cb277-13"><a href="mixture-models.html#cb277-13" tabindex="-1"></a><span class="co">#   iter_sampling = 2000,</span></span>
-<span id="cb277-14"><a href="mixture-models.html#cb277-14" tabindex="-1"></a><span class="co">#   refresh = 500,</span></span>
-<span id="cb277-15"><a href="mixture-models.html#cb277-15" tabindex="-1"></a><span class="co">#   max_treedepth = 20,</span></span>
-<span id="cb277-16"><a href="mixture-models.html#cb277-16" tabindex="-1"></a><span class="co">#   adapt_delta = 0.99,</span></span>
-<span id="cb277-17"><a href="mixture-models.html#cb277-17" tabindex="-1"></a><span class="co"># )</span></span>
-<span id="cb277-18"><a href="mixture-models.html#cb277-18" tabindex="-1"></a><span class="co"># </span></span>
-<span id="cb277-19"><a href="mixture-models.html#cb277-19" tabindex="-1"></a><span class="co"># save(samples, data, </span></span>
-<span id="cb277-20"><a href="mixture-models.html#cb277-20" tabindex="-1"></a><span class="co">#           file = &quot;simmodels/W7_multimixture.RData&quot;) </span></span>
-<span id="cb277-21"><a href="mixture-models.html#cb277-21" tabindex="-1"></a><span class="co"># samples$save_object(file = &quot;simmodels/W7_multimixture.RDS&quot;)</span></span>
-<span id="cb277-22"><a href="mixture-models.html#cb277-22" tabindex="-1"></a><span class="co"># samples$save_output_files(dir = &quot;simmodels&quot;, basename = &quot;W7_multimixture&quot;)</span></span></code></pre></div>
+<div class="sourceCode" id="cb265"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb265-1"><a href="mixture-models.html#cb265-1" tabindex="-1"></a>file <span class="ot">&lt;-</span> <span class="fu">file.path</span>(<span class="st">&quot;stan/W6_MixtureMultilevel.stan&quot;</span>)</span>
+<span id="cb265-2"><a href="mixture-models.html#cb265-2" tabindex="-1"></a>mod_mixture <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(file, <span class="at">cpp_options =</span> <span class="fu">list</span>(<span class="at">stan_threads =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb265-3"><a href="mixture-models.html#cb265-3" tabindex="-1"></a>                     <span class="at">stanc_options =</span> <span class="fu">list</span>(<span class="st">&quot;O1&quot;</span>))</span>
+<span id="cb265-4"><a href="mixture-models.html#cb265-4" tabindex="-1"></a></span>
+<span id="cb265-5"><a href="mixture-models.html#cb265-5" tabindex="-1"></a></span>
+<span id="cb265-6"><a href="mixture-models.html#cb265-6" tabindex="-1"></a><span class="co"># samples &lt;- mod_mixture$sample(</span></span>
+<span id="cb265-7"><a href="mixture-models.html#cb265-7" tabindex="-1"></a><span class="co">#   data = data_biased,</span></span>
+<span id="cb265-8"><a href="mixture-models.html#cb265-8" tabindex="-1"></a><span class="co">#   seed = 123,</span></span>
+<span id="cb265-9"><a href="mixture-models.html#cb265-9" tabindex="-1"></a><span class="co">#   chains = 2,</span></span>
+<span id="cb265-10"><a href="mixture-models.html#cb265-10" tabindex="-1"></a><span class="co">#   parallel_chains = 2,</span></span>
+<span id="cb265-11"><a href="mixture-models.html#cb265-11" tabindex="-1"></a><span class="co">#   threads_per_chain = 2,</span></span>
+<span id="cb265-12"><a href="mixture-models.html#cb265-12" tabindex="-1"></a><span class="co">#   iter_warmup = 2000,</span></span>
+<span id="cb265-13"><a href="mixture-models.html#cb265-13" tabindex="-1"></a><span class="co">#   iter_sampling = 2000,</span></span>
+<span id="cb265-14"><a href="mixture-models.html#cb265-14" tabindex="-1"></a><span class="co">#   refresh = 500,</span></span>
+<span id="cb265-15"><a href="mixture-models.html#cb265-15" tabindex="-1"></a><span class="co">#   max_treedepth = 20,</span></span>
+<span id="cb265-16"><a href="mixture-models.html#cb265-16" tabindex="-1"></a><span class="co">#   adapt_delta = 0.99,</span></span>
+<span id="cb265-17"><a href="mixture-models.html#cb265-17" tabindex="-1"></a><span class="co"># )</span></span>
+<span id="cb265-18"><a href="mixture-models.html#cb265-18" tabindex="-1"></a><span class="co"># </span></span>
+<span id="cb265-19"><a href="mixture-models.html#cb265-19" tabindex="-1"></a><span class="co"># save(samples, data, </span></span>
+<span id="cb265-20"><a href="mixture-models.html#cb265-20" tabindex="-1"></a><span class="co">#           file = &quot;simmodels/W7_multimixture.RData&quot;) </span></span>
+<span id="cb265-21"><a href="mixture-models.html#cb265-21" tabindex="-1"></a><span class="co"># samples$save_object(file = &quot;simmodels/W7_multimixture.RDS&quot;)</span></span>
+<span id="cb265-22"><a href="mixture-models.html#cb265-22" tabindex="-1"></a><span class="co"># samples$save_output_files(dir = &quot;simmodels&quot;, basename = &quot;W7_multimixture&quot;)</span></span></code></pre></div>
 <p>[MISSING: EVALUATION]</p>
-<div class="sourceCode" id="cb278"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb278-1"><a href="mixture-models.html#cb278-1" tabindex="-1"></a>samples <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(<span class="st">&quot;simmodels/W7_multimixture.RDS&quot;</span>)</span>
-<span id="cb278-2"><a href="mixture-models.html#cb278-2" tabindex="-1"></a></span>
-<span id="cb278-3"><a href="mixture-models.html#cb278-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb266"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb266-1"><a href="mixture-models.html#cb266-1" tabindex="-1"></a>samples <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(<span class="st">&quot;simmodels/W7_multimixture.RDS&quot;</span>)</span>
+<span id="cb266-2"><a href="mixture-models.html#cb266-2" tabindex="-1"></a></span>
+<span id="cb266-3"><a href="mixture-models.html#cb266-3" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">summary</span>()</span></code></pre></div>
 <pre><code>## # A tibble: 60,417 × 10
 ##    variable         mean     median      sd     mad         q5       q95  rhat ess_bulk ess_tail
 ##    &lt;chr&gt;           &lt;dbl&gt;      &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt;      &lt;dbl&gt;     &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
@@ -670,7 +670,7 @@ In this chapter, we’ll explore how to implement mixture models using Stan, beg
 ##  9 z_IDs[2,2]    -0.0185    -0.0375  0.982   0.986     -1.65       1.58   1.00    9849.    2787.
 ## 10 z_IDs[1,3]     1.93       1.91    0.527   0.521      1.11       2.83   1.00    7475.    2623.
 ## # ℹ 60,407 more rows</code></pre>
-<div class="sourceCode" id="cb280"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb280-1"><a href="mixture-models.html#cb280-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">loo</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb268"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb268-1"><a href="mixture-models.html#cb268-1" tabindex="-1"></a>samples<span class="sc">$</span><span class="fu">loo</span>()</span></code></pre></div>
 <pre><code>## 
 ## Computed from 4000 by 12000 log-likelihood matrix.
 ## 
