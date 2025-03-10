@@ -486,24 +486,24 @@ create_stan_data <- function(data, agent_type) {
   
   # Create choice matrix
   choice_data <- data %>% 
-    select(agent, trial, all_of(choice_col)) %>% 
+    dplyr::select(agent, trial, all_of(choice_col)) %>% 
     pivot_wider(
       names_from = agent, 
       values_from = all_of(choice_col),
       names_prefix = "agent_"
     ) %>%
-    select(-trial) %>%
+    dplyr::select(-trial) %>%
     as.matrix()
   
   # Create other-choice matrix (used for memory agent)
   other_data <- data %>% 
-    select(agent, trial, all_of(other_col)) %>% 
+    dplyr::select(agent, trial, all_of(other_col)) %>% 
     pivot_wider(
       names_from = agent, 
       values_from = all_of(other_col),
       names_prefix = "agent_"
     ) %>%
-    select(-trial) %>%
+    dplyr::select(-trial) %>%
     as.matrix()
   
   # Return data as a list ready for Stan
@@ -611,14 +611,14 @@ generated quantities {
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "W5_MultilevelBias.stan")
+  basename = "W6_MultilevelBias.stan")
 
 # File path for saved model
-model_file <- "simmodels/W5_MultilevelBias.RDS"
+model_file <- "simmodels/W6_MultilevelBias.RDS"
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
-  file <- file.path("stan/W5_MultilevelBias.stan")
+  file <- file.path("stan/W6_MultilevelBias.stan")
   mod <- cmdstan_model(file, 
                      cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
@@ -656,7 +656,7 @@ Besides the usual prior predictive checks, prior posterior update checks, poster
 ```{r Assessing pop level features of multilevel random agents}
 
 # Load the model results
-samples <- readRDS("simmodels/W5_MultilevelBias.RDS")
+samples <- readRDS("simmodels/W6_MultilevelBias.RDS")
 
 # Display summary statistics for key parameters
 samples$summary(c("thetaM", "thetaSD", "thetaM_prob")) 
@@ -915,7 +915,7 @@ p4
 
 ```{r}
 # File path for saved sensitivity results
-sensitivity_results_file <- "simdata/W5_sensitivity_results.csv"
+sensitivity_results_file <- "simdata/W6_sensitivity_results.csv"
 
 # Check if we need to rerun the analysis
 if (regenerate_simulations || !file.exists(sensitivity_results_file)) {
@@ -981,7 +981,7 @@ if (regenerate_simulations || !file.exists(sensitivity_results_file)) {
   # Function to fit model with specified priors
   fit_with_priors <- function(prior_mean_theta, prior_sd_theta, prior_scale_theta_sd) {
     # Create data with prior specifications
-    data_with_priors <- c(data, list(
+    data_with_priors <- c(data_random, list(
       prior_mean_theta = prior_mean_theta,
       prior_sd_theta = prior_sd_theta,
       prior_scale_theta_sd = prior_scale_theta_sd
@@ -1015,7 +1015,7 @@ if (regenerate_simulations || !file.exists(sensitivity_results_file)) {
 
   # Run parallel analysis
   library(furrr)
-  plan(multisession, workers = 2)  # Using fewer workers to reduce resource use
+  plan(multisession, workers = 4)  # Using fewer workers to reduce resource use
 
   sensitivity_results <- future_pmap_dfr(
     prior_settings,
@@ -1076,7 +1076,7 @@ p1 / p2
 
 ```{r}
 # File path for saved recovery results
-recovery_results_file <- "simdata/W5_recovery_results.csv"
+recovery_results_file <- "simdata/W6_recovery_results.csv"
 
 # Check if we need to rerun the analysis
 if (regenerate_simulations || !file.exists(recovery_results_file)) {
@@ -1371,25 +1371,30 @@ generated quantities{
 }
 "
 
+write_stan_file(
+  stan_model,
+  dir = "stan/",
+  basename = "W6_MultilevelMemory.stan")
+
 # File path for saved model
-model_file <- "simmodels/W5_MultilevelMemory_centered.RDS"
+model_file <- "simmodels/W6_MultilevelMemory_centered.RDS"
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
   
-  file <- file.path("stan/W5_MultilevelMemory.stan")
+  file <- file.path("stan/W6_MultilevelMemory.stan")
   mod <- cmdstan_model(file, 
                      cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
 
   
   # Sample from the posterior distribution
-  samples <- mod$sample(
+  samples_mlvl <- mod$sample(
     data = data_memory,
     seed = 123,
     chains = 2,
     parallel_chains = 2,
-    threads_per_chain = 2,
+    threads_per_chain = 1,
     iter_warmup = 2000,
     iter_sampling = 2000,
     refresh = 500,
@@ -1398,11 +1403,11 @@ if (regenerate_simulations || !file.exists(model_file)) {
   )
   
   # Save the model results
-  samples$save_object(file = model_file)
+  samples_mlvl$save_object(file = model_file)
   cat("Generated new model fit and saved to", model_file, "\n")
 } else {
   # Load existing results
-  samples <- readRDS(model_file)
+  samples_mlvl <- readRDS(model_file)
   cat("Loaded existing model fit from", model_file, "\n")
 }
 
@@ -1411,14 +1416,18 @@ if (regenerate_simulations || !file.exists(model_file)) {
 ### Assessing multilevel memory
 
 ```{r Assessing multilevel memory centered: markov chains}
-# Load the model results
-samples <- readRDS("simmodels/W5_MultilevelMemory_centered.RDS")
+# Check if samples_biased exists
+if (!exists("samples_mlvl")) {
+  cat("Loading multilevel model samples...\n")
+  samples_mlvl <- readRDS("simmodels/W6_MultilevelMemory_centered.RDS")
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_mlvl$draws())), collapse = ", "), "\n")
+}
 
 # Show summary statistics for key parameters
-print(samples$summary(c("biasM", "betaM", "biasSD", "betaSD")))
+print(samples_mlvl$summary(c("biasM", "betaM", "biasSD", "betaSD")))
 
 # Extract posterior draws for analysis
-draws_df <- as_draws_df(samples$draws()) 
+draws_df <- as_draws_df(samples_mlvl$draws()) 
 
 # Create trace plots to check convergence
 p1 <- mcmc_trace(draws_df, pars = c("biasM", "biasSD", "betaM", "betaSD")) +
@@ -1485,7 +1494,7 @@ p1
 sample_agents <- sample(1:agents, 100)
 sample_data <- d %>% 
   filter(agent %in% sample_agents, trial == 1) %>%
-  select(agent, bias, beta)
+  dplyr::select(agent, bias, beta)
 
 # Extract posterior means for individual agents
 bias_means <- c()
@@ -1535,7 +1544,7 @@ p1 + p2
 ```{r}
 # First, let's examine the individual bias parameters distribution
 bias_params <- draws_df %>%
-  select(starts_with("bias[")) %>%
+  dplyr::select(starts_with("bias[")) %>%
   pivot_longer(everything(), names_to = "parameter", values_to = "value")
 
 # Plot distribution of all individual bias parameters
@@ -1789,28 +1798,28 @@ generated quantities{
 write_stan_file(
   stan_model_nc,
   dir = "stan/",
-  basename = "W5_MultilevelMemory_nc.stan"
+  basename = "W6_MultilevelMemory_nc.stan"
 )
 
 # File path for saved model
-model_file <- "simmodels/W5_MultilevelMemory_noncentered.RDS"
+model_file <- "simmodels/W6_MultilevelMemory_noncentered.RDS"
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
   
   # Compile the model
-  file <- file.path("stan/W5_MultilevelMemory_nc.stan")
+  file <- file.path("stan/W6_MultilevelMemory_nc.stan")
   mod_nc <- cmdstan_model(file, 
                      cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
 
   # Sample from the posterior distribution
-  samples <- mod_nc$sample(
+  samples_mlvl_nc <- mod_nc$sample(
     data = data_memory,
     seed = 123,
     chains = 2,
     parallel_chains = 2,
-    threads_per_chain = 2,
+    threads_per_chain = 1,
     iter_warmup = 2000,
     iter_sampling = 2000,
     refresh = 500,
@@ -1819,11 +1828,11 @@ if (regenerate_simulations || !file.exists(model_file)) {
   )
   
   # Save the model results
-  samples$save_object(file = model_file)
+  samples_mlvl_nc$save_object(file = model_file)
   cat("Generated new model fit and saved to", model_file, "\n")
 } else {
   # Load existing results
-  samples <- readRDS(model_file)
+  samples_mlvl_nc <- readRDS(model_file)
   cat("Loaded existing model fit from", model_file, "\n")
 }
 ```
@@ -1831,13 +1840,18 @@ if (regenerate_simulations || !file.exists(model_file)) {
 ### Assessing multilevel memory
 
 ```{r Assessing multilevel memory nc: markov chains}
-samples <- readRDS("simmodels/W5_MultilevelMemory_noncentered.RDS")
+# Check if samples_biased exists
+if (!exists("samples_mlvl_nc")) {
+  cat("Loading multilevel non centered model samples...\n")
+  samples_mlvl_nc <- readRDS("simmodels/W6_MultilevelMemory_noncentered.RDS")
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_mlvl_nc$draws())), collapse=", "), "\n")
+}
 
 # Show summary statistics for key parameters
-print(samples$summary(c("biasM", "betaM", "biasSD", "betaSD")))
+print(samples_mlvl_nc$summary(c("biasM", "betaM", "biasSD", "betaSD")))
 
 # Extract posterior draws for analysis
-draws_df <- as_draws_df(samples$draws()) 
+draws_df <- as_draws_df(samples_mlvl_nc$draws()) 
 
 # Create trace plots to check convergence
 p1 <- mcmc_trace(draws_df, pars = c("biasM", "biasSD", "betaM", "betaSD")) +
@@ -1904,7 +1918,7 @@ p1
 sample_agents <- sample(1:agents, 100)
 sample_data <- d %>% 
   filter(agent %in% sample_agents, trial == 1) %>%
-  select(agent, bias, beta)
+  dplyr::select(agent, bias, beta)
 
 # Extract posterior means for individual agents
 bias_means <- c()
@@ -2059,26 +2073,26 @@ generated quantities{
 write_stan_file(
   stan_model_nc_cor,
   dir = "stan/",
-  basename = "W5_MultilevelMemory_nc_cor.stan")
+  basename = "W6_MultilevelMemory_nc_cor.stan")
 
-model_file <- "simmodels/W5_MultilevelMemory_noncentered_cor.RDS"
+model_file <- "simmodels/W6_MultilevelMemory_noncentered_cor.RDS"
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
   
   # Compile the model
-  file <- file.path("stan/W5_MultilevelMemory_nc_cor.stan")
+  file <- file.path("stan/W6_MultilevelMemory_nc_cor.stan")
   mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
 
 
   # Sample from the posterior distribution
-  samples <- mod$sample(
+  samples_mlvl_nc_cor <- mod$sample(
     data = data_memory,
     seed = 123,
     chains = 2,
     parallel_chains = 2,
-    threads_per_chain = 2,
+    threads_per_chain = 1,
     iter_warmup = 2000,
     iter_sampling = 2000,
     refresh = 500,
@@ -2087,11 +2101,11 @@ if (regenerate_simulations || !file.exists(model_file)) {
   )
   
   # Save the model results
-  samples$save_object(file = model_file)
+  samples_mlvl_nc_cor$save_object(file = model_file)
   cat("Generated new model fit and saved to", model_file, "\n")
 } else {
   # Load existing results
-  samples <- readRDS(model_file)
+  samples_mlvl_nc_cor <- readRDS(model_file)
   cat("Loaded existing model fit from", model_file, "\n")
 }
 
@@ -2099,16 +2113,20 @@ if (regenerate_simulations || !file.exists(model_file)) {
 
 ### Assessing multilevel memory
 
-[MISSING LOTS OF EVALUATION]
 
 ```{r Assessing multilevel memory: markov chains}
-samples <- readRDS("simmodels/W5_MultilevelMemory_noncentered_cor.RDS")
+# Check if samples_biased exists
+if (!exists("samples_mlvl_nc_cor")) {
+  cat("Loading multilevel non centered correlated model samples...\n")
+  samples_mlvl_nc_cor <- readRDS("simmodels/W6_MultilevelMemory_noncentered_cor.RDS")
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_mlvl_nc_cor$draws())), collapse = ", "), "\n")
+}
 
 # Show summary statistics for key parameters
-print(samples$summary(c("biasM", "betaM", "tau[1]", "tau[2]", "L_u[2,2]")))
+print(samples_mlvl_nc_cor$summary(c("biasM", "betaM", "tau[1]", "tau[2]", "L_u[2,2]")))
 
 # Extract posterior draws for analysis
-draws_df <- as_draws_df(samples$draws()) 
+draws_df <- as_draws_df(samples_mlvl_nc_cor$draws()) 
 
 # Create trace plots to check convergence
 p1 <- mcmc_trace(draws_df, pars = c("biasM", "betaM", "tau[1]", "tau[2]", "L_u[2,2]")) +
@@ -2179,7 +2197,7 @@ chol_to_corr <- function(L) {
 
 # Extract the Cholesky factor from posterior samples
 posterior_L <- draws_df %>%
-  select(starts_with("L_u[2,1]"))  # This is the cholesky factor element for correlation
+  dplyr::select(starts_with("L_u[2,1]"))  # This is the cholesky factor element for correlation
 
 # Convert to correlation values
 posterior_corr <- posterior_L %>%
@@ -2236,7 +2254,7 @@ p1
 sample_agents <- sample(1:agents, 100)
 sample_data <- d %>% 
   filter(agent %in% sample_agents, trial == 1) %>%
-  select(agent, bias, beta)
+  dplyr::select(agent, bias, beta)
 
 # Extract posterior means for individual agents
 bias_means <- c()
@@ -2283,8 +2301,8 @@ p1 + p2
 
 ```{r compare_parameterizations}
 # Load both models
-centered_model <- readRDS("simmodels/W5_MultilevelMemory_centered.RDS")
-noncentered_model <- readRDS("simmodels/W5_MultilevelMemory_noncentered.RDS")
+centered_model <- readRDS("simmodels/W6_MultilevelMemory_centered.RDS")
+noncentered_model <- readRDS("simmodels/W6_MultilevelMemory_noncentered.RDS")
 
 # Function to extract divergences and tree depths
 extract_diagnostics <- function(model_fit) {
@@ -2314,7 +2332,7 @@ diagnostics_table <- diagnostics %>%
     divergent_pct = round(divergent / n_draws * 100, 2),
     max_treedepth_pct = round(max_treedepth / n_draws * 100, 2)
   ) %>%
-  select(model, divergent, divergent_pct, max_treedepth, max_treedepth_pct)
+  dplyr::select(model, divergent, divergent_pct, max_treedepth, max_treedepth_pct)
 
 # Display diagnostics table
 knitr::kable(diagnostics_table, 
@@ -2333,18 +2351,18 @@ parameter_comparison <- bind_rows(
 )
 
 # Display parameter comparison
-knitr::kable(parameter_comparison %>% select(model, variable, mean, q5, q95),
+knitr::kable(parameter_comparison %>% dplyr::select(model, variable, mean, q5, q95),
             caption = "Parameter Estimates: Centered vs. Non-Centered",
             col.names = c("Model", "Parameter", "Mean", "5% Quantile", "95% Quantile"))
 
 # Visual comparison of posterior distributions
 # Extract draws from both models
 centered_draws <- as_draws_df(centered_model$draws()) %>%
-  select(biasM, biasSD, betaM, betaSD) %>%
+  dplyr::select(biasM, biasSD, betaM, betaSD) %>%
   mutate(model = "Centered")
 
 noncentered_draws <- as_draws_df(noncentered_model$draws()) %>%
-  select(biasM, biasSD, betaM, betaSD) %>%
+  dplyr::select(biasM, biasSD, betaM, betaSD) %>%
   mutate(model = "Non-Centered")
 
 # Combine draws
@@ -2757,7 +2775,7 @@ visualize_pooling_approaches <- function() {
   
   # Convert to long format
   shrinkage_long <- shrinkage_data %>%
-    select(group_id, scenario, n_obs, dist_from_mean, contains("_shrinkage")) %>%
+    dplyr::select(group_id, scenario, n_obs, dist_from_mean, contains("_shrinkage")) %>%
     pivot_longer(
       cols = contains("_shrinkage"),
       names_to = "method",
@@ -2942,7 +2960,7 @@ The practical implementation challenges we've encountered—such as sampling dif
      - Full pooling (single parameters for all agents)
      - No pooling (separate parameters for each agent)
      - Partial pooling (hierarchical model)
-   - Use different amounts of data (20, 60, and 120 trials) to determine when each approach works best.
+   - Use different amounts of data (60, 120 and 500 trials) to determine when each approach works best.
    - Create a plot showing the relative advantage of each approach as data quantity changes.
 
 3. **Extend the Model**

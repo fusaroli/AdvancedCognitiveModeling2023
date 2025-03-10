@@ -81,11 +81,11 @@ generated quantities{
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "W4_SimpleBernoulli_logodds.stan")
+  basename = "W5_SimpleBernoulli_logodds.stan")
 
 ## With the logit format
 ## Specify where the model is
-file <- file.path("stan/W4_SimpleBernoulli_logodds.stan")
+file <- file.path("stan/W5_SimpleBernoulli_logodds.stan")
 mod <- cmdstan_model(file, 
                      cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
@@ -125,8 +125,8 @@ draws_df <- as_draws_df(samples$draws())
 
 # Now let's plot the density for theta (prior and posterior)
 ggplot(draws_df) +
-  geom_density(aes(theta_posterior), fill = "blue", alpha = 0.3) +
-  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
+  geom_histogram(aes(theta_posterior), fill = "blue", alpha = 0.3) +
+  geom_histogram(aes(theta_prior), fill = "red", alpha = 0.3) +
   geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
   xlab("Rate") +
   ylab("Estimate Densities") +
@@ -184,7 +184,7 @@ ggplot(draws_df) +
 
 ## Prior sensitivity analysis
 
-```{r prior sensitivity analysis, warning = FALSE, message = FALSE, eval = FALSE}
+```{r prior sensitivity analysis, warning = FALSE, message = FALSE}
 ## Now we adding different priors for theta
 prior_mean <- seq(-3, 3, .5)
 prior_sd <- seq(0.1, 1, 0.1)
@@ -280,14 +280,14 @@ sim_d_and_fit <- function(prior_mean, prior_sd) {
 
 
 # Commenting this out to ensure faster compiling time for the book. Uncomment to run the code
-# recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
-# write_csv(recovery_df, "simdata/W4_priorSensitivityRecovery.csv")
+recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
+write_csv(recovery_df, "simdata/W5_priorSensitivityRecovery.csv")
 
 ```
 
 Now we load the data and plot it
 ```{r}
-recovery_df <- read_csv("simdata/W4_priorSensitivityRecovery.csv")
+recovery_df <- read_csv("simdata/W5_priorSensitivityRecovery.csv")
 
 ggplot(recovery_df, aes(prior_mean, theta_posterior)) +
   geom_point(alpha = 0.1) +
@@ -327,6 +327,8 @@ MemoryAgent_f <- function(bias, beta, cumulativerate){
     choice = rbinom(1, 1, inv_logit_scaled(bias + beta * logit_scaled(cumulativerate)))
   return(choice)
 }
+
+d1$Self[1] <- RandomAgentNoise_f(0.5, 0)
 
 for (i in 1:trials) {
   d1$Self[i] <- MemoryAgent_f(bias, beta, d1$cumulativerate[i])
@@ -406,10 +408,10 @@ generated quantities{
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "W4_MemoryBernoulli.stan")
+  basename = "W5_MemoryBernoulli.stan")
 
 ## Specify where the model is
-file <- file.path("stan/W4_MemoryBernoulli.stan")
+file <- file.path("stan/W5_MemoryBernoulli.stan")
 mod <- cmdstan_model(file, 
                      cpp_options = list(stan_threads = TRUE),
                      stanc_options = list("O1"))
@@ -482,7 +484,7 @@ ggplot(draws_df) +
 
 ## Prior sensitivity check for the memory model
 
-```{r prior sensitivity check for memory, warning = FALSE, message = FALSE, eval = FALSE}
+```{r prior sensitivity check for memory, warning = FALSE, message = FALSE}
 ## Now we adding different priors for theta
 prior_mean_bias <- 0
 prior_sd_bias <- seq(0.1, 0.5, 0.1)
@@ -558,9 +560,9 @@ generated quantities{
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "W4_PriorMemory.stan")
+  basename = "W5_PriorMemory.stan")
 
-file <- file.path("stan/W4_PriorMemory.stan")
+file <- file.path("stan/W5_PriorMemory.stan")
 mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE))
 
 dd <- d %>% subset(noise == 0.1 & rate == 0.8) %>%
@@ -574,9 +576,9 @@ plan(multisession, workers = 4)
 sim_d_and_fit <- function(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior_sd_beta) {
   
     data <- list(
-        n = nrow(dd),
-        h = dd$choice,
-        memory = dd$memory,
+        n = nrow(d1),
+        h = d1$Self,
+        other = d1$Other,
         prior_mean_bias = prior_mean_bias,
         prior_sd_bias = prior_sd_bias,
         prior_mean_beta = prior_mean_beta,
@@ -619,14 +621,8 @@ sim_d_and_fit <- function(prior_mean_bias, prior_sd_bias, prior_mean_beta, prior
 
 
 # Commenting this out to ensure the book compiles faster. Uncomment to run the code.
-#recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
-#write_csv(recovery_df, "simdata/W4_MemoryPriorSensitivity.csv")
-
-```
-
-
-```{r}
-recovery_df <- read_csv("simdata/W4_MemoryPriorSensitivity.csv")
+recovery_df <- future_pmap_dfr(priors, sim_d_and_fit, .options = furrr_options(seed = TRUE))
+write_csv(recovery_df, "simdata/W5_MemoryPriorSensitivity.csv")
 
 ggplot(recovery_df, aes(prior_sd_beta, beta_posterior)) +
   geom_point(alpha = 0.1) +

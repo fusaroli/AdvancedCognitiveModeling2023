@@ -1,5 +1,5 @@
 
-# From simulation to model fitting
+# From simulation to model fitting #
 
 This chapter introduces essential techniques for moving from theoretical models to empirical validation. Building on our implementation of decision-making agents, we now tackle the challenge of determining whether these models accurately describe observed behavior.
 
@@ -38,6 +38,10 @@ Here we build a new simulation of random agents with bias and noise. The code an
 
 ```{r, 03 simulating data}
 
+# Set this to TRUE when you want to regenerate all simulation results
+# Otherwise, existing results will be loaded
+regenerate_simulations <- TRUE
+
 pacman::p_load(tidyverse,
         here,
         posterior,
@@ -47,7 +51,6 @@ pacman::p_load(tidyverse,
 trials <- 120
 
 RandomAgentNoise_f <- function(rate, noise) {
-
   choice <- rbinom(1, 1, rate) # generating noiseless choices
   
   if (rbinom(1, 1, noise) == 1) {
@@ -57,27 +60,38 @@ RandomAgentNoise_f <- function(rate, noise) {
   return(choice)
 }
 
-d <- NULL
-for (noise in seq(0, 0.5, 0.1)) { # looping through noise levels
+# Check if the simulation data file exists already
+sim_data_file <- "simdata/W3_randomnoise.csv"
 
-  for (rate in seq(0, 1, 0.1)) { # looping through rate levels
-    randomChoice <- rep(NA, trials)
-    
-    for (t in seq(trials)) { # looping through trials (to make it homologous to more reactive models)
-      randomChoice[t] <- RandomAgentNoise_f(rate, noise)
-    }
-    temp <- tibble(trial = seq(trials), choice = randomChoice, rate, noise)
-    temp$cumulativerate <- cumsum(temp$choice) / seq_along(temp$choice)
-
-    if (exists("d")) {
-      d <- rbind(d, temp)
-    } else{
-      d <- temp
+if (regenerate_simulations || !file.exists(sim_data_file)) {
+  # Generate new simulation data
+  d <- NULL
+  for (noise in seq(0, 0.5, 0.1)) { # looping through noise levels
+    for (rate in seq(0, 1, 0.1)) { # looping through rate levels
+      randomChoice <- rep(NA, trials)
+      
+      for (t in seq(trials)) { # looping through trials (to make it homologous to more reactive models)
+        randomChoice[t] <- RandomAgentNoise_f(rate, noise)
+      }
+      temp <- tibble(trial = seq(trials), choice = randomChoice, rate, noise)
+      temp$cumulativerate <- cumsum(temp$choice) / seq_along(temp$choice)
+  
+      if (exists("d")) {
+        d <- rbind(d, temp)
+      } else{
+        d <- temp
+      }
     }
   }
+  
+  # Save the simulation data
+  write_csv(d, sim_data_file)
+  cat("Generated new simulation data and saved to", sim_data_file, "\n")
+} else {
+  # Load existing simulation data
+  d <- read_csv(sim_data_file)
+  cat("Loaded existing simulation data from", sim_data_file, "\n")
 }
-
-write_csv(d, "simdata/W3_randomnoise.csv")
 
 # Now we visualize it 
 p1 <- ggplot(d, aes(trial, cumulativerate, group = rate, color = rate)) + 
@@ -104,7 +118,7 @@ Here we define the data and format it for Stan. Stan likes data as a list. Why a
 d1 <- d %>% subset(noise == 0 & rate == 0.8)
 
 ## Create the data. N.B. note the two variables have different lengths: 1 for n, n for h.
-data <- list(
+data_biased <- list(
   n = 120,  # n of trials
   h = d1$choice # sequence of choices (h stands for hand)
 )
@@ -118,7 +132,7 @@ We write the stan code within the R code (so I can show it to you more easily), 
 
 Remember that the minimal Stan model requires 3 chunks, one specifying the data it will need as input; one specifying the parameters to be estimated; one specifying the model within which the parameters appear, and the priors for those parameters.
 
-```{r, 03 defining the biased model, eval = F}
+```{r, 03 defining the biased model}
 stan_model <- "
 // This model infers a random bias from a sequences of 1s and 0s (right and left hand choices)
 
@@ -154,46 +168,48 @@ write_stan_file(
 
 ### Compiling and fitting the model
 
-```{r 03 fit the biased model, eval = F}
+```{r 03 fit the biased model}
 ## Specify where the model is
 file <- file.path("stan/W3_SimpleBernoulli.stan")
 
-# Compile the model
-mod <- cmdstan_model(file, 
-                     # this specifies we can parallelize the gradient estimations on multiple cores
-                     cpp_options = list(stan_threads = TRUE), 
-                     # this is a trick to make it faster
-                     stanc_options = list("O1")) 
+# File path for saved model
+model_file <- "simmodels/W3_SimpleBernoulli.rds"
 
-# The following command calls Stan with specific options.
-samples <- mod$sample(
-  data = data, # the data :-)
-  seed = 123,  # a seed, so I always get the same results
-  chains = 2,  # how many chains should I fit (to check whether they give the same results)
-  parallel_chains = 2, # how many of the chains can be run in parallel?
-  threads_per_chain = 2, # distribute gradient estimations within chain across multiple cores
-  iter_warmup = 1000,  # warmup iterations through which hyperparameters (steps and step length) are adjusted
-  iter_sampling = 2000, # total number of iterations
-  refresh = 0,  # how often to show that iterations have been run
-  output_dir = "simmodels", # saves the samples as csv so it can be later loaded
-  max_treedepth = 20, # how many steps in the future to check to avoid u-turns
-  adapt_delta = 0.99, # how high a learning rate to adjust hyperparameters during warmup
-)
+# Check if we need to rerun the simulation
+if (regenerate_simulations || !file.exists(model_file)) {
+  # Compile the model
+  mod <- cmdstan_model(file, 
+                       # this specifies we can parallelize the gradient estimations on multiple cores
+                       cpp_options = list(stan_threads = TRUE), 
+                       # this is a trick to make it faster
+                       stanc_options = list("O1")) 
+  
+  # The following command calls Stan with specific options.
+  samples_biased <- mod$sample(
+    data = data_biased, # the data :-)
+    seed = 123,  # a seed, so I always get the same results
+    chains = 2,  # how many chains should I fit (to check whether they give the same results)
+    parallel_chains = 2, # how many of the chains can be run in parallel?
+    threads_per_chain = 2, # distribute gradient estimations within chain across multiple cores
+    iter_warmup = 1000,  # warmup iterations through which hyperparameters (steps and step length) are adjusted
+    iter_sampling = 2000, # total number of iterations
+    refresh = 0,  # how often to show that iterations have been run
+    max_treedepth = 20, # how many steps in the future to check to avoid u-turns
+    adapt_delta = 0.99, # how high a learning rate to adjust hyperparameters during warmup
+  )
+  
+  # Save the fitted model
+  samples_biased$save_object(file = model_file)
+  cat("Generated new model fit and saved to", model_file, "\n")
+} else {
+  # Load existing results
+  cat("Loading biased model samples...\n")
+  samples_biased <- readRDS(model_file)
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_biased$draws())), collapse=", "), "\n")
+  cat("Loaded existing model fit from", model_file, "\n")
+}
 
-# Same the fitted model
-samples$save_object("simmodels/W3_SimpleBernoulli.rds")
-
-```
-
-### Summarizing the model
-
-Now the model is ready to be assessed. First we simply generate a summary of the estimates to have a first idea.
-
-```{r 03 summarizing the biased model samples}
-samples <- readRDS("simmodels/W3_SimpleBernoulli.rds")
-
-samples$summary() # summarize the model
-
+samples_biased$summary() # summarize the model
 ```
 
 ### Assessing model quality
@@ -204,22 +220,39 @@ Then we need to look more in the details at the quality of the estimation:
 
 ```{r 03 biased model quality}
 
+# Check if samples_biased exists
+if (!exists("samples_biased")) {
+  model_file <- "simmodels/W3_SimpleBernoulli.rds"
+  if (file.exists(model_file)) {
+    cat("Loading biased model samples...\n")
+    samples_biased <- readRDS(model_file)
+    cat("Available parameters:", paste(colnames(as_draws_df(samples_biased$draws())), collapse=", "), "\n")
+  } else {
+    cat("Model file not found. Set regenerate_simulations=TRUE to create it.\n")
+    # Provide dummy data or skip the remaining code
+    knitr::knit_exit()
+  }
+}
+
 # Extract posterior samples and include sampling of the prior:
-draws_df <- as_draws_df(samples$draws())
+draws_df_biased <- as_draws_df(samples_biased$draws())
+
+# Explicitly extract parameters
+theta_param <- draws_df_biased$theta
+cat("Successfully extracted theta parameter with", length(theta_param), "values\n")
 
 # Checking the model's chains
-ggplot(draws_df, aes(.iteration, theta, group = .chain, color = .chain)) +
+ggplot(draws_df_biased, aes(.iteration, theta, group = .chain, color = .chain)) +
   geom_line() +
   theme_classic()
 
-
 # add a prior for theta (ugly, but we'll do better soon)
-draws_df <- draws_df %>% mutate(
-  theta_prior = rbeta(nrow(draws_df), 1, 1)
+draws_df_biased <- draws_df_biased %>% mutate(
+  theta_prior = rbeta(nrow(draws_df_biased), 1, 1)
 )
 
 # Now let's plot the density for theta (prior and posterior)
-ggplot(draws_df) +
+ggplot(draws_df_biased) +
   geom_density(aes(theta), fill = "blue", alpha = 0.3) +
   geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
   geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", linewidth = 1.5) +
@@ -272,50 +305,70 @@ write_stan_file(
 ## With the logit format
 ## Specify where the model is
 file <- file.path("stan/W3_SimpleBernoulli_logodds.stan")
-mod <- cmdstan_model(file, 
-                     cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
 
-# The following command calls Stan with specific options.
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 1000,
-  iter_sampling = 2000,
-  refresh = 0,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
+# File path for saved model
+model_file <- "simmodels/W3_SimpleBernoulli_logodds.rds"
 
-# Same the fitted model
-samples$save_object("simmodels/W3_SimpleBernoulli_logodds.rds")
+# Check if we need to rerun the simulation
+if (regenerate_simulations || !file.exists(model_file)) {
+  # Compile the model
+  mod <- cmdstan_model(file, 
+                       cpp_options = list(stan_threads = TRUE),
+                       stanc_options = list("O1"))
+  
+  # The following command calls Stan with specific options.
+  samples_biased_logodds <- mod$sample(
+    data = data_biased,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1000,
+    iter_sampling = 2000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99,
+  )
+  
+  # Save the fitted model
+  samples_biased_logodds$save_object(file = model_file)
+  cat("Generated new model fit and saved to", model_file, "\n")
+} else {
+  # Load existing results
+  cat("Loading biased model (log-odds) samples...\n")
+  samples_biased_logodds <- readRDS(model_file)
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_biased_logodds$draws())), collapse = ", "), "\n")
+  cat("Loaded existing model fit from", model_file, "\n")
+}
 ```
 
 ### Summarizing the results
 ```{r 03 biased model log-odds quality assessment}
 
-samples <- readRDS("simmodels/W3_SimpleBernoulli_logodds.rds")
-# Diagnostics
-samples$cmdstan_diagnose()
+if (!exists("samples_biased_logodds")) {
+  cat("Loading biased model (log-odds) samples...\n")
+  samples_biased_logodds <- readRDS("simmodels/W3_SimpleBernoulli_logodds.rds")
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_biased_logodds$draws())), collapse = ", "), "\n")
+}
 
 # Extract posterior samples and include sampling of the prior:
-draws_df <- as_draws_df(samples$draws()) 
+draws_df_biased_logodds <- as_draws_df(samples_biased_logodds$draws()) 
 
-ggplot(draws_df, aes(.iteration, theta, group = .chain, color = .chain)) +
+# Explicitly extract theta parameter
+theta_param_logodds <- draws_df_biased_logodds$theta
+cat("Successfully extracted theta parameter with", length(theta_param_logodds), "values\n")
+
+ggplot(draws_df_biased_logodds, aes(.iteration, theta, group = .chain, color = .chain)) +
   geom_line() +
   theme_classic()
 
 # add a prior for theta (ugly, but we'll do better soon)
-draws_df <- draws_df %>% mutate(
-  theta_prior = rnorm(nrow(draws_df), 0, 1)
+draws_df_biased_logodds <- draws_df_biased_logodds %>% mutate(
+  theta_prior = rnorm(nrow(draws_df_biased_logodds), 0, 1)
 )
 
 # Now let's plot the density for theta (prior and posterior)
-ggplot(draws_df) +
+ggplot(draws_df_biased_logodds) +
   geom_density(aes(theta), fill = "blue", alpha = 0.3) +
   geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
   geom_vline(xintercept = 1.38, linetype = "dashed", color = "black", size = 1.5) +
@@ -324,146 +377,116 @@ ggplot(draws_df) +
   theme_classic()
 
 # Summary
-samples$summary()
+samples_biased_logodds$summary()
 ```
 
 We can see that the results are very similar.
 
 ## Parameter recovery
 
-Now that we see that the model works in one case, we can run it throughout all possible rate and noise levels in the simulation. N.B. here is using loops, parallelized version in the next code chunk.
+Now that we see that the model works in one case, we can run it through all possible rate and noise levels in the simulation. Here we'll implement a better approach using parallelization, which is more efficient for complex models.
+To parallelize, we rely on furrr, a neat R package that distributes parallel operations across cores. This approach becomes crucial with more complex models.
 
-```{r 03 biased parameter recovery, eval = FALSE}
-# Now we need to scale it up to all possible rates and noises
-# recovery_df <- NULL
-# 
-# for (noiseLvl in unique(d$noise)) {
-#   
-#   for (rateLvl in unique(d$rate)) {
-#     
-#     dd <- d %>% subset(
-#       noise == noiseLvl  & rate == rateLvl
-#     )
-#     
-#     data <- list(
-#       n = 120,
-#       h = dd$choice
-#     )
-#     
-#     samples <- mod$sample(
-#       data = data,
-#       seed = 123,
-#       chains = 1,
-#       parallel_chains = 1,
-#       threads_per_chain = 1,
-#       iter_warmup = 1000,
-#       iter_sampling = 2000,
-#       refresh = 0,
-#       max_treedepth = 20,
-#       adapt_delta = 0.99,
-#     )
-#     
-#     draws_df <- as_draws_df(samples$draws()) 
-#     temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
-#                    biasTrue = rateLvl, noise = noiseLvl)
-#     
-#     
-#     if (exists("recovery_df")) {recovery_df <- rbind(recovery_df, temp)} else {recovery_df <- temp}
-#     
-#   }
-#   
-# }
-# 
-# write_csv(recovery_df, "simdata/W3_recoverydf_simple.csv")
-
-
-
-```
-
-Now we can look at the relation between the "true" bias value we inputted in the simulation and the inferred bias value - the posterior estimates of bias.
-
-```{r 03 plot parameter recovery}
-recovery_df <- read_csv("simdata/W3_recoverydf_simple.csv")
-
-ggplot(recovery_df, aes(biasTrue, biasEst)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  facet_wrap(.~noise) +
-  theme_classic()
-```
-
-
-There's much to be said about the final plot, but for now let's just say that it looks good. We can reconstruct in a nice ordered way true rate values. However, our ability to do so decreases with the increase in noise. So far no surprises. Wait, you say, shouldn't we actually model the generative process, that is, include noise in the Stan model? Gold star, there! But let's wait a bit before we get there, we'll need mixture models. 
-
-One final note before moving to the memory model: what if we parallelized the parameter recovery, so that different models / datasets run on different cores? This was not necessary above (it ran in a few minutes anyway), but will become crucial with more complex models.
-
-To parallelize, we rely on furrr, a neat R package that distributes parallel operations across cores.
 First we need to define the function that will define the operations to be run on each core separately, here we simulate the data according to a seed, a n of trials, a rate and a noise, and then we fit the model to them.
 Second, we need to create a tibble of the seeds, n of trials, rate and noise values that should be simulated.
 Third, we use future_pmap_dfr to run the function on each row of the tibble above separately on a different core. Note that I set the system to split across 4 parallel cores (to work on my computer without clogging it). Do change it according to the system you are using. Note that if you have 40 "jobs" (rows of the tibble, sets of parameter values to run), using e.g. 32 cores will not substantially speed things more than using 20.
 
 
+```{r 03 biased parameter recovery}
+# File path for saved recovery results
+recovery_file <- "simdata/W3_recoverydf_parallel.csv"
 
-```{r 03 parallelizing the code, eval = F}
+# Check if we need to run the parameter recovery
+if (regenerate_simulations || !file.exists(recovery_file)) {
+  # Load necessary packages for parallelization
+  pacman::p_load(future, purrr, furrr)
+  
+  # Set up parallel processing (adjust workers based on your system)
+  plan(multisession, workers = 4)
+  
+  # Define the function that will be run on each core separately
+  sim_d_and_fit <- function(seed, trials, rateLvl, noiseLvl) {
+    # Generate random choices
+    randomChoice <- rep(NA, trials)
+    for (t in seq(trials)) {
+      randomChoice[t] <- RandomAgentNoise_f(rateLvl, noiseLvl)
+    }
+    
+    # Create data for Stan
+    data <- list(
+      n = trials,
+      h = randomChoice
+    )
+    
+    # Compile the model
+    file <- file.path("stan/W3_SimpleBernoulli_logodds.stan")
+    mod <- cmdstan_model(file, 
+                         cpp_options = list(stan_threads = TRUE),
+                         stanc_options = list("O1"))
+    
+    # Fit the model
+    samples_recovery <- mod$sample(
+      data = data,
+      seed = 1000,
+      chains = 1,
+      parallel_chains = 1,
+      threads_per_chain = 1,
+      iter_warmup = 1000,
+      iter_sampling = 2000,
+      refresh = 0,
+      max_treedepth = 20,
+      adapt_delta = 0.99,
+    )
+    
+    # Extract results
+    draws_df_recovery <- as_draws_df(samples_recovery$draws()) 
+    # Check for parameter name
+    cat("Parameters available:", paste(colnames(draws_df_recovery), collapse=", "), "\n")
+    # Extract theta parameter
+    theta_param <- draws_df_recovery$theta
+    
+    temp <- tibble(biasEst = inv_logit_scaled(theta_param), 
+                   biasTrue = rateLvl, 
+                   noise = noiseLvl)
+    
+    return(temp)
+  }
+  
+  # Create a tibble with all parameter combinations
+  param_combinations <- tibble(
+    rateLvl = rep(seq(0, 1, 0.1), each = 6),
+    noiseLvl = rep(seq(0, 0.5, 0.1), 11),
+    seed = 1000, 
+    trials = 120
+  )
+  
+  # Run the function on each parameter combination in parallel
+  recovery_df <- future_pmap_dfr(
+    param_combinations, 
+    sim_d_and_fit, 
+    .options = furrr_options(seed = TRUE)
+  )
+  
+  # Save results for future use
+  write_csv(recovery_df, recovery_file)
+  cat("Generated new parameter recovery results and saved to", recovery_file, "\n")
+} else {
+  # Load existing results
+  recovery_df <- read_csv(recovery_file)
+  cat("Loaded existing parameter recovery results from", recovery_file, "\n")
+}
 
-# pacman::p_load(future, purrr, furrr)
-# 
-# plan(multisession, workers = 4)
-# 
-# sim_d_and_fit <- function(seed, trials, rateLvl, noiseLvl) {
-#   
-#     for (t in seq(trials)) { # looping through trials (to make it homologous to more reactive models)
-#       randomChoice[t] <- RandomAgentNoise_f(rateLvl, noiseLvl)
-#     }
-#     temp <- tibble(trial = seq(trials), choice = randomChoice, rate, noise)
-#     
-#     data <- list(
-#       n = 120,
-#       h = temp$choice
-#     )
-#     
-#     samples <- mod$sample(
-#       data = data,
-#       seed = 1000,
-#       chains = 1,
-#       parallel_chains = 1,
-#       threads_per_chain = 1,
-#       iter_warmup = 1000,
-#       iter_sampling = 2000,
-#       refresh = 0,
-#       max_treedepth = 20,
-#       adapt_delta = 0.99,
-#     )
-#     
-#     draws_df <- as_draws_df(samples$draws()) 
-#     temp <- tibble(biasEst = inv_logit_scaled(draws_df$theta), 
-#                    biasTrue = rateLvl, noise = noiseLvl)
-#     
-#     return(temp)
-#   
-# }
-# 
-# 
-# temp <- tibble(unique(d[,c("rate", "noise")])) %>% 
-#   mutate(seed = 1000, trials = 120) %>%
-#   rename(rateLvl = rate, noiseLvl = noise)
-# 
-# recovery_df <- future_pmap_dfr(temp, sim_d_and_fit, .options = furrr_options(seed = TRUE))
-# 
-# write_csv(recovery_df, "simdata/W3_recoverydf_parallel.csv")
-
-recovery_df <- read_csv("simdata/W3_recoverydf_parallel.csv")
-```
-
-And now we load the data and visualize it as before.
-
-```{r 03 visualizing the parallelization}
+# Visualize the parameter recovery results
 ggplot(recovery_df, aes(biasTrue, biasEst)) +
   geom_point(alpha = 0.1) +
   geom_smooth() +
   facet_wrap(.~noise) +
   theme_classic()
+
 ```
+
+
+There's much to be said about the final plot, but for now let's just say that it looks good. We can reconstruct in a nice ordered way true rate values. However, our ability to do so decreases with the increase in noise. So far no surprises. Wait, you say, shouldn't we actually model the generative process, that is, include noise in the Stan model? Gold star, there! But let's wait a bit before we get there, we'll need mixture models. 
 
 
 ## The memory model: conditioning theta
@@ -495,7 +518,7 @@ for (i in 2:trials) {
 }
 
 ## Create the data
-data <- list(
+data_memory <- list(
   n = 120,
   h = d1$Self,
   memory = d1$cumulativerate # this creates the new parameter: the rate of right hands so far in log-odds
@@ -504,7 +527,7 @@ data <- list(
 ```
 
 
-```{r, 03 memory stan model, eval = F}
+```{r, 03 memory stan model}
 
 stan_model <- "
 // The input (data) for the model. n of trials and h for (right and left) hand
@@ -520,8 +543,6 @@ parameters {
   real beta; // how strongly is previous rate impacting the decision?
 }
 
-
-
 // The model to be estimated. 
 model {
   // priors
@@ -531,7 +552,6 @@ model {
   // model
   target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
 }
-
 "
 write_stan_file(
   stan_model,
@@ -540,72 +560,104 @@ write_stan_file(
 
 ## Specify where the model is
 file <- file.path("stan/W3_MemoryBernoulli.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
 
-# The following command calls Stan with specific options.
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 1000,
-  iter_sampling = 1000,
-  refresh = 0,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
+# File path for saved model
+model_file_memory <- "simmodels/W3_MemoryBernoulli.rds"
 
-
-# Same the fitted model
-samples$save_object("simmodels/W3_MemoryBernoulli.rds")
+# Check if we need to rerun the simulation
+if (regenerate_simulations || !file.exists(model_file_memory)) {
+  # Compile the model
+  mod_memory <- cmdstan_model(file, 
+                       cpp_options = list(stan_threads = TRUE),
+                       stanc_options = list("O1"))
+  
+  # The following command calls Stan with specific options.
+  samples_memory <- mod_memory$sample(
+    data = data_memory,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99,
+  )
+  
+  # Save the fitted model
+  samples_memory$save_object(file = model_file_memory)
+  cat("Generated new model fit and saved to", model_file_memory, "\n")
+} else {
+  # Load existing results
+  cat("Loading memory model samples...\n")
+  samples_memory <- readRDS(model_file_memory)
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_memory$draws())), collapse=", "), "\n")
+  cat("Loaded existing model fit from", model_file_memory, "\n")
+}
 ```
 
 ### Summarizing the results
 ```{r 03 memory model log-odds quality assessment}
 
-samples <- readRDS("simmodels/W3_MemoryBernoulli.rds")
-
-# Diagnostics
-samples$cmdstan_diagnose()
+# Check if samples_memory exists
+if (!exists("samples_memory")) {
+  cat("Loading memory model samples...\n")
+  samples_memory <- readRDS("simmodels/W3_MemoryBernoulli.rds")
+  cat("Available parameters:", paste(colnames(as_draws_df(samples_memory$draws())), collapse = ", "), "\n")
+}
 
 # Extract posterior samples and include sampling of the prior:
-draws_df <- as_draws_df(samples$draws()) 
+draws_df_memory <- as_draws_df(samples_memory$draws()) 
 
-ggplot(draws_df, aes(.iteration, bias, group = .chain, color = .chain)) +
+# Explicitly extract parameters
+bias_param <- draws_df_memory$bias
+beta_param <- draws_df_memory$beta
+cat("Successfully extracted", length(bias_param), "values for bias parameter\n")
+cat("Successfully extracted", length(beta_param), "values for beta parameter\n")
+
+# Trace plot for bias
+ggplot(draws_df_memory, aes(.iteration, bias, group = .chain, color = .chain)) +
   geom_line() +
+  labs(title = "Trace plot for bias parameter") +
   theme_classic()
 
-ggplot(draws_df, aes(.iteration, beta, group = .chain, color = .chain)) +
+# Trace plot for beta
+ggplot(draws_df_memory, aes(.iteration, beta, group = .chain, color = .chain)) +
   geom_line() +
+  labs(title = "Trace plot for beta parameter") +
   theme_classic()
 
-# add a prior for theta (ugly, but we'll do better soon)
-draws_df <- draws_df %>% mutate(
-  bias_prior = rnorm(nrow(draws_df), 0, .3),
-  beta_prior = rnorm(nrow(draws_df), 0, .5),
+# add prior distributions
+draws_df_memory <- draws_df_memory %>% mutate(
+  bias_prior = rnorm(nrow(draws_df_memory), 0, .3),
+  beta_prior = rnorm(nrow(draws_df_memory), 0, .5)
 )
 
-# Now let's plot the density for theta (prior and posterior)
-ggplot(draws_df) +
+# Now let's plot the density for bias (prior and posterior)
+ggplot(draws_df_memory) +
   geom_density(aes(bias), fill = "blue", alpha = 0.3) +
   geom_density(aes(bias_prior), fill = "red", alpha = 0.3) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 1.5) +
+  labs(title = "Prior-Posterior Update for Bias Parameter",
+       subtitle = "Blue: posterior, Red: prior, Dashed: true value") +
   xlab("Bias") +
   ylab("Posterior Density") +
   theme_classic()
 
-ggplot(draws_df) +
+# Now let's plot the density for beta (prior and posterior)
+ggplot(draws_df_memory) +
   geom_density(aes(beta), fill = "blue", alpha = 0.3) +
   geom_density(aes(beta_prior), fill = "red", alpha = 0.3) +
   geom_vline(xintercept = 1, linetype = "dashed", color = "black", size = 1.5) +
+  labs(title = "Prior-Posterior Update for Beta Parameter",
+       subtitle = "Blue: posterior, Red: prior, Dashed: true value") +
   xlab("Beta") +
   ylab("Posterior Density") +
   theme_classic()
 
-samples$summary() 
+# Print summary
+samples_memory$summary()
 ```
 
 
@@ -705,7 +757,6 @@ generated quantities {
     log_lik[trial] = bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
   }
 }
-
 "
 
 write_stan_file(
@@ -715,30 +766,42 @@ write_stan_file(
 
 ## Specify where the model is
 file <- file.path("stan/W3_InternalMemory.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
 
-# The following command calls Stan with specific options.
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 1000,
-  iter_sampling = 1000,
-  refresh = 0,
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
+# File path for saved model
+model_file <- "simmodels/W3_InternalMemory.rds"
+
+# Check if we need to rerun the simulation
+if (regenerate_simulations || !file.exists(model_file)) {
+  # Compile the model
+  mod <- cmdstan_model(file, 
+                       cpp_options = list(stan_threads = TRUE),
+                       stanc_options = list("O1"))
+  
+  # The following command calls Stan with specific options.
+  samples_memory_internal <- mod$sample(
+    data = data,
+    seed = 123,
+    chains = 1,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99,
+  )
+  
+  # Save the fitted model
+  samples_memory_internal$save_object(file = model_file)
+  cat("Generated new model fit and saved to", model_file, "\n")
+} else {
+  # Load existing results
+  samples_memory_internal <- readRDS(model_file)
+  cat("Loaded existing model fit from", model_file, "\n")
+}
 
 
-samples$summary() 
-
-library(tidyverse)
-library(bayesplot)
-
-draws_df <- as_draws_df(samples$draws())
+draws_df <- as_draws_df(samples_memory_internal$draws())
 
 # 1. Check chain convergence
 # Plot traces for main parameters
@@ -775,7 +838,7 @@ p1 + p2 + p3
 
 # First let's properly extract and organize our posterior predictions
 posterior_predictions <- draws_df %>%
-  select(starts_with("posterior_preds[")) %>% # Select all posterior prediction columns
+  dplyr::select(starts_with("posterior_preds[")) %>% # Select all posterior prediction columns
   pivot_longer(everything(), 
               names_to = "trial",
               values_to = "prediction") %>%
@@ -793,7 +856,7 @@ posterior_summary <- posterior_predictions %>%
 
 # Do the same for prior predictions
 prior_predictions <- draws_df %>%
-  select(starts_with("prior_preds[")) %>%
+  dplyr::select(starts_with("prior_preds[")) %>%
   pivot_longer(everything(), 
               names_to = "trial",
               values_to = "prediction") %>%
@@ -849,19 +912,18 @@ p5 <- ggplot() +
   theme_minimal()
 
 # Display plots side by side
-library(patchwork)
 p4 + p5
 
 
 # First, let's calculate the total number of 1s predicted in each posterior sample
 posterior_totals <- draws_df %>%
-  select(starts_with("posterior_preds[")) %>%
+  dplyr::select(starts_with("posterior_preds[")) %>%
   # Sum across rows to get total 1s per sample
   mutate(total_ones = rowSums(.)) 
 
 # Do the same for prior predictions
 prior_totals <- draws_df %>%
-  select(starts_with("prior_preds[")) %>%
+  dplyr::select(starts_with("prior_preds[")) %>%
   mutate(total_ones = rowSums(.))
 
 # Calculate actual number of 1s in the data
@@ -1008,20 +1070,12 @@ p2 <- ggplot() +
   theme_minimal()
 
 # Display both visualizations
-library(patchwork)
 p1 / p2
 
 # 4. Check for divergences
 # Extract divergent transitions
 n_div <- sum(draws_df$.divergent)
 print(paste("Number of divergent transitions:", n_div))
-
-# Plot divergent transitions in parameter space
-# ggplot(draws_df, aes(bias, beta)) +
-#   geom_point(aes(color = factor(.divergent)), alpha = 0.5) +
-#   scale_color_manual(values = c("black", "red")) +
-#   theme_minimal() +
-#   ggtitle("Divergent Transitions in Parameter Space")
 ```
 
 Now that we know how to model memory as an internal state, we can play with making the update discount the past, setting a parameter that indicates after how many trials memory is lost, etc. 
@@ -1075,25 +1129,41 @@ write_stan_file(
 
 ## Specify where the model is
 file <- file.path("stan/W3_InternalMemory2.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
 
-# The following command calls Stan with specific options.
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 1000,
-  iter_sampling = 1000,
-  refresh = 0,
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
+# File path for saved model
+model_file <- "simmodels/W3_InternalMemory2.rds"
 
+# Check if we need to rerun the simulation
+if (regenerate_simulations || !file.exists(model_file)) {
+  # Compile the model
+  mod <- cmdstan_model(file, 
+                       cpp_options = list(stan_threads = TRUE),
+                       stanc_options = list("O1"))
+  
+  # The following command calls Stan with specific options.
+  samples_memory_forgetting <- mod$sample(
+    data = data,
+    seed = 123,
+    chains = 1,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99,
+  )
+  
+  # Save the fitted model
+  samples_memory_forgetting$save_object(file = model_file)
+  cat("Generated new model fit and saved to", model_file, "\n")
+} else {
+  # Load existing results
+  samples_memory_forgetting <- readRDS(model_file)
+  cat("Loaded existing model fit from", model_file, "\n")
+}
 
-samples$summary() 
+samples_memory_forgetting$summary()
 ```
 
 The memory model we've implemented can be seen as part of a broader family of models that track and update beliefs based on incoming evidence. Let's explore how it relates to some key frameworks.
@@ -1239,31 +1309,44 @@ write_stan_file(
 
 ## Specify where the model is
 file <- file.path("stan/W3_BayesianMemory.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"))
 
-# The following command calls Stan with specific options.
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 1000,
-  iter_sampling = 1000,
-  refresh = 0,
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
+# File path for saved model
+model_file <- "simmodels/W3_BayesianMemory.rds"
 
+# Check if we need to rerun the simulation
+if (regenerate_simulations || !file.exists(model_file)) {
+  # Compile the model
+  mod <- cmdstan_model(file, 
+                       cpp_options = list(stan_threads = TRUE),
+                       stanc_options = list("O1"))
+  
+  # The following command calls Stan with specific options.
+  samples_memory_bayes <- mod$sample(
+    data = data,
+    seed = 123,
+    chains = 1,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99,
+  )
+  
+  # Save the fitted model
+  samples_memory_bayes$save_object(file = model_file)
+  cat("Generated new model fit and saved to", model_file, "\n")
+} else {
+  # Load existing results
+  samples_memory_bayes <- readRDS(model_file)
+  cat("Loaded existing model fit from", model_file, "\n")
+}
 
-samples$summary() 
-
-library(posterior)
-library(bayesplot)
+samples_memory_bayes$summary() 
 
 # Extract draws
-draws_df <- as_draws_df(samples$draws())
+draws_df <- as_draws_df(samples_memory_bayes$draws())
 
 # First let's look at the priors
 ggplot(draws_df) +
@@ -1277,7 +1360,7 @@ ggplot(draws_df) +
 # Now let's look at how the rate evolves over trials
 # First melt the rate values across trials into long format
 rate_df <- draws_df %>%
-  select(starts_with("rate[")) %>%
+  dplyr::select(starts_with("rate[")) %>%
   pivot_longer(everything(), 
                names_to = "trial",
                values_to = "rate",
