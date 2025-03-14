@@ -1,0 +1,2570 @@
+---
+title: "09-BayesianModels"
+output: html_document
+date: "2025-03-10"
+---
+
+```{r 09 setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Set this to TRUE when you want to regenerate all simulation results
+# Otherwise, existing results will be loaded
+regenerate_simulations <- TRUE
+
+# Load necessary packages
+pacman::p_load(
+  tidyverse,    # For data manipulation and visualization
+  brms,         # For Bayesian regression modeling
+  cmdstanr,     # For interfacing with Stan
+  patchwork,    # For combining multiple plots
+  ggthemes,     # For enhanced plot themes
+  bayesplot,     # For Bayesian visualization tools
+  gridExtra,     # For combining multiple plots
+  furrr
+)
+
+```
+
+# Bayesian Models of Cognition
+
+### Introduction
+
+The impressive power of Bayes theorem and Bayesian approaches to modeling has tempted cognitive scientists into exploring how far they could get in thinking the mind and brain as Bayesian machines. The idea is that the mind is a probabilistic machine that updates its beliefs based on the evidence it receives. The human mind constantly receives input from various sources – direct personal experience, social information from others, prior knowledge, and sensory input. A fundamental question in cognitive science is how these disparate pieces of information are combined to produce coherent beliefs about the world.
+The Bayesian framework offers a powerful approach to modeling this process. Under this framework, the mind is conceptualized as a probabilistic machine that continuously updates its beliefs based on new evidence. This contrasts with rule-based or purely associative models by emphasizing:
+
+* Representations of uncertainty: Beliefs are represented as probability distributions, not single values
+
+* Optimal integration: Information is combined according to its reliability
+
+* Prior knowledge: New evidence is interpreted in light of existing beliefs
+
+
+In this chapter, we will explore how Bayesian integration can be formalized and used to model cognitive processes. We'll start with simple models that give equal weight to different information sources, then develop more sophisticated models that allow for differential weighting based on source reliability, and finally consider how beliefs might update over time.
+
+This chapter is not a comprehensive review of Bayesian cognitive modeling, but rather a practical introduction to the topic. We'll focus on simple models that illustrate key concepts and provide a foundation for more advanced applications.
+
+To go further in your learning check on Bayesian models of cognition check:
+
+* Ma, W. J., Kording, K. P., & Goldreich, D. (2023). Bayesian models of perception and action: An introduction. MIT press.
+
+* Griffiths, T. L., Chater, N., & Tenenbaum, J. B. (Eds.). (2024). Bayesian models of cognition: reverse engineering the mind. MIT Press.
+
+* N. D. Goodman, J. B. Tenenbaum, and The ProbMods Contributors (2016). Probabilistic Models of Cognition (2nd ed.). Retrieved 2025-3-10 from https://probmods.org/
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+
+* Understand the basic principles of Bayesian information integration
+
+* Implement models that combine multiple sources of information in a principled Bayesian way
+
+* Fit and evaluate these models using Stan
+
+* Differentiate between alternative Bayesian updating schemes
+
+* Apply Bayesian cognitive models to decision-making data
+
+## Chapter Roadmap
+
+In this chapter, we will:
+
+* Introduce the Bayesian framework for cognitive modeling
+
+* Implement a simple Bayesian integration model
+
+* Develop and test a weighted Bayesian model that allows for different source reliability
+
+* Explore temporal Bayesian updating
+
+* Extend our models to multilevel structures that capture individual differences
+
+* Compare alternative Bayesian models and evaluate their cognitive implications
+
+## The Bayesian Framework for Cognition
+
+Bayesian models of cognition explore the idea that the mind operates according to principles similar to Bayes' theorem, combining different sources of evidence to form updated beliefs. Most commonly this is framed in terms of prior beliefs being updated with new evidence to form updated posterior beliefs. Formally:
+
+P(belief | evidence) ∝ P(evidence | belief) × P(belief)
+
+Where:
+
+* P(belief | evidence) is the posterior belief after observing evidence
+
+* P(evidence | belief) is the likelihood of observing the evidence given a belief
+
+* P(belief) is the prior belief before observing evidence
+
+In cognitive terms, this means people integrate new information with existing knowledge, giving more weight to reliable information sources and less weight to unreliable ones. Yet, there is nothing mathematically special about the prior and the likelihood. They are just two sources of information that are combined in a way that is consistent with the rules of probability. Any other combination of information sources can be modeled with the same theorem.
+
+***
+Note that a more traditional formula for Bayes Theorem would be
+
+P(belief | evidence) = [P(evidence | belief) × P(belief)] / P(evidence)
+
+where the product of prior and likelihood is normalized by P(evidence) (bringing it back to a probability scale). 
+That's why we used a ∝ symbol in the formula above, to indicate that we are not considering the normalization constant, and that the posterior is only proportional (and not exactly equal) to the multiplication of the two sources of information. Nevertheless, this is a first useful approximation of the theorem, which we can build on in the rest of the chapter.
+***
+
+## Visualizing Bayesian Updating
+
+To better understand Bayesian updating, let's create a conceptual diagram:
+```{r 09 visualizing bayesian updating}
+# Create a visualization of Bayesian updating process
+
+# Function to create Bayesian updating visualization
+create_bayesian_updating_diagram <- function() {
+  # Create example data
+  # Prior (starting with uniform distribution)
+  x <- seq(0, 1, by = 0.01)
+  prior <- dbeta(x, 1, 1)
+  
+  # Likelihood (evidence suggesting higher probability)
+  likelihood <- dbeta(x, 7, 3)
+  
+  # Posterior (combines prior and likelihood)
+  posterior <- dbeta(x, 8, 4)  # 1+7, 1+3
+  
+  # Create data frame for plotting
+  plot_data <- data.frame(
+    x = rep(x, 3),
+    density = c(prior, likelihood, posterior),
+    distribution = factor(rep(c("Prior", "Likelihood", "Posterior"), each = length(x)),
+                         levels = c("Prior", "Likelihood", "Posterior"))
+  )
+  
+  # Create main plot showing distributions
+  p1 <- ggplot(plot_data, aes(x = x, y = density, color = distribution, linetype = distribution)) +
+    geom_line(size = 1.2) +
+    scale_color_manual(values = c("Prior" = "blue", "Likelihood" = "red", "Posterior" = "purple")) +
+    scale_linetype_manual(values = c("Prior" = "dashed", "Likelihood" = "dotted", "Posterior" = "solid")) +
+    labs(title = "Bayesian Updating Process",
+         subtitle = "Combining prior beliefs with new evidence",
+         x = "Belief (probability)",
+         y = "Probability Density",
+         color = "Distribution",
+         linetype = "Distribution") +
+    theme_minimal() +
+    theme(legend.position = "bottom") +
+    annotate("text", x = 0.1, y = 0.9, label = "Low certainty\nprior belief", color = "blue", hjust = 0) +
+    annotate("text", x = 0.8, y = 1.5, label = "New evidence\nsuggests high\nprobability", color = "red", hjust = 1) +
+    annotate("text", x = 0.65, y = 2.2, label = "Updated belief\ncombines both\nsources", color = "purple", hjust = 0)
+  
+  # Create flow diagram to illustrate process
+  flow_data <- data.frame(
+    x = c(1, 2, 3),
+    y = c(1, 1, 1),
+    label = c("Prior\nBelief", "Evidence", "Posterior\nBelief"),
+    box_color = c("blue", "red", "purple")
+  )
+  
+  arrow_data <- data.frame(
+    x = c(1.3, 2.3),
+    xend = c(1.7, 2.7),
+    y = c(1, 1),
+    yend = c(1, 1)
+  )
+  
+  p2 <- ggplot() +
+    # Add boxes for process stages
+    geom_rect(data = flow_data, aes(xmin = x - 0.3, xmax = x + 0.3, 
+                                   ymin = y - 0.3, ymax = y + 0.3,
+                                   fill = box_color), color = "black", alpha = 0.3) +
+    # Add text labels
+    geom_text(data = flow_data, aes(x = x, y = y, label = label), size = 3.5) +
+    # Add arrows
+    geom_segment(data = arrow_data, aes(x = x, y = y, xend = xend, yend = yend),
+                arrow = arrow(length = unit(0.2, "cm"), type = "closed")) +
+    # Add the operation being performed
+    annotate("text", x = 1.5, y = 1.2, label = "×", size = 6) +
+    annotate("text", x = 2.5, y = 1.2, label = "∝", size = 5) +
+    # Formatting
+    scale_fill_manual(values = c("blue", "red", "purple")) +
+    theme_void() +
+    theme(legend.position = "none") +
+    labs(title = "Bayesian Inference Flow")
+  
+  # Combine plots vertically
+  combined_plot <- p1 / p2 + plot_layout(heights = c(4, 1))
+  
+  return(combined_plot)
+}
+
+# Generate and display the diagram
+create_bayesian_updating_diagram()
+```
+
+This diagram illustrates the key elements of Bayesian updating:
+
+* Prior belief (blue dashed line): Our initial uncertainty about a phenomenon, before seeing evidence
+
+* Likelihood (red dotted line): The pattern of evidence we observe
+
+* Posterior belief (purple solid line): Our updated belief after combining prior and evidence
+
+Notice how the posterior distribution:
+
+* Is narrower than either the prior or likelihood alone (indicating increased certainty)
+
+* Sits between the prior and likelihood, but closer to the likelihood (as the evidence was fairly strong)
+
+* Has its peak shifted from the prior toward the likelihood (reflecting belief updating)
+
+The bottom diagram shows the algebraic process: we multiply the prior by the likelihood, then normalize to get the posterior belief.
+
+## Bayesian Models in Cognitive Science
+
+Bayesian cognitive models have been successfully applied to a wide range of phenomena:
+
+* Perception: How we combine multiple sensory cues (visual, auditory, tactile) to form a unified percept
+
+* Learning: How we update our knowledge from observation and instruction
+
+* Decision-making: How we weigh different sources of evidence when making choices
+
+* Social cognition: How we integrate others' opinions with our own knowledge
+
+* Language: How we disambiguate words and sentences based on context
+
+* Psychopathology: How crucial aspects of conditions like schizophrenia and autism can be understood in terms of atypical Bayesian inference (e.g. atypical weights given to different sources of information, or hyper-precise priors or hyper-precise likelihood).
+
+## Example: Social Influence in Perceptual Decision-Making
+
+To ground our discussion in a cognitive science context, let's consider a simplified version of a recent study examining how people with and without schizophrenia integrate information from different sources (Simonsen et al., 2021).
+
+In this task, participants needed to guess the color of the next marble drawn from a jar. They received information from two sources:
+
+* Direct evidence: A small sample of 8 marbles drawn from the jar (e.g., 6 blue and 2 red marbles)
+
+* Social evidence: The choices and confidence ratings of four other people who had seen their own independent samples from the jar
+
+This paradigm allows researchers to examine how individuals integrate their own direct perceptual evidence with socially transmitted information — a fundamental process in human cognition that may be altered in certain clinical conditions and be involved in generating some aspects of their psychopathology.
+
+For simplicity, we'll focus on a binary version where participants must guess whether the next marble will be blue or red, and we'll examine how they integrate their direct sample with social information from just what one other person has chosen. Further, at every trial the participants are given a new jar with a potentially different proportion of blue and red marbles, so there is no learning involved.
+
+## A Bayesian Integration Model for the Marble Task
+
+In a fully Bayesian approach, participants would:
+
+* Use direct evidence to form a belief about the proportion of blue marbles in the jar
+
+* Use social evidence to form another belief about the same proportion
+
+* Combine these beliefs in a principled way to make their final judgment
+
+### Intuitive Explanation Using Beta Distributions
+
+The beta distribution provides an elegant way to represent beliefs about proportions (like the proportion of blue marbles in a jar):
+
+* The beta distribution is defined by two parameters, traditionally called α (alpha) and β (beta).
+
+* These parameters have an intuitive interpretation: you can think of α as the number of "successes" you've observed (e.g., blue marbles) plus 1, and β as the number of "failures" (e.g., red marbles) plus 1.
+
+* So a Beta(1,1) distribution represents a uniform belief - no prior knowledge about the proportion.
+
+* After observing evidence, you simply add the counts to these parameters:
+
+  * If you see 6 blue and 2 red marbles, your updated belief is Beta(1+6, 1+2) = Beta(7, 3)
+  * This distribution has its peak at 7/(7+3) = 0.7, reflecting your belief that the true proportion is around 70% blue
+
+
+* To combine multiple sources of evidence, you simply add all the counts together:
+
+  * If direct evidence gives Beta(7, 3) and social evidence suggests Beta(2, 4)
+  * Your combined belief is Beta(7+2, 3+4) = Beta(9, 7)
+  * This has its peak at 9/(9+7) = 0.56, reflecting a compromise between the two sources
+
+
+The beauty of this approach is that it automatically weights evidence by its strength (amount of data) and properly represents uncertainty through the width of the distribution.
+
+## The Mathematical Model
+
+For our marble task, the Bayesian inference process involves:
+
+### Evidence Representation
+
+* Direct evidence: Observing blue1 blue marbles and red1 red marbles out of total1 trials
+
+* Social evidence: Inferring blue2 blue marbles and red2 red marbles from social information. If we consider only their choice: red corresponds to the sampling of one red marble; blue corresponds to the sampling of one blue marble. If we consider their confidence, we might try to make this correspond to the marbles the sampled: "Clear blue" might imply 8 blue marbles; maybe blue might imply 6 blue and 2 red marbles; "maybe red" might imply 6 red and 2 blue marbles; "clear red" might imply 8 red marbles. Alternatively we can keep it more uncertain and reduce the assumed sample to 0 blue out of 3, 1 blue out of 3, 2 blue marbles out of 3, or 3 blue marbles out of 3. This intrinsically models the added uncertainty in observing the other's choice and not their samples.
+
+### Integration
+
+The integrated belief is represented by a posterior beta distribution:
+
+Beta(α + blue1 + blue2, β + red1 + red2)
+
+Where α and β are prior parameters (typically 1 each for a uniform prior)
+
+### Decision
+
+* Final choice (blue or red) depends on whether the expected value of this distribution is above 0.5
+
+* Confidence depends on the concentration of the distribution
+
+### Implementation in R
+
+```{r 09 implementing simple bayes}
+# Beta-binomial model for Bayesian integration in the marble task
+#
+# This function implements a Bayesian integration model for combining direct and social evidence
+# about the proportion of blue marbles in a jar. It uses the beta-binomial model, which is
+# particularly suitable for reasoning about proportions.
+#
+# Parameters:
+#   alpha_prior: Prior alpha parameter (conceptually: prior blue marbles + 1)
+#   beta_prior: Prior beta parameter (conceptually: prior red marbles + 1)
+#   blue1: Number of blue marbles in direct evidence
+#   total1: Total marbles in direct evidence
+#   blue2: Effective blue marbles from social evidence
+#   total2: Effective total marbles from social evidence
+#
+# Returns:
+#   List with posterior parameters and statistics for decision-making
+betaBinomialModel <- function(alpha_prior, beta_prior, blue1, total1, blue2, total2) {
+  # Calculate red marbles for each source
+  red1 <- total1 - blue1  # Number of red marbles in direct evidence
+  red2 <- total2 - blue2  # Inferred number of red marbles from social evidence
+  
+  # The key insight of Bayesian integration: simply add up all evidence counts
+  # This automatically gives more weight to sources with more data
+  alpha_post <- alpha_prior + blue1 + blue2  # Posterior alpha (total blues + prior)
+  beta_post <- beta_prior + red1 + red2      # Posterior beta (total reds + prior)
+  
+  # Calculate posterior statistics
+  expected_rate <- alpha_post / (alpha_post + beta_post)  # Mean of beta distribution
+  
+  # Variance has a simple formula for beta distributions
+  # Lower variance = higher confidence in our estimate
+  variance <- (alpha_post * beta_post) / 
+             ((alpha_post + beta_post)^2 * (alpha_post + beta_post + 1))
+  
+  # Calculate 95% credible interval using beta quantile functions
+  # This gives us bounds within which we believe the true proportion lies
+  ci_lower <- qbeta(0.025, alpha_post, beta_post)
+  ci_upper <- qbeta(0.975, alpha_post, beta_post)
+  
+  # Calculate confidence based on variance
+  # Higher variance = lower confidence; transform to 0-1 scale
+  confidence <- 1 - (2 * sqrt(variance))
+  confidence <- max(0, min(1, confidence))  # Bound between 0 and 1
+  
+  # Make decision based on whether expected rate exceeds 0.5
+  # If P(blue) > 0.5, choose blue; otherwise choose red
+  choice <- ifelse(expected_rate > 0.5, "Blue", "Red")
+  
+  # Return all calculated parameters in a structured list
+  return(list(
+    alpha_post = alpha_post,
+    beta_post = beta_post,
+    expected_rate = expected_rate,
+    variance = variance,
+    ci_lower = ci_lower,
+    ci_upper = ci_upper,
+    confidence = confidence,
+    choice = choice
+  ))
+}
+```
+
+### Simulating Experimental Scenarios
+
+We'll create a comprehensive set of scenarios by varying both direct evidence (number of blue marbles observed directly) and social evidence (number of blue marbles inferred from social information).
+
+```{r 09 simulating experimental scencarios}
+# Set total counts for direct and social evidence
+total1 <- 8  # Total marbles in direct evidence
+total2 <- 3  # Total evidence units in social evidence
+
+# Create all possible combinations of direct and social evidence
+scenarios <- expand_grid(
+  blue1 = seq(0, 8, 1),  # Direct evidence: 0 to 8 blue marbles
+  blue2 = seq(0, 3, 1)   # Social evidence: 0 to 3 blue marbles (confidence levels)
+) %>% mutate(
+  red1 = total1 - blue1,  # Calculate red marbles for direct evidence
+  red2 = total2 - blue2   # Calculate implied red marbles for social evidence
+)
+
+# Process all scenarios to generate summary statistics
+sim_data <- map_dfr(1:nrow(scenarios), function(i) {
+  # Extract scenario parameters
+  blue1 <- scenarios$blue1[i]
+  red1 <- scenarios$red1[i]
+  blue2 <- scenarios$blue2[i]
+  red2 <- scenarios$red2[i]
+  
+  # Calculate Bayesian integration using our model
+  result <- betaBinomialModel(1, 1, blue1, total1, blue2, total2)
+  
+  # Return summary data for this scenario
+  tibble(
+    blue1 = blue1,
+    red1 = red1,
+    blue2 = blue2,
+    red2 = red2,
+    expected_rate = result$expected_rate,
+    variance = result$variance,
+    ci_lower = result$ci_lower,
+    ci_upper = result$ci_upper,
+    choice = result$choice,
+    confidence = result$confidence
+  )
+})
+
+# Convert social evidence to meaningful labels for better visualization
+sim_data$social_evidence <- factor(sim_data$blue2,
+                                 levels = c(0, 1, 2, 3),
+                                 labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue"))
+```
+
+### Visualizing Bayesian Integration
+
+Let's examine how expected proportion and uncertainty vary across different evidence combinations:
+
+```{r 09 visualizing bayesian integration}
+
+# Create two plot panels to visualize model behavior across all evidence combinations
+p1 <- ggplot(sim_data, aes(x = blue1, y = expected_rate, color = social_evidence, group = social_evidence)) +
+  # Add credible intervals to show uncertainty
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper, fill = social_evidence), alpha = 0.2, color = NA) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray50") +
+  scale_x_continuous(breaks = 0:8) +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(title = "Bayesian Integration of Direct and Social Evidence",
+       subtitle = "Expected proportion with 95% credible intervals",
+       x = "Number of Blue Marbles in Direct Sample (out of 8)",
+       y = "Expected Proportion of Blue Marbles",
+       color = "Social Evidence",
+       fill = "Social Evidence") +
+  theme_bw() +
+  coord_cartesian(ylim = c(0, 1))
+
+# Display plot
+p1
+```
+
+
+A few notes about the plot:
+
+* Evidence integration: The expected proportion of blue marbles (top plot) varies with both direct and social evidence. I would normally expect a non-linear interaction: when direct evidence is ambiguous (e.g., 4 blue out of 8), social evidence should have a stronger effect on the final belief. However, the effect is subtle if any.
+
+* Evidence Interaction: It may be hard to see, but the influence of social evidence is strongest when direct evidence is ambiguous (around 4 blue marbles) and weakest at the extremes (0 or 8 blue marbles). This reflects the Bayesian property that stronger evidence dominates weaker evidence.
+
+* Credible intervals: The 95% credible intervals (shaded regions) show our uncertainty about the true proportion. These intervals narrow with more evidence, indicating increased confidence in our estimates. This is better seen in the lower plot than in the upper one. Notice how the variance is highest when direct evidence is ambiguous (around 4 blue marbles) and lowest at the extremes (as they combine congruent evidence from both sources).
+
+## Examining Belief Distributions for Selected Scenarios
+
+While the summary statistics give us a high-level view, examining the full posterior distributions provides deeper insight into how evidence is combined. Let's visualize the complete probability distributions for a selected subset of scenarios:
+
+```{r 09 zoom in specific scenarios}
+# Function to generate Beta distributions for all components of a Bayesian model
+# This function returns the prior, likelihood, and posterior distributions
+# for a given scenario of blue and red marbles
+simpleBayesianModel_f <- function(blue1, red1, blue2, red2) {
+  # Prior parameters (uniform prior)
+  alpha_prior <- 1
+  beta_prior <- 1
+  
+  # Calculate parameters for each distribution
+  # Direct evidence distribution
+  alpha_direct <- alpha_prior + blue1
+  beta_direct <- beta_prior + red1
+  
+  # Social evidence distribution
+  alpha_social <- alpha_prior + blue2
+  beta_social <- beta_prior + red2
+  
+  # Posterior distribution (combined evidence)
+  alpha_post <- alpha_prior + blue1 + blue2
+  beta_post <- beta_prior + red1 + red2
+  
+  # Create a grid of theta values (possible proportions of blue marbles)
+  theta <- seq(0.001, 0.999, length.out = 200)
+  
+  # Calculate densities for each distribution
+  prior_density <- dbeta(theta, alpha_prior, beta_prior)
+  direct_density <- dbeta(theta, alpha_direct, beta_direct)
+  social_density <- dbeta(theta, alpha_social, beta_social)
+  posterior_density <- dbeta(theta, alpha_post, beta_post)
+  
+  # Return dataframe with all distributions
+  return(data.frame(
+    theta = theta,
+    prior = prior_density,
+    direct = direct_density,
+    social = social_density,
+    posterior = posterior_density
+  ))
+}
+
+# Select a few representative scenarios
+selected_scenarios <- expand_grid(
+  blue1 = c(1, 4, 7),     # Different levels of direct evidence
+  blue2 = c(0, 1, 2, 3)   # Different levels of social evidence
+)
+
+# Generate distributions for each scenario
+distribution_data <- do.call(rbind, lapply(1:nrow(selected_scenarios), function(i) {
+  blue1 <- selected_scenarios$blue1[i]
+  blue2 <- selected_scenarios$blue2[i]
+  
+  # Generate distributions
+  dist_df <- simpleBayesianModel_f(blue1, total1 - blue1, blue2, total2 - blue2)
+  
+  # Add scenario information
+  dist_df$blue1 <- blue1
+  dist_df$blue2 <- blue2
+  dist_df$social_evidence <- factor(blue2,
+                                    levels = c(0, 1, 2, 3),
+                                    labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue"))
+  return(dist_df)
+}))
+
+# Modify the plotting function
+p_evidence_combination <- ggplot(distribution_data) +
+  # Prior distribution with clear emphasis
+  geom_line(aes(x = theta, y = prior), color = "gray50", linetype = "solid", size = 0.5) +
+  
+  # Posterior distribution with consistent coloring
+  geom_area(aes(x = theta, y = posterior), 
+            fill = "purple", 
+            alpha = 0.3) +
+  geom_line(aes(x = theta, y = posterior), 
+            color = "purple", 
+            size = 1.2) +
+  
+  # Direct and social evidence distributions
+  geom_line(aes(x = theta, y = direct, color = "Direct Evidence"), 
+            size = 1, 
+            alpha = 0.7, 
+            linetype = "dashed") +
+  
+  geom_line(aes(x = theta, y = social, color = "Social Evidence"), 
+            size = 1, 
+            alpha = 0.7, 
+            linetype = "dashed") +
+  
+  # Facet by direct and social evidence levels
+  facet_grid(blue2 ~ blue1, 
+             labeller = labeller(
+               blue1 = function(x) paste("Direct: ", x, " Blue"),
+               blue2 = function(x) paste("Social: ", x, " Blue")
+             )) +
+  
+  # Aesthetics
+  scale_color_manual(values = c(
+    "Direct Evidence" = "blue", 
+    "Social Evidence" = "red"
+  )) +
+  
+  # Labels and theme
+  labs(
+    title = "Bayesian Evidence Integration: Distribution Combination",
+    subtitle = "Merging direct and social evidence into a posterior belief",
+    x = "Proportion of Blue Marbles",
+    y = "Probability Density",
+    color = "Evidence Type"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(size = 8),
+    axis.text = element_text(size = 6)
+  )
+
+# Display the plot
+print(p_evidence_combination)
+```
+
+
+This comprehensive visualization shows how the different probability distributions interact:
+
+* Prior distribution (gray line): Our initial uniform belief about the proportion of blue marbles.
+
+* Direct evidence distribution (blue dashed line): Belief based solely on our direct observation of marbles. Notice how it becomes more concentrated with more extreme evidence (e.g., 1 or 7 blue marbles).
+
+* Social evidence distribution (red dashed line): Belief based solely on social information. This is generally less concentrated than the direct evidence distribution since it's based on lower evidence (0-3 vs. 0-8).
+
+* Posterior distribution (purple area): The final belief that results from combining all information sources. Notice how it tends to lie between the direct and social evidence distributions, but is typically narrower than either, reflecting increased certainty from combining information, unless the evidence is in conflict.
+
+## Weighted Bayesian Integration
+
+In real cognitive systems, people often weight information sources differently based on their reliability or relevance. Let's implement a weighted Bayesian model that allows for differential weighting of evidence sources.
+
+### The Mathematical Model
+
+Our weighted Bayesian integration model extends the simple model by introducing weight parameters for each information source:
+
+* Start with prior: Beta(α₀, β₀)
+
+* Observe direct evidence: k₁ blue marbles out of n₁ total
+
+* Observe social evidence: k₂ blue marbles out of n₂ total
+
+* Apply weights: w₁ for direct evidence, w₂ for social evidence
+
+* Posterior: Beta(α₀ + w₁·k₁ + w₂·k₂, β₀ + w₁·(n₁-k₁) + w₂·(n₂-k₂))
+
+The weights represent the degree to which each information source influences the final belief. A weight of 2.0 means you treat that evidence as if you had observed twice as many marbles as you actually did (as more reliable than what the current evidence would warrant), while a weight of 0.5 means you treat it as half as informative. From a cognitive perspective, they might reflect judgments about reliability, relevance, or attentional focus.
+
+### Implementation
+
+```{r 09 implementing weighted bayes}
+# Weighted Beta-Binomial model for evidence integration
+#
+# This function extends our basic model by allowing different weights for each
+# evidence source. This can represent differences in perceived reliability,
+# attention, or individual cognitive tendencies.
+#
+# Parameters:
+#   alpha_prior, beta_prior: Prior parameters (typically 1,1 for uniform prior)
+#   blue1, total1: Direct evidence (blue marbles and total)
+#   blue2, total2: Social evidence (blue signals and total)
+#   weight_direct, weight_social: Relative weights for each evidence source
+#
+# Returns:
+#   List with model results and statistics
+weightedBetaBinomial <- function(alpha_prior, beta_prior, 
+                                blue1, total1, 
+                                blue2, total2,
+                                weight_direct, weight_social) {
+  
+  # Calculate red marbles for each source
+  red1 <- total1 - blue1   # Number of red marbles in direct evidence
+  red2 <- total2 - blue2   # Number of red signals in social evidence
+  
+  # Apply weights to evidence (this is the key step)
+  # Weighting effectively scales the "sample size" of each information source
+  weighted_blue1 <- blue1 * weight_direct    # Weighted blue count from direct evidence
+  weighted_red1 <- red1 * weight_direct      # Weighted red count from direct evidence
+  weighted_blue2 <- blue2 * weight_social    # Weighted blue count from social evidence
+  weighted_red2 <- red2 * weight_social      # Weighted red count from social evidence
+  
+  # Calculate posterior parameters by adding weighted evidence
+  alpha_post <- alpha_prior + weighted_blue1 + weighted_blue2  # Posterior alpha parameter
+  beta_post <- beta_prior + weighted_red1 + weighted_red2      # Posterior beta parameter
+  
+  # Calculate statistics from posterior beta distribution
+  expected_rate <- alpha_post / (alpha_post + beta_post)   # Mean of beta distribution
+  
+  # Calculate variance (lower variance = higher confidence)
+  variance <- (alpha_post * beta_post) / 
+              ((alpha_post + beta_post)^2 * (alpha_post + beta_post + 1))
+  
+  # Calculate 95% credible interval
+  ci_lower <- qbeta(0.025, alpha_post, beta_post)
+  ci_upper <- qbeta(0.975, alpha_post, beta_post)
+  
+  # Calculate decision and confidence
+  decision <- ifelse(rbinom(1, 1, expected_rate) == 1, "Blue", "Red")   # Decision based on most likely color
+  confidence <- 1 - (2 * sqrt(variance))                  # Confidence based on certainty
+  confidence <- max(0, min(1, confidence))                # Bound between 0 and 1
+  
+  # Return all calculated parameters in a structured list
+  return(list(
+    alpha_post = alpha_post,
+    beta_post = beta_post,
+    expected_rate = expected_rate,
+    variance = variance,
+    ci_lower = ci_lower,
+    ci_upper = ci_upper,
+    decision = decision,
+    confidence = confidence
+  ))
+}
+```
+
+### Visualizing Weighted Bayesian Integration
+
+Let's create a comprehensive visualization showing how different weights affect belief formation:
+
+```{r 09 visualizing weighted bayes}
+# Create improved visualization using small multiples
+weighted_belief_plot <- function() {
+  # Define grid of parameters to visualize
+  w1_values <- seq(0, 2, by = 0.2)  # Weight for source 1
+  w2_values <- seq(0, 2, by = 0.2)  # Weight for source 2
+  source1_values <- seq(0, 8, by = 1)  # Source 1 values
+  source2_values <- seq(0, 3, by = 1)  # Source 2 values 
+  
+  # Generate data
+  plot_data <- expand_grid(
+    w1 = w1_values,
+    w2 = w2_values,
+    Source1 = source1_values,
+    Source2 = source2_values
+  ) %>%
+  mutate(
+    belief = pmap_dbl(list(w1, w2, Source1, Source2), function(w1, w2, s1, s2) {
+      
+      # Calculate Beta parameters
+      alpha_prior <- 1
+      beta_prior <- 1
+      alpha_post <- alpha_prior + w1 * s1 + w2 * s2
+      beta_post <- beta_prior + w1 * (8 - s1) + w2*(3 - s2)
+      
+      # Return expected value
+      alpha_post / (alpha_post + beta_post)
+    })
+  )
+  
+  # Create visualization
+  p <- ggplot(plot_data, aes(x = Source1, y = belief, color = Source2, group = Source2)) +
+    geom_line() +
+    facet_grid(w1 ~ w2, labeller = labeller(
+      w1 = function(x) paste("w1 =", x),
+      w2 = function(x) paste("w2 =", x)
+    )) +
+    scale_color_viridis_c(option = "plasma") +
+    labs(
+      title = "Weighted Bayesian Integration of Two Evidence Sources",
+      x = "Direct Evidence (Blue Marbles)",
+      y = "Belief in the next pick being a blue marble",
+      color = "Social Evidence (Blue Marbles)"
+    ) +
+    theme_minimal() +
+    theme(
+      strip.background = element_rect(fill = "gray90"),
+      strip.text = element_text(size = 10, face = "bold"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA)
+    )
+  
+  return(p)
+}
+
+# Generate and display the plot
+weighted_belief_plot()
+```
+
+The visualization showcases weighted Bayesian integration:
+
+* First, when both weights (w1 and w2) are low (top left panels), beliefs remain moderate regardless of the evidence values, representing high uncertainty. As weights increase (moving right and down), beliefs become more extreme, showing increased confidence in the integrated evidence.
+
+* Second, the slope of the lines indicates the relative influence of each source. Steeper slopes (bottom right panels) demonstrate that Source1 has stronger influence on belief when both weights are high, while the spacing between lines shows the impact of Source2.
+
+* Third, when weights are asymmetric (e.g., high w1 and low w2), the belief is dominated by the source with the higher weight, essentially ignoring evidence from the other source. This illustrates how selective attention to certain evidence sources can be modeled as differential weighting in a Bayesian framework.
+
+### Resolving Conflicting Evidence
+
+To further understand how weighted Bayesian integration resolves conflicts between evidence sources, let's examine two specific conflict scenarios:
+
+```{r 09 conflicting scenarios}
+# Define conflict scenarios
+scenario1 <- list(blue1 = 7, total1 = 8, blue2 = 0, total2 = 3)  # Direct: blue, Social: red
+scenario2 <- list(blue1 = 5, total1 = 8, blue2 = 0, total2 = 3)  # Direct: red, Social: blue
+
+# Create function to evaluate scenarios across weight combinations
+evaluate_conflict <- function(scenario) {
+  weight_grid <- expand_grid(
+    weight_direct =  seq(0, 2, by = 0.2),
+    weight_social =  seq(0, 2, by = 0.2)
+  )
+  
+  # Calculate results for each weight combination
+  results <- pmap_dfr(weight_grid, function(weight_direct, weight_social) {
+    result <- weightedBetaBinomial(
+      1, 1, 
+      scenario$blue1, scenario$total1, 
+      scenario$blue2, scenario$total2, 
+      weight_direct, weight_social
+    )
+    
+    tibble(
+      weight_direct = weight_direct,
+      weight_social = weight_social,
+      expected_rate = result$expected_rate,
+      decision = result$decision
+    )
+  })
+  
+  return(results)
+}
+
+# Calculate results
+conflict1_results <- evaluate_conflict(scenario1)
+conflict2_results <- evaluate_conflict(scenario2)
+
+# Create visualizations
+p1 <- ggplot(conflict1_results, aes(x = weight_direct, y = weight_social)) +
+  geom_tile(aes(fill = expected_rate)) +
+  geom_contour(aes(z = expected_rate), breaks = 0.5, color = "black", size = 1) +
+  scale_fill_gradient2(
+    low = "red", mid = "white", high = "blue", 
+    midpoint = 0.5, limits = c(0, 1)
+  ) +
+  labs(
+    title = "Scenario 1: Strong Direct Evidence for Blue (7 out of 8) \nvs. Strong Social Evidence for Red (0/3)",
+    subtitle = "Black line shows decision boundary (expected rate = 0.5)",
+    x = "Weight for Direct Evidence",
+    y = "Weight for Social Evidence",
+    fill = "Expected\nRate"
+  ) +
+  theme_minimal() +
+  coord_fixed()
+
+p2 <- ggplot(conflict2_results, aes(x = weight_direct, y = weight_social)) +
+  geom_tile(aes(fill = expected_rate)) +
+  geom_contour(aes(z = expected_rate), breaks = 0.5, color = "black", size = 1) +
+  scale_fill_gradient2(
+    low = "red", mid = "white", high = "blue", 
+    midpoint = 0.5, limits = c(0, 1)
+  ) +
+  labs(
+    title = "Scenario 1: Weak Direct Evidence for Blue (5 out of 8) \nvs. Strong Social Evidence for Red (0/3)",
+    subtitle = "Black line shows decision boundary (expected rate = 0.5)",
+    x = "Weight for Direct Evidence",
+    y = "Weight for Social Evidence",
+    fill = "Expected\nRate"
+  ) +
+  theme_minimal() +
+  coord_fixed()
+
+# Display plots
+p1 / p2
+```
+
+These visualizations illustrate how different weight combinations resolve conflicts between evidence sources:
+
+* Decision boundary: The black line represents combinations of weights that lead to equal evidence for red and blue (expected rate = 0.5). Weight combinations above this line lead to a "blue" decision, while those below lead to a "red" decision.
+
+* Relative evidence strength: The slope of the decision boundary reflects the relative strength of the evidence sources. A steeper slope indicates that direct evidence is stronger relative to social evidence.
+
+* Individual differences: Different individuals might give different weights to evidence sources, leading to different decisions even when faced with identical evidence. This provides a mechanistic explanation for individual variation in decision-making.
+
+## Common Misinterpretations
+
+
+### Weight Interpretation
+
+Weights effectively scale the relative importance of each source of evidence. A weight of 0 means ignoring that evidence source entirely. A weight of 1 means treating the evidence as observed, at face value. Weights above 1 amplify the evidence, while weights below 1 dampen it. A negative weight would make the agent invert the direction of the evidence (if more evidence for red, they'd tend to pick blue).
+Remember that weights moderate the evidence, so a strong weight doesn't guarantee a strong influence if the evidence itself is weak.
+
+### Integration vs. Averaging
+
+Bayesian integration is not simply the averaging of evidence across sources, because it naturally includes how precise the evidence is (how narrow the distribution). Normally, this would happen when we multiply the distributions involved. The Beta-Binomial model handles this automatically by incorporating sample sizes (the n of marbles).
+
+### Interpreting Confidence
+
+There is something tricky in this model when it comes to confidence. We can say that a belief that the next sample is going to be blue with a 0.8 (average) probability more confident than one with a 0.6 (average) probability. We can also say that a belief that the next sample is going to be blue with a 0.8 (95% CIs 0.5-1) probability is less confident than a belief with a 0.6 (95% CIs 0.55-0.65) probability.
+We need to keep these two aspects separate. The first one is about the average probability, the second one is about the uncertainty around that average probability.
+In the code above we only call the second confidence and use entropy of the posterior distribution to quantify it.
+
+## Simulating Agents with Different Evidence Weighting Strategies
+
+To prepare for our model fitting, we'll simulate three distinct agents:
+
+* Balanced Agent: This agent treats both direct and social evidence at face value, applying equal weights (w_direct = 1.0, w_social = 1.0). This represents an unbiased integration of information.
+
+* Self-Focused Agent: This agent overweights their own direct evidence (w_direct = 1.5) while underweighting social evidence (w_social = 0.5). This represents someone who trusts their own observations more than information from others.
+
+* Socially-Influenced Agent: This agent does the opposite, overweighting social evidence (w_social = 2.0) while underweighting their own direct evidence (w_direct = 0.7). This might represent someone who is highly responsive to social information.
+
+Let's generate decisions for these three agents in an experiment exposing them to all possible evidence combinations and visualize how their different weighting strategies affect their beliefs and choices.
+```{r 09 simulating agents with different strategies}
+# Simulation of agents with different weighting strategies
+# This code generates decisions for three agents with different approaches to weighting evidence
+
+# Define our three agent types with their respective weights
+agents <- tibble(
+  agent_type = c("Balanced", "Self-Focused", "Socially-Influenced"),
+  weight_direct = c(1.0, 1.5, 0.7),   # Weight for direct evidence
+  weight_social = c(1.0, 0.5, 2.0)    # Weight for social evidence
+)
+
+# Create all possible evidence combinations
+# Direct evidence: 0-8 blue marbles out of 8 total
+# Social evidence: 0-3 signals (representing confidence levels)
+evidence_combinations <- expand_grid(
+  blue1 = 0:8,     # Direct evidence: number of blue marbles seen
+  blue2 = 0:3      # Social evidence: strength of blue evidence
+) %>% mutate(
+  total1 = 8,      # Total marbles in direct evidence
+  total2 = 3       # Total strength units in social evidence
+)
+
+# Function to generate decisions across all evidence combinations for a given agent
+generate_agent_decisions <- function(weight_direct, weight_social, evidence_df) {
+  # Apply our weighted Bayesian model to each evidence combination
+  decisions <- pmap_dfr(evidence_df, function(blue1, blue2, total1, total2) {
+    # Calculate Bayesian integration with the agent's specific weights
+    result <- weightedBetaBinomial(
+      alpha_prior = 1, beta_prior = 1,
+      blue1 = blue1, total1 = total1,
+      blue2 = blue2, total2 = total2,
+      weight_direct = weight_direct,
+      weight_social = weight_social
+    )
+    
+    # Return key decision metrics
+    tibble(
+      blue1 = blue1,
+      blue2 = blue2,
+      expected_rate = result$expected_rate,   # Probability the next marble is blue
+      choice = result$decision,               # Final decision (Blue or Red)
+      confidence = result$confidence          # Confidence in decision
+    )
+  })
+  
+  return(decisions)
+}
+
+# Generate decisions for all agents across all evidence combinations
+simulation_results <- map_dfr(1:nrow(agents), function(i) {
+  # Extract this agent's parameters
+  agent_data <- agents[i, ]
+  
+  # Generate decisions for this agent
+  decisions <- generate_agent_decisions(
+    agent_data$weight_direct,
+    agent_data$weight_social,
+    evidence_combinations
+  )
+  
+  # Add agent identifier
+  decisions$agent_type <- agent_data$agent_type
+  
+  return(decisions)
+})
+
+# Add descriptive labels for visualization
+simulation_results <- simulation_results %>%
+  mutate(
+    # Create descriptive labels for social evidence
+    social_evidence = factor(
+      blue2,
+      levels = 0:3,
+      labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+    ),
+    # Create factor for agent type to control plotting order
+    agent_type = factor(
+      agent_type,
+      levels = c("Balanced", "Self-Focused", "Socially-Influenced")
+    )
+  )
+
+# Let's examine a sample of the generated data
+head(simulation_results)
+```
+
+Now let's create visualizations to compare how these different agents make decisions based on the same evidence:
+
+```{r 09 visualizing agents with different strategies}
+# Visualization 1: Expected probability across evidence combinations
+p1 <- ggplot(simulation_results, 
+             aes(x = blue1, y = expected_rate, color = social_evidence, group = social_evidence)) +
+  # Draw a line for each social evidence level
+  geom_line(size = 1) +
+  # Add points to show discrete evidence combinations
+  geom_point(size = 2) +
+  # Add a reference line at 0.5 (decision boundary)
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray50") +
+  # Facet by agent type
+  facet_wrap(~ agent_type, ncol = 1) +
+  # Customize colors and labels
+  scale_color_brewer(palette = "Set1") +
+  scale_x_continuous(breaks = 0:8) +
+  labs(
+    title = "How Different Agents Integrate Evidence",
+    subtitle = "Expected probability of blue marble across evidence combinations",
+    x = "Number of Blue Marbles in Direct Sample (out of 8)",
+    y = "Expected Probability of Blue",
+    color = "Social Evidence"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+# Visualization 2: Decision boundaries for each agent
+# Create a simplified dataset showing just the decision (Blue/Red)
+decision_data <- simulation_results %>%
+  mutate(decision_value = ifelse(choice == "Blue", 1, 0))
+
+p2 <- ggplot(decision_data, aes(x = blue1, y = blue2)) +
+  # Create tiles colored by decision
+  geom_tile(aes(fill = choice)) +
+  # Add decision boundary contour line
+  stat_contour(aes(z = decision_value), breaks = 0.5, color = "black", size = 1) +
+  # Facet by agent type
+  facet_wrap(~ agent_type) +
+  # Customize colors and labels
+  scale_fill_manual(values = c("Red" = "firebrick", "Blue" = "royalblue")) +
+  scale_x_continuous(breaks = 0:8) +
+  scale_y_continuous(breaks = 0:3) +
+  labs(
+    title = "Decision Boundaries Across Agents",
+    subtitle = "Black line shows where agents switch from choosing red to blue",
+    x = "Number of Blue Marbles in Direct Evidence (out of 8)",
+    y = "Number of Blue Signals in Social Evidence (out of 3)",
+    fill = "Decision"
+  ) +
+  theme_bw()
+
+# Visualization 3: Confidence levels
+p3 <- ggplot(simulation_results, aes(x = blue1, y = confidence, color = social_evidence, group = social_evidence)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ agent_type, ncol = 1) +
+  scale_color_brewer(palette = "Set1") +
+  scale_x_continuous(breaks = 0:8) +
+  labs(
+    title = "Confidence Across Evidence Combinations",
+    subtitle = "Higher values indicate greater confidence in decision",
+    x = "Number of Blue Marbles in Direct Sample (out of 8)",
+    y = "Decision Confidence",
+    color = "Social Evidence"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+# Display the visualizations
+p1
+p2
+p3
+```
+
+## Key Observations from the Simulation
+
+Our simulation highlights several important aspects of Bayesian evidence integration with different weighting strategies:
+
+* Evidence Thresholds: The decision boundaries (Visualization 2) clearly show how much evidence each agent requires to switch from choosing red to blue. The Self-Focused agent needs less direct evidence when social evidence supports blue, compared to the Socially-Influenced agent.
+
+* Influence of Social Evidence: In the first visualization, we can observe how the lines for different social evidence levels are spaced. For the Socially-Influenced agent, these lines are widely spaced, indicating that social evidence strongly affects their beliefs. For the Self-Focused agent, the lines are closer together, showing less impact from social evidence.
+
+* Confidence Patterns: The third visualization reveals how confidence varies across evidence combinations and agent types. All agents are most confident when evidence is strong and consistent across sources, but they differ in how they handle conflicting evidence.
+
+* Decision Regions: The Self-Focused agent has a larger region where they choose blue based primarily on direct evidence, while the Socially-Influenced agent has more regions where social evidence can override moderate direct evidence.
+
+These patterns highlight the profound impact that evidence weighting can have on decision-making, even when agents are all using the same underlying Bayesian integration mechanism. In the next section, we'll implement these agents in Stan to perform more sophisticated parameter estimation.
+
+Now, let's define our Stan models to implement: a simple bayesian agent (equivalent to assuming both weights to be 1); and a weighted bayesian agent (explicitly inferring weights for direct and social evidence).
+
+```{r 09 defining stan models}
+# Simple Beta-Binomial Stan model (no weights)
+SimpleAgent_stan <- "
+// Bayesian integration model with separate theta parameters for each evidence source
+// All evidence is taken at face value (equal weights)
+data {
+  int<lower=1> N;                        // Number of decisions
+  array[N] int<lower=0, upper=1> choice; // Choices (0=red, 1=blue)
+  array[N] int<lower=0> blue1;           // Direct evidence (blue marbles)
+  array[N] int<lower=0> total1;          // Total direct evidence (total marbles)
+  array[N] int<lower=0> blue2;           // Social evidence (blue signals)
+  array[N] int<lower=0> total2;          // Total social evidence (total signals)
+}
+
+model {
+  // Each observation is a separate decision
+  for (i in 1:N) {
+    // Calculate Beta parameters for this decision only (including a flat prior)
+    real alpha_post = 1 + blue1[i] + blue2[i];
+    real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+    
+    // Expected probability for this specific decision
+    real expected_prob = alpha_post / (alpha_post + beta_post);
+    
+    // Model choice for this decision
+    target += bernoulli_lpmf(choice[i] | expected_prob);
+  }
+}
+
+generated quantities {
+  // Log likelihood for model comparison
+  vector[N] log_lik;
+  
+  // Prior samples for model checking
+  array[N] int prior_pred_choice;
+  
+  // Predictive checks
+  array[N] int posterior_pred_choice;
+  
+  for (i in 1:N) {
+    // For prior predictions, use uniform prior (Beta(1,1))
+    real prior_prob = 0.5;  // Expected value of Beta(1,1)
+    
+    // For posterior predictions, use integrated evidence
+    real alpha_post = 1 + blue1[i] + blue2[i];
+    real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+    real expected_prob = alpha_post / (alpha_post + beta_post);
+    
+    // Generate predictions
+    prior_pred_choice[i] = bernoulli_rng(prior_prob);
+    posterior_pred_choice[i] = bernoulli_rng(expected_prob);
+    
+    // Log likelihood calculation
+    log_lik[i] = bernoulli_lpmf(choice[i] | expected_prob);
+  }
+}
+"
+
+# Weighted Beta-Binomial Stan model
+WeightedAgent_stan <- "
+data {
+  int<lower=1> N;                        // Number of decisions
+  array[N] int<lower=0, upper=1> choice; // Choices (0=red, 1=blue)
+  array[N] int<lower=0> blue1;           // Direct evidence (blue marbles)
+  array[N] int<lower=0> total1;          // Total direct evidence
+  array[N] int<lower=0> blue2;           // Social evidence (blue signals)
+  array[N] int<lower=0> total2;          // Total social evidence
+}
+
+parameters {
+  // Using inverse logit for better numeric properties
+  real<lower=0> weight_direct;           // Direct evidence weight
+  real<lower=0> weight_social;           // Social evidence weight
+}
+
+model {
+  // Priors
+  target += normal_lpdf(weight_direct | 1, 0.3);  // Exponential prior with mean 1
+  target += normal_lpdf(weight_social | 1, 0.3);  // Exponential prior with mean 1
+  
+  // Each observation is a separate decision
+  for (i in 1:N) {
+    // For this specific decision:
+    real weighted_blue1 = blue1[i] * weight_direct;
+    real weighted_red1 = (total1[i] - blue1[i]) * weight_direct;
+    real weighted_blue2 = blue2[i] * weight_social;
+    real weighted_red2 = (total2[i] - blue2[i]) * weight_social;
+    
+    // Calculate Beta parameters for this decision only
+    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
+    real beta_post = 1 + weighted_red1 + weighted_red2;
+    
+    // Expected probability for this specific decision
+    real expected_prob = alpha_post / (alpha_post + beta_post);
+    
+    // Model choice for this decision
+    target += bernoulli_lpmf(choice[i] | expected_prob);
+  }
+}
+
+generated quantities {
+  // Log likelihood and predictions
+  vector[N] log_lik;
+  array[N] int posterior_pred_choice;
+  
+  for (i in 1:N) {
+    real weighted_blue1 = blue1[i] * weight_direct;
+    real weighted_red1 = (total1[i] - blue1[i]) * weight_direct;
+    real weighted_blue2 = blue2[i] * weight_social;
+    real weighted_red2 = (total2[i] - blue2[i]) * weight_social;
+    
+    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
+    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real expected_prob = alpha_post / (alpha_post + beta_post);
+    
+    log_lik[i] = bernoulli_lpmf(choice[i] | expected_prob);
+    posterior_pred_choice[i] = bernoulli_rng(expected_prob);
+  }
+}
+"
+
+# Write the models to files
+write_stan_file(
+  SimpleAgent_stan,
+  dir = "stan/",
+  basename = "W9_beta_binomial.stan"
+)
+
+write_stan_file(
+  WeightedAgent_stan,
+  dir = "stan/",
+  basename = "W9_weighted_beta_binomial.stan"
+)
+
+# Prepare simulation data for Stan fitting
+# Convert 'Blue' and 'Red' choices to binary format (1 for Blue, 0 for Red)
+sim_data_for_stan <- simulation_results %>%
+  mutate(
+    choice_binary = as.integer(choice == "Blue"),
+    total1 = 8,  # Total marbles in direct evidence (constant)
+    total2 = 3   # Total signals in social evidence (constant)
+  )
+
+# Split data by agent type
+balanced_data <- sim_data_for_stan %>% filter(agent_type == "Balanced")
+self_focused_data <- sim_data_for_stan %>% filter(agent_type == "Self-Focused")
+socially_influenced_data <- sim_data_for_stan %>% filter(agent_type == "Socially-Influenced")
+
+# Function to prepare data for Stan
+prepare_stan_data <- function(df) {
+  list(
+    N = nrow(df),
+    choice = df$choice_binary,
+    blue1 = df$blue1,
+    total1 = df$total1,
+    blue2 = df$blue2,
+    total2 = df$total2
+  )
+}
+
+# Prepare Stan data for each agent
+stan_data_balanced <- prepare_stan_data(balanced_data)
+stan_data_self_focused <- prepare_stan_data(self_focused_data)
+stan_data_socially_influenced <- prepare_stan_data(socially_influenced_data)
+
+# Compile the Stan models
+file_simple <- file.path("stan/W9_beta_binomial.stan")
+file_weighted <- file.path("stan/W9_weighted_beta_binomial.stan")
+
+# Check if we need to regenerate simulation results
+if (regenerate_simulations) {
+  # Compile models
+  mod_simple <- cmdstan_model(file_simple, cpp_options = list(stan_threads = TRUE))
+  mod_weighted <- cmdstan_model(file_weighted, cpp_options = list(stan_threads = TRUE))
+  
+  # Fit simple model to each agent's data
+  fit_simple_balanced <- mod_simple$sample(
+    data = stan_data_balanced,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0  # Set to 500 or so to see progress
+  )
+  
+  fit_simple_self_focused <- mod_simple$sample(
+    data = stan_data_self_focused,
+    seed = 124,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0
+  )
+  
+  fit_simple_socially_influenced <- mod_simple$sample(
+    data = stan_data_socially_influenced,
+    seed = 125,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0
+  )
+  
+  # Fit weighted model to each agent's data
+  fit_weighted_balanced <- mod_weighted$sample(
+    data = stan_data_balanced,
+    seed = 126,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0
+  )
+  
+  fit_weighted_self_focused <- mod_weighted$sample(
+    data = stan_data_self_focused,
+    seed = 127,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0
+  )
+  
+  fit_weighted_socially_influenced <- mod_weighted$sample(
+    data = stan_data_socially_influenced,
+    seed = 128,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0
+  )
+  
+  # Save model fits for future use
+  fit_simple_balanced$save_object("simmodels/fit_simple_balanced.rds")
+  fit_simple_self_focused$save_object("simmodels/fit_simple_self_focused.rds")
+  fit_simple_socially_influenced$save_object("simmodels/fit_simple_socially_influenced.rds")
+  fit_weighted_balanced$save_object("simmodels/fit_weighted_balanced.rds")
+  fit_weighted_self_focused$save_object("simmodels/fit_weighted_self_focused.rds")
+  fit_weighted_socially_influenced$save_object("simmodels/fit_weighted_socially_influenced.rds")
+  
+  cat("Generated and saved new model fits\n")
+} else {
+  # Load existing model fits
+  fit_simple_balanced <- readRDS("simmodels/fit_simple_balanced.rds")
+  fit_simple_self_focused <- readRDS("simmodels/fit_simple_self_focused.rds")
+  fit_simple_socially_influenced <- readRDS("simmodels/fit_simple_socially_influenced.rds")
+  fit_weighted_balanced <- readRDS("simmodels/fit_weighted_balanced.rds")
+  fit_weighted_self_focused <- readRDS("simmodels/fit_weighted_self_focused.rds")
+  fit_weighted_socially_influenced <- readRDS("simmodels/fit_weighted_socially_influenced.rds")
+  
+  cat("Loaded existing model fits\n")
+}
+
+```
+
+## Model Quality Checks
+
+### Overview
+
+Model quality checks are crucial for understanding how well our Bayesian models capture the underlying data-generating process. We'll use three primary techniques:
+
+1. Prior Predictive Checks
+2. Posterior Predictive Checks
+3. Prior-Posterior Update Visualization
+
+### Prior and Posterior Predictive Checks
+
+Prior predictive checks help us understand what our model assumes about the world before seeing any data. They answer the question: "What kind of data would we expect to see if we only used our prior beliefs?" Posterior predictive checks are the same, but after having seen the data. This helps us assess whether the model can generate data that looks similar to our observed data.
+
+```{r 09 prior and posterior predictive checks}}
+plot_predictive_checks <- function(stan_fit, 
+                                   simulation_results, 
+                                   model_name = "Simple Balanced", 
+                                   param_name = "prior_pred_choice") {
+  # Extract predictive samples
+  pred_samples <- stan_fit$draws(param_name, format = "data.frame")
+  
+  # Get the number of samples and observations
+  n_samples <- nrow(pred_samples)
+  n_obs <- ncol(pred_samples) - 3  # Subtract chain, iteration, and draw columns
+  
+  # Convert to long format
+  long_pred <- pred_samples %>%
+    dplyr::select(-.chain, -.iteration, -.draw) %>%  # Remove metadata columns
+    pivot_longer(
+      cols = everything(),
+      names_to = "obs_id",
+      values_to = "choice"
+    ) %>%
+    mutate(obs_id = parse_number(obs_id))  # Extract observation number
+  
+  # Join with the original simulation data to get evidence levels
+  # First, add an observation ID to the simulation data
+  sim_with_id <- simulation_results %>%
+    mutate(obs_id = row_number())
+  
+  # Join predictions with evidence levels
+  long_pred_with_evidence <- long_pred %>%
+    left_join(
+      sim_with_id %>% dplyr::select(obs_id, blue1, blue2),
+      by = "obs_id"
+    )
+  
+  # Summarize proportion of 1s per evidence combination
+  pred_summary <- long_pred_with_evidence %>%
+    group_by(blue1, blue2) %>%
+    summarize(
+      proportion = mean(choice, na.rm = TRUE), 
+      n = n(),  
+      se = sqrt((proportion * (1 - proportion)) / n),  # Binomial SE
+      lower = proportion - 1.96 * se,  
+      upper = proportion + 1.96 * se,  
+      .groups = "drop"
+    )
+
+  # Generate title based on parameter name
+  title <- ifelse(param_name == "prior_pred_choice", 
+                  paste0("Prior Predictive Check for ", model_name),
+                  paste0("Posterior Predictive Check for ", model_name))
+  
+  # Create plot
+  ggplot(pred_summary, aes(x = blue1, y = proportion, color = factor(blue2), group = blue2)) +
+    geom_line() +
+    geom_point() +
+    geom_ribbon(aes(ymin = lower, ymax = upper, fill = factor(blue2)), alpha = 0.2, color = NA) +
+    ylim(0, 1) +
+    labs(title = title,
+         x = "Direct Evidence (Blue Marbles)",
+         y = "Proportion of Choice = Blue",
+         color = "Social Evidence",
+         fill = "Social Evidence") +
+    theme_minimal()
+}
+
+# Generate all plots
+prior_simple_balanced <- plot_predictive_checks(fit_simple_balanced, simulation_results, "Simple Balanced", "prior_pred_choice")
+prior_simple_self_focused <- plot_predictive_checks(fit_simple_self_focused, simulation_results, "Simple Self Focused", "prior_pred_choice")
+prior_simple_socially_influenced <- plot_predictive_checks(fit_simple_socially_influenced, simulation_results, "Simple Socially Influenced", "prior_pred_choice")
+
+#prior_weighted_balanced <- plot_predictive_checks(fit_weighted_balanced, simulation_results, "Weighted Balanced", "prior_pred_choice")
+#prior_weighted_self_focused <- plot_predictive_checks(fit_weighted_self_focused, simulation_results, "Weighted Self Focused", "prior_pred_choice")
+#prior_weighted_socially_influenced <- plot_predictive_checks(fit_weighted_socially_influenced, simulation_results, "Weighted Socially Influenced", "prior_pred_choice")
+
+posterior_simple_balanced <- plot_predictive_checks(fit_simple_balanced, simulation_results, "Simple Balanced", "posterior_pred_choice")
+posterior_simple_self_focused <- plot_predictive_checks(fit_simple_self_focused, simulation_results, "Simple Self Focused", "posterior_pred_choice")
+posterior_simple_socially_influenced <- plot_predictive_checks(fit_simple_socially_influenced, simulation_results, "Simple Socially Influenced", "posterior_pred_choice")
+
+posterior_weighted_balanced <- plot_predictive_checks(fit_weighted_balanced, simulation_results, "Weighted Balanced", "posterior_pred_choice")
+posterior_weighted_self_focused <- plot_predictive_checks(fit_weighted_self_focused, simulation_results, "Weighted Self Focused", "posterior_pred_choice")
+posterior_weighted_socially_influenced <- plot_predictive_checks(fit_weighted_socially_influenced, simulation_results, "Weighted Socially Influenced", "posterior_pred_choice")
+
+# Arrange Prior Predictive Checks in a Grid
+prior_grid <- (prior_simple_balanced + prior_simple_self_focused + prior_simple_socially_influenced) +#/  (prior_weighted_balanced + prior_weighted_self_focused + prior_weighted_socially_influenced) +
+              plot_annotation(title = "Prior Predictive Checks")
+
+# Arrange Posterior Predictive Checks in a Grid
+posterior_grid <- (posterior_simple_balanced + posterior_simple_self_focused + posterior_simple_socially_influenced) /
+                  (posterior_weighted_balanced + posterior_weighted_self_focused + posterior_weighted_socially_influenced) +
+                  plot_annotation(title = "Posterior Predictive Checks")
+
+# Display the grids
+print(prior_grid)
+print(posterior_grid)
+```
+
+## Prior-Posterior Update Visualization
+
+This visualization shows how our beliefs change after observing data, comparing the prior and posterior distributions for key parameters.
+
+```{r}
+
+prior_posterior_update_grid <- function(fit_list, true_params_list, model_names) {
+  if (length(fit_list) != length(true_params_list) || length(fit_list) != length(model_names)) {
+    stop("fit_list, true_params_list, and model_names must have the same length!")
+  }
+  
+  # Extract prior and posterior samples for all models
+  prior_posterior_df <- map2_dfr(fit_list, model_names, function(fit, model_name) {
+    draws_df <- as_draws_df(fit$draws())
+    param_names <- c("weight_direct", "weight_social")
+    
+    map_dfr(param_names, function(param) {
+      tibble(
+        model_name = model_name,
+        parameter = param,
+        value = c(draws_df[[paste0(param, "_prior")]], draws_df[[param]]),
+        distribution = rep(c("Prior", "Posterior"), each = nrow(draws_df))
+      )
+    })
+  })
+
+  # Combine true parameter values into a single dataframe
+  true_values_df <- map2_dfr(true_params_list, model_names, function(params, model_name) {
+    tibble(
+      model_name = model_name,
+      parameter = names(params),
+      value = unlist(params)
+    )
+  })
+  
+  # Base plot with facet grid
+  p <- ggplot(prior_posterior_df, aes(x = value, fill = distribution, color = distribution)) +
+    geom_density(alpha = 0.3, linewidth = 1.2) +
+    facet_grid(model_name ~ parameter, scales = "free") +  # Arrange models in rows, parameters in columns
+    scale_fill_manual(values = c("Prior" = "#E63946", "Posterior" = "#1D3557")) +  
+    scale_color_manual(values = c("Prior" = "#E63946", "Posterior" = "#1D3557")) +
+    labs(title = "Prior vs. Posterior Distributions Across Models",
+         x = "Parameter Value",
+         y = "Density",
+         fill = "Distribution",
+         color = "Distribution") +
+    theme_minimal(base_size = 14) +
+    theme(legend.position = "top")
+
+  # Add true parameter values
+  if (!is.null(true_params_list)) {
+    p <- p + 
+      geom_vline(data = true_values_df,
+                 aes(xintercept = value),
+                 color = "#2A9D8F", linetype = "dashed", linewidth = 1.2)
+  }
+
+  return(p)
+}
+
+# Define models and true parameter values
+fit_list <- list(
+  fit_weighted_balanced,
+  fit_weighted_self_focused,
+  fit_weighted_socially_influenced
+)
+
+true_params_list <- list(
+  list(weight_direct = 1, weight_social = 1),
+  list(weight_direct = 1.5, weight_social = 0.5),
+  list(weight_direct = 0.7, weight_social = 2)
+)
+
+model_names <- c("Weighted Balanced", "Weighted Self-Focused", "Weighted Socially Influenced")
+
+# Generate the plot
+# prior_posterior_update_grid(fit_list, true_params_list, model_names)
+
+
+```
+
+## Parameter recovery
+
+```{r}
+## Set up parallel processing
+future::plan(multisession, workers = parallel::detectCores() - 1)
+
+# Define parameter grid
+weight_values <- c(0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
+n_trials <- c(1, 2, 3, 4, 5) # Number of times full combination of levels is repeated
+
+param_grid <- expand_grid(w1 = weight_values, w2 = weight_values, trials = n_trials)
+
+# Define evidence combinations
+evidence_combinations <- expand_grid(
+  blue1 = 0:8,     # Direct evidence: number of blue marbles seen
+  blue2 = 0:3      # Social evidence: strength of blue evidence
+) %>% mutate(
+  total1 = 8,      # Total marbles in direct evidence
+  total2 = 3       # Total strength units in social evidence
+)
+
+# Function to generate decisions across all evidence combinations for a given agent
+generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, trials) {
+  # Expand dataset to account for multiple trials
+  expanded_data <- evidence_df %>% slice(rep(1:n(), each = trials))
+  
+  # Apply our weighted Bayesian model to each evidence combination
+  decisions <- pmap_dfr(expanded_data, function(blue1, blue2, total1, total2) {
+    # Calculate Bayesian integration with the agent's specific weights
+    result <- weightedBetaBinomial(
+      alpha_prior = 1, beta_prior = 1,
+      blue1 = blue1, total1 = total1,
+      blue2 = blue2, total2 = total2,
+      weight_direct = weight_direct,
+      weight_social = weight_social
+    )
+    
+    # Return key decision metrics
+    tibble(
+      blue1 = blue1,
+      blue2 = blue2,
+      total1 = total1,
+      total2 = total2,
+      expected_rate = result$expected_rate,   # Probability the next marble is blue
+      choice = result$decision,               # Final decision (Blue or Red)
+      confidence = result$confidence          # Confidence in decision
+    )
+  })
+  
+  return(decisions)
+}
+
+# Function to prepare Stan data
+prepare_stan_data <- function(df) {
+  list(
+    N = nrow(df),
+    choice = as.integer(df$choice == "Blue"),
+    blue1 = df$blue1,
+    total1 = df$total1,
+    blue2 = df$blue2,
+    total2 = df$total2
+  )
+}
+
+# Compile the Stan model 
+file_weighted <- file.path("stan/W9_weighted_beta_binomial.stan")
+mod_weighted <- cmdstan_model(file_weighted, cpp_options = list(stan_threads = TRUE))
+
+# Function to fit model using cmdstanr
+fit_model <- function(data) {
+  stan_data <- prepare_stan_data(data)
+  fit <- mod_weighted$sample(
+    data = stan_data,
+    seed = 126,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 0
+  )
+  return(fit)
+}
+
+# Run simulations and model fitting in parallel
+results <- param_grid %>%
+  mutate(
+    # Generate synthetic data for each parameter combination
+    data = future_pmap(list(w1, w2, trials), function(w1, w2, t) {
+      generate_agent_decisions(w1, w2, evidence_combinations, t)
+    }, .options = furrr_options(seed = TRUE)),
+    
+    # Fit model to each dataset
+    fit = future_map(data, fit_model, .progress = TRUE)
+  )
+
+# Extract estimated coefficients - proper parameter names
+results <- results %>%
+  mutate(
+    # Extract weight parameters properly - names from Stan model
+    weight_direct_est = map_dbl(fit, ~mean(as_draws_df(.x$draws())$weight_direct)),
+    weight_social_est = map_dbl(fit, ~mean(as_draws_df(.x$draws())$weight_social)),
+    
+    # Extract uncertainty estimates
+    weight_direct_sd = map_dbl(fit, ~sd(as_draws_df(.x$draws())$weight_direct)),
+    weight_social_sd = map_dbl(fit, ~sd(as_draws_df(.x$draws())$weight_social))
+  )
+
+# Visualize direct weight recovery
+p1 <- results %>%
+  ggplot(aes(x = w1, y = weight_direct_est, color = factor(trials))) +
+  geom_point() +
+  geom_errorbar(aes(ymin = weight_direct_est - weight_direct_sd, 
+                    ymax = weight_direct_est + weight_direct_sd), 
+                width = 0.1, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  facet_wrap(~ w2) +
+  labs(title = "Direct Weight Parameter Recovery", 
+       x = "True Direct Weight", 
+       y = "Estimated Direct Weight",
+       color = "Number of Trials") +
+  theme_minimal()
+
+# Visualize social weight recovery
+p2 <- results %>%
+  ggplot(aes(x = w2, y = weight_social_est, color = factor(trials))) +
+  geom_point() +
+  geom_errorbar(aes(ymin = weight_social_est - weight_social_sd, 
+                    ymax = weight_social_est + weight_social_sd), 
+                width = 0.1, alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  facet_wrap(~ w1) +
+  labs(title = "Social Weight Parameter Recovery", 
+       x = "True Social Weight", 
+       y = "Estimated Social Weight",
+       color = "Number of Trials") +
+  theme_minimal()
+
+# Display plots
+p1
+p2
+```
+
+## Multilevel Bayesian Models
+
+In the previous sections, we explored how individuals integrate direct and social evidence using Bayesian principles. However, our models assumed that all individuals use the same weighting strategy. In reality, people vary in how they weigh different sources of information - some may trust their own observations more, while others may be more influenced by social information.
+
+Multilevel (hierarchical) models allow us to capture this individual variation while still leveraging the commonalities across individuals. They offer several advantages:
+
+1. They model individual differences explicitly
+2. They improve parameter estimation for individuals with limited data 
+3. They allow us to examine correlations between individual parameters
+4. They provide population-level insights about general tendencies
+
+In this section, we'll develop multilevel versions of both our simple beta-binomial and weighted beta-binomial models.
+
+### Simulating Data from Multiple Agents
+
+First, let's simulate a population of agents with varying evidence-weighting parameters:
+
+```{r multilevel_sim_setup}
+# Set random seed for reproducibility
+set.seed(8675309)
+
+# Simulation parameters
+n_agents <- 20  # Number of agents
+n_scenarios_per_agent <- 36  # Number of evidence combinations (all possible combinations)
+
+# Population-level parameters
+# For the weighted model
+population_mean_direct <- 1.0  # Mean weight for direct evidence
+population_sd_direct <- 0.1    # SD of individual variation in direct evidence weight
+population_mean_social <- 0.6  # Mean weight for social evidence
+population_sd_social <- 0.1    # SD of individual variation in social evidence weight
+
+# Sample individual agent parameters from population distributions
+agent_params <- tibble(
+  agent_id = 1:n_agents,
+  # For weighted models - individual weights
+  weight_direct = rnorm(n_agents, population_mean_direct, population_sd_direct),
+  weight_social = rnorm(n_agents, population_mean_social, population_sd_social)
+)
+
+# Display the distribution of agent parameters
+summary(agent_params)
+
+# Create all possible evidence combinations
+evidence_combinations <- expand_grid(
+  blue1 = 0:8,     # Direct evidence: number of blue marbles seen (0-8 blue out of 8)
+  blue2 = 0:3,     # Social evidence: strength of blue evidence (0-3 blue signals)
+  total1 = 8,      # Total marbles in direct evidence (constant) 
+  total2 = 3       # Total signals in social evidence (constant)
+)
+
+# Generate data for each agent across all evidence combinations
+multilevel_sim_data <- map_dfr(1:n_agents, function(agent_idx) {
+  # Get this agent's parameters
+  agent_data <- agent_params[agent_params$agent_id == agent_idx, ]
+  
+  # Apply our weighted Bayesian model to each evidence combination
+  agent_decisions <- pmap_dfr(evidence_combinations, function(blue1, blue2, total1, total2) {
+    # Calculate Bayesian integration with this agent's specific weights
+    result <- weightedBetaBinomial(
+      alpha_prior = 1, beta_prior = 1,
+      blue1 = blue1, total1 = total1,
+      blue2 = blue2, total2 = total2,
+      weight_direct = agent_data$weight_direct,
+      weight_social = agent_data$weight_social
+    )
+    
+    # Return decision for this evidence combination
+    tibble(
+      agent_id = agent_idx,
+      blue1 = blue1,
+      blue2 = blue2,
+      total1 = total1,
+      total2 = total2,
+      choice = result$decision,
+      choice_binary = as.integer(result$decision == "Blue"),
+      expected_rate = result$expected_rate,
+      confidence = result$confidence
+    )
+  })
+  
+  return(agent_decisions)
+})
+
+# Add true parameter values to the dataset
+multilevel_sim_data <- multilevel_sim_data %>%
+  left_join(agent_params, by = "agent_id")
+
+# Add descriptive labels
+multilevel_sim_data <- multilevel_sim_data %>%
+  mutate(
+    social_evidence = factor(blue2,
+                           levels = 0:3,
+                           labels = c("Clear Red", "Weak Red", "Weak Blue", "Clear Blue"))
+  )
+
+# Examine a sample of the data
+head(multilevel_sim_data)
+```
+
+### Visualizing Individual Differences in Decision Patterns
+
+Let's visualize how different agents make decisions based on the same evidence:
+
+```{r multilevel_viz}
+# Select a subset of agents to visualize
+viz_agents <- sample(1:n_agents, 6)
+
+# Create decision curves for selected agents
+p_decision_curves <- multilevel_sim_data %>%
+  filter(agent_id %in% viz_agents) %>%
+  ggplot(aes(x = blue1, y = expected_rate, color = social_evidence, group = social_evidence)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray50") +
+  facet_wrap(~ agent_id, ncol = 3, labeller = labeller(
+    agent_id = function(x) paste("Agent", x, 
+                              "\nw₁=", round(agent_params$weight_direct[as.numeric(x)], 2),
+                              ", w₂=", round(agent_params$weight_social[as.numeric(x)], 2))
+  )) +
+  scale_color_brewer(palette = "Set1") +
+  scale_x_continuous(breaks = seq(0, 8, 2)) +
+  labs(
+    title = "Individual Differences in Evidence Integration",
+    subtitle = "Expected probability of blue marble across evidence combinations",
+    x = "Number of Blue Marbles in Direct Evidence (out of 8)",
+    y = "Expected Probability of Blue",
+    color = "Social Evidence"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+# Create decision boundary plot
+p_decision_boundaries <- multilevel_sim_data %>%
+  filter(agent_id %in% viz_agents) %>%
+  ggplot(aes(x = blue1, y = blue2)) +
+  geom_tile(aes(fill = choice)) +
+  facet_wrap(~ agent_id, ncol = 3, labeller = labeller(
+    agent_id = function(x) paste("Agent", x, 
+                              "\nw₁=", round(agent_params$weight_direct[as.numeric(x)], 2),
+                              ", w₂=", round(agent_params$weight_social[as.numeric(x)], 2))
+  )) +
+  scale_fill_manual(values = c("Red" = "firebrick", "Blue" = "royalblue")) +
+  scale_x_continuous(breaks = 0:8) +
+  scale_y_continuous(breaks = 0:3) +
+  labs(
+    title = "Decision Boundaries Across Individuals",
+    subtitle = "Color shows whether agent chooses blue or red",
+    x = "Number of Blue Marbles in Direct Evidence (out of 8)",
+    y = "Number of Blue Signals in Social Evidence (out of 3)",
+    fill = "Decision"
+  ) +
+  theme_bw()
+
+# Display the visualizations
+p_decision_curves
+p_decision_boundaries
+
+# Plot the distribution of agent parameters
+p_param_distribution <- ggplot(agent_params, aes(x = weight_direct, y = weight_social)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
+  geom_hline(yintercept = population_mean_social, linetype = "dashed", color = "blue") +
+  geom_vline(xintercept = population_mean_direct, linetype = "dashed", color = "blue") +
+  labs(
+    title = "Distribution of Agent Parameters",
+    subtitle = "Each point represents one agent; dashed lines show population means",
+    x = "Weight for Direct Evidence (w₁)",
+    y = "Weight for Social Evidence (w₂)"
+  ) +
+  theme_minimal()
+
+p_param_distribution
+```
+
+Looking at these visualizations, we can see clear individual differences in how agents integrate evidence:
+
+- Some agents give more weight to direct evidence, requiring less direct evidence to choose "blue" regardless of social evidence
+- Others are more influenced by social information, showing greater spacing between the different social evidence lines
+- These differences create unique decision boundaries for each agent, where they transition from choosing red to blue
+
+### Implementing the Multilevel Simple Beta-Binomial Model in Stan
+
+Now, let's implement a multilevel version of our simple beta-binomial model. This model assumes equal weights (1.0) for both evidence sources but allows individuals to have different baseline tendencies to choose blue versus red.
+
+```{r multilevel_simple_model}
+# Stan model for multilevel simple beta-binomial
+multilevel_simple_stan <- "
+// Multilevel Simple Beta-Binomial Model
+// This model assumes equal weights for evidence sources but allows 
+// individual variation in baseline tendencies
+
+data {
+  int<lower=1> N;                        // Total number of observations
+  int<lower=1> J;                        // Number of subjects
+  array[N] int<lower=1, upper=J> agent_id;  // Agent ID for each observation
+  array[N] int<lower=0, upper=1> choice; // Choices (0=red, 1=blue)
+  array[N] int<lower=0> blue1;           // Direct evidence (blue marbles)
+  array[N] int<lower=0> total1;          // Total direct evidence
+  array[N] int<lower=0> blue2;           // Social evidence (blue signals)
+  array[N] int<lower=0> total2;          // Total social evidence
+}
+
+parameters {
+  // Population-level (fixed) effects
+  real<lower=0, upper=1> population_theta; // Population average probability
+  
+  // Individual-level (random) effects
+  real<lower=0> tau;                      // Between-subject variability
+  vector[J] z;                            // Standardized individual deviations
+}
+
+transformed parameters {
+  // Individual-level parameters
+  vector<lower=0, upper=1>[J] theta;      // Individual probabilities
+  
+  // Non-centered parameterization
+  for (j in 1:J) {
+    // Transform z to probability space via logit
+    real logit_population = logit(population_theta);
+    real logit_individual = logit_population + z[j] * tau;
+    theta[j] = inv_logit(logit_individual);
+  }
+}
+
+model {
+  // Priors for population parameters
+  population_theta ~ beta(1, 1);        // Uniform prior
+  tau ~ exponential(1);                 // Prior for between-subject variability
+  z ~ std_normal();                     // Prior for standardized random effects
+  
+  // Likelihood
+  for (i in 1:N) {
+    // Calculate combined theta for this specific decision
+    real p_blue1 = (blue1[i] + 1.0) / (total1[i] + 2.0); // Beta-binomial posterior
+    real p_blue2 = (blue2[i] + 1.0) / (total2[i] + 2.0); // Beta-binomial posterior
+    
+    // Simple average of the two probabilities
+    real combined_theta = (p_blue1 + p_blue2) / 2.0;
+    
+    // Individual adjustment to the combined theta
+    real adjusted_theta = theta[agent_id[i]] * combined_theta;
+    
+    // Bound probability between 0 and 1
+    adjusted_theta = fmin(fmax(adjusted_theta, 0.001), 0.999);
+    
+    // Model choice
+    choice[i] ~ bernoulli(adjusted_theta);
+  }
+}
+
+generated quantities {
+  // Log likelihood for model comparison
+  vector[N] log_lik;
+  
+  // Population and individual predictions
+  array[N] int pred_choice;
+  
+  for (i in 1:N) {
+    // Calculate the same combined theta as in the model block
+    real p_blue1 = (blue1[i] + 1.0) / (total1[i] + 2.0);
+    real p_blue2 = (blue2[i] + 1.0) / (total2[i] + 2.0);
+    real combined_theta = (p_blue1 + p_blue2) / 2.0;
+    real adjusted_theta = theta[agent_id[i]] * combined_theta;
+    adjusted_theta = fmin(fmax(adjusted_theta, 0.001), 0.999);
+    
+    // Generate predictions
+    pred_choice[i] = bernoulli_rng(adjusted_theta);
+    
+    // Calculate log likelihood
+    log_lik[i] = bernoulli_lpmf(choice[i] | adjusted_theta);
+  }
+}
+"
+
+# Write the model to a file
+write_stan_file(
+  multilevel_simple_stan,
+  dir = "stan/",
+  basename = "W9_multilevel_simple_beta_binomial.stan"
+)
+```
+
+### Implementing the Multilevel Weighted Beta-Binomial Model in Stan
+
+Now let's implement the multilevel weighted beta-binomial model, which allows both population-level estimates of evidence weights and individual variations around these population means.
+
+```{r multilevel_weighted_model}
+
+multilevel_weighted_stan <- "
+// Multilevel Weighted Beta-Binomial Model with Relative Weighting
+// This model parameterizes weights in relation to each other for better identifiability
+
+data {
+  int<lower=1> N;                        // Total number of observations
+  int<lower=1> J;                        // Number of subjects
+  array[N] int<lower=1, upper=J> agent_id;  // Agent ID for each observation
+  array[N] int<lower=0, upper=1> choice; // Choices (0=red, 1=blue)
+  array[N] int<lower=0> blue1;           // Direct evidence (blue marbles)
+  array[N] int<lower=0> total1;          // Total direct evidence
+  array[N] int<lower=0> blue2;           // Social evidence (blue signals)
+  array[N] int<lower=0> total2;          // Total social evidence
+}
+
+parameters {
+  // Population-level (fixed) effects
+  real mu_weight_ratio;                  // Population mean for relative weight (direct/social)
+  
+  // Population-level standard deviation
+  real<lower=0> sigma_weight_ratio;      // Between-subject variability in relative weighting
+  
+  // Individual-level (random) effects
+  vector[J] z;                           // Standardized individual deviations
+  
+  // Overall evidence scaling factor (shared across both sources)
+  real<lower=0> mu_scaling;              // Population mean for overall scaling
+  real<lower=0> sigma_scaling;           // Between-subject variability in scaling
+  vector[J] z_scaling;                   // Individual scaling factors (standardized)
+}
+
+transformed parameters {
+  // Individual-level parameters
+  vector<lower=0>[J] weight_ratio;       // Individual relative weights (direct/social)
+  vector<lower=0>[J] scaling_factor;     // Individual overall scaling factors
+  vector<lower=0>[J] weight_direct;      // Individual weights for direct evidence
+  vector<lower=0>[J] weight_social;      // Individual weights for social evidence
+  
+  // Non-centered parameterization for weight ratio
+  for (j in 1:J) {
+    // Transform standardized parameters to natural scale
+    weight_ratio[j] = exp(mu_weight_ratio + z[j] * sigma_weight_ratio);
+    scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
+    
+    // Calculate individual weights
+    // The sum of weights is determined by the scaling factor
+    // The ratio between weights is determined by weight_ratio
+    weight_direct[j] = scaling_factor[j] * weight_ratio[j] / (1 + weight_ratio[j]);
+    weight_social[j] = scaling_factor[j] / (1 + weight_ratio[j]);
+  }
+}
+
+model {
+  // Priors for population parameters
+  mu_weight_ratio ~ normal(0, 1);        // Prior for log weight ratio centered at 0 (equal weights)
+  sigma_weight_ratio ~ exponential(2);   // Prior for between-subject variability
+  
+  mu_scaling ~ normal(0, 1);             // Prior for log scaling factor
+  sigma_scaling ~ exponential(2);        // Prior for scaling variability
+  
+  // Priors for individual random effects
+  z ~ std_normal();                      // Standard normal prior for weight ratio z-scores
+  z_scaling ~ std_normal();              // Standard normal prior for scaling z-scores
+  
+  // Likelihood
+  for (i in 1:N) {
+    // Get weights for this person
+    real w_direct = weight_direct[agent_id[i]];
+    real w_social = weight_social[agent_id[i]];
+    
+    // Calculate weighted evidence
+    real weighted_blue1 = blue1[i] * w_direct;
+    real weighted_red1 = (total1[i] - blue1[i]) * w_direct;
+    real weighted_blue2 = blue2[i] * w_social;
+    real weighted_red2 = (total2[i] - blue2[i]) * w_social;
+    
+    // Calculate Beta parameters for Bayesian integration
+    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
+    real beta_post = 1 + weighted_red1 + weighted_red2;
+    
+    // Expected probability from integrated evidence
+    real expected_prob = alpha_post / (alpha_post + beta_post);
+    
+    // Model choice
+    choice[i] ~ bernoulli(expected_prob);
+  }
+}
+
+generated quantities {
+  // Log likelihood for model comparison
+  vector[N] log_lik;
+  
+  // Population and individual predictions
+  array[N] int pred_choice;
+  
+  // Convert population parameters to original weight scale for interpretation
+  real population_ratio = exp(mu_weight_ratio);
+  real population_scaling = exp(mu_scaling);
+  real population_weight_direct = population_scaling * population_ratio / (1 + population_ratio);
+  real population_weight_social = population_scaling / (1 + population_ratio);
+  
+  for (i in 1:N) {
+    // Get weights for this person
+    real w_direct = weight_direct[agent_id[i]];
+    real w_social = weight_social[agent_id[i]];
+    
+    // Calculate weighted evidence
+    real weighted_blue1 = blue1[i] * w_direct;
+    real weighted_red1 = (total1[i] - blue1[i]) * w_direct;
+    real weighted_blue2 = blue2[i] * w_social;
+    real weighted_red2 = (total2[i] - blue2[i]) * w_social;
+    
+    // Calculate Beta parameters
+    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
+    real beta_post = 1 + weighted_red1 + weighted_red2;
+    
+    // Expected probability
+    real expected_prob = alpha_post / (alpha_post + beta_post);
+    
+    // Generate predictions and calculate log likelihood
+    pred_choice[i] = bernoulli_rng(expected_prob);
+    log_lik[i] = bernoulli_lpmf(choice[i] | expected_prob);
+  }
+}
+"
+# Write the model to a file
+write_stan_file(
+  multilevel_weighted_stan,
+  dir = "stan/",
+  basename = "W9_multilevel_weighted_beta_binomial.stan"
+)
+```
+
+### Preparing Data for Stan Fitting
+
+```{r prepare_stan_data}
+# Create data for Stan in the correct format
+stan_data_multilevel <- list(
+  N = nrow(multilevel_sim_data),
+  J = n_agents,
+  agent_id = multilevel_sim_data$agent_id,
+  choice = multilevel_sim_data$choice_binary,
+  blue1 = multilevel_sim_data$blue1,
+  total1 = multilevel_sim_data$total1,
+  blue2 = multilevel_sim_data$blue2,
+  total2 = multilevel_sim_data$total2
+)
+
+# Compile the Stan models
+file_simple_ml <- file.path("stan/W9_multilevel_simple_beta_binomial.stan")
+file_weighted_ml <- file.path("stan/W9_multilevel_weighted_beta_binomial.stan")
+
+# Check if we need to regenerate simulation results
+if (regenerate_simulations) {
+  # Compile models
+  mod_simple_ml <- cmdstan_model(file_simple_ml, cpp_options = list(stan_threads = TRUE))
+  mod_weighted_ml <- cmdstan_model(file_weighted_ml, cpp_options = list(stan_threads = TRUE))
+  
+  # Fit the simple multilevel model
+  fit_simple_ml <- mod_simple_ml$sample(
+    data = stan_data_multilevel,
+    seed = 42,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 100,
+    adapt_delta = 0.9
+  )
+  
+  # Fit the weighted multilevel model
+  fit_weighted_ml <- mod_weighted_ml$sample(
+    data = stan_data_multilevel,
+    seed = 43,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 100,
+    adapt_delta = 0.95
+  )
+  
+  # Save model fits for future use
+  fit_simple_ml$save_object("simmodels/fit_multilevel_simple.rds")
+  fit_weighted_ml$save_object("simmodels/fit_multilevel_weighted.rds")
+  
+  cat("Generated and saved new multilevel model fits\n")
+} else {
+  # Load existing model fits
+  fit_simple_ml <- readRDS("simmodels/fit_multilevel_simple.rds")
+  fit_weighted_ml <- readRDS("simmodels/fit_multilevel_weighted.rds")
+  
+  cat("Loaded existing multilevel model fits\n")
+}
+```
+
+### Model Diagnostics and Quality Checks
+
+Let's examine the model diagnostics to ensure our models have converged properly:
+
+```{r model_diagnostics}
+# Examine trace plots for key parameters
+# Simple model
+mcmc_trace(as_draws_df(fit_simple_ml$draws()), 
+           pars = c("population_theta", "tau"), 
+           facet_args = list(ncol = 1)) +
+  ggtitle("Trace Plots for Simple Multilevel Model") +
+  theme_minimal()
+
+# Weighted model (revised parameterization)
+mcmc_trace(as_draws_df(fit_weighted_ml$draws()), 
+           pars = c("mu_weight_ratio", "mu_scaling", "sigma_weight_ratio", "sigma_scaling"), 
+           facet_args = list(ncol = 1)) +
+  ggtitle("Trace Plots for Weighted Multilevel Model") +
+  theme_minimal()
+```
+
+### Parameter Recovery Analysis
+
+Now let's examine how well our multilevel models recovered the true individual parameters:
+
+```{r parameter_recovery}
+# Extract individual parameter estimates from the models
+# For weighted model
+draws_weighted_ml <- as_draws_df(fit_weighted_ml$draws())
+
+# Extract the individual weight parameters for each agent
+weight_direct_samples <- matrix(NA, nrow = nrow(draws_weighted_ml), ncol = n_agents)
+weight_social_samples <- matrix(NA, nrow = nrow(draws_weighted_ml), ncol = n_agents)
+weight_ratio_samples <- matrix(NA, nrow = nrow(draws_weighted_ml), ncol = n_agents)
+
+for (j in 1:n_agents) {
+  weight_direct_samples[, j] <- draws_weighted_ml[[paste0("weight_direct[", j, "]")]]
+  weight_social_samples[, j] <- draws_weighted_ml[[paste0("weight_social[", j, "]")]]
+  weight_ratio_samples[, j] <- draws_weighted_ml[[paste0("weight_ratio[", j, "]")]]
+}
+
+# Calculate posterior means for each agent
+weight_direct_est <- colMeans(weight_direct_samples)
+weight_social_est <- colMeans(weight_social_samples)
+weight_ratio_est <- colMeans(weight_ratio_samples)
+
+# Create dataframe for recovery analysis
+recovery_data <- tibble(
+  agent_id = 1:n_agents,
+  # True parameter values
+  true_weight_direct = agent_params$weight_direct,
+  true_weight_social = agent_params$weight_social,
+  true_weight_ratio = agent_params$weight_direct / agent_params$weight_social,
+  # Estimated values
+  est_weight_direct = weight_direct_est,
+  est_weight_social = weight_social_est,
+  est_weight_ratio = weight_ratio_est
+)
+
+# Calculate estimation errors
+recovery_data <- recovery_data %>%
+  mutate(
+    error_direct = est_weight_direct - true_weight_direct,
+    error_social = est_weight_social - true_weight_social,
+    error_ratio = est_weight_ratio - true_weight_ratio,
+    error_direct_pct = 100 * error_direct / true_weight_direct,
+    error_social_pct = 100 * error_social / true_weight_social,
+    error_ratio_pct = 100 * error_ratio / true_weight_ratio
+  )
+
+# Summarize recovery errors
+cat("Parameter Recovery Summary:\n")
+cat("Direct Weight - Mean Absolute Error:", mean(abs(recovery_data$error_direct)), "\n")
+cat("Social Weight - Mean Absolute Error:", mean(abs(recovery_data$error_social)), "\n")
+cat("Weight Ratio - Mean Absolute Error:", mean(abs(recovery_data$error_ratio)), "\n")
+cat("Direct Weight - Mean Absolute Percentage Error:", mean(abs(recovery_data$error_direct_pct)), "%\n")
+cat("Social Weight - Mean Absolute Percentage Error:", mean(abs(recovery_data$error_social_pct)), "%\n")
+cat("Weight Ratio - Mean Absolute Percentage Error:", mean(abs(recovery_data$error_ratio_pct)), "%\n")
+
+# Visualize parameter recovery
+p1 <- ggplot(recovery_data, aes(x = true_weight_direct, y = est_weight_direct)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Recovery of Direct Evidence Weights",
+    subtitle = "Perfect recovery would place all points on the dashed line",
+    x = "True Weight",
+    y = "Estimated Weight"
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(recovery_data, aes(x = true_weight_social, y = est_weight_social)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Recovery of Social Evidence Weights",
+    subtitle = "Perfect recovery would place all points on the dashed line",
+    x = "True Weight",
+    y = "Estimated Weight"
+  ) +
+  theme_minimal()
+
+# Add visualization of weight ratio recovery
+p_ratio <- ggplot(recovery_data, aes(x = true_weight_ratio, y = est_weight_ratio)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Recovery of Weight Ratio (Direct/Social)",
+    subtitle = "Perfect recovery would place all points on the dashed line",
+    x = "True Weight Ratio",
+    y = "Estimated Weight Ratio"
+  ) +
+  theme_minimal()
+
+# Display plots
+p1
+p2
+p_ratio
+
+# Visualize relationship between weights
+p3 <- ggplot(recovery_data, aes(x = est_weight_direct, y = est_weight_social)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
+  labs(
+    title = "Relationship Between Estimated Parameters",
+    x = "Estimated Direct Weight",
+    y = "Estimated Social Weight"
+  ) +
+  theme_minimal()
+
+p3
+```
+
+### Population-Level Parameter Analysis
+
+Let's examine the population-level parameters from our multilevel models:
+
+```{r population_parameters}
+# Extract population-level parameters
+# From simple model
+simple_pop_theta <- mean(as_draws_df(fit_simple_ml$draws())$population_theta)
+simple_tau <- mean(as_draws_df(fit_simple_ml$draws())$tau)
+
+# From weighted model (revised parameterization)
+population_ratio <- mean(draws_weighted_ml$population_ratio)
+population_scaling <- mean(draws_weighted_ml$population_scaling)
+population_weight_direct <- mean(draws_weighted_ml$population_weight_direct)
+population_weight_social <- mean(draws_weighted_ml$population_weight_social)
+sigma_weight_ratio <- mean(draws_weighted_ml$sigma_weight_ratio)
+sigma_scaling <- mean(draws_weighted_ml$sigma_scaling)
+
+# True population values
+true_ratio <- population_mean_direct / population_mean_social
+true_scaling <- population_mean_direct + population_mean_social
+
+# Create a summary table
+population_params <- tibble(
+  parameter = c("Population Mean (Direct)", "Population Mean (Social)",
+               "Population Ratio (Direct/Social)", "Population Scaling Factor",
+               "Population SD (Ratio)", "Population SD (Scaling)"),
+  true_value = c(population_mean_direct, population_mean_social,
+                true_ratio, true_scaling,
+                population_sd_direct/population_sd_social, # approx ratio SD
+                sqrt(population_sd_direct^2 + population_sd_social^2)), # approx scaling SD
+  estimated = c(population_weight_direct, population_weight_social,
+              population_ratio, population_scaling,
+              sigma_weight_ratio, sigma_scaling)
+)
+
+# Calculate error and percent error
+population_params <- population_params %>%
+  mutate(
+    absolute_error = abs(estimated - true_value),
+    percent_error = 100 * absolute_error / abs(true_value)
+  )
+
+# Display table
+knitr::kable(population_params, digits = 3,
+            caption = "Recovery of Population-Level Parameters")
+
+# Visualize population distribution based on ratio and scaling
+# Create a grid of values for plotting
+ratio_range <- seq(0.5, 3, length.out = 100)
+scaling_range <- seq(0.5, 3, length.out = 100)
+grid_values <- expand.grid(ratio = ratio_range, scaling = scaling_range)
+
+# Calculate weights from ratio and scaling
+grid_values <- grid_values %>%
+  mutate(
+    weight_direct = scaling * ratio / (1 + ratio),
+    weight_social = scaling / (1 + ratio)
+  )
+
+# Estimate density based on population parameters (using bivariate normal approximation in log space)
+grid_values$density <- with(grid_values, {
+  # Transform to log space
+  log_ratio <- log(ratio)
+  log_scaling <- log(scaling)
+  
+  # Parameters from fitted model
+  mu_log_ratio <- log(population_ratio)
+  mu_log_scaling <- log(population_scaling)
+  sigma_log_ratio <- sigma_weight_ratio
+  sigma_log_scaling <- sigma_scaling
+  
+  # Calculate density in log space (independent normal for simplicity)
+  dnorm(log_ratio, mu_log_ratio, sigma_log_ratio) * 
+    dnorm(log_scaling, mu_log_scaling, sigma_log_scaling)
+})
+
+# Plot population distribution
+p_pop_distribution <- ggplot() +
+  # Add contour plot of estimated distribution
+  geom_contour_filled(data = grid_values, 
+                    aes(x = weight_direct, y = weight_social, z = density),
+                    bins = 8) +
+  # Add true parameter values
+  geom_point(data = agent_params, 
+           aes(x = weight_direct, y = weight_social),
+           size = 3, color = "red", alpha = 0.7) +
+  # Add estimated parameter values
+  geom_point(data = recovery_data, 
+           aes(x = est_weight_direct, y = est_weight_social),
+           size = 3, color = "blue", alpha = 0.7) +
+  # Add population means (true and estimated)
+  geom_point(aes(x = population_mean_direct, y = population_mean_social),
+            size = 5, shape = 8, color = "darkred") +
+  geom_point(aes(x = population_weight_direct, y = population_weight_social),
+            size = 5, shape = 8, color = "darkblue") +
+  # Add reference lines showing constant ratio and scaling
+  labs(
+    title = "Estimated Population Distribution of Evidence Weights",
+    x = "Weight for Direct Evidence",
+    y = "Weight for Social Evidence",
+    fill = "Density"
+  ) +
+  #scale_x_continuous(limits = c(0, 2)) +
+  #scale_y_continuous(limits = c(0, 2)) +
+  theme_minimal() +
+  # Add a legend explaining the points
+  annotate("text", x = 0.1, y = 1.9, 
+          label = "Red: True individual parameters\nBlue: Estimated individual parameters\nX: Population means (red=true, blue=estimated)",
+          hjust = 0, size = 3)
+
+# Display the population distribution plot
+#p_pop_distribution
+```
+
+### Posterior Predictive Checks
+
+Let's examine how well our multilevel models can reproduce the observed choices:
+
+```{r posterior_checks}
+# Extract posterior predictions
+pred_choice_samples <- as_draws_df(fit_weighted_ml$draws("pred_choice"))
+
+# Calculate the probability of choosing blue for each observation
+pred_probs <- matrix(NA, nrow = stan_data_multilevel$N, ncol = 1)
+for (i in 1:stan_data_multilevel$N) {
+  # Parameter name in the format pred_choice[i]
+  param_name <- paste0("pred_choice[", i, "]")
+  # Calculate probability as mean of binary predictions
+  pred_probs[i] <- mean(pred_choice_samples[[param_name]])
+}
+
+# Create dataframe for predictions
+prediction_data <- multilevel_sim_data %>%
+  mutate(
+    pred_prob = pred_probs,
+    binned_direct = cut(blue1, breaks = c(-1, 2, 5, 8), 
+                       labels = c("Low (0-2)", "Medium (3-5)", "High (6-8)")),
+    binned_social = cut(blue2, breaks = c(-1, 1, 3), 
+                       labels = c("Low (0-1)", "High (2-3)"))
+  )
+
+# Group-level posterior predictive check
+p_group_ppc <- prediction_data %>%
+  # Group by evidence levels
+  group_by(binned_direct, binned_social) %>%
+  # Calculate observed and predicted probabilities
+  summarize(
+    n = n(),
+    observed_prob = mean(choice_binary),
+    predicted_prob = mean(pred_prob),
+    error = predicted_prob - observed_prob,
+    .groups = "drop"
+  ) %>%
+  # Create plot
+  ggplot(aes(x = observed_prob, y = predicted_prob, size = n)) +
+  geom_point(alpha = 0.7) +
+  geom_text(aes(label = paste(binned_direct, "-", binned_social)), 
+            hjust = -0.2, vjust = 0, size = 3) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Group-Level Posterior Predictive Check",
+    subtitle = "Each point represents a combination of evidence levels",
+    x = "Observed Probability of Blue Choice",
+    y = "Predicted Probability of Blue Choice",
+    size = "Number of\nObservations"
+  ) +
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal()
+
+# Individual-level posterior predictive check
+p_individual_ppc <- prediction_data %>%
+  # Group by agent and evidence levels
+  group_by(agent_id, binned_direct, binned_social) %>%
+  # Calculate observed and predicted probabilities
+  summarize(
+    n = n(),
+    observed_prob = mean(choice_binary),
+    predicted_prob = mean(pred_prob),
+    error = predicted_prob - observed_prob,
+    .groups = "drop"
+  ) %>%
+  # Create plot
+  ggplot(aes(x = observed_prob, y = predicted_prob, color = factor(agent_id))) +
+  geom_point(alpha = 0.7) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Individual-Level Posterior Predictive Check",
+    subtitle = "Each point represents an agent's behavior for a specific evidence combination",
+    x = "Observed Probability of Blue Choice",
+    y = "Predicted Probability of Blue Choice",
+    color = "Agent ID"
+  ) +
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal() +
+  theme(legend.position = "none")  # Hide legend due to many agents
+
+# Display posterior predictive checks
+p_group_ppc
+p_individual_ppc
+
+# Calculate overall prediction accuracy
+prediction_accuracy <- mean((pred_probs > 0.5) == multilevel_sim_data$choice_binary)
+cat("Overall prediction accuracy:", round(prediction_accuracy * 100, 1), "%\n")
+```
+
+## Model Comparison
+
+Finally, let's compare our models to determine which one better captures the data:
+
+```{r}
+# Calculate LOO-CV for model comparison
+loo_simple <- fit_simple_ml$loo()
+loo_weighted <- fit_weighted_ml$loo()
+
+# Compare models
+loo_comparison <- loo_compare(loo_simple, loo_weighted)
+print(loo_comparison)
+
+# Calculate model weights
+model_weights <- loo_model_weights(list(
+  "Simple Beta-Binomial" = loo_simple,
+  "Weighted Beta-Binomial" = loo_weighted
+))
+
+# Create comparison visualization
+comparison_data <- tibble(
+  model = names(model_weights),
+  weight = as.numeric(model_weights)
+)
+
+ggplot(comparison_data, aes(x = model, y = weight, fill = model)) +
+  geom_col() +
+  geom_text(aes(label = scales::percent(weight, accuracy = 0.1)), 
+            vjust = -0.5, size = 5) +
+  scale_fill_brewer(palette = "Set1") +
+  labs(
+    title = "Model Comparison via LOO-CV",
+    subtitle = "Higher weights indicate better predictive performance",
+    x = NULL,
+    y = "Model Weight"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+## Extensions and Applications
+
+The multilevel Bayesian framework we've developed can be extended in several important ways:
+
+
+
+### Time-Varying Weights
+
+Evidence weights might change over time as participants learn about the reliability of different sources:
+
+```{r}
+#// Dynamically updated weights
+#weight_direct[j, t] = weight_direct_baseline[j] * (1 + learning_rate * prediction_error[j, t-1]);
+```
+
+### Group Comparisons
+
+The framework allows for comparing different populations (e.g., clinical vs. control groups):
+
+```{r}
+# // In the parameters block
+# real mu_direct_group1;
+# real mu_direct_group2;
+# real<lower=0> sigma_direct_group1;
+# real<lower=0> sigma_direct_group2;
+# 
+# // In the model block
+# for (j in 1:J1) {  // Group 1
+#   theta_j[j] ~ normal(mu_direct_group1, sigma_direct_group1);
+# }
+# for (j in (J1+1):(J1+J2)) {  // Group 2
+#   theta_j[j] ~ normal(mu_direct_group2, sigma_direct_group2);
+# }
+```
+
+## Cognitive Implications of Multilevel Bayesian Models
+
+Our multilevel models reveal several important insights about cognitive processing:
+
+1. **Individual Variability**: There are substantial individual differences in how people weigh direct versus social evidence, suggesting different cognitive "styles" or strategies.
+
+2. **Population Regularities**: Despite individual variation, there are identifiable population-level patterns in evidence integration.
+
+3. **Parameter Correlations**: The correlation between direct and social evidence weights suggests potential cognitive constraints or trade-offs in information processing.
+
+4. **Source Reliability Assessment**: Different weightings may reflect individuals' implicit judgments about the reliability of different information sources.
+
+5. **Prediction Accuracy**: The ability of our models to predict individual choices confirms that Bayesian integration is a plausible mechanism for human decision-making under uncertainty.
+
+## Conclusion
+
+Multilevel Bayesian models provide a powerful framework for understanding individual differences in cognitive processes. By simultaneously modeling both population-level trends and individual variations, these models allow us to:
+
+1. Identify common cognitive mechanisms across individuals
+2. Quantify individual differences in strategy and information weighting
+3. Make predictions about new individuals from the same population
+4. Test hypotheses about the factors that influence evidence integration
+

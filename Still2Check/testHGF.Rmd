@@ -10,7 +10,84 @@ library(tidyverse)
 library(cmdstanr)
 ```
 
-## R Markdown
+## Hierarchical Gaussian Filter: Modeling Adaptive Learning Under Uncertainty
+
+### Introduction
+
+Learning in complex, changing environments poses a fundamental challenge for both humans and artificial agents. Imagine playing a video game where the rules subtly change throughout the experience, or trying to predict whether it will rain tomorrow in a climate that is gradually changing. These scenarios require more than simple learning; they demand the ability to adapt how quickly one learns based on the perceived stability of the environment.
+
+Traditional reinforcement learning models often employ fixed learning rates, effectively assuming the world is stationary or changes at a constant pace. But our environments are rarely so obliging - they may be stable for long periods before suddenly changing, or they might fluctuate continuously with varying patterns of volatility. The Hierarchical Gaussian Filter (HGF) addresses this challenge by providing a mathematical framework for adaptive learning that responds to environmental uncertainty.
+
+The HGF model, developed by Mathys et al. (2011, 2014), belongs to a family of Bayesian models that describe perception and learning as processes of hierarchical inference. It extends beyond simpler models like the Rescorla-Wagner model or Kalman filter by incorporating multiple levels of uncertainty, allowing for learning rates that dynamically adjust based on the agent's beliefs about environmental volatility.
+
+### Learning Objectives
+
+ After completing this chapter, you will be able to:
+
+* Understand the theoretical framework of hierarchical belief updating
+
+* Implement a two-level HGF model in Stan
+
+* Simulate data with varying levels of environmental volatility
+
+* Fit the model to behavioral data and recover parameters
+
+* Interpret parameters in terms of individual differences in learning
+
+* Compare the HGF to simpler learning models
+
+## Theoretical Framework
+
+### Hierarchical Bayesian Inference
+
+At its core, the HGF rests on Bayesian principles, viewing learning as a process of updating beliefs about hidden states in the environment based on observed data. What distinguishes the HGF is its hierarchical structure - it represents beliefs as a hierarchy where higher levels govern the dynamics at lower levels.
+In a standard Bayesian framework, we might model an agent's belief about some environmental state x as a Gaussian distribution with mean μ and variance σ². The agent updates this belief when receiving new observations using Bayes' rule:
+
+p(x|observation) ∝ p(observation|x) × p(x)
+
+The HGF extends this by organizing beliefs in a hierarchy where:
+
+* The lowest level represents beliefs about observable states (e.g., rewards)
+
+* Higher levels represent beliefs about how lower levels change over time
+
+Each level has its own mean (μ) and variance (σ²) that get updated based on prediction errors
+
+### Prediction Errors and Precision-Weighted Updates
+
+A central concept in the HGF is that prediction errors at each level drive updates in beliefs, but the magnitude of these updates depends on the relative precision (inverse variance) of predictions versus observations.
+
+For example, at level 1, if we observe an outcome y that differs from our prediction μ₁, we generate a prediction error δ₁ = y - μ₁. How much we update our belief depends on the precision (certainty) of our prediction versus the precision of our observation:
+
+Δμ₁ ∝ (precision of observation / precision of prediction) × δ₁
+
+This precision weighting is crucial - it allows the model to be conservative when its predictions are precise (low uncertainty) and more responsive when they are imprecise (high uncertainty).
+
+### The Hierarchical Structure of Uncertainty
+
+What makes the HGF particularly powerful is how it models the evolution of beliefs across multiple levels. At level 1, we have beliefs about observable outcomes. At level 2, we have beliefs about the tendencies that generate those outcomes. If there were more levels, level 3 would represent beliefs about how quickly level 2 changes, and so on.
+
+Each level follows a Gaussian random walk whose step size is controlled by the level above it. Mathematically, for a 2-level model:
+
+x₁(t) ∼ Bernoulli(σ(x₂(t)))
+
+x₂(t) = x₂(t-1) + w + v(t), where v(t) ∼ N(0, exp(ω))
+
+Here, x₁ represents our first-level belief (often about binary outcomes, thus the Bernoulli distribution and sigmoid transform σ(·)), x₂ represents our second-level belief, w is a drift term, and ω (omega) controls the volatility of the environment.
+
+The parameter ω is particularly important as it determines how quickly x₂ can change - higher values of ω indicate a more volatile environment where the agent should learn more quickly from new information.
+
+### Relating to Other Models
+
+The HGF can be viewed as a generalization of other learning models:
+
+* When volatility is fixed (constant ω), the HGF reduces to something similar to a Kalman filter
+
+* With appropriate parameterization, it can approximate Rescorla-Wagner models with fixed learning rates. 
+
+Unlike simple reinforcement learning models, the HGF naturally produces learning rates that adapt based on unexpected uncertainty
+
+Now that we've established the theoretical underpinnings, let's look at how to implement a basic 2-level HGF model in Stan and explore its behavior through simulations.
 
 
 

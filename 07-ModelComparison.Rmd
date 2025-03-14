@@ -57,7 +57,7 @@ Let's get going.
 ```{r}
 # Flag to control whether to regenerate simulations
 # Set this to TRUE when you need to rerun the models
-regenerate_simulations <- TRUE
+regenerate_simulations <- FALSE
 
 # Load required packages
 pacman::p_load(
@@ -112,8 +112,8 @@ observed_df <- tibble(
 
 # Create the plot
 p1 <- ggplot() +
-  geom_jitter(data = observed_df %>% filter(trial>2), aes(x = trial, y = choice), height = 0.05, alpha = 0.7, color = "black") +
-  geom_line(data = model_data %>% filter(trial>2), aes(x = trial, y = cumulative, color = model, linetype = model)) +
+  geom_jitter(data = observed_df %>% filter(trial > 2), aes(x = trial, y = choice), height = 0.05, alpha = 0.7, color = "black") +
+  geom_line(data = model_data %>% filter(trial > 2), aes(x = trial, y = cumulative, color = model, linetype = model)) +
   scale_color_brewer(palette = "Set1") +
   labs(
     title = "Two Competing Models of Decision Making",
@@ -1240,33 +1240,33 @@ Now that we've defined our models, we'll fit them to our simulated data and perf
 
 ## Fitting the models to the data
 
-```{r, 06 fitting models}
+```{r, 07 fitting models}
 
 # File path for saved model
 model_file <- "simmodels/W7_fit_biased2biased.RDS"
 
 # Check if we need to rerun the simulation or we can load a pre-run one (for computational efficiency)
 if (regenerate_simulations || !file.exists(model_file)) {
-
-# Fitting biased agent model to biased agent data
-fit_biased2biased <- mod_biased$sample(
-  data = data_biased,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 1,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-  samples$save_object(file = model_file)
+  
+  # Fitting biased agent model to biased agent data
+  fit_biased2biased <- mod_biased$sample(
+    data = data_biased,
+    seed = 123,
+    chains = 1,
+    parallel_chains = 1,
+    threads_per_chain = 1,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+  
+  fit_biased2biased$save_object(file = model_file)
   cat("Generated new model fit and saved to", model_file, "\n")
 } else {
   # Load existing results
-  samples <- readRDS(model_file)
+  fit_biased2biased <- readRDS(model_file)
   cat("Loaded existing model fit from", model_file, "\n")
 }
 
@@ -1275,26 +1275,26 @@ model_file <- "simmodels/W7_fit_biased2memory.RDS"
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
-# Fitting biased agent model to memory agent data
-fit_biased2memory <- mod_biased$sample(
-  data = data_memory,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 1,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-
-  samples$save_object(file = model_file)
+  # Fitting biased agent model to memory agent data
+  fit_biased2memory <- mod_biased$sample(
+    data = data_memory,
+    seed = 123,
+    chains = 1,
+    parallel_chains = 1,
+    threads_per_chain = 1,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+  
+  
+  fit_biased2memory$save_object(file = model_file)
   cat("Generated new model fit and saved to", model_file, "\n")
 } else {
   # Load existing results
-  samples <- readRDS(model_file)
+  fit_biased2memory <- readRDS(model_file)
   cat("Loaded existing model fit from", model_file, "\n")
 }
 
@@ -1303,25 +1303,25 @@ model_file <- "simmodels/W7_fit_memory2biased.RDS"
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
-# Fitting memory agent model to biased agent data
-fit_memory2biased <- mod_memory$sample(
-  data = data_biased,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 4,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-  samples$save_object(file = model_file)
+  # Fitting memory agent model to biased agent data
+  fit_memory2biased <- mod_memory$sample(
+    data = data_biased,
+    seed = 123,
+    chains = 1,
+    parallel_chains = 1,
+    threads_per_chain = 1,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+  
+  fit_memory2biased$save_object(file = model_file)
   cat("Generated new model fit and saved to", model_file, "\n")
 } else {
   # Load existing results
-  samples <- readRDS(model_file)
+  fit_memory2biased <- readRDS(model_file)
   cat("Loaded existing model fit from", model_file, "\n")
 }
 
@@ -1330,24 +1330,24 @@ model_file <- "simmodels/W7_fit_memory2memory.RDS"
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {# Fitting memory agent model to memory agent data
-fit_memory2memory <- mod_memory$sample(
-  data = data_memory,
-  seed = 123,
-  chains = 1,
-  parallel_chains = 1,
-  threads_per_chain = 4,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 0,
-  max_treedepth = 20,
-  adapt_delta = 0.99
-)
-
-  samples$save_object(file = model_file)
+  fit_memory2memory <- mod_memory$sample(
+    data = data_memory,
+    seed = 123,
+    chains = 1,
+    parallel_chains = 1,
+    threads_per_chain = 1,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    refresh = 0,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+  
+  fit_memory2memory$save_object(file = model_file)
   cat("Generated new model fit and saved to", model_file, "\n")
 } else {
   # Load existing results
-  samples <- readRDS(model_file)
+  fit_memory2memory <- readRDS(model_file)
   cat("Loaded existing model fit from", model_file, "\n")
 }
 

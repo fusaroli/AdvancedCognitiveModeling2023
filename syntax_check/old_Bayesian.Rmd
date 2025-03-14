@@ -1,0 +1,1703 @@
+### Visualizing the Model's Behavior
+
+Let's visualize how our Bayesian model behaves for different evidence combinations:
+
+
+```{r}
+# Convert social evidence to meaningful labels
+sim_data$social_evidence <- factor(sim_data$blue2,
+                                 levels = c(0, 1, 2, 3),
+                                 labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue"))
+
+# Create two plots: one for expected rate and one for confidence
+p1 <- ggplot(sim_data, aes(x = blue1, y = expected_rate, color = social_evidence, group = social_evidence)) +
+  # Add ribbon for 95% credible interval
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper, fill = social_evidence), alpha = 0.2, color = NA) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray50") +
+  scale_x_continuous(breaks = 0:8) +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(title = "Bayesian Integration of Direct and Social Evidence",
+       subtitle = "Posterior distribution of blue marble proportion",
+       x = "Number of Blue Marbles in Direct Sample (out of 8)",
+       y = "Expected Proportion of Blue Marbles",
+       color = "Social Evidence",
+       fill = "Social Evidence") +
+  theme_bw() +
+  coord_cartesian(ylim = c(0, 1))
+
+p2 <- ggplot(sim_data, aes(x = blue1, y = confidence, color = social_evidence, group = social_evidence)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = 0:8) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Confidence in Judgment Based on Evidence",
+       x = "Number of Blue Marbles in Direct Sample (out of 8)",
+       y = "Confidence Level",
+       color = "Social Evidence") +
+  theme_bw() +
+  coord_cartesian(ylim = c(0, 1))
+
+# Combine plots
+gridExtra::grid.arrange(p1, p2, ncol = 1)
+```
+
+This visualization reveals several key insights about our Bayesian integration model:
+
+* Influence of both sources: The expected proportion changes based on both direct and social evidence, with each source having substantial influence.
+
+* Conflict resolution: When direct and social evidence conflict (e.g., 1 blue marble in direct sample but "Clear Blue" social evidence), the model produces an intermediate belief, balancing the conflicting information.
+
+* Confidence effects: Not shown directly in this plot, but the variance of the integrated distribution (affecting confidence) would be lowest when both sources provide strong, consistent evidence.
+
+* Decision threshold: The dashed line at 0.5 represents the decision boundary - points above lead to choosing "blue" while points below lead to "red."
+
+* Nonlinear integration: The curves show how evidence combines in a nonlinear fashion, consistent with proper Bayesian integration of evidence.
+
+Let's also visualize the actual posterior distributions for a few key scenarios:
+
+
+Let's implement this approach to model how participants integrate information to form beliefs and make decisions.
+
+
+## A simple Bayesian Integration Model
+
+Let's begin with the simplest form of Bayesian integration, where we approximate information integration from two sources with equal weight. In this model:
+
+* We start with a prior belief (which we'll represent with a bias parameter)
+
+* We observe information from two different sources
+
+* We combine these sources (with equal weight) to form a posterior belief
+
+### The Mathematical Model
+
+Our simple Bayesian integration model can be formalized as:
+
+posterior = inv_logit(bias + logit(Source1) + logit(Source2))
+
+This formula uses logit transformations to:
+
+* Convert the source information from probability to log-odds scale
+
+* Add the information (in log-odds space) along with the bias term
+
+* Convert back to a probability for the final belief
+
+In log-odds space, addition corresponds to combining evidence multiplicatively in probability space. The bias term represents a general tendency toward one option or the other, independent of the evidence. 
+
+This model is clearly an approximation: we are simply combining two sources of information without worrying about their reliability, nor about the normalization of their combination. We'll get to more complex versions as the chapter proceeds.
+
+We first get to understand the model, then we'll worry about its concrete applications.
+
+### Implementing the Model in R
+
+First, let's define a function that implements our simple Bayesian model:
+
+```{r 09 simple bayes model}
+
+# Simple Bayesian integration model
+# Combines evidence from two sources with equal weight
+# 
+# Parameters:
+#   bias: Prior bias term (log-odds scale)
+#   Source1: First information source (probability scale, 0-1)
+#   Source2: Second information source (probability scale, 0-1)
+# 
+# Returns:
+#   Posterior belief (probability scale, 0-1)
+SimpleBayes_f <- function(bias, Source1, Source2){
+  outcome <- inv_logit_scaled(bias + logit_scaled(Source1) + logit_scaled(Source2))
+  return(outcome)
+}
+
+# Extension that works with multiple evidence sources
+# 
+# Parameters:
+#   bias: Prior bias term (log-odds scale)
+#   sources: Vector of information sources (probability scale, 0-1)
+# 
+# Returns:
+#   Posterior belief (probability scale, 0-1)
+SimpleBayes_MultiSource_f <- function(bias, sources) {
+  outcome <- inv_logit_scaled(bias + sum(logit_scaled(sources)))
+  return(outcome)
+}
+```
+
+### Simulating Data from the Model
+
+Now, let's create a simulation to explore how this model behaves under different conditions. We'll simulate choices made by an agent using our simple Bayesian integration model:
+
+```{r 09 create simple bayes simulation}
+# File path for saved simulation results
+sim_results_file <- "simdata/W10_simple_bayes_sim.RData"
+
+# Check if we need to regenerate simulation results
+if (regenerate_simulations || !file.exists(sim_results_file)) {
+  # Define simulation parameters
+  bias <- 0  # No initial bias
+  trials <- seq(10)  # 10 trials
+  Source1 <- seq(0.1, 0.9, 0.1)  # First source ranges from 0.1 to 0.9
+  Source2 <- seq(0.1, 0.9, 0.1)  # Second source ranges from 0.1 to 0.9
+  
+  # Create combination of all conditions
+  db <- expand.grid(bias = bias, trials = trials, Source1 = Source1, Source2 = Source2)
+  
+  # Apply the model to generate beliefs and choices
+  for (n in seq(nrow(db))) {
+    # Calculate belief using our Bayesian model
+    db$belief[n] <- SimpleBayes_f(db$bias[n], db$Source1[n], db$Source2[n])
+    
+    # Generate binary choice from the belief (0 or 1)
+    db$choice[n] <- rbinom(1, 1, db$belief[n])
+    
+    # For different outcome measures, we also create:
+    # Continuous rating on a 0-9 scale
+    db$continuous[n] <- db$belief[n] * 9
+    
+    # Discrete rating on a 0-9 scale (rounded)
+    db$discrete[n] <- round(db$belief[n] * 9, 0)
+  }
+  
+  # Save simulation results
+  save(db, file = sim_results_file)
+  cat("Generated new simulation data and saved to", sim_results_file, "\n")
+} else {
+  # Load existing simulation data
+  load(sim_results_file)
+  cat("Loaded existing simulation data from", sim_results_file, "\n")
+}
+```
+
+Our simulation creates several types of outcomes that might be observed in different experimental paradigms:
+
+* Beliefs: The raw posterior probabilities (0-1), e.g., "What's the probability that X is true?"
+
+* Binary choices: Decisions made based on the belief (0 or 1), e.g. "Which option do you choose?"
+
+* Continuous ratings: Beliefs scaled to a continuous range (0-9), e.g. "How confident are you on a scale of 0-9?"
+
+* Discrete ratings: Beliefs mapped to a discrete scale (0-9)
+
+## Visualizing the Model's Behavior
+
+Let's visualize how our simple Bayesian model behaves across different information sources:
+
+
+```{r 09 visualize simple bayes simulation}
+# Plot relationship between Source1, Source2, and resulting belief
+p1 <- ggplot(db, aes(Source1, belief, color = Source2, group = Source2)) +
+  geom_line() +
+  scale_color_viridis_c() +
+  labs(title = "Posterior Belief as a Function of Evidence Sources",
+       subtitle = "Each line represents a different value of Source2",
+       x = "Source 1 (Probability)",
+       y = "Resulting Belief (Probability)",
+       color = "Source 2\nValue") +
+  theme_bw()
+
+# Plot relationship between Source1, Source2, and binary choice
+p2 <- ggplot(db, aes(Source1, choice, color = Source2, group = Source2)) +
+  geom_smooth(se = F) +
+  scale_color_viridis_c() +
+  labs(title = "Binary Choice as a Function of Evidence Sources",
+       subtitle = "Each line represents a different value of Source2",
+       x = "Source 1 (Probability)",
+       y = "Probability of Choosing Option B",
+       color = "Source 2\nValue") +
+  theme_bw()
+
+# Combine plots for belief and choice behaviors
+(p1 + p2)  +
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "right")
+```
+
+
+These visualizations reveal several key insights about our simple Bayesian model:
+
+* Evidence integration: We can observe in the left panel that the relationship between Source1 and belief is positive but modulated by Source2. Higher values of Source2 (shown in warmer colors) shift the entire curve upward, demonstrating how the model integrates both sources of information. As the evidence is more extreme (close to 0 or 1), the impact of the other source is smaller, as it's more uncertain (close to 0.5) the impact of the other source is greater.
+
+* Binary choice: In the binary choice plot (right panel), we can see a more messy pattern. As the binary choice is probabilistically sampled from the underlying belief, the observed pattern is more messy than just looking at the belief.
+
+Now, let's also look at the continuous and discrete rating outcomes:
+
+```{r}
+# Plot distribution of continuous ratings
+p5 <- ggplot(db, aes(continuous)) +
+  geom_histogram(bins = 10, alpha = 0.3, color = "black", fill = "seagreen") +
+  labs(title = "Distribution of Continuous Ratings",
+       subtitle = "Belief mapped to 0-9 scale",
+       x = "Rating",
+       y = "Count") +
+  theme_bw()
+
+# Plot relationship between Source1, Source2, and continuous rating
+p6 <- ggplot(db, aes(Source1, continuous, color = Source2, group = Source2)) +
+  geom_smooth(se = TRUE) +
+  scale_color_viridis_c() +
+  labs(title = "Continuous Rating as a Function of Evidence Sources",
+       subtitle = "Each line represents a different value of Source2",
+       x = "Source 1 (Probability)",
+       y = "Rating (0-9 scale)",
+       color = "Source 2\nValue") +
+  theme_bw()
+
+# Plot distribution of discrete ratings
+p7 <- ggplot(db, aes(discrete)) +
+  geom_histogram(bins = 10, alpha = 0.3, color = "black", fill = "purple") +
+  labs(title = "Distribution of Discrete Ratings",
+       subtitle = "Belief rounded to nearest integer on 0-9 scale",
+       x = "Rating",
+       y = "Count") +
+  theme_bw()
+
+# Plot relationship between Source1, Source2, and discrete rating
+p8 <- ggplot(db, aes(Source1, discrete, color = Source2, group = Source2)) +
+  geom_smooth(se = TRUE) +
+  scale_color_viridis_c() +
+  labs(title = "Discrete Rating as a Function of Evidence Sources",
+       subtitle = "Each line represents a different value of Source2",
+       x = "Source 1 (Probability)",
+       y = "Rating (0-9 scale)",
+       color = "Source 2\nValue") +
+  theme_bw()
+
+# Combine plots for continuous and discrete ratings
+(p5 + p6) / (p7 + p8) + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "right")
+```
+
+The continuous and discrete rating visualizations provide additional insights:
+
+* Continuous ratings: These directly reflect the posterior beliefs, scaled to a 0-9 range. The smooth relationship between evidence sources and ratings shows how beliefs change gradually with evidence.
+
+* Discrete ratings: When beliefs are rounded to the nearest integer, we see clustering at specific values. This represents how humans often convert continuous beliefs into discrete response categories, potentially losing some information in the process.
+
+* Measurement implications: The different outcome measures (binary, continuous, discrete) capture the same underlying belief with varying levels of precision. This highlights how the model can be used to analyze different types of experimental setups and measures, but also that we should carefully consider the best way of eliciting or measuring beliefs.
+
+## Implementing the Simple Bayesian Model in Stan
+
+Now that we've explored our model's behavior, let's implement it in Stan to enable parameter estimation from observed data. We'll focus on binary choice data as the simplest case.
+
+## Data for Stan
+
+```{r 09 simple bayes data for stan}
+# Prepare data for Stan model
+data_simpleBayes <- list(
+  N = nrow(db),
+  y = db$choice,
+  Source1 = db$Source1,
+  Source2 = db$Source2
+)
+```
+
+## Create the Stan Model
+
+```{r 09 create stan version simple bayes}
+
+# Define the Stan model
+stan_simpleBayes_model <- "
+data {
+  int<lower=0> N;
+  array[N] int y;
+  array[N] real<lower=0, upper = 1> Source1;
+  array[N] real<lower=0, upper = 1> Source2;
+}
+
+transformed data{
+  array[N] real l_Source1;
+  array[N] real l_Source2;
+  l_Source1 = logit(Source1);
+  l_Source2 = logit(Source2);
+}
+
+parameters {
+  real bias;
+}
+
+model {
+  target +=  normal_lpdf(bias | 0, 1);
+  target +=  bernoulli_logit_lpmf(y | bias + to_vector(l_Source1) + to_vector(l_Source2));
+}
+
+generated quantities{
+  real bias_prior;
+  array[N] real log_lik;
+  
+  bias_prior = normal_rng(0, 1);
+  
+  for (n in 1:N){  
+    log_lik[n] = bernoulli_logit_lpmf(y[n] | bias + l_Source1[n] +  l_Source2[n]);
+  }
+}
+"
+
+# Write the Stan model to a file
+model_file <- "stan/W10_SimpleBayes.stan"
+write_stan_file(stan_simpleBayes_model, dir = "stan/", basename = "W10_SimpleBayes.stan")
+
+# Compile the Stan model
+file <- file.path("stan/W10_SimpleBayes.stan")
+mod_simpleBayes <- cmdstan_model(
+  file, 
+  cpp_options = list(stan_threads = TRUE),
+  stanc_options = list("O1")
+)
+```
+
+Let's walk through the key components of our Stan model:
+
+* Data block: Takes in the number of observations, binary choices (y), and two information sources.
+
+* Transformed data block: Converts the information sources from probability to log-odds scale using the logit transformation. This preprocessing step makes the subsequent calculations more efficient.
+
+* Parameters block: Defines the bias parameter to be estimated.
+
+* Model block:
+
+  * Sets a normal(0, 1) prior for the bias parameter
+
+  * Specifies the likelihood function: binary choices follow a Bernoulli distribution where the log-odds of success equals bias + logit(Source1) + logit(Source2)
+
+* Generated quantities block:
+
+  * Generates samples from the prior distribution for visualization
+
+  * Calculates log-likelihood values for model comparison
+
+## Fitting the Simple Bayesian Model
+
+Now let's fit our model to the simulated data:
+
+```{r 09 fitting simple bayes stan model}
+# File path for saved model fit
+fit_results_file <- "simmodels/W10_simple_bayes_fit.RDS"
+
+# Check if we need to regenerate model fitting results
+if (regenerate_simulations || !file.exists(fit_results_file)) {
+  # Sample from the posterior
+  samples_simple <- mod_simpleBayes$sample(
+    data = data_simpleBayes,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1500,
+    iter_sampling = 3000,
+    refresh = 500
+  )
+  
+  # Save the results
+  samples_simple$save_object(file = fit_results_file)
+  cat("Generated new model fit and saved to", fit_results_file, "\n")
+} else {
+  # Load existing model fit
+  samples_simple <- readRDS(fit_results_file)
+  cat("Loaded existing model fit from", fit_results_file, "\n")
+}
+
+```
+
+## Evaluating the Simple Bayesian Model
+
+Let's examine the results of our model fit, checking convergence and parameter recovery:
+
+```{r 09 evaluate simple bayes stan model}
+samples_simple$cmdstan_diagnose()
+
+# View parameter summary
+samples_simple$summary()
+
+# Calculate LOO for model comparison
+loo_simple <- samples_simple$loo()
+print(loo_simple)
+
+# Extract posterior draws
+draws_df <- as_draws_df(samples_simple$draws())
+
+# Check MCMC convergence with trace plots
+p1 <- ggplot(draws_df, aes(.iteration, bias, group = .chain, color = as.factor(.chain))) +
+  geom_line(alpha = 0.5) +
+  labs(title = "MCMC Trace Plot for Bias Parameter",
+       subtitle = "Each color represents a different chain",
+       x = "Iteration",
+       y = "Parameter Value",
+       color = "Chain") +
+  theme_classic()
+
+# Compare prior and posterior distributions
+p2 <- ggplot(draws_df) +
+  geom_histogram(aes(bias), alpha = 0.6, fill = "lightblue") +
+  geom_histogram(aes(bias_prior), alpha = 0.6, fill = "pink") +
+  geom_vline(xintercept = db$bias[1], linetype = "dashed") +
+  labs(title = "Prior-Posterior Update for Bias Parameter",
+       subtitle = "Blue: posterior, Pink: prior, Dashed line: true value",
+       x = "Bias Parameter Value",
+       y = "Density") +
+  theme_bw()
+
+# Display plots
+p1 + p2
+
+```
+
+Our model evaluation reveals:
+
+* Convergence: The trace plot shows good mixing of the MCMC chains, suggesting proper convergence of our sampling algorithm.
+
+* Parameter recovery: The posterior distribution for the bias parameter is centered near the true value (0), suggesting that our model successfully recovers the parameter.
+
+* Prior influence: Comparing the prior and posterior distributions shows that the data substantially informs our estimate of the bias parameter, significantly updating our beliefs.
+
+We could do more to evaluate the quality, prior sensitivity and parameter recovery, but let's move to a more complex model, instead.
+
+## Weighted Bayesian Integration Model
+
+The simple model we've implemented assumes that information from both sources is weighted equally. However, in real cognitive systems, we often weight information sources differently based on their reliability or relevance. Let's now implement a weighted Bayesian model that allows for differential weighting of evidence sources.
+
+### The Mathematical Model
+
+Our weighted Bayesian integration model extends the simple model by introducing weight parameters for each information source:
+
+posterior = inv_logit(bias + w1 × logit(Source1) + w2 × logit(Source2))
+
+Where:
+
+* w₁ is the weight for Source1
+* w₂ is the weight for Source2
+
+These weights represent the degree to which each information source influences the final belief. From a cognitive perspective, they might reflect judgments about:
+
+* The reliability of the information source
+
+* The relevance of the information to the current decision
+
+* Attentional focus on particular sources
+
+Two important points about these weights:
+
+* Scale interpretation: Weights of 1.0 mean the information is taken at face value. Weights less than 1.0 mean the information is discounted. Weights greater than 1.0 mean the information is amplified.
+
+* Parameterization: We'll constrain the weights to the range 0.5-1 for theoretical reasons. A weight of 0.5 effectively ignores that information source, while 1.0 gives it full influence. Values below 0.5 would invert the evidence, which is rarely observed in human cognition.
+
+### Implementing the Weighted Model in R
+
+Let's define a function for our weighted Bayesian model:
+
+```{r 09 design weighted bayes agent and generate data}
+
+# Weighted Bayesian integration model
+# Combines evidence from two sources with source-specific weights
+#
+# Parameters:
+#   bias: Prior bias term (log-odds scale)
+#   Source1: First information source (probability scale, 0-1)
+#   Source2: Second information source (probability scale, 0-1)
+#   w1: Weight for first source (0.5-1 scale, where 0.5 = ignore, 1 = full weight)
+#   w2: Weight for second source (0.5-1 scale, where 0.5 = ignore, 1 = full weight)
+#
+# Returns:
+#   Posterior belief (probability scale, 0-1)
+WeightedBayes_f <- function(bias, Source1, Source2, w1, w2){
+  # Transform weights from 0.5-1 scale to 0-1 scale
+  w1 <- (w1 - 0.5) * 2
+  w2 <- (w2 - 0.5) * 2
+  
+  # Calculate posterior belief
+  outcome <- inv_logit_scaled(bias + w1 * logit_scaled(Source1) + w2 * logit_scaled(Source2))
+  return(outcome)
+}
+
+# Simulate data using the weighted Bayesian model
+# File path for saved simulation results
+sim_results_file <- "simdata/W10_weighted_bayes_sim.RData"
+
+# Check if we need to regenerate simulation results
+if (regenerate_simulations || !file.exists(sim_results_file)) {
+  # Define simulation parameters
+  bias <- 0  # No initial bias
+  trials <- seq(10)  # 10 trials
+  Source1 <- seq(0.1, 0.9, 0.1)  # First source ranges from 0.1 to 0.9
+  Source2 <- seq(0.1, 0.9, 0.1)  # Second source ranges from 0.1 to 0.9
+  w1 <- seq(0.5, 1, 0.1)  # Weight for Source1 ranges from 0.5 to 1
+  w2 <- seq(0.5, 1, 0.1)  # Weight for Source2 ranges from 0.5 to 1
+  
+  # Create combination of all conditions
+  db <- expand.grid(bias = bias, trials = trials, 
+                   Source1 = Source1, Source2 = Source2, 
+                   w1 = w1, w2 = w2)
+  
+  # Apply the model to generate beliefs and choices
+  for (n in seq(nrow(db))) {
+    # Calculate belief using our weighted Bayesian model
+    db$belief[n] <- WeightedBayes_f(db$bias[n], db$Source1[n], db$Source2[n], 
+                                   db$w1[n], db$w2[n])
+    
+    # Generate binary choice from the belief (0 or 1)
+    db$binary[n] <- rbinom(1, 1, db$belief[n])
+    
+    # For different outcome measures, we also create:
+    # Continuous rating on a 0-9 scale
+    db$continuous[n] <- db$belief[n] * 9
+    
+    # Discrete rating on a 0-9 scale (rounded)
+    db$discrete[n] <- round(db$belief[n] * 9, 0)
+  }
+  
+  # Save simulation results
+  save(db, file = sim_results_file)
+  cat("Generated new simulation data and saved to", sim_results_file, "\n")
+} else {
+  # Load existing simulation data
+  load(sim_results_file)
+  cat("Loaded existing simulation data from", sim_results_file, "\n")
+}
+```
+
+### Visualizing the Weighted Model's Behavior
+
+Let's examine how the different weight parameters affect the integration of information:
+
+```{r 09 visualize weighted bayes agents}
+
+p1 <- ggplot(db, aes(Source1, belief, color = Source2, group = Source2)) +
+  geom_line() +
+  scale_color_viridis_c() +
+  labs(title = "Weighted Bayesian Integration ",
+       x = "Source 1 (Probability)",
+       y = "Resulting Belief (Probability)",
+       color = "Source 2\nValue") +
+  theme_bw() +
+  facet_wrap(w1~w2)
+
+p2 <- ggplot(db, aes(w1, w2, fill = belief)) +
+  geom_tile() +
+  scale_fill_viridis_c() +
+  labs(title = "Joint Effect of w1 and w2 on Belief",
+       x = "Weight for Source1 (w1)",
+       y = "Weight for Source2 (w2)",
+       fill = "Resulting\nBelief") +
+  theme_bw() +
+  facet_wrap(Source1~Source2)
+
+
+p1 
+p2
+
+```
+
+The visualizations reveal how the weighting parameters affect belief formation:
+
+* [something on the first plot]
+
+* Joint effects: The heatmap illustrates how the two weights jointly determine the resulting belief. The colors show that when both weights are high, the belief is strongly influenced by both sources, resulting in a higher overall belief (when both sources favor option 1).
+
+These patterns demonstrate how differential weighting allows our model to capture more nuanced belief formation processes, where some information sources have greater influence than others.
+
+## Implementing the Weighted Bayesian Model in Stan
+
+Now let's implement our weighted Bayesian model in Stan and fit it to data:
+
+
+```{r 09 stan weighted bayes model}
+
+# Define the Stan model for weighted Bayesian integration
+stan_WB_model <- "
+data {
+  int<lower=0> N;
+  array[N] int y;
+  array[N] real <lower = 0, upper = 1> Source1; 
+  array[N] real <lower = 0, upper = 1> Source2; 
+}
+
+transformed data {
+  array[N] real l_Source1;
+  array[N] real l_Source2;
+  l_Source1 = logit(Source1);
+  l_Source2 = logit(Source2);
+}
+
+parameters {
+  real bias;
+  // meaningful weights are btw 0.5 and 1 (theory reasons)
+  real<lower = 0.5, upper = 1> w1; 
+  real<lower = 0.5, upper = 1> w2;
+}
+
+transformed parameters {
+  real<lower = 0, upper = 1> weight1;
+  real<lower = 0, upper = 1> weight2;
+  // weight parameters are rescaled to be on a 0-1 scale (0 -> no effects; 1 -> face value)
+  weight1 = (w1 - 0.5) * 2;  
+  weight2 = (w2 - 0.5) * 2;
+}
+
+model {
+  target += normal_lpdf(bias | 0, 1);
+  target += beta_lpdf(weight1 | 1, 1);
+  target += beta_lpdf(weight2 | 1, 1);
+  for (n in 1:N)
+    target += bernoulli_logit_lpmf(y[n] | bias + weight1 *l_Source1[n] + weight2 * l_Source2[n]);
+}
+
+generated quantities{
+  array[N] real log_lik;
+  real bias_prior;
+  real w1_prior;
+  real w2_prior;
+  bias_prior = normal_rng(0, 1) ;
+  w1_prior = 0.5 + inv_logit(normal_rng(0, 1))/2 ;
+  w2_prior = 0.5 + inv_logit(normal_rng(0, 1))/2 ;
+  for (n in 1:N)
+    log_lik[n]= bernoulli_logit_lpmf(y[n] | bias + weight1 * l_Source1[n] + weight2 * l_Source2[n]);
+}
+"
+
+# Write the Stan model to a file
+write_stan_file(
+  stan_WB_model,
+  dir = "stan/",
+  basename = "W10_WB.stan")
+
+file <- file.path("stan/W10_WB.stan")
+mod_wb <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+# Create a subset of the data for model fitting
+# We'll use data with specific weight values: w1 = 0.7, w2 = 0.9
+db_subset <- db %>% filter(w1 == 0.7 & w2 == 0.9)
+
+# Visualize the data we'll be using for model fitting
+p1 <- ggplot(db_subset, aes(Source1, belief, color = Source2, group = Source2)) +
+  geom_line() +
+  scale_color_viridis_c() +
+  labs(title = "Data for Model Fitting",
+       subtitle = "Generated with w1 = 0.7, w2 = 0.9",
+       x = "Source 1 (Probability)",
+       y = "Belief (Probability)",
+       color = "Source 2\nValue") +
+  theme_bw()
+
+p1 
+
+# Prepare data for Stan
+data_weightedBayes <- list(
+  N = nrow(db_subset),
+  y = db_subset$binary,
+  Source1 = db_subset$Source1,
+  Source2 = db_subset$Source2
+)
+
+# File path for saved model fit
+fit_results_file <- "simmodels/W10_weighted_bayes_fit.RDS"
+
+# Check if we need to regenerate model fitting results
+if (regenerate_simulations || !file.exists(fit_results_file)) {
+  # Sample from the posterior
+  samples_weighted <- mod_wb$sample(
+    data = data_weightedBayes,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1500,
+    iter_sampling = 3000,
+    refresh = 500
+  )
+  
+  # Save the results
+  samples_weighted$save_object(file = fit_results_file)
+  cat("Generated new model fit and saved to", fit_results_file, "\n")
+} else {
+  # Load existing model fit
+  samples_weighted <- readRDS(fit_results_file)
+  cat("Loaded existing model fit from", fit_results_file, "\n")
+}
+
+```
+
+## Evaluating the Weighted Bayesian Model
+
+Let's examine the results of our weighted Bayesian model fit, checking convergence and parameter recovery:
+
+```{r 10 evaluate stan weighted bayes model}
+# Check model diagnostics
+samples_weighted$cmdstan_diagnose()
+
+# View parameter summary
+summary_wb <- samples_weighted$summary()
+print(summary_wb)
+
+# Calculate LOO for model comparison
+loo_weighted <- samples_weighted$loo()
+print(loo_weighted)
+
+# Extract posterior draws
+draws_df <- as_draws_df(samples_weighted$draws())
+
+# Check MCMC convergence with trace plots
+p1 <- ggplot(draws_df, aes(.iteration, bias, group = .chain, color = as.factor(.chain))) +
+  geom_line(alpha = 0.5) +
+  labs(title = "MCMC Trace Plot for Bias Parameter",
+       x = "Iteration",
+       y = "Parameter Value",
+       color = "Chain") +
+  theme_classic()
+
+p2 <- ggplot(draws_df, aes(.iteration, w1, group = .chain, color = as.factor(.chain))) +
+  geom_line(alpha = 0.5) +
+  labs(title = "MCMC Trace Plot for w1 Parameter",
+       x = "Iteration",
+       y = "Parameter Value",
+       color = "Chain") +
+  theme_classic()
+
+p3 <- ggplot(draws_df, aes(.iteration, w2, group = .chain, color = as.factor(.chain))) +
+  geom_line(alpha = 0.5) +
+  labs(title = "MCMC Trace Plot for w2 Parameter",
+       x = "Iteration",
+       y = "Parameter Value",
+       color = "Chain") +
+  theme_classic()
+
+# Combine trace plots
+(p1 | p2 | p3) & theme(legend.position = "bottom")
+
+# Compare prior and posterior distributions for each parameter
+p4 <- ggplot(draws_df) +
+  geom_histogram(aes(bias), alpha = 0.6, fill = "lightblue") +
+  geom_histogram(aes(bias_prior), alpha = 0.6, fill = "pink") +
+  geom_vline(xintercept = db_subset$bias[1], linetype = "dashed") +
+  labs(title = "Bias Parameter: Prior vs Posterior",
+       subtitle = "Blue: posterior, Pink: prior, Dashed line: true value",
+       x = "Bias Parameter Value",
+       y = "Density") +
+  theme_bw()
+
+p5 <- ggplot(draws_df) +
+  geom_histogram(aes(w1), alpha = 0.6, fill = "lightblue") +
+  geom_histogram(aes(w1_prior), alpha = 0.6, fill = "pink") +
+  geom_vline(xintercept = db_subset$w1[1], linetype = "dashed") +
+  labs(title = "w1 Parameter: Prior vs Posterior",
+       subtitle = "Blue: posterior, Pink: prior, Dashed line: true value",
+       x = "w1 Parameter Value",
+       y = "Density") +
+  theme_bw()
+
+p6 <- ggplot(draws_df) +
+  geom_histogram(aes(w2), alpha = 0.6, fill = "lightblue") +
+  geom_histogram(aes(w2_prior), alpha = 0.6, fill = "pink") +
+  geom_vline(xintercept = db_subset$w2[1], linetype = "dashed") +
+  labs(title = "w2 Parameter: Prior vs Posterior",
+       subtitle = "Blue: posterior, Pink: prior, Dashed line: true value",
+       x = "w2 Parameter Value",
+       y = "Density") +
+  theme_bw()
+
+# Combine prior-posterior plots
+p4 / p5 / p6
+
+# Examine parameter correlations
+p7 <- ggplot(draws_df) +
+  geom_point(aes(w1, w2), alpha = 0.3) +
+  labs(title = "Correlation Between w1 and w2 Parameters",
+       x = "w1 (Weight for Source 1)",
+       y = "w2 (Weight for Source 2)") +
+  theme_bw()
+
+p8 <- ggplot(draws_df) +
+  geom_point(aes(bias, w1), alpha = 0.3) +
+  labs(title = "Correlation Between Bias and w1 Parameters",
+       x = "Bias",
+       y = "w1 (Weight for Source 1)") +
+  theme_bw()
+
+p9 <- ggplot(draws_df) +
+  geom_point(aes(bias, w2), alpha = 0.3) +
+  labs(title = "Correlation Between Bias and w2 Parameters",
+       x = "Bias",
+       y = "w2 (Weight for Source 2)") +
+  theme_bw()
+
+# Combine correlation plots
+p7 | p8 | p9
+```
+
+Our weighted Bayesian model evaluation reveals several important insights:
+
+* Convergence: The trace plots show good mixing of the MCMC chains for all three parameters (bias, w1, w2), indicating proper convergence of our sampling algorithm.
+* Parameter recovery: The posterior distributions for all parameters show good recovery:
+
+The bias parameter is centered near the true value (0)
+* The w1 parameter is centered near 0.7
+* The w2 parameter is centered near 0.9
+
+This demonstrates that our model successfully recovers all the parameters from the data.
+
+* Parameter uncertainty: The posterior distributions show different levels of certainty for different parameters. The w2 parameter (weight for Source2) has a narrower posterior distribution than w1, suggesting we have more certainty about its value. This is consistent with our data generation process, where w2 was given a higher value and thus had a stronger influence on the choices.
+
+* Parameter correlations: The correlation plots show some interesting relationships:
+
+  * There is a negative correlation between w1 and w2, suggesting that as one weight increases, the other can decrease to maintain a similar overall effect on choices.
+  * There are weaker correlations between the bias parameter and the weight parameters.
+
+
+These results confirm that our weighted Bayesian model can successfully recover the true parameters that generated the data, and provides insights into the relationships between these parameters.
+
+## Model Comparison: Simple vs. Weighted Bayesian Model
+
+Now that we've implemented both the simple and weighted Bayesian models, let's compare them to determine which better captures the observed behavior. We'll use two approaches:
+
+* Compare model performance on data generated by each model
+
+* Perform formal model comparison using LOO-CV
+
+### Generating Data for Model Comparison
+
+First, let's generate data from both models with known parameters:
+
+```{r 09 evaluate stan weighted bayes model}
+# File path for saved simulation results
+sim_comparison_file <- "simdata/W10_model_comparison_sim.RData"
+
+# Check if we need to regenerate simulation results
+if (regenerate_simulations || !file.exists(sim_comparison_file)) {
+  # Define simulation parameters
+  bias <- 0  # No initial bias
+  trials <- seq(10)  # 10 trials
+  Source1 <- seq(0.1, 0.9, 0.1)  # First source ranges from 0.1 to 0.9
+  Source2 <- seq(0.1, 0.9, 0.1)  # Second source ranges from 0.1 to 0.9
+  w1 <- 0.7  # Fixed weight for Source1
+  w2 <- 0.9  # Fixed weight for Source2
+  
+  # Create combination of all conditions
+  db_comp <- expand.grid(
+    bias = bias, 
+    trials = trials, 
+    Source1 = Source1, 
+    Source2 = Source2, 
+    w1 = w1, 
+    w2 = w2
+  )
+  
+  # Generate data from both models
+  for (n in seq(nrow(db_comp))) {
+    # Simple Bayesian model (equal weights)
+    db_comp$simple_belief[n] <- SimpleBayes_f(
+      db_comp$bias[n], 
+      db_comp$Source1[n], 
+      db_comp$Source2[n]
+    )
+    db_comp$simple_binary[n] <- rbinom(1, 1, db_comp$simple_belief[n])
+    
+    # Weighted Bayesian model (differential weights)
+    db_comp$weighted_belief[n] <- WeightedBayes_f(
+      db_comp$bias[n], 
+      db_comp$Source1[n], 
+      db_comp$Source2[n],
+      db_comp$w1[n], 
+      db_comp$w2[n]
+    )
+    db_comp$weighted_binary[n] <- rbinom(1, 1, db_comp$weighted_belief[n])
+  }
+  
+  # Save simulation results
+  save(db_comp, file = sim_comparison_file)
+  cat("Generated new comparison data and saved to", sim_comparison_file, "\n")
+} else {
+  # Load existing simulation data
+  load(sim_comparison_file)
+  cat("Loaded existing comparison data from", sim_comparison_file, "\n")
+}
+
+# Prepare data for Stan models
+data_SB <- list(
+  N = nrow(db_comp),
+  y = db_comp$simple_binary,
+  Source1 = db_comp$Source1,
+  Source2 = db_comp$Source2
+)
+
+data_WB <- list(
+  N = nrow(db_comp),
+  y = db_comp$weighted_binary,
+  Source1 = db_comp$Source1,
+  Source2 = db_comp$Source2
+)
+
+# File paths for saved model fits
+simple2simple_file <- "simmodels/W10_simple2simple.RDS"
+weighted2simple_file <- "simmodels/W10_weighted2simple.RDS"
+simple2weighted_file <- "simmodels/W10_simple2weighted.RDS"
+weighted2weighted_file <- "simmodels/W10_weighted2weighted.RDS"
+
+# Fit simple model to data generated by simple model
+if (regenerate_simulations || !file.exists(simple2simple_file)) {
+  simple2simple <- mod_simpleBayes$sample(
+    data = data_SB,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1500,
+    iter_sampling = 3000,
+    refresh = 500
+  )
+  simple2simple$save_object(file = simple2simple_file)
+  cat("Generated new model fit (simple to simple) and saved\n")
+} else {
+  simple2simple <- readRDS(simple2simple_file)
+  cat("Loaded existing model fit (simple to simple)\n")
+}
+
+# Fit weighted model to data generated by simple model
+if (regenerate_simulations || !file.exists(weighted2simple_file)) {
+  weighted2simple <- mod_wb$sample(
+    data = data_SB,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1500,
+    iter_sampling = 3000,
+    refresh = 500
+  )
+  weighted2simple$save_object(file = weighted2simple_file)
+  cat("Generated new model fit (weighted to simple) and saved\n")
+} else {
+  weighted2simple <- readRDS(weighted2simple_file)
+  cat("Loaded existing model fit (weighted to simple)\n")
+}
+
+# Fit simple model to data generated by weighted model
+if (regenerate_simulations || !file.exists(simple2weighted_file)) {
+  simple2weighted <- mod_simpleBayes$sample(
+    data = data_WB,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1500,
+    iter_sampling = 3000,
+    refresh = 500
+  )
+  simple2weighted$save_object(file = simple2weighted_file)
+  cat("Generated new model fit (simple to weighted) and saved\n")
+} else {
+  simple2weighted <- readRDS(simple2weighted_file)
+  cat("Loaded existing model fit (simple to weighted)\n")
+}
+
+# Fit weighted model to data generated by weighted model
+if (regenerate_simulations || !file.exists(weighted2weighted_file)) {
+  weighted2weighted <- mod_wb$sample(
+    data = data_WB,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1500,
+    iter_sampling = 3000,
+    refresh = 500
+  )
+  weighted2weighted$save_object(file = weighted2weighted_file)
+  cat("Generated new model fit (weighted to weighted) and saved\n")
+} else {
+  weighted2weighted <- readRDS(weighted2weighted_file)
+  cat("Loaded existing model fit (weighted to weighted)\n")
+}
+
+# Calculate LOO for all model fits
+loo_simple2simple <- simple2simple$loo(save_psis = TRUE)
+loo_weighted2simple <- weighted2simple$loo(save_psis = TRUE)
+loo_simple2weighted <- simple2weighted$loo(save_psis = TRUE)
+loo_weighted2weighted <- weighted2weighted$loo(save_psis = TRUE)
+
+# Compare models on simple data
+comparison_simple_data <- loo_compare(loo_simple2simple, loo_weighted2simple)
+print("Model comparison for data generated by simple model:")
+print(comparison_simple_data)
+
+# Compare models on weighted data
+comparison_weighted_data <- loo_compare(loo_weighted2weighted, loo_simple2weighted)
+print("\nModel comparison for data generated by weighted model:")
+print(comparison_weighted_data)
+
+# Calculate model weights for both datasets
+weights_simple_data <- loo_model_weights(list(
+  "Simple" = loo_simple2simple, 
+  "Weighted" = loo_weighted2simple
+))
+
+weights_weighted_data <- loo_model_weights(list(
+  "Simple" = loo_simple2weighted,
+  "Weighted" = loo_weighted2weighted
+))
+
+# Prepare data for visualization
+model_weights <- tibble(
+  model = rep(c("Simple", "Weighted"), 2),
+  data_type = rep(c("Simple Data", "Weighted Data"), each = 2),
+  weight = c(weights_simple_data["Simple"], weights_simple_data["Weighted"],
+            weights_weighted_data["Simple"], weights_weighted_data["Weighted"])
+)
+
+# Visualize model comparison results
+ggplot(model_weights, aes(x = model, y = weight, fill = model)) +
+  geom_col() +
+  facet_wrap(~ data_type) +
+  scale_fill_brewer(palette = "Set1") +
+  labs(
+    title = "Model Comparison Results",
+    subtitle = "Higher weights indicate better model performance",
+    x = NULL,
+    y = "Model Weight",
+    fill = "Model"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  geom_text(aes(label = scales::percent(weight, accuracy = 0.1)), 
+           position = position_stack(vjust = 0.5))
+
+# Extract pointwise ELPD differences
+elpd_diff_simple <- tibble(
+  observation = seq(nrow(db_comp)),
+  elpd_diff = loo_simple2simple$pointwise[, "elpd_loo"] - 
+              loo_weighted2simple$pointwise[, "elpd_loo"]
+)
+
+elpd_diff_weighted <- tibble(
+  observation = seq(nrow(db_comp)),
+  elpd_diff = loo_weighted2weighted$pointwise[, "elpd_loo"] - 
+              loo_simple2weighted$pointwise[, "elpd_loo"]
+)
+
+# Visualize pointwise differences
+p1 <- ggplot(elpd_diff_simple, aes(x = observation, y = elpd_diff)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "ELPD Differences on Simple Data",
+    subtitle = "Positive values favor simple model, negative values favor weighted model",
+    x = "Observation",
+    y = "ELPD Difference"
+  ) +
+  theme_bw()
+
+p2 <- ggplot(elpd_diff_weighted, aes(x = observation, y = elpd_diff)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "ELPD Differences on Weighted Data",
+    subtitle = "Positive values favor weighted model, negative values favor simple model",
+    x = "Observation",
+    y = "ELPD Difference"
+  ) +
+  theme_bw()
+
+# Display plots side by side
+p1 | p2
+
+```
+
+Our model comparison analysis yields interesting insights:
+
+* Model recovery: Our results show that when data is generated by the simple Bayesian model, the simple model performs better in terms of predictive performance (as measured by ELPD). Similarly, when data is generated by the weighted model, the weighted model performs better. This confirms that our model comparison approach can correctly identify the true data-generating model.
+
+* Weight estimates: Looking at the parameter estimates from the weighted model when fit to simple data, we see that the estimated weights are close to 1.0, which corresponds to equal weighting. This demonstrates that the weighted model can appropriately recover the equal-weighting scenario as a special case.
+
+These findings highlight the value of model comparison in cognitive modeling. By systematically testing alternative models against data, we can determine which cognitive mechanisms are most likely underlying observed behavior. In this case, our analysis would suggest using the weighted model when there is evidence for differential weighting of information sources, but defaulting to the simpler model when such evidence is lacking.
+
+## Temporal Bayesian Model
+
+So far, we've considered models where beliefs are formed by integrating multiple sources of information at a single point in time. However, many cognitive processes involve belief updating over time, where current beliefs serve as priors for future belief updates. Let's implement a temporal Bayesian model that captures this sequential updating process.
+In a temporal Bayesian model:
+
+* An initial belief serves as the prior
+
+* New evidence is observed
+
+* The prior is updated to form a posterior belief
+
+* This posterior becomes the new prior for the next update
+
+* The process repeats as new evidence arrives
+
+### The Mathematical Model
+
+Our temporal Bayesian model can be formalized as:
+$\text{belief}_t = \text{inv_logit}(\text{bias} + w_1 \times \text{logit}(\text{Source1}t) + w_2 \times \text{logit}(\text{belief}{t-1}))$
+
+Where:
+
+* belief_t is the belief at time t
+
+* Source1_t is the new evidence at time t
+
+* belief_{t-1} is the previous belief (which serves as a prior)
+
+* w1 is the weight given to new evidence
+
+* w2 is the weight given to the prior belief
+
+This model captures how beliefs evolve over time as new evidence accumulates. The weights determine how much influence new evidence has relative to established beliefs.
+
+### Implementing the Temporal Bayesian Model in R
+
+Let's define a function for our temporal Bayesian model and generate simulated data:
+
+```{r 09 model recovery simple and weighted bayes}
+# Temporal Bayesian integration model
+# Combines new evidence with previous belief, with source-specific weights
+#
+# Parameters:
+#   bias: Prior bias term (log-odds scale)
+#   Source1: New evidence source (probability scale, 0-1)
+#   Source2: Previous belief (probability scale, 0-1)
+#   w1: Weight for new evidence (0.5-1 scale)
+#   w2: Weight for previous belief (0.5-1 scale)
+#
+# Returns:
+#   Updated belief (probability scale, 0-1)
+WeightedTimeBayes_f <- function(bias, Source1, Source2, w1, w2){
+  w1 <- (w1 - 0.5)*2
+  w2 <- (w2 - 0.5)*2
+  outcome <- inv_logit_scaled(bias + w1 * logit_scaled(Source1) + w2 * logit_scaled(Source2))
+  return(outcome)
+}
+
+# File path for saved simulation results
+sim_results_file <- "simdata/W10_temporal_bayes_sim.RData"
+
+# Check if we need to regenerate simulation results
+if (regenerate_simulations || !file.exists(sim_results_file)) {
+  # Define simulation parameters
+  bias <- 0  # No initial bias
+  trials <- seq(10)  # 10 trials
+  Source1 <- seq(0.1, 0.9, 0.1)  # New evidence ranges from 0.1 to 0.9
+  w1 <- seq(0.5, 1, 0.1)  # Weight for new evidence
+  w2 <- seq(0.5, 1, 0.1)  # Weight for prior belief
+  
+  # Create combination of all conditions
+  db <- expand.grid(bias = bias, trials = trials, Source1 = Source1, w1 = w1, w2 = w2) %>%
+    mutate(Source2 = NA, belief = NA, binary = NA)
+  
+  # Apply the model to generate sequential beliefs
+  for (n in seq(nrow(db))) {
+    # For the first observation in each sequence, set neutral prior belief
+    if (n == 1) {db$Source2[1] = 0.5}
+    
+    # Calculate belief using temporal Bayesian model
+    db$belief[n] <- WeightedTimeBayes_f(
+      db$bias[n], 
+      db$Source1[n], 
+      db$Source2[n],
+      db$w1[n], 
+      db$w2[n]
+    )
+    
+    # Generate binary choice from the belief
+    db$binary[n] <- rbinom(1, 1, db$belief[n])
+    
+    # Set up next trial's prior as current belief
+    if (n < nrow(db)) {db$Source2[n + 1] <- db$belief[n]}
+  }
+  
+  # Save simulation results
+  save(db, file = sim_results_file)
+  cat("Generated new temporal model data and saved to", sim_results_file, "\n")
+} else {
+  # Load existing simulation data
+  load(sim_results_file)
+  cat("Loaded existing temporal model data from", sim_results_file, "\n")
+}
+
+# Visualize the temporal Bayesian model
+# Plot belief evolution over time
+p1 <- ggplot(db, aes(x = trials, y = belief, color = as.factor(Source1))) +
+  geom_line() +
+  labs(title = "Belief Evolution in Temporal Bayesian Model",
+       x = "Trial",
+       y = "Belief (Probability)",
+       color = "Source1\nValue") +
+  facet_wrap(w1~w2) +
+  theme_bw()
+
+# Plot relationship between Source1 and resulting belief, colored by previous belief
+p2 <- ggplot(db, aes(x = Source1, y = belief, color = Source2)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_c() +
+  labs(title = "Relationship Between New Evidence and Updated Belief",
+       subtitle = "Color indicates value of previous belief (Source2)",
+       x = "New Evidence (Source1)",
+       y = "Updated Belief",
+       color = "Previous\nBelief") +
+  facet_wrap(w1~w2) +
+  theme_bw()
+
+# Display plots side by side
+p1 | p2
+```
+
+The plots reveal key features of our temporal Bayesian model:
+
+* Belief trajectory: The first plot shows how beliefs evolve over time based on the sequence of evidence. Different colored lines represent different values of new evidence (Source1). We can see that the model balances stability (maintaining consistent beliefs) with flexibility (updating based on new evidence).
+
+* Influence of previous belief: The second plot illustrates how the same new evidence (x-axis) leads to different updated beliefs (y-axis) depending on the previous belief (color). This demonstrates the model's "inertia" - a tendency to weight prior beliefs heavily when updating.
+
+* Anchoring effects: When previous beliefs are strong, the model requires more contrary evidence to substantially change those beliefs. This captures the cognitive phenomenon of belief anchoring, where initial beliefs can be resistant to change.
+
+## Implementing the Temporal Bayesian Model in Stan
+Let's now implement our temporal Bayesian model in Stan to enable parameter estimation from observed data:
+
+```{r}
+# Define the Stan model for temporal Bayesian updating
+stan_TB_model <- "
+data {
+  int<lower=0> N;
+  array[N] int y;
+  array[N] real <lower = 0, upper = 1> Source1; 
+}
+
+transformed data {
+  array[N] real l_Source1;
+  l_Source1 = logit(Source1);
+}
+
+parameters {
+  real bias;
+  // meaningful weights are btw 0.5 and 1 (theory reasons)
+  real<lower = 0.5, upper = 1> w1; 
+  real<lower = 0.5, upper = 1> w2;
+}
+
+transformed parameters {
+  real<lower = 0, upper = 1> weight1;
+  real<lower = 0, upper = 1> weight2;
+  array[N] real l_Source2;
+
+  // weight parameters are rescaled to be on a 0-1 scale (0 -> no effects; 1 -> face value)
+  weight1 = (w1 - 0.5) * 2;  
+  weight2 = (w2 - 0.5) * 2;
+  
+  // Initialize first time step with neutral prior (logit(0.5) = 0)
+  l_Source2[1] = 0;
+  
+  // Calculate belief propagation over time
+  for (n in 2:N){
+    l_Source2[n] = bias + weight1 * l_Source1[n] + weight2 * l_Source2[n-1];
+  }
+}
+
+model {
+  // Priors
+  target += normal_lpdf(bias | 0, 1);
+  target += beta_lpdf(weight1 | 1, 1);
+  target += beta_lpdf(weight2 | 1, 1);
+  
+  // First time step has only new evidence, no prior
+  target += bernoulli_logit_lpmf(y[1] | bias + weight1 * l_Source1[1] + weight2 * l_Source2[1]);
+  
+  // Subsequent time steps combine new evidence with prior belief
+  for (n in 2:N){  
+    target += bernoulli_logit_lpmf(y[n] | l_Source2[n]);
+  }
+}
+
+generated quantities{
+  array[N] real log_lik;
+  real bias_prior;
+  real w1_prior;
+  real w2_prior;
+  bias_prior = normal_rng(0, 1) ;
+  w1_prior = 0.5 + inv_logit(normal_rng(0, 1))/2 ;
+  w2_prior = 0.5 + inv_logit(normal_rng(0, 1))/2 ;
+  for (n in 1:N)
+    log_lik[n]= bernoulli_logit_lpmf(y[n] | l_Source2[n]);
+}
+"
+
+# Write the Stan model to a file
+write_stan_file(
+  stan_TB_model,
+  dir = "stan/",
+  basename = "W10_TB.stan")
+
+file <- file.path("stan/W10_TB.stan")
+mod_tb <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+
+# Create data subset for model fitting
+db_subset <- db %>% filter(w1 == 0.7 & w2 == 0.9)
+
+# Prepare data for Stan
+data_TB <- list(
+  N = nrow(db_subset),
+  y = db_subset$binary,
+  Source1 = db_subset$Source1
+)
+
+# File path for saved model fit
+fit_results_file <- "simmodels/W10_temporal_bayes_fit.RDS"
+
+# Check if we need to regenerate model fitting results
+if (regenerate_simulations || !file.exists(fit_results_file)) {
+  # Sample from the posterior
+  samples_TB <- mod_tb$sample(
+    data = data_TB,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 2000,
+    iter_sampling = 3000,
+    refresh = 500,
+    adapt_delta = 0.99,
+    max_treedepth = 20
+  )
+  
+  # Save the results
+  samples_TB$save_object(file = fit_results_file)
+  cat("Generated new model fit and saved to", fit_results_file, "\n")
+} else {
+  # Load existing model fit
+  samples_TB <- readRDS(fit_results_file)
+  cat("Loaded existing model fit from", fit_results_file, "\n")
+}
+```
+
+
+Let's break down the key components of our temporal Bayesian Stan model:
+
+* Data block: Takes in the number of observations, binary choices (y), and new evidence (Source1) for each time step.
+
+* Transformed data block: Converts the information sources from probability to log-odds scale.
+
+* Parameters block: Defines the bias and weight parameters to be estimated.
+
+* Transformed parameters block:
+  * Transforms weights to the 0-1 scale
+  * Initializes the first time step
+  * Recursively calculates belief propagation over time
+
+* Model block:
+  * Sets priors for the parameters
+  * Handles the first time step separately (since there's no prior belief)
+  * Models remaining time steps by combining new evidence with the updated prior
+
+* Generated quantities block:
+  * Generates prior samples
+  * Calculates log-likelihood values for model comparison
+
+This model captures the sequential nature of belief updating over time, where each updated belief serves as the prior for the next time step.
+
+### Evaluating the Temporal Bayesian Model
+
+Let's examine the results of our temporal Bayesian model fit:
+
+```{r}
+# Check model diagnostics
+samples_TB$cmdstan_diagnose()
+samples_TB$summary()
+
+# Extract posterior draws
+draws_df <- as_draws_df(samples_TB$draws())
+
+# Check MCMC convergence with trace plots
+p1 <- ggplot(draws_df, aes(.iteration, bias, group = .chain, color = as.factor(.chain))) +
+  geom_line(alpha = 0.5) +
+  labs(title = "MCMC Trace Plot for Bias Parameter",
+       x = "Iteration",
+       y = "Parameter Value",
+       color = "Chain") +
+  theme_classic()
+
+p2 <- ggplot(draws_df, aes(.iteration, w1, group = .chain, color = as.factor(.chain))) +
+  geom_line(alpha = 0.5) +
+  labs(title = "MCMC Trace Plot for w1 Parameter",
+       x = "Iteration",
+       y = "Parameter Value",
+       color = "Chain") +
+  theme_classic()
+
+p3 <- ggplot(draws_df, aes(.iteration, w2, group = .chain, color = as.factor(.chain))) +
+  geom_line(alpha = 0.5) +
+  labs(title = "MCMC Trace Plot for w2 Parameter",
+       x = "Iteration",
+       y = "Parameter Value",
+       color = "Chain") +
+  theme_classic()
+
+# Combine trace plots
+(p1 | p2 | p3) & theme(legend.position = "bottom")
+
+# Compare prior and posterior distributions for each parameter
+p4 <- ggplot(draws_df) +
+  geom_histogram(aes(bias), alpha = 0.6, fill = "lightblue") +
+  geom_histogram(aes(bias_prior), alpha = 0.6, fill = "pink") +
+  geom_vline(xintercept = db_subset$bias[1], linetype = "dashed") +
+  labs(title = "Bias Parameter: Prior vs Posterior",
+       subtitle = "Blue: posterior, Pink: prior, Dashed line: true value",
+       x = "Bias Parameter Value",
+       y = "Density") +
+  theme_bw()
+
+p5 <- ggplot(draws_df) +
+  geom_histogram(aes(w1), alpha = 0.6, fill = "lightblue") +
+  geom_histogram(aes(w1_prior), alpha = 0.6, fill = "pink") +
+  geom_vline(xintercept = db_subset$w1[1], linetype = "dashed") +
+  labs(title = "w1 Parameter: Prior vs Posterior",
+       subtitle = "Blue: posterior, Pink: prior, Dashed line: true value",
+       x = "w1 Parameter Value (Weight for New Evidence)",
+       y = "Density") +
+  theme_bw()
+
+p6 <- ggplot(draws_df) +
+  geom_histogram(aes(w2), alpha = 0.6, fill = "lightblue") +
+  geom_histogram(aes(w2_prior), alpha = 0.6, fill = "pink") +
+  geom_vline(xintercept = db_subset$w2[1], linetype = "dashed") +
+  labs(title = "w2 Parameter: Prior vs Posterior",
+       subtitle = "Blue: posterior, Pink: prior, Dashed line: true value",
+       x = "w2 Parameter Value (Weight for Prior Belief)",
+       y = "Density") +
+  theme_bw()
+
+# Combine prior-posterior plots
+p4 / p5 / p6
+
+# Examine parameter correlations
+p7 <- ggplot(draws_df) +
+  geom_point(aes(w1, w2), alpha = 0.3) +
+  labs(title = "Correlation Between w1 and w2 Parameters",
+       x = "w1 (Weight for New Evidence)",
+       y = "w2 (Weight for Prior Belief)") +
+  theme_bw()
+
+p8 <- ggplot(draws_df) +
+  geom_point(aes(bias, w1), alpha = 0.3) +
+  labs(title = "Correlation Between Bias and w1 Parameters",
+       x = "Bias",
+       y = "w1 (Weight for New Evidence)") +
+  theme_bw()
+
+p9 <- ggplot(draws_df) +
+  geom_point(aes(bias, w2), alpha = 0.3) +
+  labs(title = "Correlation Between Bias and w2 Parameters",
+       x = "Bias",
+       y = "w2 (Weight for Prior Belief)") +
+  theme_bw()
+
+# Combine correlation plots
+p7 | p8 | p9
+```
+
+Our temporal Bayesian model evaluation reveals several insights:
+
+* Convergence: The trace plots show good mixing of the MCMC chains for all parameters, indicating proper convergence of our sampling algorithm.
+
+* Parameter recovery: The posterior distributions for all parameters show bad recovery [TO BE FIXED]
+
+* Parameter correlations: The correlation plots reveal: 
+  * A negative correlation between w1 and w2, suggesting a trade-off between reliance on new evidence versus prior beliefs
+  * Weaker correlations between the bias parameter and the weight parameters
+
+* Model suitability: The successful recovery of parameters suggests that the temporal Bayesian model can[NOT YET] capture the sequential belief updating process we simulated.
+
+This model has numerous applications in cognitive science, including:
+
+* Studying belief persistence: How strongly do people weight their prior beliefs versus new evidence?
+
+* Learning rates: How quickly do people update their beliefs in changing environments?
+
+* Individual differences: Do some people rely more on new evidence while others stick to established beliefs?
+
+* Developmental changes: How does the balance between prior beliefs and new evidence change across the lifespan?
+
+## Multilevel Bayesian Models
+I
+n real cognitive science applications, we typically have data from multiple participants, each with their own set of parameters. Multilevel (or hierarchical) Bayesian models allow us to capture both individual differences and population-level tendencies.
+In this section, we'll briefly outline multilevel extensions for our Bayesian models. The implementation follows the same principles as our previous multilevel models, adding population-level distributions for the parameters.
+
+## Simple Bayesian Multilevel Model
+For the simple Bayesian model, a multilevel extension would look like:
+
+```{r}
+# Stan model for multilevel simple Bayesian integration
+stan_simpleBayes_ml_model <- "
+data {
+  int<lower=0> N;  // n of trials
+  int<lower=0> S;  // n of participants
+  array[N, S] int y;
+  array[N, S] real<lower=0, upper = 1> Source1;
+  array[N, S] real<lower=0, upper = 1> Source2;
+}
+
+transformed data{
+  array[N, S] real l_Source1;
+  array[N, S] real l_Source2;
+  l_Source1 = logit(Source1);
+  l_Source2 = logit(Source2);
+}
+
+parameters {
+  real biasM;
+  real<lower=0> biasSD;
+  array[S] real z_bias;
+}
+
+transformed parameters {
+  vector[S] biasC;
+  vector[S] bias;
+  biasC = biasSD * to_vector(z_bias);
+  bias = biasM + biasC;
+ }
+
+model {
+  target +=  normal_lpdf(biasM | 0, 1);
+  target +=  normal_lpdf(biasSD | 0, 1)  -
+    normal_lccdf(0 | 0, 1);
+  target += std_normal_lpdf(to_vector(z_bias));
+  
+  for (s in 1:S){
+  target +=  bernoulli_logit_lpmf(y[,s] | bias[s] + 
+                                          to_vector(l_Source1[,s]) + 
+                                          to_vector(l_Source2[,s]));
+  }
+}
+"
+
+write_stan_file(
+  stan_simpleBayes_ml_model,
+  dir = "stan/",
+  basename = "W10_SimpleBayes_ml.stan")
+
+file <- file.path("stan/W10_SimpleBayes_ml.stan")
+mod_simpleBayes_ml <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+```
+
+## Weighted Bayesian Multilevel Model
+
+For the weighted Bayesian model, a multilevel extension would include population-level distributions for bias, w1, and w2:
+
+```{r}
+# Stan model for multilevel weighted Bayesian integration
+stan_WB_ml_model <- "
+data {
+  int<lower=0> N;  // n of trials
+  int<lower=0> S;  // n of participants
+  array[N, S] int y;
+  array[N, S] real<lower=0, upper = 1> Source1;
+  array[N, S] real<lower=0, upper = 1> Source2; 
+}
+
+transformed data {
+  array[N,S] real l_Source1;
+  array[N,S] real l_Source2;
+  l_Source1 = logit(Source1);
+  l_Source2 = logit(Source2);
+}
+
+parameters {
+  real biasM;
+  
+  real w1_M; 
+  real w2_M;
+  
+  vector<lower = 0>[3] tau;
+  matrix[3, S] z_IDs;
+  cholesky_factor_corr[3] L_u;
+  
+}
+
+transformed parameters{
+  matrix[S,3] IDs;
+  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)';
+}
+
+model {
+  // Population-level priors
+  target += normal_lpdf(biasM | 0, 1);
+  target +=  normal_lpdf(tau[1] | 0, 1)  -
+    normal_lccdf(0 | 0, 1);
+  target += normal_lpdf(w1_M | 0, 1);
+  target +=  normal_lpdf(tau[2] | 0, 1)  -
+    normal_lccdf(0 | 0, 1);
+  target += normal_lpdf(w2_M | 0, 1);
+  target +=  normal_lpdf(tau[3] | 0, 1)  -
+    normal_lccdf(0 | 0, 1);
+  target += lkj_corr_cholesky_lpdf(L_u | 3);
+  
+  // Individual z-scores (non-centered parameterization)
+  target += std_normal_lpdf(to_vector(z_IDs));
+    
+  // Likelihood
+  for (s in 1:S){
+    for (n in 1:N){
+      target += bernoulli_logit_lpmf(y[n,s] | biasM + IDs[s, 1] + 
+            (w1_M + IDs[s, 2]) * l_Source1[n,s] + 
+            (w2_M + IDs[s, 3]) * l_Source2[n,s]);
+    }
+  }
+}
+"
+
+write_stan_file(
+  stan_WB_ml_model,
+  dir = "stan/",
+  basename = "W10_WB_ml.stan")
+
+file <- file.path("stan/W10_WB_ml.stan")
+mod_wb_ml <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                     stanc_options = list("O1"))
+```
+
+These multilevel models extend our approach to accommodate individual differences, allowing us to:
+
+* Estimate individual parameters for each participant
+* Learn about population-level tendencies
+* Improve parameter estimation for participants with limited data
+* Test hypotheses about group differences in cognitive processes
+
+## Conclusion
+
+In this chapter, we've explored Bayesian models of cognition, implementing and testing several variants:
+
+* Simple Bayesian integration, where multiple information sources are combined with equal weight
+* Weighted Bayesian integration, where sources are weighted according to their reliability or relevance
+* Temporal Bayesian updating, where beliefs evolve over time through sequential updating
+Multilevel Bayesian models, which capture individual differences in belief formation
+
+These models provide powerful tools for understanding how humans integrate information and form beliefs in complex environments. The Bayesian framework offers several advantages for cognitive modeling:
+
+* Theoretical elegance: Bayesian models provide a normative account of how rational agents should update their beliefs in light of new evidence.
+* Psychological plausibility: The models capture key cognitive phenomena, such as confirmation bias (through differential weighting), belief persistence (through temporal updating), and individual differences (through multilevel modeling).
+* Interpretable parameters: The model parameters have clear psychological interpretations, allowing us to test specific hypotheses about cognitive processes.
+
+Our implementation and testing approach demonstrates how to:
+
+* Simulate data from cognitive models
+* Implement models in Stan
+* Perform parameter recovery tests
+* Compare alternative models
+* Extend models to capture individual differences
+
+Throughout this process, we've seen how Bayesian cognitive models can help us understand the mechanisms of human belief formation and decision-making. These models serve as powerful tools for exploring how people integrate multiple sources of information, weight evidence differentially, update beliefs over time, and differ from one another in these cognitive processes.
+
+## Exercises [JUST A PLACEHOLDER]
+
+* Parameter exploration: Vary the parameters in the weighted Bayesian model and observe how they affect the integration of evidence. Which parameter combinations lead to more confirmation bias? Which lead to more balanced integration?
+
+* Model extension: Extend the temporal Bayesian model to incorporate a forgetting parameter that reduces the influence of older beliefs over time. How does this affect belief trajectories?
+
+* Real data application: Find a dataset involving probabilistic judgments or categorization decisions, and fit the models discussed in this chapter. Which model best explains the observed behavior?
+
+* Individual differences: Simulate data from participants with different cognitive styles (e.g., some who heavily weight prior beliefs, others who are more influenced by new evidence). Can the multilevel model recover these group differences?
+
+* Model comparison: Design a critical test experiment that could distinguish between the simple, weighted, and temporal Bayesian models. What pattern of results would favor each model?
