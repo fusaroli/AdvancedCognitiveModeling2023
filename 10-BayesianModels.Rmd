@@ -9,7 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Set this to TRUE when you want to regenerate all simulation results
 # Otherwise, existing results will be loaded
-regenerate_simulations <- TRUE
+regenerate_simulations <- FALSE
 
 # Load necessary packages
 pacman::p_load(
@@ -1110,15 +1110,19 @@ data {
 }
 
 parameters {
-  // Using inverse logit for better numeric properties
-  real<lower=0> weight_direct;           // Direct evidence weight
-  real<lower=0> weight_social;           // Social evidence weight
+  real<lower=0> total_weight;         // Total influence of all evidence
+  real<lower=0, upper=1> weight_prop; // Proportion of weight for direct evidence
+}
+
+transformed parameters {
+  real<lower=0> weight_direct = total_weight * weight_prop;
+  real<lower=0> weight_social = total_weight * (1 - weight_prop);
 }
 
 model {
   // Priors
-  target += normal_lpdf(weight_direct | 1, 0.3);  // Exponential prior with mean 1
-  target += normal_lpdf(weight_social | 1, 0.3);  // Exponential prior with mean 1
+  target += gamma_lpdf(total_weight | 2, 1);  // Centered around 2 with reasonable spread
+  target += beta_lpdf(weight_prop | 1, 1);    // Uniform prior on proportion
   
   // Each observation is a separate decision
   for (i in 1:N) {
@@ -1144,6 +1148,8 @@ generated quantities {
   // Log likelihood and predictions
   vector[N] log_lik;
   array[N] int posterior_pred_choice;
+  real weight_direct_prior = normal_rng(1, 0.3);
+  real weight_social_prior = normal_rng(1, 0.3);
   
   for (i in 1:N) {
     real weighted_blue1 = blue1[i] * weight_direct;
@@ -1316,6 +1322,38 @@ Model quality checks are crucial for understanding how well our Bayesian models 
 2. Posterior Predictive Checks
 3. Prior-Posterior Update Visualization
 
+```{r 09 fit quality}
+# Function to create trace and rank plots for a model
+create_diagnostic_plots <- function(fit, model_name) {
+  # Extract posterior draws
+  draws <- as_draws_df(fit$draws())
+  
+  # Create trace plots
+  trace_plot <- mcmc_trace(draws, pars = c("weight_direct", "weight_social"),
+                       facet_args = list(ncol = 1)) +
+    ggtitle(paste("Trace Plots for", model_name)) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  # Create rank plots
+  rank_plot <- mcmc_rank_hist(draws, pars = c("weight_direct", "weight_social")) +
+    ggtitle(paste("Rank Plots for", model_name)) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  # Return the plots
+  return(list(trace_plot = trace_plot, rank_plot = rank_plot))
+}
+
+# Generate diagnostic plots for each model
+balanced_plots <- create_diagnostic_plots(fit_weighted_balanced, "Balanced Model")
+self_focused_plots <- create_diagnostic_plots(fit_weighted_self_focused, "Self-Focused Model")
+socially_influenced_plots <- create_diagnostic_plots(fit_weighted_socially_influenced, "Socially-Influenced Model")
+
+
+```
+
+
 ### Prior and Posterior Predictive Checks
 
 Prior predictive checks help us understand what our model assumes about the world before seeing any data. They answer the question: "What kind of data would we expect to see if we only used our prior beliefs?" Posterior predictive checks are the same, but after having seen the data. This helps us assess whether the model can generate data that looks similar to our observed data.
@@ -1421,62 +1459,226 @@ print(posterior_grid)
 This visualization shows how our beliefs change after observing data, comparing the prior and posterior distributions for key parameters.
 
 ```{r}
-
-prior_posterior_update_grid <- function(fit_list, true_params_list, model_names) {
-  if (length(fit_list) != length(true_params_list) || length(fit_list) != length(model_names)) {
-    stop("fit_list, true_params_list, and model_names must have the same length!")
+# Function to plot prior-posterior updates for reparameterized model
+plot_reparameterized_updates <- function(fit_list, true_params_list, model_names) {
+  # Create dataframe for posterior values
+  posterior_df <- tibble()
+  
+  # Process each model
+  for (i in seq_along(fit_list)) {
+    fit <- fit_list[[i]]
+    model_name <- model_names[i]
+    
+    # Extract posterior draws
+    draws_df <- as_draws_df(fit$draws())
+    
+    # Check which parameterization is used (old or new)
+    if (all(c("total_weight", "weight_prop") %in% names(draws_df))) {
+      # New parameterization - extract parameters directly
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "total_weight",
+        value = draws_df$total_weight,
+        distribution = "Posterior"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+      
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "weight_prop",
+        value = draws_df$weight_prop,
+        distribution = "Posterior"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+      
+      # Also calculate the derived parameters for comparison with true values
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "weight_direct",
+        value = draws_df$total_weight * draws_df$weight_prop,
+        distribution = "Posterior (derived)"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+      
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "weight_social",
+        value = draws_df$total_weight * (1 - draws_df$weight_prop),
+        distribution = "Posterior (derived)"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+      
+    } else if (all(c("weight_direct", "weight_social") %in% names(draws_df))) {
+      # Old parameterization - extract and calculate equivalent new parameters
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "weight_direct",
+        value = draws_df$weight_direct,
+        distribution = "Posterior"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+      
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "weight_social",
+        value = draws_df$weight_social,
+        distribution = "Posterior"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+      
+      # Calculate the equivalent new parameters
+      total_weight <- draws_df$weight_direct + draws_df$weight_social
+      weight_prop <- draws_df$weight_direct / total_weight
+      
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "total_weight",
+        value = total_weight,
+        distribution = "Posterior (derived)"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+      
+      temp_df <- tibble(
+        model_name = model_name,
+        parameter = "weight_prop",
+        value = weight_prop,
+        distribution = "Posterior (derived)"
+      )
+      posterior_df <- bind_rows(posterior_df, temp_df)
+    } else {
+      warning(paste("Unknown parameterization in model", model_name))
+    }
   }
   
-  # Extract prior and posterior samples for all models
-  prior_posterior_df <- map2_dfr(fit_list, model_names, function(fit, model_name) {
-    draws_df <- as_draws_df(fit$draws())
-    param_names <- c("weight_direct", "weight_social")
+  # Generate prior samples based on recommended priors for new parameterization
+  prior_df <- tibble()
+  
+  for (i in seq_along(model_names)) {
+    model_name <- model_names[i]
     
-    map_dfr(param_names, function(param) {
-      tibble(
-        model_name = model_name,
-        parameter = param,
-        value = c(draws_df[[paste0(param, "_prior")]], draws_df[[param]]),
-        distribution = rep(c("Prior", "Posterior"), each = nrow(draws_df))
-      )
-    })
-  })
-
-  # Combine true parameter values into a single dataframe
+    # Number of prior samples to match posterior
+    n_samples <- 2000
+    
+    # Generate prior samples - gamma(2,1) for total_weight and beta(1,1) for weight_prop
+    total_weight_prior <- rgamma(n_samples, shape = 2, rate = 1)
+    weight_prop_prior <- rbeta(n_samples, 1, 1)
+    
+    # For the new parameterization
+    temp_df <- tibble(
+      model_name = model_name,
+      parameter = "total_weight",
+      value = total_weight_prior,
+      distribution = "Prior"
+    )
+    prior_df <- bind_rows(prior_df, temp_df)
+    
+    temp_df <- tibble(
+      model_name = model_name,
+      parameter = "weight_prop",
+      value = weight_prop_prior,
+      distribution = "Prior"
+    )
+    prior_df <- bind_rows(prior_df, temp_df)
+    
+    # Calculate derived parameters for the old parameterization
+    weight_direct_prior <- total_weight_prior * weight_prop_prior
+    weight_social_prior <- total_weight_prior * (1 - weight_prop_prior)
+    
+    temp_df <- tibble(
+      model_name = model_name,
+      parameter = "weight_direct",
+      value = weight_direct_prior,
+      distribution = "Prior (derived)"
+    )
+    prior_df <- bind_rows(prior_df, temp_df)
+    
+    temp_df <- tibble(
+      model_name = model_name,
+      parameter = "weight_social",
+      value = weight_social_prior,
+      distribution = "Prior (derived)"
+    )
+    prior_df <- bind_rows(prior_df, temp_df)
+  }
+  
+  # Combine prior and posterior
+  combined_df <- bind_rows(prior_df, posterior_df)
+  
+  # Convert true parameter values
   true_values_df <- map2_dfr(true_params_list, model_names, function(params, model_name) {
+    # Extract original parameters
+    weight_direct <- params$weight_direct
+    weight_social <- params$weight_social
+    
+    # Calculate new parameterization
+    total_weight <- weight_direct + weight_social
+    weight_prop <- weight_direct / total_weight
+    
     tibble(
       model_name = model_name,
-      parameter = names(params),
-      value = unlist(params)
+      parameter = c("weight_direct", "weight_social", "total_weight", "weight_prop"),
+      value = c(weight_direct, weight_social, total_weight, weight_prop)
     )
   })
   
-  # Base plot with facet grid
-  p <- ggplot(prior_posterior_df, aes(x = value, fill = distribution, color = distribution)) +
+  # Create plots for different parameter sets
+  
+  # 1. New parameterization (total_weight and weight_prop)
+  p1 <- combined_df %>% 
+    filter(parameter %in% c("total_weight", "weight_prop")) %>%
+    ggplot(aes(x = value, fill = distribution, color = distribution)) +
     geom_density(alpha = 0.3, linewidth = 1.2) +
-    facet_grid(model_name ~ parameter, scales = "free") +  # Arrange models in rows, parameters in columns
-    scale_fill_manual(values = c("Prior" = "#E63946", "Posterior" = "#1D3557")) +  
-    scale_color_manual(values = c("Prior" = "#E63946", "Posterior" = "#1D3557")) +
-    labs(title = "Prior vs. Posterior Distributions Across Models",
+    facet_grid(model_name ~ parameter, scales = "free") +
+    scale_fill_manual(values = c("Prior" = "#E63946", 
+                                "Prior (derived)" = "#E67946",
+                                "Posterior" = "#1D3557", 
+                                "Posterior (derived)" = "#1D5587")) +  
+    scale_color_manual(values = c("Prior" = "#E63946", 
+                                 "Prior (derived)" = "#E67946", 
+                                 "Posterior" = "#1D3557", 
+                                 "Posterior (derived)" = "#1D5587")) +
+    geom_vline(data = true_values_df %>% filter(parameter %in% c("total_weight", "weight_prop")),
+               aes(xintercept = value),
+               color = "#2A9D8F", linetype = "dashed", linewidth = 1.2) +
+    labs(title = "Prior vs. Posterior: New Parameterization",
+         subtitle = "Green dashed lines indicate true parameter values",
          x = "Parameter Value",
          y = "Density",
          fill = "Distribution",
          color = "Distribution") +
     theme_minimal(base_size = 14) +
     theme(legend.position = "top")
-
-  # Add true parameter values
-  if (!is.null(true_params_list)) {
-    p <- p + 
-      geom_vline(data = true_values_df,
-                 aes(xintercept = value),
-                 color = "#2A9D8F", linetype = "dashed", linewidth = 1.2)
-  }
-
-  return(p)
+  
+  # 2. Original parameterization (weight_direct and weight_social)
+  p2 <- combined_df %>% 
+    filter(parameter %in% c("weight_direct", "weight_social")) %>%
+    ggplot(aes(x = value, fill = distribution, color = distribution)) +
+    geom_density(alpha = 0.3, linewidth = 1.2) +
+    facet_grid(model_name ~ parameter, scales = "free") +
+    scale_fill_manual(values = c("Prior" = "#E63946", 
+                                "Prior (derived)" = "#E67946",
+                                "Posterior" = "#1D3557", 
+                                "Posterior (derived)" = "#1D5587")) +  
+    scale_color_manual(values = c("Prior" = "#E63946", 
+                                 "Prior (derived)" = "#E67946", 
+                                 "Posterior" = "#1D3557", 
+                                 "Posterior (derived)" = "#1D5587")) +
+    geom_vline(data = true_values_df %>% filter(parameter %in% c("weight_direct", "weight_social")),
+               aes(xintercept = value),
+               color = "#2A9D8F", linetype = "dashed", linewidth = 1.2) +
+    labs(title = "Prior vs. Posterior: Original Parameterization",
+         subtitle = "Green dashed lines indicate true parameter values",
+         x = "Parameter Value",
+         y = "Density",
+         fill = "Distribution",
+         color = "Distribution") +
+    theme_minimal(base_size = 14) +
+    theme(legend.position = "top")
+  
+  # Return both plots
+  return(list(new_params = p1, old_params = p2))
 }
 
-# Define models and true parameter values
 fit_list <- list(
   fit_weighted_balanced,
   fit_weighted_self_focused,
@@ -1491,36 +1693,47 @@ true_params_list <- list(
 
 model_names <- c("Weighted Balanced", "Weighted Self-Focused", "Weighted Socially Influenced")
 
-# Generate the plot
-# prior_posterior_update_grid(fit_list, true_params_list, model_names)
+# Generate the plots
+plots <- plot_reparameterized_updates(fit_list, true_params_list, model_names)
 
+# Display the plots
+print(plots$new_params)
+print(plots$old_params)
+
+# Save the plots
+ggsave("prior_posterior_new_params.pdf", plots$new_params, width = 12, height = 10)
+ggsave("prior_posterior_old_params.pdf", plots$old_params, width = 12, height = 10)
 
 ```
 
 ## Parameter recovery
 
 ```{r}
+## Parameter recovery
+# Set random seed for reproducibility
+set.seed(123)
+
 ## Set up parallel processing
 future::plan(multisession, workers = parallel::detectCores() - 1)
 
-# Define parameter grid
+# Define parameter grid for thorough testing
 weight_values <- c(0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
 n_trials <- c(1, 2, 3, 4, 5) # Number of times full combination of levels is repeated
 
+# Create a grid of all parameter combinations to test
 param_grid <- expand_grid(w1 = weight_values, w2 = weight_values, trials = n_trials)
 
 # Define evidence combinations
 evidence_combinations <- expand_grid(
   blue1 = 0:8,     # Direct evidence: number of blue marbles seen
-  blue2 = 0:3      # Social evidence: strength of blue evidence
-) %>% mutate(
-  total1 = 8,      # Total marbles in direct evidence
-  total2 = 3       # Total strength units in social evidence
+  blue2 = 0:3,     # Social evidence: strength of blue evidence
+  total1 = 8,      # Total marbles in direct evidence (constant)
+  total2 = 3       # Total strength units in social evidence (constant)
 )
 
 # Function to generate decisions across all evidence combinations for a given agent
 generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, trials) {
-  # Expand dataset to account for multiple trials
+  # Expand dataset to account for multiple trials of the same evidence combination
   expanded_data <- evidence_df %>% slice(rep(1:n(), each = trials))
   
   # Apply our weighted Bayesian model to each evidence combination
@@ -1541,7 +1754,7 @@ generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, 
       total1 = total1,
       total2 = total2,
       expected_rate = result$expected_rate,   # Probability the next marble is blue
-      choice = result$decision,               # Final decision (Blue or Red)
+      choice = ifelse(result$decision == "Blue", 1, 0), # Convert to binary format for Stan
       confidence = result$confidence          # Confidence in decision
     )
   })
@@ -1553,7 +1766,7 @@ generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, 
 prepare_stan_data <- function(df) {
   list(
     N = nrow(df),
-    choice = as.integer(df$choice == "Blue"),
+    choice = df$choice,
     blue1 = df$blue1,
     total1 = df$total1,
     blue2 = df$blue2,
@@ -1593,52 +1806,552 @@ results <- param_grid %>%
     fit = future_map(data, fit_model, .progress = TRUE)
   )
 
-# Extract estimated coefficients - proper parameter names
+# Extract both old and new parameterization results
 results <- results %>%
   mutate(
-    # Extract weight parameters properly - names from Stan model
-    weight_direct_est = map_dbl(fit, ~mean(as_draws_df(.x$draws())$weight_direct)),
-    weight_social_est = map_dbl(fit, ~mean(as_draws_df(.x$draws())$weight_social)),
+    # First extract parameters in the new parameterization
+    total_weight_est = map_dbl(fit, ~mean(as_draws_df(.x$draws())$total_weight)),
+    weight_prop_est = map_dbl(fit, ~mean(as_draws_df(.x$draws())$weight_prop)),
     
-    # Extract uncertainty estimates
-    weight_direct_sd = map_dbl(fit, ~sd(as_draws_df(.x$draws())$weight_direct)),
-    weight_social_sd = map_dbl(fit, ~sd(as_draws_df(.x$draws())$weight_social))
+    # Calculate the traditional parameters from the new parameterization
+    weight_direct_est = total_weight_est * weight_prop_est,
+    weight_social_est = total_weight_est * (1 - weight_prop_est),
+    
+    # Calculate the true parameters in the new parameterization 
+    true_total_weight = w1 + w2,
+    true_weight_prop = w1 / (w1 + w2),
+    
+    # Also extract uncertainty estimates
+    total_weight_sd = map_dbl(fit, ~sd(as_draws_df(.x$draws())$total_weight)),
+    weight_prop_sd = map_dbl(fit, ~sd(as_draws_df(.x$draws())$weight_prop)),
+    weight_direct_sd = map_dbl(fit, function(x) {
+      draws <- as_draws_df(x$draws())
+      sd(draws$total_weight * draws$weight_prop)
+    }),
+    weight_social_sd = map_dbl(fit, function(x) {
+      draws <- as_draws_df(x$draws())
+      sd(draws$total_weight * (1 - draws$weight_prop))
+    })
   )
 
-# Visualize direct weight recovery
-p1 <- results %>%
-  ggplot(aes(x = w1, y = weight_direct_est, color = factor(trials))) +
-  geom_point() +
-  geom_errorbar(aes(ymin = weight_direct_est - weight_direct_sd, 
-                    ymax = weight_direct_est + weight_direct_sd), 
-                width = 0.1, alpha = 0.5) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  facet_wrap(~ w2) +
-  labs(title = "Direct Weight Parameter Recovery", 
-       x = "True Direct Weight", 
-       y = "Estimated Direct Weight",
-       color = "Number of Trials") +
+# Create functions to visualize parameter recovery for both parameterizations
+plot_recovery_original <- function(results_df) {
+  # Visualize direct weight recovery
+  p1 <- results_df %>%
+    ggplot(aes(x = w1, y = weight_direct_est, color = factor(trials))) +
+    geom_point() +
+    geom_errorbar(aes(ymin = weight_direct_est - weight_direct_sd, 
+                      ymax = weight_direct_est + weight_direct_sd), 
+                  width = 0.1, alpha = 0.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    facet_wrap(~ w2, labeller = labeller(w2 = function(x) paste("Social Weight =", x))) +
+    labs(title = "Direct Weight Parameter Recovery", 
+         x = "True Direct Weight", 
+         y = "Estimated Direct Weight",
+         color = "Number of\nTrials per\nCondition") +
+    theme_minimal() +
+    theme(legend.position = "right")
+
+  # Visualize social weight recovery
+  p2 <- results_df %>%
+    ggplot(aes(x = w2, y = weight_social_est, color = factor(trials))) +
+    geom_point() +
+    geom_errorbar(aes(ymin = weight_social_est - weight_social_sd, 
+                      ymax = weight_social_est + weight_social_sd), 
+                  width = 0.1, alpha = 0.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    facet_wrap(~ w1, labeller = labeller(w1 = function(x) paste("Direct Weight =", x))) +
+    labs(title = "Social Weight Parameter Recovery", 
+         x = "True Social Weight", 
+         y = "Estimated Social Weight",
+         color = "Number of\nTrials per\nCondition") +
+    theme_minimal() +
+    theme(legend.position = "right")
+    
+  return(list(direct = p1, social = p2))
+}
+
+plot_recovery_new <- function(results_df) {
+  # Visualize total weight recovery
+  # First, create discrete categories for weight proportion to avoid using continuous variable in facet_wrap
+  results_with_categories <- results_df %>%
+    filter(true_total_weight > 0) %>% # Avoid division by zero issues
+    mutate(weight_prop_cat = cut(true_weight_prop, 
+                               breaks = c(0, 0.25, 0.5, 0.75, 1.0),
+                               labels = c("0-0.25", "0.25-0.5", "0.5-0.75", "0.75-1.0"),
+                               include.lowest = TRUE))
+  
+  p1 <- results_with_categories %>%
+    ggplot(aes(x = true_total_weight, y = total_weight_est, color = factor(trials))) +
+    geom_point() +
+    geom_errorbar(aes(ymin = total_weight_est - total_weight_sd, 
+                      ymax = total_weight_est + total_weight_sd), 
+                  width = 0.1, alpha = 0.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    facet_wrap(~ weight_prop_cat, labeller = labeller(
+      weight_prop_cat = function(x) paste("Weight Proportion =", x)
+    )) +
+    labs(title = "Total Weight Parameter Recovery", 
+         x = "True Total Weight", 
+         y = "Estimated Total Weight",
+         color = "Number of\nTrials per\nCondition") +
+    theme_minimal() +
+    theme(legend.position = "right")
+
+  # Visualize weight proportion recovery
+  # Create discrete categories for total weight
+  results_with_categories <- results_df %>%
+    filter(true_total_weight > 0) %>% # Avoid division by zero issues
+    mutate(total_weight_cat = cut(true_total_weight, 
+                                breaks = c(0, 0.5, 1.0, 1.5, 2.0),
+                                labels = c("0-0.5", "0.5-1.0", "1.0-1.5", "1.5-2.0"),
+                                include.lowest = TRUE))
+  
+  p2 <- results_with_categories %>%
+    ggplot(aes(x = true_weight_prop, y = weight_prop_est, color = factor(trials))) +
+    geom_point() +
+    geom_errorbar(aes(ymin = weight_prop_est - weight_prop_sd, 
+                      ymax = weight_prop_est + weight_prop_sd), 
+                  width = 0.01, alpha = 0.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    facet_wrap(~ total_weight_cat, labeller = labeller(
+      total_weight_cat = function(x) paste("Total Weight =", x)
+    )) +
+    labs(title = "Weight Proportion Parameter Recovery", 
+         x = "True Weight Proportion", 
+         y = "Estimated Weight Proportion",
+         color = "Number of\nTrials per\nCondition") +
+    theme_minimal() +
+    theme(legend.position = "right")
+    
+  return(list(total = p1, prop = p2))
+}
+
+# Generate plots
+original_recovery_plots <- plot_recovery_original(results)
+new_recovery_plots <- plot_recovery_new(results)
+
+# Display plots for original parameterization
+original_recovery_plots$direct
+original_recovery_plots$social
+
+# Display plots for new parameterization
+new_recovery_plots$total
+new_recovery_plots$prop
+
+# Analysis of recovery quality by parameter combination
+recovery_summary <- results %>%
+  mutate(
+    # Calculate error metrics for original parameterization
+    error_direct = abs(weight_direct_est - w1),
+    error_social = abs(weight_social_est - w2),
+    rel_error_direct = ifelse(w1 > 0, error_direct / w1, NA),
+    rel_error_social = ifelse(w2 > 0, error_social / w2, NA),
+    
+    # Calculate error metrics for new parameterization
+    error_total = abs(total_weight_est - true_total_weight),
+    error_prop = abs(weight_prop_est - true_weight_prop),
+    rel_error_total = ifelse(true_total_weight > 0, error_total / true_total_weight, NA),
+    rel_error_prop = ifelse(true_weight_prop > 0, error_prop / true_weight_prop, NA)
+  ) %>%
+  group_by(trials) %>%
+  summarize(
+    mean_error_direct = mean(error_direct, na.rm = TRUE),
+    mean_error_social = mean(error_social, na.rm = TRUE),
+    mean_rel_error_direct = mean(rel_error_direct, na.rm = TRUE),
+    mean_rel_error_social = mean(rel_error_social, na.rm = TRUE),
+    mean_error_total = mean(error_total, na.rm = TRUE),
+    mean_error_prop = mean(error_prop, na.rm = TRUE),
+    mean_rel_error_total = mean(rel_error_total, na.rm = TRUE),
+    mean_rel_error_prop = mean(rel_error_prop, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Display summary table
+knitr::kable(recovery_summary, 
+             digits = 3,
+             caption = "Parameter Recovery Quality by Number of Trials")
+
+# Create a summary visualization showing how recovery improves with more trials
+p_summary <- recovery_summary %>%
+  pivot_longer(
+    cols = starts_with("mean_"),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    parameter_type = case_when(
+      grepl("direct", metric) ~ "Direct Weight",
+      grepl("social", metric) ~ "Social Weight",
+      grepl("total", metric) ~ "Total Weight",
+      grepl("prop", metric) ~ "Weight Proportion"
+    ),
+    error_type = case_when(
+      grepl("rel_error", metric) ~ "Relative Error",
+      TRUE ~ "Absolute Error"
+    )
+  ) %>%
+  ggplot(aes(x = trials, y = value, color = parameter_type, linetype = error_type)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  facet_wrap(~ error_type, scales = "free_y") +
+  labs(
+    title = "Parameter Recovery Improvement with Increased Trials",
+    x = "Number of Trials per Evidence Combination",
+    y = "Mean Error",
+    color = "Parameter",
+    linetype = "Error Type"
+  ) +
   theme_minimal()
 
-# Visualize social weight recovery
-p2 <- results %>%
-  ggplot(aes(x = w2, y = weight_social_est, color = factor(trials))) +
-  geom_point() +
-  geom_errorbar(aes(ymin = weight_social_est - weight_social_sd, 
-                    ymax = weight_social_est + weight_social_sd), 
-                width = 0.1, alpha = 0.5) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  facet_wrap(~ w1) +
-  labs(title = "Social Weight Parameter Recovery", 
-       x = "True Social Weight", 
-       y = "Estimated Social Weight",
-       color = "Number of Trials") +
-  theme_minimal()
+p_summary
+```
+
+## Model comparison
+
+## Leave-One-Out Cross-Validation and Model Comparison
+
+In this section, we'll explore how to compare the simple Bayesian agent (where weights are equal) and the weighted Bayesian agent (where weights can differ) using Leave-One-Out Cross-Validation (LOO-CV). We'll leverage the models we've already fitted to our three simulated agent types: Balanced, Self-Focused, and Socially-Influenced.
+
+### Understanding LOO Cross-Validation in Bayesian Framework
+
+LOO-CV is a powerful method for model comparison that estimates how well a model will predict new, unseen data. At its core, LOO-CV works by:
+
+1. Leaving out one observation at a time
+2. Fitting the model on all remaining observations 
+3. Predicting the left-out observation using that model
+4. Repeating for all observations and aggregating the results
+
+In a Bayesian context, exact LOO-CV would require refitting our model N times (where N is the number of observations), which is computationally expensive. Instead, we use Pareto-Smoothed Importance Sampling (PSIS-LOO), which approximates LOO-CV from a single model fit.
+
+The key insight of PSIS-LOO is that we can use importance sampling to approximate how the posterior would change if an observation were removed:
+
+$$p(\theta | y_{-i}) \approx \frac{p(\theta | y)}{p(y_i | \theta)} \propto \frac{p(\theta | y)}{p(y_i | \theta)}$$
+
+where $p(\theta | y_{-i})$ is the posterior without observation $i$, and $p(\theta | y)$ is the full posterior.
+
+### Step-by-Step Implementation of LOO-CV
+
+Let's apply LOO-CV to compare our models across the three scenarios. 
+
+```{r}
+# Load the loo package
+library(loo)
+
+# Function to extract log-likelihood and compute LOO
+compute_loo <- function(model_fit) {
+  # Extract log-likelihood values
+  log_lik <- model_fit$draws("log_lik", format = "matrix")
+  
+  # Compute LOO-CV using PSIS
+  loo_result <- loo(log_lik)
+  return(loo_result)
+}
+
+# Compute LOO for each model and scenario
+loo_simple_balanced <- compute_loo(fit_simple_balanced)
+loo_simple_self_focused <- compute_loo(fit_simple_self_focused)
+loo_simple_socially_influenced <- compute_loo(fit_simple_socially_influenced)
+
+loo_weighted_balanced <- compute_loo(fit_weighted_balanced)
+loo_weighted_self_focused <- compute_loo(fit_weighted_self_focused)
+loo_weighted_socially_influenced <- compute_loo(fit_weighted_socially_influenced)
+```
+
+### Understanding PSIS-LOO Diagnostics
+
+Before we compare models, it's important to check the reliability of our LOO estimates. PSIS-LOO provides diagnostics through the Pareto k values:
+
+```{r}
+# Function to check Pareto k diagnostics
+check_pareto_k <- function(loo_result, model_name) {
+  # Extract Pareto k values
+  pareto_k <- loo_result$diagnostics$pareto_k
+  
+  # Count problematic k values
+  n_k_high <- sum(pareto_k > 0.7)
+  n_k_medium <- sum(pareto_k > 0.5 & pareto_k <= 0.7)
+  
+  # Proportion of problematic observations
+  prop_problematic <- (n_k_high + n_k_medium) / length(pareto_k)
+  
+  # Create diagnostic summary
+  summary_df <- tibble(
+    model = model_name,
+    total_obs = length(pareto_k),
+    k_high = n_k_high,
+    k_medium = n_k_medium,
+    prop_problematic = prop_problematic,
+    reliability = case_when(
+      prop_problematic == 0 ~ "Excellent",
+      prop_problematic < 0.05 ~ "Good",
+      prop_problematic < 0.1 ~ "Fair",
+      TRUE ~ "Poor"
+    )
+  )
+  
+  return(summary_df)
+}
+
+# Check diagnostics for all models
+diagnostics <- bind_rows(
+  check_pareto_k(loo_simple_balanced, "Simple - Balanced"),
+  check_pareto_k(loo_simple_self_focused, "Simple - Self-Focused"),
+  check_pareto_k(loo_simple_socially_influenced, "Simple - Socially-Influenced"),
+  check_pareto_k(loo_weighted_balanced, "Weighted - Balanced"),
+  check_pareto_k(loo_weighted_self_focused, "Weighted - Self-Focused"),
+  check_pareto_k(loo_weighted_socially_influenced, "Weighted - Socially-Influenced")
+)
+
+# Display diagnostics table
+knitr::kable(diagnostics, 
+             digits = 3,
+             caption = "PSIS-LOO Reliability Diagnostics")
+```
+
+### Model Comparison for Each Scenario
+
+Now we can compare the models within each scenario:
+
+```{r}
+# Function to compare models and create visualization
+compare_scenario_models <- function(loo_simple, loo_weighted, scenario_name) {
+  # Compare models
+  comparison <- loo_compare(loo_simple, loo_weighted)
+  
+  # Calculate model weights
+  weights <- loo_model_weights(list(
+    "Simple Bayesian" = loo_simple,
+    "Weighted Bayesian" = loo_weighted
+  ))
+  
+  # Print comparison
+  cat("\nModel comparison for", scenario_name, "scenario:\n")
+  print(comparison)
+  
+  # Print weights
+  cat("\nModel weights for", scenario_name, "scenario:\n")
+  print(weights)
+  
+  # Create comparison dataframe
+  comparison_df <- as.data.frame(comparison)
+  comparison_df$model <- rownames(comparison_df)
+  rownames(comparison_df) <- NULL
+  comparison_df$scenario <- scenario_name
+  
+  # Create weights dataframe
+  weights_df <- tibble(
+    model = names(weights),
+    weight = as.numeric(weights),
+    scenario = scenario_name
+  )
+  
+  # Return both dataframes
+  return(list(comparison = comparison_df, weights = weights_df))
+}
+
+# Perform comparisons for each scenario
+balanced_comparison <- compare_scenario_models(
+  loo_simple_balanced, loo_weighted_balanced, "Balanced"
+)
+
+self_focused_comparison <- compare_scenario_models(
+  loo_simple_self_focused, loo_weighted_self_focused, "Self-Focused"
+)
+
+socially_influenced_comparison <- compare_scenario_models(
+  loo_simple_socially_influenced, loo_weighted_socially_influenced, "Socially-Influenced"
+)
+
+# Combine comparison results
+all_comparisons <- bind_rows(
+  balanced_comparison$comparison,
+  self_focused_comparison$comparison,
+  socially_influenced_comparison$comparison
+)
+
+all_weights <- bind_rows(
+  balanced_comparison$weights,
+  self_focused_comparison$weights,
+  socially_influenced_comparison$weights
+)
+```
+
+### Visualizing the Comparison Results
+
+Let's create informative visualizations to better understand the comparison results:
+
+```{r}
+# Plot ELPD differences
+p1 <- ggplot(all_comparisons, 
+             aes(x = model, y = elpd_diff, fill = model)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = elpd_diff - se_diff, 
+                    ymax = elpd_diff + se_diff), 
+                width = 0.2) +
+  facet_wrap(~ scenario, scales = "free_y") +
+  labs(
+    title = "Model Comparison via LOO-CV",
+    subtitle = "Higher ELPD difference is better; error bars show ±1 SE",
+    x = NULL,
+    y = "ELPD Difference"
+  ) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Plot model weights
+p2 <- ggplot(all_weights, 
+             aes(x = model, y = weight, fill = model)) +
+  geom_col() +
+  geom_text(aes(label = scales::percent(weight, accuracy = 0.1)), 
+            vjust = -0.5, size = 4) +
+  facet_wrap(~ scenario) +
+  labs(
+    title = "Model Weights Based on LOO-CV",
+    subtitle = "Higher weights indicate better predictive performance",
+    x = NULL,
+    y = "Model Weight"
+  ) +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  ylim(0, 1)
 
 # Display plots
 p1
 p2
+
+# Create a summary table of results
+summary_table <- all_weights %>%
+  pivot_wider(names_from = model, values_from = weight) %>%
+  mutate(
+    winning_model = case_when(
+      `Simple Bayesian` > `Weighted Bayesian` ~ "Simple Bayesian",
+      `Weighted Bayesian` > `Simple Bayesian` ~ "Weighted Bayesian",
+      TRUE ~ "Tie"
+    ),
+    weight_difference = abs(`Simple Bayesian` - `Weighted Bayesian`),
+    evidence_strength = case_when(
+      weight_difference < 0.1 ~ "Weak",
+      weight_difference < 0.3 ~ "Moderate",
+      weight_difference < 0.6 ~ "Strong",
+      TRUE ~ "Very Strong"
+    )
+  )
+
+# Display summary table
+knitr::kable(summary_table, 
+             digits = 3,
+             caption = "Summary of Model Comparison Results")
 ```
+
+### Understanding the Results: A Pedagogical Breakdown
+
+Now let's take a deeper look at what these LOO comparisons tell us in cognitive terms:
+
+#### 1. Balanced Agent Scenario
+
+In the Balanced Agent scenario (where both direct and social evidence are weighted equally), we expect the simple Bayesian model to perform well, since it assumes equal weights by design. If our LOO comparison shows the weighted model doesn't provide much advantage, this confirms our expectations - the additional complexity of differential weighting isn't justified when the true process gives equal weight to evidence sources.
+
+#### 2. Self-Focused Agent Scenario
+
+For the Self-Focused Agent (who overweights direct evidence and underweights social evidence), we expect the weighted Bayesian model to outperform the simple model. If the LOO comparison shows a substantial advantage for the weighted model, it suggests that capturing the differential weighting of evidence is important for predicting this agent's behavior.
+
+#### 3. Socially-Influenced Agent Scenario
+
+Similarly, for the Socially-Influenced Agent (who overweights social evidence), we expect the weighted model to have an advantage. The size of this advantage indicates how crucial it is to account for the specific weighting pattern to understand this agent's decision-making process.
+
+### The Mathematics Behind LOO-CV
+
+Let's look at the mathematical foundations of LOO-CV to better understand what's happening:
+
+1. **Log Predictive Density**: For each observation $i$, the log predictive density is:
+
+   $$\log p(y_i | y_{-i}) = \log \int p(y_i | \theta) p(\theta | y_{-i}) d\theta$$
+
+   This represents how well we can predict observation $i$ using a model trained on all other observations.
+
+2. **PSIS-LOO Approximation**: Since we don't want to refit our model for each observation, we use importance sampling:
+
+   $$\log p(y_i | y_{-i}) \approx \log \frac{\sum_{j=1}^S w_i^j p(y_i | \theta^j)}{\sum_{j=1}^S w_i^j}$$
+
+   where $w_i^j \propto \frac{1}{p(y_i | \theta^j)}$ are importance weights and $\theta^j$ are samples from the full posterior.
+
+3. **Expected Log Predictive Density (ELPD)**: The overall measure of model predictive accuracy is:
+
+   $$\text{ELPD} = \sum_{i=1}^N \log p(y_i | y_{-i})$$
+
+   Higher ELPD values indicate better predictive performance.
+
+### Examining Pointwise Contributions to LOO
+
+To understand where model differences arise, we can look at the pointwise contributions to LOO:
+
+```{r}
+# Extract pointwise values
+pointwise_balanced <- tibble(
+  observation = 1:length(loo_simple_balanced$pointwise[,"elpd_loo"]),
+  simple = loo_simple_balanced$pointwise[,"elpd_loo"],
+  weighted = loo_weighted_balanced$pointwise[,"elpd_loo"],
+  difference = weighted - simple,
+  scenario = "Balanced"
+)
+
+pointwise_self_focused <- tibble(
+  observation = 1:length(loo_simple_self_focused$pointwise[,"elpd_loo"]),
+  simple = loo_simple_self_focused$pointwise[,"elpd_loo"],
+  weighted = loo_weighted_self_focused$pointwise[,"elpd_loo"],
+  difference = weighted - simple,
+  scenario = "Self-Focused"
+)
+
+pointwise_socially_influenced <- tibble(
+  observation = 1:length(loo_simple_socially_influenced$pointwise[,"elpd_loo"]),
+  simple = loo_simple_socially_influenced$pointwise[,"elpd_loo"],
+  weighted = loo_weighted_socially_influenced$pointwise[,"elpd_loo"],
+  difference = weighted - simple,
+  scenario = "Socially-Influenced"
+)
+
+# Combine pointwise data
+all_pointwise <- bind_rows(
+  pointwise_balanced,
+  pointwise_self_focused,
+  pointwise_socially_influenced
+)
+
+# Plot pointwise differences
+ggplot(all_pointwise, aes(x = observation, y = difference)) +
+  geom_col(aes(fill = difference > 0)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~ scenario, scales = "free_x") +
+  scale_fill_manual(values = c("TRUE" = "green4", "FALSE" = "firebrick"),
+                   name = "Weighted Better?") +
+  labs(
+    title = "Pointwise Differences in ELPD Between Models",
+    subtitle = "Green bars indicate observations where the weighted model performs better",
+    x = "Observation",
+    y = "ELPD Difference (Weighted - Simple)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### Conclusion: What Does This Tell Us About Bayesian Cognitive Models?
+
+By comparing our models using LOO-CV, we gain several important insights:
+
+1. **Model Selection Guidance**: LOO provides a principled way to select between competing cognitive models, balancing fit and complexity automatically.
+
+2. **Evidence for Differential Weighting**: In scenarios where agents truly weight evidence sources differently (Self-Focused and Socially-Influenced), the weighted model shows an advantage, suggesting that differential weighting is an important aspect of cognitive processing.
+
+3. **Parsimony Principle**: For the Balanced agent, if the simpler model performs similarly to the complex one, this supports the cognitive principle of parsimony - humans may default to treating evidence sources equally unless there's a reason to weight them differently.
+
+4. **Individual Differences**: The pattern of results across scenarios suggests that individual differences in evidence weighting are meaningful and detectable through model comparison.
+
+In cognitive science terms, our analysis suggests that humans likely do employ differential weighting of evidence sources, and that this weighting varies across individuals. This has implications for understanding decision-making, social influence, and information processing more broadly.
+
 
 ## Multilevel Bayesian Models
 
