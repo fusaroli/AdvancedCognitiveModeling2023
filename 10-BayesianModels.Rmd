@@ -4,7 +4,7 @@ output: html_document
 date: "2025-03-10"
 ---
 
-```{r 09 setup, include=FALSE}
+```{r 10 setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
 # Set this to TRUE when you want to regenerate all simulation results
@@ -109,7 +109,7 @@ That's why we used a ∝ symbol in the formula above, to indicate that we are no
 ## Visualizing Bayesian Updating
 
 To better understand Bayesian updating, let's create a conceptual diagram:
-```{r 09 visualizing bayesian updating}
+```{r 10 visualizing bayesian updating}
 # Create a visualization of Bayesian updating process
 
 # Function to create Bayesian updating visualization
@@ -271,7 +271,9 @@ The beta distribution provides an elegant way to represent beliefs about proport
 * To combine multiple sources of evidence, you simply add all the counts together:
 
   * If direct evidence gives Beta(7, 3) and social evidence suggests Beta(2, 4)
+  
   * Your combined belief is Beta(7+2, 3+4) = Beta(9, 7)
+  
   * This has its peak at 9/(9+7) = 0.56, reflecting a compromise between the two sources
 
 
@@ -303,7 +305,7 @@ Where α and β are prior parameters (typically 1 each for a uniform prior)
 
 ### Implementation in R
 
-```{r 09 implementing simple bayes}
+```{r 10 implementing simple bayes}
 # Beta-binomial model for Bayesian integration in the marble task
 #
 # This function implements a Bayesian integration model for combining direct and social evidence
@@ -370,7 +372,7 @@ betaBinomialModel <- function(alpha_prior, beta_prior, blue1, total1, blue2, tot
 
 We'll create a comprehensive set of scenarios by varying both direct evidence (number of blue marbles observed directly) and social evidence (number of blue marbles inferred from social information).
 
-```{r 09 simulating experimental scencarios}
+```{r 10 simulating experimental scenarios}
 # Set total counts for direct and social evidence
 total1 <- 8  # Total marbles in direct evidence
 total2 <- 3  # Total evidence units in social evidence
@@ -420,7 +422,7 @@ sim_data$social_evidence <- factor(sim_data$blue2,
 
 Let's examine how expected proportion and uncertainty vary across different evidence combinations:
 
-```{r 09 visualizing bayesian integration}
+```{r 10 visualizing bayesian integration}
 
 # Create two plot panels to visualize model behavior across all evidence combinations
 p1 <- ggplot(sim_data, aes(x = blue1, y = expected_rate, color = social_evidence, group = social_evidence)) +
@@ -458,7 +460,7 @@ A few notes about the plot:
 
 While the summary statistics give us a high-level view, examining the full posterior distributions provides deeper insight into how evidence is combined. Let's visualize the complete probability distributions for a selected subset of scenarios:
 
-```{r 09 zoom in specific scenarios}
+```{r 10 zoom in specific scenarios}
 # Function to generate Beta distributions for all components of a Bayesian model
 # This function returns the prior, likelihood, and posterior distributions
 # for a given scenario of blue and red marbles
@@ -611,7 +613,7 @@ The weights represent the degree to which each information source influences the
 
 ### Implementation
 
-```{r 09 implementing weighted bayes}
+```{r 10 implementing weighted bayes}
 # Weighted Beta-Binomial model for evidence integration
 #
 # This function extends our basic model by allowing different weights for each
@@ -680,7 +682,7 @@ weightedBetaBinomial <- function(alpha_prior, beta_prior,
 
 Let's create a comprehensive visualization showing how different weights affect belief formation:
 
-```{r 09 visualizing weighted bayes}
+```{r 10 visualizing weighted bayes}
 # Create improved visualization using small multiples
 weighted_belief_plot <- function() {
   # Define grid of parameters to visualize
@@ -751,7 +753,7 @@ The visualization showcases weighted Bayesian integration:
 
 To further understand how weighted Bayesian integration resolves conflicts between evidence sources, let's examine two specific conflict scenarios:
 
-```{r 09 conflicting scenarios}
+```{r 10 conflicting scenarios}
 # Define conflict scenarios
 scenario1 <- list(blue1 = 7, total1 = 8, blue2 = 0, total2 = 3)  # Direct: blue, Social: red
 scenario2 <- list(blue1 = 5, total1 = 8, blue2 = 0, total2 = 3)  # Direct: red, Social: blue
@@ -863,7 +865,7 @@ To prepare for our model fitting, we'll simulate three distinct agents:
 * Socially-Influenced Agent: This agent does the opposite, overweighting social evidence (w_social = 2.0) while underweighting their own direct evidence (w_direct = 0.7). This might represent someone who is highly responsive to social information.
 
 Let's generate decisions for these three agents in an experiment exposing them to all possible evidence combinations and visualize how their different weighting strategies affect their beliefs and choices.
-```{r 09 simulating agents with different strategies}
+```{r 10 simulating agents with different strategies}
 # Simulation of agents with different weighting strategies
 # This code generates decisions for three agents with different approaches to weighting evidence
 
@@ -885,10 +887,17 @@ evidence_combinations <- expand_grid(
   total2 = 3       # Total strength units in social evidence
 )
 
-# Function to generate decisions across all evidence combinations for a given agent
-generate_agent_decisions <- function(weight_direct, weight_social, evidence_df) {
+generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, n_samples = 5) {
+  # Create a data frame that repeats each evidence combination n_samples times
+  repeated_evidence <- evidence_df %>%
+    slice(rep(1:n(), each = n_samples)) %>%
+    # Add a sample_id to distinguish between repetitions of the same combination
+    group_by(blue1, blue2, total1, total2) %>%
+    mutate(sample_id = 1:n()) %>%
+    ungroup()
+  
   # Apply our weighted Bayesian model to each evidence combination
-  decisions <- pmap_dfr(evidence_df, function(blue1, blue2, total1, total2) {
+  decisions <- pmap_dfr(repeated_evidence, function(blue1, blue2, total1, total2, sample_id) {
     # Calculate Bayesian integration with the agent's specific weights
     result <- weightedBetaBinomial(
       alpha_prior = 1, beta_prior = 1,
@@ -900,10 +909,14 @@ generate_agent_decisions <- function(weight_direct, weight_social, evidence_df) 
     
     # Return key decision metrics
     tibble(
+      sample_id = sample_id,
       blue1 = blue1,
       blue2 = blue2,
+      total1 = total1,
+      total2 = total2,
       expected_rate = result$expected_rate,   # Probability the next marble is blue
       choice = result$decision,               # Final decision (Blue or Red)
+      choice_binary = ifelse(result$decision == "Blue", 1, 0),
       confidence = result$confidence          # Confidence in decision
     )
   })
@@ -911,16 +924,17 @@ generate_agent_decisions <- function(weight_direct, weight_social, evidence_df) 
   return(decisions)
 }
 
-# Generate decisions for all agents across all evidence combinations
+# When generating data for weighted Bayesian model simulation
 simulation_results <- map_dfr(1:nrow(agents), function(i) {
   # Extract this agent's parameters
   agent_data <- agents[i, ]
   
-  # Generate decisions for this agent
+  # Generate decisions for this agent with multiple samples
   decisions <- generate_agent_decisions(
     agent_data$weight_direct,
     agent_data$weight_social,
-    evidence_combinations
+    evidence_combinations,
+    n_samples = 5  # Generate 5 samples per evidence combination
   )
   
   # Add agent identifier
@@ -951,7 +965,7 @@ head(simulation_results)
 
 Now let's create visualizations to compare how these different agents make decisions based on the same evidence:
 
-```{r 09 visualizing agents with different strategies}
+```{r 10 visualizing agents with different strategies}
 # Visualization 1: Expected probability across evidence combinations
 p1 <- ggplot(simulation_results, 
              aes(x = blue1, y = expected_rate, color = social_evidence, group = social_evidence)) +
@@ -1040,32 +1054,31 @@ These patterns highlight the profound impact that evidence weighting can have on
 
 Now, let's define our Stan models to implement: a simple bayesian agent (equivalent to assuming both weights to be 1); and a weighted bayesian agent (explicitly inferring weights for direct and social evidence).
 
-```{r 09 defining stan models}
+```{r 10 defining stan models}
 # Simple Beta-Binomial Stan model (no weights)
 SimpleAgent_stan <- "
-// Bayesian integration model with separate theta parameters for each evidence source
+// Bayesian integration model relying on a beta-binomial distribution
+// to preserve all uncertainty
 // All evidence is taken at face value (equal weights)
 data {
-  int<lower=1> N;                        // Number of decisions
+  int<lower=1> N;                      // Number of decisions
   array[N] int<lower=0, upper=1> choice; // Choices (0=red, 1=blue)
-  array[N] int<lower=0> blue1;           // Direct evidence (blue marbles)
-  array[N] int<lower=0> total1;          // Total direct evidence (total marbles)
-  array[N] int<lower=0> blue2;           // Social evidence (blue signals)
-  array[N] int<lower=0> total2;          // Total social evidence (total signals)
+  array[N] int<lower=0> blue1;         // Direct evidence (blue marbles)
+  array[N] int<lower=0> total1;        // Total direct evidence (total marbles)
+  array[N] int<lower=0> blue2;         // Social evidence (blue signals)
+  array[N] int<lower=0> total2;        // Total social evidence (total signals)
 }
 
 model {
   // Each observation is a separate decision
   for (i in 1:N) {
-    // Calculate Beta parameters for this decision only (including a flat prior)
+    // Calculate Beta parameters for posterior belief distribution
     real alpha_post = 1 + blue1[i] + blue2[i];
     real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
     
-    // Expected probability for this specific decision
-    real expected_prob = alpha_post / (alpha_post + beta_post);
-    
-    // Model choice for this decision
-    target += bernoulli_lpmf(choice[i] | expected_prob);
+    // Use beta_binomial distribution which integrates over all possible values
+    // of the rate parameter weighted by their posterior probability
+    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
 }
 
@@ -1073,27 +1086,23 @@ generated quantities {
   // Log likelihood for model comparison
   vector[N] log_lik;
   
-  // Prior samples for model checking
+  // Prior and posterior predictive checks
   array[N] int prior_pred_choice;
-  
-  // Predictive checks
   array[N] int posterior_pred_choice;
   
   for (i in 1:N) {
     // For prior predictions, use uniform prior (Beta(1,1))
-    real prior_prob = 0.5;  // Expected value of Beta(1,1)
+    prior_pred_choice[i] = beta_binomial_rng(1, 1, 1);
     
     // For posterior predictions, use integrated evidence
     real alpha_post = 1 + blue1[i] + blue2[i];
     real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
-    real expected_prob = alpha_post / (alpha_post + beta_post);
     
-    // Generate predictions
-    prior_pred_choice[i] = bernoulli_rng(prior_prob);
-    posterior_pred_choice[i] = bernoulli_rng(expected_prob);
+    // Generate predictions using the complete beta-binomial model
+    posterior_pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
     
-    // Log likelihood calculation
-    log_lik[i] = bernoulli_lpmf(choice[i] | expected_prob);
+    // Log likelihood calculation using beta-binomial
+    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
 }
 "
@@ -1121,7 +1130,7 @@ transformed parameters {
 
 model {
   // Priors
-  target += gamma_lpdf(total_weight | 2, 1);  // Centered around 2 with reasonable spread
+  target += lognormal_lpdf(total_weight | .8, .4);  // Centered around 2 with reasonable spread and always positive
   target += beta_lpdf(weight_prop | 1, 1);    // Uniform prior on proportion
   
   // Each observation is a separate decision
@@ -1132,15 +1141,12 @@ model {
     real weighted_blue2 = blue2[i] * weight_social;
     real weighted_red2 = (total2[i] - blue2[i]) * weight_social;
     
-    // Calculate Beta parameters for this decision only
+    // Calculate Beta parameters for this decision
     real alpha_post = 1 + weighted_blue1 + weighted_blue2;
     real beta_post = 1 + weighted_red1 + weighted_red2;
     
-    // Expected probability for this specific decision
-    real expected_prob = alpha_post / (alpha_post + beta_post);
-    
-    // Model choice for this decision
-    target += bernoulli_lpmf(choice[i] | expected_prob);
+    // Use beta_binomial distribution to integrate over the full posterior
+    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
 }
 
@@ -1148,10 +1154,19 @@ generated quantities {
   // Log likelihood and predictions
   vector[N] log_lik;
   array[N] int posterior_pred_choice;
-  real weight_direct_prior = normal_rng(1, 0.3);
-  real weight_social_prior = normal_rng(1, 0.3);
+  array[N] int prior_pred_choice;
   
+  // Sample from priors for the reparameterized model
+  real<lower = 0> total_weight_prior = lognormal_rng(.8, .4);
+  real weight_prop_prior = beta_rng(1, 1);
+  
+  // Derive the implied direct and social weights from the prior samples
+  real weight_direct_prior = total_weight_prior * weight_prop_prior;
+  real weight_social_prior = total_weight_prior * (1 - weight_prop_prior);
+  
+  // Posterior predictions and log-likelihood
   for (i in 1:N) {
+    // Posterior predictions using the weighted evidence
     real weighted_blue1 = blue1[i] * weight_direct;
     real weighted_red1 = (total1[i] - blue1[i]) * weight_direct;
     real weighted_blue2 = blue2[i] * weight_social;
@@ -1159,10 +1174,24 @@ generated quantities {
     
     real alpha_post = 1 + weighted_blue1 + weighted_blue2;
     real beta_post = 1 + weighted_red1 + weighted_red2;
-    real expected_prob = alpha_post / (alpha_post + beta_post);
     
-    log_lik[i] = bernoulli_lpmf(choice[i] | expected_prob);
-    posterior_pred_choice[i] = bernoulli_rng(expected_prob);
+    // Log likelihood using beta_binomial
+    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    
+    // Generate predictions from the full posterior
+    posterior_pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
+    
+    // Prior predictions using the prior-derived weights
+    real prior_weighted_blue1 = blue1[i] * weight_direct_prior;
+    real prior_weighted_red1 = (total1[i] - blue1[i]) * weight_direct_prior;
+    real prior_weighted_blue2 = blue2[i] * weight_social_prior;
+    real prior_weighted_red2 = (total2[i] - blue2[i]) * weight_social_prior;
+    
+    real alpha_prior = 1 + prior_weighted_blue1 + prior_weighted_blue2;
+    real beta_prior = 1 + prior_weighted_red1 + prior_weighted_red2;
+    
+    // Generate predictions from the prior
+    prior_pred_choice[i] = beta_binomial_rng(1, alpha_prior, beta_prior);
   }
 }
 "
@@ -1171,13 +1200,13 @@ generated quantities {
 write_stan_file(
   SimpleAgent_stan,
   dir = "stan/",
-  basename = "W9_beta_binomial.stan"
+  basename = "W10 _beta_binomial.stan"
 )
 
 write_stan_file(
   WeightedAgent_stan,
   dir = "stan/",
-  basename = "W9_weighted_beta_binomial.stan"
+  basename = "W10 _weighted_beta_binomial.stan"
 )
 
 # Prepare simulation data for Stan fitting
@@ -1212,8 +1241,8 @@ stan_data_self_focused <- prepare_stan_data(self_focused_data)
 stan_data_socially_influenced <- prepare_stan_data(socially_influenced_data)
 
 # Compile the Stan models
-file_simple <- file.path("stan/W9_beta_binomial.stan")
-file_weighted <- file.path("stan/W9_weighted_beta_binomial.stan")
+file_simple <- file.path("stan/W10 _beta_binomial.stan")
+file_weighted <- file.path("stan/W10 _weighted_beta_binomial.stan")
 
 # Check if we need to regenerate simulation results
 if (regenerate_simulations) {
@@ -1258,7 +1287,7 @@ if (regenerate_simulations) {
   # Fit weighted model to each agent's data
   fit_weighted_balanced <- mod_weighted$sample(
     data = stan_data_balanced,
-    seed = 126,
+    seed = 124,
     chains = 2,
     parallel_chains = 2,
     threads_per_chain = 1,
@@ -1322,33 +1351,72 @@ Model quality checks are crucial for understanding how well our Bayesian models 
 2. Posterior Predictive Checks
 3. Prior-Posterior Update Visualization
 
-```{r 09 fit quality}
+```{r 10 fit quality}
 # Function to create trace and rank plots for a model
 create_diagnostic_plots <- function(fit, model_name) {
   # Extract posterior draws
-  draws <- as_draws_df(fit$draws())
+  draws <- as_draws_df(fit$draws()) 
   
-  # Create trace plots
-  trace_plot <- mcmc_trace(draws, pars = c("weight_direct", "weight_social"),
-                       facet_args = list(ncol = 1)) +
-    ggtitle(paste("Trace Plots for", model_name)) +
+  trace_data <- data.frame(
+    Iteration = rep(1:(nrow(draws)/length(unique(draws$.chain))), 
+                    length(unique(draws$.chain))),
+    Chain = draws$.chain,
+    weight_direct = draws$weight_direct,
+    weight_social = draws$weight_social,
+    total_weight = draws$total_weight,
+    weight_prop = draws$weight_prop
+  )
+  
+  # Create trace plot
+  trace_plot1 <- ggplot(trace_data, aes(x = Iteration, y = weight_direct, color = factor(Chain))) +
+    geom_line() +
+    labs(title = paste("Trace Plot for weight_direct"),
+         x = "Iteration",
+         y = "weight_direct",
+         color = "Chain") +
     theme_minimal() +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"))
   
-  # Create rank plots
-  rank_plot <- mcmc_rank_hist(draws, pars = c("weight_direct", "weight_social")) +
-    ggtitle(paste("Rank Plots for", model_name)) +
+  trace_plot2 <- ggplot(trace_data, aes(x = Iteration, y = weight_social, color = factor(Chain))) +
+    geom_line() +
+    labs(title = paste("Trace Plot for weight_social"),
+         x = "Iteration",
+         y = "weight_direct",
+         color = "Chain") +
     theme_minimal() +
     theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  trace_plot3 <- ggplot(trace_data, aes(x = Iteration, y = total_weight, color = factor(Chain))) +
+    geom_line() +
+    labs(title = paste("Trace Plot for total_weight"),
+         x = "Iteration",
+         y = "weight_direct",
+         color = "Chain") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  trace_plot4 <- ggplot(trace_data, aes(x = Iteration, y = weight_prop, color = factor(Chain))) +
+    geom_line() +
+    labs(title = paste("Trace Plot for weight_prop"),
+         x = "Iteration",
+         y = "weight_direct",
+         color = "Chain") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  # Combine plots using patchwork
+  combined_trace_plot <- (trace_plot1 + trace_plot2) / (trace_plot3 + trace_plot4) +
+    plot_annotation(title = paste("Trace Plots for", model_name))
+  
   
   # Return the plots
-  return(list(trace_plot = trace_plot, rank_plot = rank_plot))
+  return(combined_trace_plot)
 }
 
 # Generate diagnostic plots for each model
-balanced_plots <- create_diagnostic_plots(fit_weighted_balanced, "Balanced Model")
-self_focused_plots <- create_diagnostic_plots(fit_weighted_self_focused, "Self-Focused Model")
-socially_influenced_plots <- create_diagnostic_plots(fit_weighted_socially_influenced, "Socially-Influenced Model")
+create_diagnostic_plots(fit_weighted_balanced, "Balanced Model")
+create_diagnostic_plots(fit_weighted_self_focused, "Self-Focused Model")
+create_diagnostic_plots(fit_weighted_socially_influenced, "Socially-Influenced Model")
 
 
 ```
@@ -1358,7 +1426,7 @@ socially_influenced_plots <- create_diagnostic_plots(fit_weighted_socially_influ
 
 Prior predictive checks help us understand what our model assumes about the world before seeing any data. They answer the question: "What kind of data would we expect to see if we only used our prior beliefs?" Posterior predictive checks are the same, but after having seen the data. This helps us assess whether the model can generate data that looks similar to our observed data.
 
-```{r 09 prior and posterior predictive checks}}
+```{r 10 prior and posterior predictive checks}}
 plot_predictive_checks <- function(stan_fit, 
                                    simulation_results, 
                                    model_name = "Simple Balanced", 
@@ -1717,7 +1785,7 @@ set.seed(123)
 future::plan(multisession, workers = parallel::detectCores() - 1)
 
 # Define parameter grid for thorough testing
-weight_values <- c(0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
+weight_values <- c(0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2)
 n_trials <- c(1, 2, 3, 4, 5) # Number of times full combination of levels is repeated
 
 # Create a grid of all parameter combinations to test
@@ -1732,12 +1800,17 @@ evidence_combinations <- expand_grid(
 )
 
 # Function to generate decisions across all evidence combinations for a given agent
-generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, trials) {
-  # Expand dataset to account for multiple trials of the same evidence combination
-  expanded_data <- evidence_df %>% slice(rep(1:n(), each = trials))
+generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, n_samples = 5) {
+  # Create a data frame that repeats each evidence combination n_samples times
+  repeated_evidence <- evidence_df %>%
+    slice(rep(1:n(), each = n_samples)) %>%
+    # Add a sample_id to distinguish between repetitions of the same combination
+    group_by(blue1, blue2, total1, total2) %>%
+    mutate(sample_id = 1:n()) %>%
+    ungroup()
   
   # Apply our weighted Bayesian model to each evidence combination
-  decisions <- pmap_dfr(expanded_data, function(blue1, blue2, total1, total2) {
+  decisions <- pmap_dfr(repeated_evidence, function(blue1, blue2, total1, total2, sample_id) {
     # Calculate Bayesian integration with the agent's specific weights
     result <- weightedBetaBinomial(
       alpha_prior = 1, beta_prior = 1,
@@ -1749,12 +1822,14 @@ generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, 
     
     # Return key decision metrics
     tibble(
+      sample_id = sample_id,
       blue1 = blue1,
       blue2 = blue2,
       total1 = total1,
       total2 = total2,
       expected_rate = result$expected_rate,   # Probability the next marble is blue
-      choice = ifelse(result$decision == "Blue", 1, 0), # Convert to binary format for Stan
+      choice = result$decision,               # Final decision (Blue or Red)
+      choice_binary = ifelse(result$decision == "Blue", 1, 0),
       confidence = result$confidence          # Confidence in decision
     )
   })
@@ -1766,7 +1841,7 @@ generate_agent_decisions <- function(weight_direct, weight_social, evidence_df, 
 prepare_stan_data <- function(df) {
   list(
     N = nrow(df),
-    choice = df$choice,
+    choice = df$choice_binary,
     blue1 = df$blue1,
     total1 = df$total1,
     blue2 = df$blue2,
@@ -1775,7 +1850,7 @@ prepare_stan_data <- function(df) {
 }
 
 # Compile the Stan model 
-file_weighted <- file.path("stan/W9_weighted_beta_binomial.stan")
+file_weighted <- file.path("stan/W10 _weighted_beta_binomial.stan")
 mod_weighted <- cmdstan_model(file_weighted, cpp_options = list(stan_threads = TRUE))
 
 # Function to fit model using cmdstanr
@@ -1931,13 +2006,14 @@ plot_recovery_new <- function(results_df) {
 original_recovery_plots <- plot_recovery_original(results)
 new_recovery_plots <- plot_recovery_new(results)
 
+# Display plots for new parameterization
+new_recovery_plots$total
+new_recovery_plots$prop
+
 # Display plots for original parameterization
 original_recovery_plots$direct
 original_recovery_plots$social
 
-# Display plots for new parameterization
-new_recovery_plots$total
-new_recovery_plots$prop
 
 # Analysis of recovery quality by parameter combination
 recovery_summary <- results %>%
@@ -2219,8 +2295,7 @@ p2 <- ggplot(all_weights,
   ylim(0, 1)
 
 # Display plots
-p1
-p2
+p1 + p2
 
 # Create a summary table of results
 summary_table <- all_weights %>%
@@ -2246,9 +2321,9 @@ knitr::kable(summary_table,
              caption = "Summary of Model Comparison Results")
 ```
 
-### Understanding the Results: A Pedagogical Breakdown
+### Understanding the Results
 
-Now let's take a deeper look at what these LOO comparisons tell us in cognitive terms:
+Now let's take a deeper look at what these LOO comparisons tell us:
 
 #### 1. Balanced Agent Scenario
 
@@ -2338,20 +2413,6 @@ ggplot(all_pointwise, aes(x = observation, y = difference)) +
   theme(legend.position = "bottom")
 ```
 
-### Conclusion: What Does This Tell Us About Bayesian Cognitive Models?
-
-By comparing our models using LOO-CV, we gain several important insights:
-
-1. **Model Selection Guidance**: LOO provides a principled way to select between competing cognitive models, balancing fit and complexity automatically.
-
-2. **Evidence for Differential Weighting**: In scenarios where agents truly weight evidence sources differently (Self-Focused and Socially-Influenced), the weighted model shows an advantage, suggesting that differential weighting is an important aspect of cognitive processing.
-
-3. **Parsimony Principle**: For the Balanced agent, if the simpler model performs similarly to the complex one, this supports the cognitive principle of parsimony - humans may default to treating evidence sources equally unless there's a reason to weight them differently.
-
-4. **Individual Differences**: The pattern of results across scenarios suggests that individual differences in evidence weighting are meaningful and detectable through model comparison.
-
-In cognitive science terms, our analysis suggests that humans likely do employ differential weighting of evidence sources, and that this weighting varies across individuals. This has implications for understanding decision-making, social influence, and information processing more broadly.
-
 
 ## Multilevel Bayesian Models
 
@@ -2371,162 +2432,215 @@ In this section, we'll develop multilevel versions of both our simple beta-binom
 First, let's simulate a population of agents with varying evidence-weighting parameters:
 
 ```{r multilevel_sim_setup}
-# Set random seed for reproducibility
-set.seed(8675309)
-
 # Simulation parameters
-n_agents <- 20  # Number of agents
-n_scenarios_per_agent <- 36  # Number of evidence combinations (all possible combinations)
+n_agents <- 20        # Number of agents per model
+n_trials_per_agent <- 36  # Number of evidence combinations per agent
 
-# Population-level parameters
-# For the weighted model
-population_mean_direct <- 1.0  # Mean weight for direct evidence
-population_sd_direct <- 0.1    # SD of individual variation in direct evidence weight
-population_mean_social <- 0.6  # Mean weight for social evidence
-population_sd_social <- 0.1    # SD of individual variation in social evidence weight
+# Define population parameters for simple model (equal weights with varying scaling)
+simple_population_scaling_mean <- 1.0    # Mean scaling factor (log-scale)
+simple_population_scaling_sd <- 0.3      # SD of scaling factor (log-scale)
 
-# Sample individual agent parameters from population distributions
-agent_params <- tibble(
+# Define population parameters for weighted model
+weighted_population_scaling_mean <- 1.5   # Mean scaling factor (log-scale)
+weighted_population_scaling_sd <- 0.3     # SD of scaling factor (log-scale)
+weighted_population_ratio_mean <- 0.0     # Mean weight ratio (log-scale, 0 = equal weights)
+weighted_population_ratio_sd <- 0.5       # SD of weight ratio (log-scale)
+
+# Generate agent parameters for simple model
+simple_agents <- tibble(
   agent_id = 1:n_agents,
-  # For weighted models - individual weights
-  weight_direct = rnorm(n_agents, population_mean_direct, population_sd_direct),
-  weight_social = rnorm(n_agents, population_mean_social, population_sd_social)
+  model_type = "simple",
+  # Generate log-normal scaling factors
+  log_scaling = rnorm(n_agents, simple_population_scaling_mean, simple_population_scaling_sd),
+  scaling_factor = exp(log_scaling),
+  # For simple model, weight ratio is always 1 (equal weights)
+  weight_ratio = rep(1, n_agents),
+  # Calculate the actual weights
+  weight_direct = scaling_factor * weight_ratio / (1 + weight_ratio),
+  weight_social = scaling_factor / (1 + weight_ratio)
 )
 
-# Display the distribution of agent parameters
-summary(agent_params)
+# Generate agent parameters for weighted model
+weighted_agents <- tibble(
+  agent_id = n_agents + (1:n_agents),  # Continue numbering from simple agents
+  model_type = "weighted",
+  # Generate log-normal scaling factors
+  log_scaling = rnorm(n_agents, weighted_population_scaling_mean, weighted_population_scaling_sd),
+  scaling_factor = exp(log_scaling),
+  # Generate log-normal weight ratios
+  log_weight_ratio = rnorm(n_agents, weighted_population_ratio_mean, weighted_population_ratio_sd),
+  weight_ratio = exp(log_weight_ratio),
+  # Calculate the actual weights
+  weight_direct = scaling_factor * weight_ratio / (1 + weight_ratio),
+  weight_social = scaling_factor / (1 + weight_ratio)
+)
+
+# Combine agent parameters
+all_agents <- bind_rows(simple_agents, weighted_agents)
+
+# Print summary of agent parameters
+agent_summary <- all_agents %>%
+  group_by(model_type) %>%
+  summarize(
+    n = n(),
+    mean_scaling = mean(scaling_factor),
+    sd_scaling = sd(scaling_factor),
+    mean_ratio = mean(weight_ratio),
+    sd_ratio = sd(weight_ratio),
+    mean_direct = mean(weight_direct),
+    sd_direct = sd(weight_direct),
+    mean_social = mean(weight_social),
+    sd_social = sd(weight_social)
+  )
+
+print(agent_summary)
 
 # Create all possible evidence combinations
 evidence_combinations <- expand_grid(
-  blue1 = 0:8,     # Direct evidence: number of blue marbles seen (0-8 blue out of 8)
-  blue2 = 0:3,     # Social evidence: strength of blue evidence (0-3 blue signals)
-  total1 = 8,      # Total marbles in direct evidence (constant) 
+  blue1 = 0:8,     # Direct evidence: 0-8 blue marbles out of 8
+  blue2 = 0:3,     # Social evidence: 0-3 blue signals out of 3
+  total1 = 8,      # Total marbles in direct evidence (constant)
   total2 = 3       # Total signals in social evidence (constant)
 )
 
-# Generate data for each agent across all evidence combinations
-multilevel_sim_data <- map_dfr(1:n_agents, function(agent_idx) {
-  # Get this agent's parameters
-  agent_data <- agent_params[agent_params$agent_id == agent_idx, ]
+# Function to generate agent decisions based on their parameters
+generate_agent_decisions <- function(agent_data, evidence_df, n_samples = 5) {
+  # Extract agent parameters
+  agent_id <- agent_data$agent_id
+  model_type <- agent_data$model_type
+  weight_direct <- agent_data$weight_direct
+  weight_social <- agent_data$weight_social
   
-  # Apply our weighted Bayesian model to each evidence combination
-  agent_decisions <- pmap_dfr(evidence_combinations, function(blue1, blue2, total1, total2) {
-    # Calculate Bayesian integration with this agent's specific weights
-    result <- weightedBetaBinomial(
-      alpha_prior = 1, beta_prior = 1,
-      blue1 = blue1, total1 = total1,
-      blue2 = blue2, total2 = total2,
-      weight_direct = agent_data$weight_direct,
-      weight_social = agent_data$weight_social
-    )
+  # Create a data frame that repeats each evidence combination n_samples times
+  repeated_evidence <- evidence_df %>%
+    slice(rep(1:n(), each = n_samples)) %>%
+    group_by(blue1, blue2, total1, total2) %>%
+    mutate(sample_id = 1:n()) %>%
+    ungroup()
+  
+  # Generate decisions for each evidence combination
+  decisions <- pmap_dfr(repeated_evidence, function(blue1, blue2, total1, total2, sample_id) {
+    # Calculate weighted evidence
+    weighted_blue1 <- blue1 * weight_direct
+    weighted_red1 <- (total1 - blue1) * weight_direct
+    weighted_blue2 <- blue2 * weight_social
+    weighted_red2 <- (total2 - blue2) * weight_social
     
-    # Return decision for this evidence combination
+    # Calculate Beta parameters
+    alpha_post <- 1 + weighted_blue1 + weighted_blue2
+    beta_post <- 1 + weighted_red1 + weighted_red2
+    
+    # Expected probability
+    expected_rate <- alpha_post / (alpha_post + beta_post)
+    
+    # Make choice
+    choice <- rbinom(1, 1, expected_rate)
+    
+    # Return decision data
     tibble(
-      agent_id = agent_idx,
+      agent_id = agent_id,
+      model_type = model_type,
+      sample_id = sample_id,
       blue1 = blue1,
       blue2 = blue2,
       total1 = total1,
       total2 = total2,
-      choice = result$decision,
-      choice_binary = as.integer(result$decision == "Blue"),
-      expected_rate = result$expected_rate,
-      confidence = result$confidence
+      expected_rate = expected_rate,
+      choice = choice,
+      
+      # Include true parameter values for reference
+      true_weight_direct = weight_direct,
+      true_weight_social = weight_social,
+      true_weight_ratio = weight_direct / weight_social,
+      true_scaling_factor = weight_direct + weight_social
     )
   })
   
-  return(agent_decisions)
-})
+  return(decisions)
+}
 
-# Add true parameter values to the dataset
-multilevel_sim_data <- multilevel_sim_data %>%
-  left_join(agent_params, by = "agent_id")
+# Generate decisions for all agents
+multilevel_sim_data <- map_dfr(1:nrow(all_agents), function(i) {
+  generate_agent_decisions(all_agents[i, ], evidence_combinations)
+})
 
 # Add descriptive labels
 multilevel_sim_data <- multilevel_sim_data %>%
   mutate(
-    social_evidence = factor(blue2,
-                           levels = 0:3,
-                           labels = c("Clear Red", "Weak Red", "Weak Blue", "Clear Blue"))
+    social_evidence = factor(
+      blue2,
+      levels = 0:3,
+      labels = c("Clear Red", "Weak Red", "Weak Blue", "Clear Blue")
+    )
   )
 
-# Examine a sample of the data
-head(multilevel_sim_data)
-```
+# Visualize decision patterns for selected agents
+# Take a sample of agents from each model type
+selected_simple_agents <- sample(unique(simple_agents$agent_id), 3)
+selected_weighted_agents <- sample(unique(weighted_agents$agent_id), 3)
+selected_agents <- c(selected_simple_agents, selected_weighted_agents)
 
-### Visualizing Individual Differences in Decision Patterns
-
-Let's visualize how different agents make decisions based on the same evidence:
-
-```{r multilevel_viz}
-# Select a subset of agents to visualize
-viz_agents <- sample(1:n_agents, 6)
-
-# Create decision curves for selected agents
-p_decision_curves <- multilevel_sim_data %>%
-  filter(agent_id %in% viz_agents) %>%
+# Create plot
+decision_plot <- multilevel_sim_data %>%
+  filter(agent_id %in% selected_agents) %>%
   ggplot(aes(x = blue1, y = expected_rate, color = social_evidence, group = social_evidence)) +
   geom_line(size = 1) +
   geom_point(size = 2) +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray50") +
-  facet_wrap(~ agent_id, ncol = 3, labeller = labeller(
-    agent_id = function(x) paste("Agent", x, 
-                              "\nw₁=", round(agent_params$weight_direct[as.numeric(x)], 2),
-                              ", w₂=", round(agent_params$weight_social[as.numeric(x)], 2))
-  )) +
-  scale_color_brewer(palette = "Set1") +
-  scale_x_continuous(breaks = seq(0, 8, 2)) +
+  facet_wrap(~ model_type + agent_id, ncol = 3) +
   labs(
-    title = "Individual Differences in Evidence Integration",
-    subtitle = "Expected probability of blue marble across evidence combinations",
-    x = "Number of Blue Marbles in Direct Evidence (out of 8)",
-    y = "Expected Probability of Blue",
+    title = "Decision Patterns: Simple vs. Weighted Integration",
+    subtitle = "Simple model shows parallel curves (equal weights), weighted model shows varying influence of social evidence",
+    x = "Blue Marbles in Direct Evidence (out of 8)",
+    y = "Probability of Choosing Blue",
     color = "Social Evidence"
   ) +
   theme_bw() +
   theme(legend.position = "bottom")
 
-# Create decision boundary plot
-p_decision_boundaries <- multilevel_sim_data %>%
-  filter(agent_id %in% viz_agents) %>%
-  ggplot(aes(x = blue1, y = blue2)) +
-  geom_tile(aes(fill = choice)) +
-  facet_wrap(~ agent_id, ncol = 3, labeller = labeller(
-    agent_id = function(x) paste("Agent", x, 
-                              "\nw₁=", round(agent_params$weight_direct[as.numeric(x)], 2),
-                              ", w₂=", round(agent_params$weight_social[as.numeric(x)], 2))
-  )) +
-  scale_fill_manual(values = c("Red" = "firebrick", "Blue" = "royalblue")) +
-  scale_x_continuous(breaks = 0:8) +
-  scale_y_continuous(breaks = 0:3) +
-  labs(
-    title = "Decision Boundaries Across Individuals",
-    subtitle = "Color shows whether agent chooses blue or red",
-    x = "Number of Blue Marbles in Direct Evidence (out of 8)",
-    y = "Number of Blue Signals in Social Evidence (out of 3)",
-    fill = "Decision"
-  ) +
-  theme_bw()
+# Display plot
+print(decision_plot)
 
-# Display the visualizations
-p_decision_curves
-p_decision_boundaries
+# Print summary of dataset
+cat("Generated", nrow(multilevel_sim_data), "observations from", 
+    n_agents * 2, "agents (", n_agents, "per model type)\n")
 
-# Plot the distribution of agent parameters
-p_param_distribution <- ggplot(agent_params, aes(x = weight_direct, y = weight_social)) +
-  geom_point(size = 3, alpha = 0.7) +
-  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
-  geom_hline(yintercept = population_mean_social, linetype = "dashed", color = "blue") +
-  geom_vline(xintercept = population_mean_direct, linetype = "dashed", color = "blue") +
-  labs(
-    title = "Distribution of Agent Parameters",
-    subtitle = "Each point represents one agent; dashed lines show population means",
-    x = "Weight for Direct Evidence (w₁)",
-    y = "Weight for Social Evidence (w₂)"
-  ) +
-  theme_minimal()
-
-p_param_distribution
+# Create data structure for Stan fitting
+stan_data_multilevel <- list(
+  N = nrow(multilevel_sim_data),
+  J = n_agents * 2,
+  agent_id = multilevel_sim_data$agent_id,
+  choice = multilevel_sim_data$choice,
+  blue1 = multilevel_sim_data$blue1,
+  total1 = multilevel_sim_data$total1,
+  blue2 = multilevel_sim_data$blue2,
+  total2 = multilevel_sim_data$total2
+)
 ```
+
+
+
+### Understanding the Simulated Data
+
+The simulation generates data from two types of agents:
+
+1. **Simple Integration Agents**: These agents weight direct and social evidence equally, but with varying overall scaling factors. This creates individual differences in how strongly evidence affects beliefs, but without preferential weighting of sources.
+
+2. **Weighted Integration Agents**: These agents can weight direct and social evidence differently. Some might trust their direct evidence more, others might be more influenced by social information.
+
+The key visual difference in their decision patterns is:
+
+- **Simple integration agents** show parallel curves for different social evidence levels. The spacing between curves is consistent across all levels of direct evidence, indicating equal influence.
+
+- **Weighted integration agents** show varying spacing between curves. When an agent weights social evidence more heavily, the curves are more separated; when direct evidence is weighted more, the curves converge.
+
+By generating data from both models, we can:
+
+1. Verify our model-fitting procedure can recover the true parameters
+2. Test whether our model comparison methods correctly identify which integration strategy generated each dataset
+3. Assess how robustly we can detect differential weighting of evidence sources
+
+In the next section, we'll fit both our multilevel models to this data and compare their performance..
 
 Looking at these visualizations, we can see clear individual differences in how agents integrate evidence:
 
@@ -2534,16 +2648,204 @@ Looking at these visualizations, we can see clear individual differences in how 
 - Others are more influenced by social information, showing greater spacing between the different social evidence lines
 - These differences create unique decision boundaries for each agent, where they transition from choosing red to blue
 
-### Implementing the Multilevel Simple Beta-Binomial Model in Stan
+## Multilevel Bayesian Models for Evidence Integration
 
-Now, let's implement a multilevel version of our simple beta-binomial model. This model assumes equal weights (1.0) for both evidence sources but allows individuals to have different baseline tendencies to choose blue versus red.
+In this section, we implement two multilevel Bayesian models that capture different hypotheses about how individuals integrate evidence from multiple sources. Both models allow for individual differences, but they differ in what aspects of evidence integration can vary across individuals.
 
-```{r multilevel_simple_model}
+### Model 1: Simple Evidence Integration with Individual Scaling
+
+Our first model implements a cognitively simple integration strategy where all evidence sources are weighted equally (taken at "face value"), but the overall impact of evidence can vary across individuals:
+
+- Each information source (direct and social evidence) receives **equal relative weight** in the integration process
+- However, the **overall scaling** of evidence can vary between individuals
+- This represents individuals who treat all evidence sources as equally reliable, but differ in how strongly any evidence influences their beliefs
+
+Mathematically, this means that for individual *j*:
+- Direct evidence weight = scaling_factor[j] × 0.5
+- Social evidence weight = scaling_factor[j] × 0.5
+
+This model captures the hypothesis that individuals differ in their overall sensitivity to evidence, but not in how they relatively weight different sources. Some individuals might be more conservative (low scaling factor), requiring more evidence to shift their beliefs, while others might be more responsive to evidence overall (high scaling factor).
+
+### Model 2: Weighted Evidence Integration
+
+Our second model implements a more complex integration strategy where both the overall impact of evidence and the relative weighting of different evidence sources can vary across individuals:
+
+- Each individual can give **different weights** to direct versus social evidence
+- The **overall scaling** of evidence can also vary between individuals
+- This represents individuals who may trust certain evidence sources more than others
+
+We parameterize this model using two key parameters for each individual *j*:
+- `scaling_factor[j]`: The total weight given to all evidence
+- `weight_ratio[j]`: The ratio of direct evidence weight to social evidence weight
+
+From these, we derive the actual weights:
+- Direct evidence weight = scaling_factor[j] × weight_ratio[j] / (1 + weight_ratio[j])
+- Social evidence weight = scaling_factor[j] / (1 + weight_ratio[j])
+
+This parameterization ensures that the sum of weights equals the scaling factor, while the ratio between weights is determined by the weight ratio.
+
+### Why Allow Scaling to Vary in the Simple Model?
+
+Including individual variation in the scaling factor for the simple model serves several important purposes:
+
+1. **Fair Comparison**: It ensures that the comparison between models focuses specifically on differential weighting rather than just the presence of individual differences. The key question becomes "Do individuals weight evidence sources differently?" rather than "Do individuals vary in how they use evidence?"
+
+2. **Statistical Control**: The scaling parameter serves as a statistical control, ensuring that any evidence for differential weighting isn't just capturing overall differences in evidence sensitivity.
+
+3. **Nested Model Structure**: It creates a proper nested model relationship - the simple model is a special case of the weighted model where the weight ratio is constrained to be 1.0 (equal weights) for everyone.
+
+This approach allows us to conduct a more precise test of our cognitive hypothesis about differential weighting of evidence sources, while accounting for individual differences in overall evidence use that likely exist regardless of weighting strategy.
+
+## From Single-Agent to Multilevel: Extending Bayesian Cognitive Models
+
+When moving from single-agent to multilevel modeling, we need to extend our Stan code to capture both population-level patterns and individual differences. This transformation requires careful consideration of parameter structure, prior specification, and computational efficiency. Let's explore how we adapted our single-agent models into multilevel versions.
+
+### Key Components of the Multilevel Extension
+
+1. Parameterizing Individual Differences
+
+In our single-agent models, we had straightforward parameters like total_weight and weight_prop (for the weighted model) or just a scaling factor (for the simple model). For multilevel modeling, we need to create parameters that vary across individuals while maintaining population coherence.
+
+For the simple integration model:
+
+```
+// Single-agent version
+parameters {
+  real<lower=0> total_weight;         // Overall scaling of evidence
+}
+
+// Multilevel version
+parameters {
+  real mu_scaling;                    // Population mean (log scale)
+  real<lower=0> sigma_scaling;        // Population SD
+  vector[J] z_scaling;                // Standardized individual deviations
+}
+
+transformed parameters {
+  vector<lower=0>[J] scaling_factor;  // Individual scaling factors
+  
+  for (j in 1:J) {
+    scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
+  }
+}
+```
+
+Note several key changes:
+
+* We now have population-level parameters (mu_scaling, sigma_scaling) that describe the distribution from which individual parameters are drawn
+
+* We use non-centered parameterization with standardized z-scores to improve sampling efficiency
+
+* We work in log space to ensure positive scaling factors
+
+### 2. Hierarchical Prior Structure
+
+Priors also need to be restructured in a hierarchical fashion:
+
+```
+
+// Single-agent version
+target += lognormal_lpdf(total_weight | .8, .4);  // Prior for scaling
+
+// Multilevel version
+target += normal_lpdf(mu_scaling | 0, 1);        // Prior for population mean
+target += exponential_lpdf(sigma_scaling | 2);   // Prior for between-subject variability
+target += std_normal_lpdf(z_scaling);            // Prior for standardized deviations
+
+```
+
+The prior structure now has:
+
+* Priors on population means
+* Priors on population variances
+* Standard normal priors on the standardized individual deviations
+
+This creates a proper hierarchical structure where individual parameters are partially pooled toward the population mean, with the degree of pooling determined by the population variance.
+
+### 3. Handling Data from Multiple Individuals
+
+The data structure must be modified to associate observations with specific individuals:
+
+```
+// Single-agent version
+data {
+  int<lower=1> N;                    // Number of observations
+  array[N] int<lower=0, upper=1> choice; // Choices (0=red, 1=blue)
+  // Other data...
+}
+
+// Multilevel version
+data {
+  int<lower=1> N;                    // Number of observations
+  int<lower=1> J;                    // Number of subjects
+  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation
+  array[N] int<lower=0, upper=1> choice;   // Choices (0=red, 1=blue)
+  // Other data...
+}
+```
+
+The key addition is agent_id, which maps each observation to its corresponding agent. This allows us to apply the correct individual-level parameters to each observation.
+
+### 4. Likelihood Specification
+
+The likelihood must be adapted to use the appropriate individual-level parameters:
+
+```
+// Single-agent version
+for (i in 1:N) {
+  real weighted_blue1 = blue1[i] * weight_direct;
+  // ...additional code...
+  choice[i] ~ bernoulli(expected_prob);
+}
+
+// Multilevel version
+for (i in 1:N) {
+  real w_direct = weight_direct[agent_id[i]];  // Get parameters for this individual
+  real w_social = weight_social[agent_id[i]];
+  
+  real weighted_blue1 = blue1[i] * w_direct;
+  // ...additional code...
+  choice[i] ~ bernoulli(expected_prob);
+}
+```
+
+We now index individual parameters by agent_id[i] to ensure each observation uses the correct agent's parameters.
+
+### Why These Changes Matter
+
+#### Computational Efficiency: Non-Centered Parameterization
+
+The non-centered parameterization (using z-scores) is critical for efficient sampling in hierarchical models. When individual parameters are close to the population mean or when population variance is small, direct parameterization can cause the sampler to get stuck in a difficult geometry called the "funnel" problem.
+
+By separating the individual effects into standardized z-scores, we create better sampling geometry and improve convergence. 
+
+This is why we use:
+```
+scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
+```
+
+instead of directly sampling individual parameters.
+
+#### Working in Log Space for Bounded Parameters
+
+For parameters that must be positive (like scaling factors), working in log space ensures we maintain proper bounds while allowing the parameter to vary freely on the unconstrained scale:
+
+```
+// This ensures scaling_factor is always positive
+scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
+```
+
+Similarly, for parameters constrained between 0 and 1 (like weight_prop), we use the logit transformation.
+
+Now we are ready for the full implementation of our multilevel Bayesian models for evidence integration.
+
+```{r 10 multilevel_simple_model}
+
 # Stan model for multilevel simple beta-binomial
 multilevel_simple_stan <- "
 // Multilevel Simple Beta-Binomial Model
-// This model assumes equal weights for evidence sources but allows 
-// individual variation in baseline tendencies
+// This model assumes equal weights for evidence sources (taking evidence at face value)
+// but allows for individual variation in overall responsiveness
 
 data {
   int<lower=1> N;                        // Total number of observations
@@ -2557,54 +2859,57 @@ data {
 }
 
 parameters {
-  // Population-level (fixed) effects
-  real<lower=0, upper=1> population_theta; // Population average probability
+  // Population-level parameter for overall scaling
+  real mu_scaling;                       // Population mean scaling factor (log scale)
+  real<lower=0> sigma_scaling;           // Population SD of scaling
   
   // Individual-level (random) effects
-  real<lower=0> tau;                      // Between-subject variability
-  vector[J] z;                            // Standardized individual deviations
+  vector[J] z_scaling;                   // Standardized individual deviations
 }
 
 transformed parameters {
   // Individual-level parameters
-  vector<lower=0, upper=1>[J] theta;      // Individual probabilities
+  vector<lower=0>[J] scaling_factor;     // Individual scaling factors
   
-  // Non-centered parameterization
+  // Non-centered parameterization for scaling factor
   for (j in 1:J) {
-    // Transform z to probability space via logit
-    real logit_population = logit(population_theta);
-    real logit_individual = logit_population + z[j] * tau;
-    theta[j] = inv_logit(logit_individual);
+    scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
   }
 }
 
 model {
   // Priors for population parameters
-  population_theta ~ beta(1, 1);        // Uniform prior
-  tau ~ exponential(1);                 // Prior for between-subject variability
-  z ~ std_normal();                     // Prior for standardized random effects
+  mu_scaling ~ normal(0, 1);             // Prior for log scaling factor
+  sigma_scaling ~ exponential(2);        // Prior for between-subject variability
+  
+  // Prior for standardized random effects
+  z_scaling ~ std_normal();              // Standard normal prior
   
   // Likelihood
   for (i in 1:N) {
-    // Calculate combined theta for this specific decision
-    real p_blue1 = (blue1[i] + 1.0) / (total1[i] + 2.0); // Beta-binomial posterior
-    real p_blue2 = (blue2[i] + 1.0) / (total2[i] + 2.0); // Beta-binomial posterior
+    // Calculate the individual scaling factor
+    real scale = scaling_factor[agent_id[i]];
     
-    // Simple average of the two probabilities
-    real combined_theta = (p_blue1 + p_blue2) / 2.0;
+    // Simple integration - weights both evidence sources equally but applies individual scaling
+    // Both direct and social evidence get weight = 1.0 * scaling_factor
+    real weighted_blue1 = blue1[i] * scale;
+    real weighted_red1 = (total1[i] - blue1[i]) * scale;
+    real weighted_blue2 = blue2[i] * scale;
+    real weighted_red2 = (total2[i] - blue2[i]) * scale;
     
-    // Individual adjustment to the combined theta
-    real adjusted_theta = theta[agent_id[i]] * combined_theta;
+    // Calculate Beta parameters for posterior
+    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
+    real beta_post = 1 + weighted_red1 + weighted_red2;
     
-    // Bound probability between 0 and 1
-    adjusted_theta = fmin(fmax(adjusted_theta, 0.001), 0.999);
-    
-    // Model choice
-    choice[i] ~ bernoulli(adjusted_theta);
+    // Use beta-binomial distribution to model the choice
+    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
 }
 
 generated quantities {
+  // Population parameters on natural scale
+  real population_scaling = exp(mu_scaling);
+  
   // Log likelihood for model comparison
   vector[N] log_lik;
   
@@ -2612,18 +2917,24 @@ generated quantities {
   array[N] int pred_choice;
   
   for (i in 1:N) {
-    // Calculate the same combined theta as in the model block
-    real p_blue1 = (blue1[i] + 1.0) / (total1[i] + 2.0);
-    real p_blue2 = (blue2[i] + 1.0) / (total2[i] + 2.0);
-    real combined_theta = (p_blue1 + p_blue2) / 2.0;
-    real adjusted_theta = theta[agent_id[i]] * combined_theta;
-    adjusted_theta = fmin(fmax(adjusted_theta, 0.001), 0.999);
+    // Calculate the individual scaling factor
+    real scale = scaling_factor[agent_id[i]];
     
-    // Generate predictions
-    pred_choice[i] = bernoulli_rng(adjusted_theta);
+    // Calculate weighted evidence
+    real weighted_blue1 = blue1[i] * scale;
+    real weighted_red1 = (total1[i] - blue1[i]) * scale;
+    real weighted_blue2 = blue2[i] * scale;
+    real weighted_red2 = (total2[i] - blue2[i]) * scale;
+    
+    // Calculate Beta parameters
+    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
+    real beta_post = 1 + weighted_red1 + weighted_red2;
+    
+    // Generate predictions using beta-binomial
+    pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
     
     // Calculate log likelihood
-    log_lik[i] = bernoulli_lpmf(choice[i] | adjusted_theta);
+    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
 }
 "
@@ -2632,7 +2943,7 @@ generated quantities {
 write_stan_file(
   multilevel_simple_stan,
   dir = "stan/",
-  basename = "W9_multilevel_simple_beta_binomial.stan"
+  basename = "W10_multilevel_simple_beta_binomial.stan"
 )
 ```
 
@@ -2643,8 +2954,9 @@ Now let's implement the multilevel weighted beta-binomial model, which allows bo
 ```{r multilevel_weighted_model}
 
 multilevel_weighted_stan <- "
-// Multilevel Weighted Beta-Binomial Model with Relative Weighting
-// This model parameterizes weights in relation to each other for better identifiability
+// Multilevel Weighted Beta-Binomial Model
+// This model allows different weights for different evidence sources
+// Using total_weight and weight_prop parameterization
 
 data {
   int<lower=1> N;                        // Total number of observations
@@ -2658,19 +2970,17 @@ data {
 }
 
 parameters {
-  // Population-level (fixed) effects
-  real mu_weight_ratio;                  // Population mean for relative weight (direct/social)
+  // Population-level parameters
+  real mu_weight_ratio;                  // Population mean for relative weight (direct/social) - log scale
+  real mu_scaling;                       // Population mean for overall scaling - log scale
   
-  // Population-level standard deviation
+  // Population-level standard deviations
   real<lower=0> sigma_weight_ratio;      // Between-subject variability in relative weighting
+  real<lower=0> sigma_scaling;           // Between-subject variability in scaling
   
   // Individual-level (random) effects
-  vector[J] z;                           // Standardized individual deviations
-  
-  // Overall evidence scaling factor (shared across both sources)
-  real<lower=0> mu_scaling;              // Population mean for overall scaling
-  real<lower=0> sigma_scaling;           // Between-subject variability in scaling
-  vector[J] z_scaling;                   // Individual scaling factors (standardized)
+  vector[J] z_weight_ratio;              // Standardized individual weight ratio deviations
+  vector[J] z_scaling;                   // Standardized individual scaling deviations
 }
 
 transformed parameters {
@@ -2680,10 +2990,10 @@ transformed parameters {
   vector<lower=0>[J] weight_direct;      // Individual weights for direct evidence
   vector<lower=0>[J] weight_social;      // Individual weights for social evidence
   
-  // Non-centered parameterization for weight ratio
+  // Non-centered parameterization
   for (j in 1:J) {
     // Transform standardized parameters to natural scale
-    weight_ratio[j] = exp(mu_weight_ratio + z[j] * sigma_weight_ratio);
+    weight_ratio[j] = exp(mu_weight_ratio + z_weight_ratio[j] * sigma_weight_ratio);
     scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
     
     // Calculate individual weights
@@ -2697,13 +3007,13 @@ transformed parameters {
 model {
   // Priors for population parameters
   mu_weight_ratio ~ normal(0, 1);        // Prior for log weight ratio centered at 0 (equal weights)
-  sigma_weight_ratio ~ exponential(2);   // Prior for between-subject variability
-  
   mu_scaling ~ normal(0, 1);             // Prior for log scaling factor
+  
+  sigma_weight_ratio ~ exponential(2);   // Prior for between-subject variability
   sigma_scaling ~ exponential(2);        // Prior for scaling variability
   
   // Priors for individual random effects
-  z ~ std_normal();                      // Standard normal prior for weight ratio z-scores
+  z_weight_ratio ~ std_normal();         // Standard normal prior for weight ratio z-scores
   z_scaling ~ std_normal();              // Standard normal prior for scaling z-scores
   
   // Likelihood
@@ -2722,26 +3032,23 @@ model {
     real alpha_post = 1 + weighted_blue1 + weighted_blue2;
     real beta_post = 1 + weighted_red1 + weighted_red2;
     
-    // Expected probability from integrated evidence
-    real expected_prob = alpha_post / (alpha_post + beta_post);
-    
-    // Model choice
-    choice[i] ~ bernoulli(expected_prob);
+    // Use beta-binomial distribution to model the choice
+    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
 }
 
 generated quantities {
-  // Log likelihood for model comparison
-  vector[N] log_lik;
-  
-  // Population and individual predictions
-  array[N] int pred_choice;
-  
   // Convert population parameters to original weight scale for interpretation
   real population_ratio = exp(mu_weight_ratio);
   real population_scaling = exp(mu_scaling);
   real population_weight_direct = population_scaling * population_ratio / (1 + population_ratio);
   real population_weight_social = population_scaling / (1 + population_ratio);
+  
+  // Log likelihood for model comparison
+  vector[N] log_lik;
+  
+  // Population and individual predictions
+  array[N] int pred_choice;
   
   for (i in 1:N) {
     // Get weights for this person
@@ -2758,12 +3065,11 @@ generated quantities {
     real alpha_post = 1 + weighted_blue1 + weighted_blue2;
     real beta_post = 1 + weighted_red1 + weighted_red2;
     
-    // Expected probability
-    real expected_prob = alpha_post / (alpha_post + beta_post);
+    // Generate predictions using beta-binomial
+    pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
     
-    // Generate predictions and calculate log likelihood
-    pred_choice[i] = bernoulli_rng(expected_prob);
-    log_lik[i] = bernoulli_lpmf(choice[i] | expected_prob);
+    // Calculate log likelihood
+    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
 }
 "
@@ -2771,424 +3077,295 @@ generated quantities {
 write_stan_file(
   multilevel_weighted_stan,
   dir = "stan/",
-  basename = "W9_multilevel_weighted_beta_binomial.stan"
+  basename = "W10_multilevel_weighted_beta_binomial.stan"
 )
 ```
 
-### Preparing Data for Stan Fitting
+## Fitting the Multilevel Models
 
-```{r prepare_stan_data}
-# Create data for Stan in the correct format
-stan_data_multilevel <- list(
-  N = nrow(multilevel_sim_data),
-  J = n_agents,
-  agent_id = multilevel_sim_data$agent_id,
-  choice = multilevel_sim_data$choice_binary,
-  blue1 = multilevel_sim_data$blue1,
-  total1 = multilevel_sim_data$total1,
-  blue2 = multilevel_sim_data$blue2,
-  total2 = multilevel_sim_data$total2
-)
+Now that we've generated data from both simple and weighted integration strategies, we can fit our two multilevel models to this data. This will allow us to:
 
-# Compile the Stan models
-file_simple_ml <- file.path("stan/W9_multilevel_simple_beta_binomial.stan")
-file_weighted_ml <- file.path("stan/W9_multilevel_weighted_beta_binomial.stan")
+1. Evaluate our ability to recover the true parameters
+2. Compare the models to determine which better explains the observed decisions
+3. Assess whether we can correctly identify which cognitive strategy generated each agent's data
 
-# Check if we need to regenerate simulation results
+We'll fit both models to the full dataset, which contains a mixture of simple and weighted integration agents. This represents a realistic scenario where we don't know in advance which strategy each individual is using.
+
+```{r}
+# Fitting the Multilevel Models to Simulated Data
+# We'll fit both the simple and weighted integration models to our simulated data
+
+# Create file paths for Stan models
+file_simple_ml <- file.path("stan/W10_multilevel_simple_beta_binomial.stan")
+file_weighted_ml <- file.path("stan/W10_multilevel_weighted_beta_binomial.stan")
+
+# Check if we need to regenerate model fits or load existing ones
 if (regenerate_simulations) {
-  # Compile models
-  mod_simple_ml <- cmdstan_model(file_simple_ml, cpp_options = list(stan_threads = TRUE))
-  mod_weighted_ml <- cmdstan_model(file_weighted_ml, cpp_options = list(stan_threads = TRUE))
+  # Compile Stan models
+  mod_simple_ml <- cmdstan_model(
+    file_simple_ml, 
+    cpp_options = list(stan_threads = TRUE)
+  )
+  
+  mod_weighted_ml <- cmdstan_model(
+    file_weighted_ml, 
+    cpp_options = list(stan_threads = TRUE)
+  )
   
   # Fit the simple multilevel model
+  # This model assumes equal weights for evidence sources but allows individual scaling
+  cat("Fitting the simple multilevel model...\n")
+  
   fit_simple_ml <- mod_simple_ml$sample(
-    data = stan_data_multilevel,
-    seed = 42,
-    chains = 2,
-    parallel_chains = 2,
-    threads_per_chain = 1,
-    iter_warmup = 1000,
-    iter_sampling = 1000,
-    refresh = 100,
-    adapt_delta = 0.9
+    data = stan_data_multilevel,     # Data for all agents (both types)
+    seed = 242,                       # Seed for reproducibility
+    chains = 2,                      # Number of MCMC chains
+    parallel_chains = 2,             # Run chains in parallel
+    threads_per_chain = 1,           # Stan threading
+    iter_warmup = 1000,              # Warmup iterations
+    iter_sampling = 1000,            # Sampling iterations
+    refresh = 100,                   # Progress update frequency
+    adapt_delta = 0.9,               # Adaptation parameter for HMC
+    max_treedepth = 12               # Maximum tree depth for HMC
   )
   
   # Fit the weighted multilevel model
+  # This model allows different weights for different evidence sources
+  cat("Fitting the weighted multilevel model...\n")
+  
   fit_weighted_ml <- mod_weighted_ml$sample(
-    data = stan_data_multilevel,
-    seed = 43,
-    chains = 2,
-    parallel_chains = 2,
-    threads_per_chain = 1,
-    iter_warmup = 1000,
-    iter_sampling = 1000,
-    refresh = 100,
-    adapt_delta = 0.95
+    data = stan_data_multilevel,     # Same data as simple model
+    seed = 143,                       # Different seed
+    chains = 2,                      # Number of MCMC chains
+    parallel_chains = 2,             # Run chains in parallel
+    threads_per_chain = 1,           # Stan threading
+    iter_warmup = 1000,              # Warmup iterations
+    iter_sampling = 1000,            # Sampling iterations
+    refresh = 100,                   # Progress update frequency
+    adapt_delta = 0.95,              # Higher adapt_delta for stability
+    max_treedepth = 12               # Maximum tree depth for HMC
   )
   
   # Save model fits for future use
-  fit_simple_ml$save_object("simmodels/fit_multilevel_simple.rds")
-  fit_weighted_ml$save_object("simmodels/fit_multilevel_weighted.rds")
+  fit_simple_ml$save_object("simmodels/fit_multilevel_simple_mixed.rds")
+  fit_weighted_ml$save_object("simmodels/fit_multilevel_weighted_mixed.rds")
   
-  cat("Generated and saved new multilevel model fits\n")
+  cat("Models fitted and saved.\n")
 } else {
   # Load existing model fits
-  fit_simple_ml <- readRDS("simmodels/fit_multilevel_simple.rds")
-  fit_weighted_ml <- readRDS("simmodels/fit_multilevel_weighted.rds")
+  fit_simple_ml <- readRDS("simmodels/fit_multilevel_simple_mixed.rds")
+  fit_weighted_ml <- readRDS("simmodels/fit_multilevel_weighted_mixed.rds")
   
-  cat("Loaded existing multilevel model fits\n")
+  cat("Loaded existing model fits.\n")
 }
+
+# Check for convergence issues
+# For simple model
+simple_summary <- fit_simple_ml$summary()
+simple_rhat_issues <- simple_summary %>%
+  filter(rhat > 1.05) %>%
+  nrow()
+
+# For weighted model
+weighted_summary <- fit_weighted_ml$summary()
+weighted_rhat_issues <- weighted_summary %>%
+  filter(rhat > 1.05) %>%
+  nrow()
+
+# Print convergence summary
+cat("Convergence check:\n")
+cat("Simple model parameters with Rhat > 1.05:", simple_rhat_issues, "out of", nrow(simple_summary), "\n")
+cat("Weighted model parameters with Rhat > 1.05:", weighted_rhat_issues, "out of", nrow(weighted_summary), "\n")
+
+# Extract posterior samples for key parameters
+# From simple model
+draws_simple <- as_draws_df(fit_simple_ml$draws())
+population_scaling_simple <- mean(exp(draws_simple$mu_scaling))
+population_scaling_sd_simple <- mean(draws_simple$sigma_scaling)
+
+# From weighted model
+draws_weighted <- as_draws_df(fit_weighted_ml$draws())
+population_ratio_weighted <- mean(exp(draws_weighted$mu_weight_ratio))
+population_scaling_weighted <- mean(exp(draws_weighted$mu_scaling))
+population_ratio_sd_weighted <- mean(draws_weighted$sigma_weight_ratio)
+population_scaling_sd_weighted <- mean(draws_weighted$sigma_scaling)
+
+# Print population-level parameter estimates
+cat("\nPopulation parameter estimates:\n")
+cat("Simple model:\n")
+cat("  Mean scaling factor:", round(population_scaling_simple, 2), "\n")
+cat("  SD of log scaling:", round(population_scaling_sd_simple, 2), "\n\n")
+
+cat("Weighted model:\n")
+cat("  Mean scaling factor:", round(population_scaling_weighted, 2), "\n")
+cat("  Mean weight ratio (direct/social):", round(population_ratio_weighted, 2), "\n")
+cat("  SD of log scaling:", round(population_scaling_sd_weighted, 2), "\n")
+cat("  SD of log weight ratio:", round(population_ratio_sd_weighted, 2), "\n")
 ```
 
-### Model Diagnostics and Quality Checks
-
-Let's examine the model diagnostics to ensure our models have converged properly:
-
-```{r model_diagnostics}
-# Examine trace plots for key parameters
-# Simple model
-mcmc_trace(as_draws_df(fit_simple_ml$draws()), 
-           pars = c("population_theta", "tau"), 
-           facet_args = list(ncol = 1)) +
-  ggtitle("Trace Plots for Simple Multilevel Model") +
-  theme_minimal()
-
-# Weighted model (revised parameterization)
-mcmc_trace(as_draws_df(fit_weighted_ml$draws()), 
-           pars = c("mu_weight_ratio", "mu_scaling", "sigma_weight_ratio", "sigma_scaling"), 
-           facet_args = list(ncol = 1)) +
-  ggtitle("Trace Plots for Weighted Multilevel Model") +
-  theme_minimal()
-```
 
 ### Parameter Recovery Analysis
 
-Now let's examine how well our multilevel models recovered the true individual parameters:
+Now that we've fitted both models, let's examine how well we can recover the true individual parameters. This is a crucial step in validating our models - if we can't recover the parameters that generated our data, we might need to refine our models or collect more data.
 
-```{r parameter_recovery}
-# Extract individual parameter estimates from the models
-# For weighted model
-draws_weighted_ml <- as_draws_df(fit_weighted_ml$draws())
-
-# Extract the individual weight parameters for each agent
-weight_direct_samples <- matrix(NA, nrow = nrow(draws_weighted_ml), ncol = n_agents)
-weight_social_samples <- matrix(NA, nrow = nrow(draws_weighted_ml), ncol = n_agents)
-weight_ratio_samples <- matrix(NA, nrow = nrow(draws_weighted_ml), ncol = n_agents)
-
-for (j in 1:n_agents) {
-  weight_direct_samples[, j] <- draws_weighted_ml[[paste0("weight_direct[", j, "]")]]
-  weight_social_samples[, j] <- draws_weighted_ml[[paste0("weight_social[", j, "]")]]
-  weight_ratio_samples[, j] <- draws_weighted_ml[[paste0("weight_ratio[", j, "]")]]
+```{r}
+# Extract individual parameter estimates from both models
+# For simple model (scaling factor only)
+scaling_factor_simple <- matrix(NA, nrow = nrow(draws_simple), ncol = n_agents * 2)
+for (j in 1:(n_agents * 2)) {
+  scaling_factor_simple[, j] <- draws_simple[[paste0("scaling_factor[", j, "]")]]
 }
 
-# Calculate posterior means for each agent
-weight_direct_est <- colMeans(weight_direct_samples)
-weight_social_est <- colMeans(weight_social_samples)
-weight_ratio_est <- colMeans(weight_ratio_samples)
+# Calculate posterior means
+scaling_factor_simple_est <- colMeans(scaling_factor_simple)
+
+# For weighted model (scaling factor and weight ratio)
+scaling_factor_weighted <- matrix(NA, nrow = nrow(draws_weighted), ncol = n_agents * 2)
+weight_ratio_weighted <- matrix(NA, nrow = nrow(draws_weighted), ncol = n_agents * 2)
+weight_direct_weighted <- matrix(NA, nrow = nrow(draws_weighted), ncol = n_agents * 2)
+weight_social_weighted <- matrix(NA, nrow = nrow(draws_weighted), ncol = n_agents * 2)
+
+for (j in 1:(n_agents * 2)) {
+  scaling_factor_weighted[, j] <- draws_weighted[[paste0("scaling_factor[", j, "]")]]
+  weight_ratio_weighted[, j] <- draws_weighted[[paste0("weight_ratio[", j, "]")]]
+  weight_direct_weighted[, j] <- draws_weighted[[paste0("weight_direct[", j, "]")]]
+  weight_social_weighted[, j] <- draws_weighted[[paste0("weight_social[", j, "]")]]
+}
+
+# Calculate posterior means
+scaling_factor_weighted_est <- colMeans(scaling_factor_weighted)
+weight_ratio_weighted_est <- colMeans(weight_ratio_weighted)
+weight_direct_weighted_est <- colMeans(weight_direct_weighted)
+weight_social_weighted_est <- colMeans(weight_social_weighted)
 
 # Create dataframe for recovery analysis
 recovery_data <- tibble(
-  agent_id = 1:n_agents,
-  # True parameter values
-  true_weight_direct = agent_params$weight_direct,
-  true_weight_social = agent_params$weight_social,
-  true_weight_ratio = agent_params$weight_direct / agent_params$weight_social,
-  # Estimated values
-  est_weight_direct = weight_direct_est,
-  est_weight_social = weight_social_est,
-  est_weight_ratio = weight_ratio_est
+  agent_id = 1:(n_agents * 2),
+  model_type = all_agents$model_type,
+  
+  # True parameters
+  true_scaling_factor = all_agents$scaling_factor,
+  true_weight_ratio = all_agents$weight_ratio,
+  true_weight_direct = all_agents$weight_direct,
+  true_weight_social = all_agents$weight_social,
+  
+  # Estimated from simple model
+  est_scaling_simple = scaling_factor_simple_est,
+  
+  # Estimated from weighted model
+  est_scaling_weighted = scaling_factor_weighted_est,
+  est_ratio_weighted = weight_ratio_weighted_est,
+  est_direct_weighted = weight_direct_weighted_est,
+  est_social_weighted = weight_social_weighted_est
 )
 
-# Calculate estimation errors
+# Calculate recovery accuracy metrics
 recovery_data <- recovery_data %>%
   mutate(
-    error_direct = est_weight_direct - true_weight_direct,
-    error_social = est_weight_social - true_weight_social,
-    error_ratio = est_weight_ratio - true_weight_ratio,
-    error_direct_pct = 100 * error_direct / true_weight_direct,
-    error_social_pct = 100 * error_social / true_weight_social,
-    error_ratio_pct = 100 * error_ratio / true_weight_ratio
+    # Error in scaling factor estimates
+    error_scaling_simple = est_scaling_simple - true_scaling_factor,
+    pct_error_scaling_simple = 100 * error_scaling_simple / true_scaling_factor,
+    
+    error_scaling_weighted = est_scaling_weighted - true_scaling_factor,
+    pct_error_scaling_weighted = 100 * error_scaling_weighted / true_scaling_factor,
+    
+    # Error in weight ratio estimates (only for weighted model)
+    error_ratio_weighted = est_ratio_weighted - true_weight_ratio,
+    pct_error_ratio_weighted = 100 * error_ratio_weighted / true_weight_ratio,
+    
+    # Error in direct/social weight estimates
+    error_direct_weighted = est_direct_weighted - true_weight_direct,
+    pct_error_direct_weighted = 100 * error_direct_weighted / true_weight_direct,
+    
+    error_social_weighted = est_social_weighted - true_weight_social,
+    pct_error_social_weighted = 100 * error_social_weighted / true_weight_social
   )
 
-# Summarize recovery errors
-cat("Parameter Recovery Summary:\n")
-cat("Direct Weight - Mean Absolute Error:", mean(abs(recovery_data$error_direct)), "\n")
-cat("Social Weight - Mean Absolute Error:", mean(abs(recovery_data$error_social)), "\n")
-cat("Weight Ratio - Mean Absolute Error:", mean(abs(recovery_data$error_ratio)), "\n")
-cat("Direct Weight - Mean Absolute Percentage Error:", mean(abs(recovery_data$error_direct_pct)), "%\n")
-cat("Social Weight - Mean Absolute Percentage Error:", mean(abs(recovery_data$error_social_pct)), "%\n")
-cat("Weight Ratio - Mean Absolute Percentage Error:", mean(abs(recovery_data$error_ratio_pct)), "%\n")
-
-# Visualize parameter recovery
-p1 <- ggplot(recovery_data, aes(x = true_weight_direct, y = est_weight_direct)) +
-  geom_point(size = 3, alpha = 0.7) +
-  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-  labs(
-    title = "Recovery of Direct Evidence Weights",
-    subtitle = "Perfect recovery would place all points on the dashed line",
-    x = "True Weight",
-    y = "Estimated Weight"
-  ) +
-  theme_minimal()
-
-p2 <- ggplot(recovery_data, aes(x = true_weight_social, y = est_weight_social)) +
-  geom_point(size = 3, alpha = 0.7) +
-  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-  labs(
-    title = "Recovery of Social Evidence Weights",
-    subtitle = "Perfect recovery would place all points on the dashed line",
-    x = "True Weight",
-    y = "Estimated Weight"
-  ) +
-  theme_minimal()
-
-# Add visualization of weight ratio recovery
-p_ratio <- ggplot(recovery_data, aes(x = true_weight_ratio, y = est_weight_ratio)) +
-  geom_point(size = 3, alpha = 0.7) +
-  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-  labs(
-    title = "Recovery of Weight Ratio (Direct/Social)",
-    subtitle = "Perfect recovery would place all points on the dashed line",
-    x = "True Weight Ratio",
-    y = "Estimated Weight Ratio"
-  ) +
-  theme_minimal()
-
-# Display plots
-p1
-p2
-p_ratio
-
-# Visualize relationship between weights
-p3 <- ggplot(recovery_data, aes(x = est_weight_direct, y = est_weight_social)) +
-  geom_point(size = 3, alpha = 0.7) +
-  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0, size = 3) +
-  labs(
-    title = "Relationship Between Estimated Parameters",
-    x = "Estimated Direct Weight",
-    y = "Estimated Social Weight"
-  ) +
-  theme_minimal()
-
-p3
-```
-
-### Population-Level Parameter Analysis
-
-Let's examine the population-level parameters from our multilevel models:
-
-```{r population_parameters}
-# Extract population-level parameters
-# From simple model
-simple_pop_theta <- mean(as_draws_df(fit_simple_ml$draws())$population_theta)
-simple_tau <- mean(as_draws_df(fit_simple_ml$draws())$tau)
-
-# From weighted model (revised parameterization)
-population_ratio <- mean(draws_weighted_ml$population_ratio)
-population_scaling <- mean(draws_weighted_ml$population_scaling)
-population_weight_direct <- mean(draws_weighted_ml$population_weight_direct)
-population_weight_social <- mean(draws_weighted_ml$population_weight_social)
-sigma_weight_ratio <- mean(draws_weighted_ml$sigma_weight_ratio)
-sigma_scaling <- mean(draws_weighted_ml$sigma_scaling)
-
-# True population values
-true_ratio <- population_mean_direct / population_mean_social
-true_scaling <- population_mean_direct + population_mean_social
-
-# Create a summary table
-population_params <- tibble(
-  parameter = c("Population Mean (Direct)", "Population Mean (Social)",
-               "Population Ratio (Direct/Social)", "Population Scaling Factor",
-               "Population SD (Ratio)", "Population SD (Scaling)"),
-  true_value = c(population_mean_direct, population_mean_social,
-                true_ratio, true_scaling,
-                population_sd_direct/population_sd_social, # approx ratio SD
-                sqrt(population_sd_direct^2 + population_sd_social^2)), # approx scaling SD
-  estimated = c(population_weight_direct, population_weight_social,
-              population_ratio, population_scaling,
-              sigma_weight_ratio, sigma_scaling)
-)
-
-# Calculate error and percent error
-population_params <- population_params %>%
-  mutate(
-    absolute_error = abs(estimated - true_value),
-    percent_error = 100 * absolute_error / abs(true_value)
-  )
-
-# Display table
-knitr::kable(population_params, digits = 3,
-            caption = "Recovery of Population-Level Parameters")
-
-# Visualize population distribution based on ratio and scaling
-# Create a grid of values for plotting
-ratio_range <- seq(0.5, 3, length.out = 100)
-scaling_range <- seq(0.5, 3, length.out = 100)
-grid_values <- expand.grid(ratio = ratio_range, scaling = scaling_range)
-
-# Calculate weights from ratio and scaling
-grid_values <- grid_values %>%
-  mutate(
-    weight_direct = scaling * ratio / (1 + ratio),
-    weight_social = scaling / (1 + ratio)
-  )
-
-# Estimate density based on population parameters (using bivariate normal approximation in log space)
-grid_values$density <- with(grid_values, {
-  # Transform to log space
-  log_ratio <- log(ratio)
-  log_scaling <- log(scaling)
-  
-  # Parameters from fitted model
-  mu_log_ratio <- log(population_ratio)
-  mu_log_scaling <- log(population_scaling)
-  sigma_log_ratio <- sigma_weight_ratio
-  sigma_log_scaling <- sigma_scaling
-  
-  # Calculate density in log space (independent normal for simplicity)
-  dnorm(log_ratio, mu_log_ratio, sigma_log_ratio) * 
-    dnorm(log_scaling, mu_log_scaling, sigma_log_scaling)
-})
-
-# Plot population distribution
-p_pop_distribution <- ggplot() +
-  # Add contour plot of estimated distribution
-  geom_contour_filled(data = grid_values, 
-                    aes(x = weight_direct, y = weight_social, z = density),
-                    bins = 8) +
-  # Add true parameter values
-  geom_point(data = agent_params, 
-           aes(x = weight_direct, y = weight_social),
-           size = 3, color = "red", alpha = 0.7) +
-  # Add estimated parameter values
-  geom_point(data = recovery_data, 
-           aes(x = est_weight_direct, y = est_weight_social),
-           size = 3, color = "blue", alpha = 0.7) +
-  # Add population means (true and estimated)
-  geom_point(aes(x = population_mean_direct, y = population_mean_social),
-            size = 5, shape = 8, color = "darkred") +
-  geom_point(aes(x = population_weight_direct, y = population_weight_social),
-            size = 5, shape = 8, color = "darkblue") +
-  # Add reference lines showing constant ratio and scaling
-  labs(
-    title = "Estimated Population Distribution of Evidence Weights",
-    x = "Weight for Direct Evidence",
-    y = "Weight for Social Evidence",
-    fill = "Density"
-  ) +
-  #scale_x_continuous(limits = c(0, 2)) +
-  #scale_y_continuous(limits = c(0, 2)) +
-  theme_minimal() +
-  # Add a legend explaining the points
-  annotate("text", x = 0.1, y = 1.9, 
-          label = "Red: True individual parameters\nBlue: Estimated individual parameters\nX: Population means (red=true, blue=estimated)",
-          hjust = 0, size = 3)
-
-# Display the population distribution plot
-#p_pop_distribution
-```
-
-### Posterior Predictive Checks
-
-Let's examine how well our multilevel models can reproduce the observed choices:
-
-```{r posterior_checks}
-# Extract posterior predictions
-pred_choice_samples <- as_draws_df(fit_weighted_ml$draws("pred_choice"))
-
-# Calculate the probability of choosing blue for each observation
-pred_probs <- matrix(NA, nrow = stan_data_multilevel$N, ncol = 1)
-for (i in 1:stan_data_multilevel$N) {
-  # Parameter name in the format pred_choice[i]
-  param_name <- paste0("pred_choice[", i, "]")
-  # Calculate probability as mean of binary predictions
-  pred_probs[i] <- mean(pred_choice_samples[[param_name]])
-}
-
-# Create dataframe for predictions
-prediction_data <- multilevel_sim_data %>%
-  mutate(
-    pred_prob = pred_probs,
-    binned_direct = cut(blue1, breaks = c(-1, 2, 5, 8), 
-                       labels = c("Low (0-2)", "Medium (3-5)", "High (6-8)")),
-    binned_social = cut(blue2, breaks = c(-1, 1, 3), 
-                       labels = c("Low (0-1)", "High (2-3)"))
-  )
-
-# Group-level posterior predictive check
-p_group_ppc <- prediction_data %>%
-  # Group by evidence levels
-  group_by(binned_direct, binned_social) %>%
-  # Calculate observed and predicted probabilities
+# Summarize recovery errors by agent type
+recovery_summary <- recovery_data %>%
+  group_by(model_type) %>%
   summarize(
-    n = n(),
-    observed_prob = mean(choice_binary),
-    predicted_prob = mean(pred_prob),
-    error = predicted_prob - observed_prob,
+    # Simple model scaling recovery
+    mean_abs_error_scaling_simple = mean(abs(error_scaling_simple)),
+    mean_abs_pct_error_scaling_simple = mean(abs(pct_error_scaling_simple)),
+    
+    # Weighted model param recovery
+    mean_abs_error_scaling_weighted = mean(abs(error_scaling_weighted)),
+    mean_abs_pct_error_scaling_weighted = mean(abs(pct_error_scaling_weighted)),
+    
+    mean_abs_error_ratio_weighted = mean(abs(error_ratio_weighted)),
+    mean_abs_pct_error_ratio_weighted = mean(abs(pct_error_ratio_weighted)),
+    
+    mean_abs_error_direct_weighted = mean(abs(error_direct_weighted)),
+    mean_abs_pct_error_direct_weighted = mean(abs(pct_error_direct_weighted)),
+    
+    mean_abs_error_social_weighted = mean(abs(error_social_weighted)),
+    mean_abs_pct_error_social_weighted = mean(abs(pct_error_social_weighted)),
     .groups = "drop"
-  ) %>%
-  # Create plot
-  ggplot(aes(x = observed_prob, y = predicted_prob, size = n)) +
-  geom_point(alpha = 0.7) +
-  geom_text(aes(label = paste(binned_direct, "-", binned_social)), 
-            hjust = -0.2, vjust = 0, size = 3) +
+  )
+
+# Print recovery summary
+knitr::kable(recovery_summary, digits = 2, caption = "Parameter Recovery Accuracy by Agent Type")
+
+# Create visualizations of parameter recovery
+
+# 1. Scaling factor recovery
+p1 <- ggplot(recovery_data, aes(x = true_scaling_factor, y = est_scaling_simple, color = model_type)) +
+  geom_point(size = 3, alpha = 0.7) +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
   labs(
-    title = "Group-Level Posterior Predictive Check",
-    subtitle = "Each point represents a combination of evidence levels",
-    x = "Observed Probability of Blue Choice",
-    y = "Predicted Probability of Blue Choice",
-    size = "Number of\nObservations"
+    title = "Scaling Factor Recovery (Simple Model)",
+    subtitle = "How well can the simple model recover the true scaling factors?",
+    x = "True Scaling Factor",
+    y = "Estimated Scaling Factor",
+    color = "Agent Type"
   ) +
-  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
   theme_minimal()
 
-# Individual-level posterior predictive check
-p_individual_ppc <- prediction_data %>%
-  # Group by agent and evidence levels
-  group_by(agent_id, binned_direct, binned_social) %>%
-  # Calculate observed and predicted probabilities
-  summarize(
-    n = n(),
-    observed_prob = mean(choice_binary),
-    predicted_prob = mean(pred_prob),
-    error = predicted_prob - observed_prob,
-    .groups = "drop"
-  ) %>%
-  # Create plot
-  ggplot(aes(x = observed_prob, y = predicted_prob, color = factor(agent_id))) +
-  geom_point(alpha = 0.7) +
+p2 <- ggplot(recovery_data, aes(x = true_scaling_factor, y = est_scaling_weighted, color = model_type)) +
+  geom_point(size = 3, alpha = 0.7) +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
   labs(
-    title = "Individual-Level Posterior Predictive Check",
-    subtitle = "Each point represents an agent's behavior for a specific evidence combination",
-    x = "Observed Probability of Blue Choice",
-    y = "Predicted Probability of Blue Choice",
-    color = "Agent ID"
+    title = "Scaling Factor Recovery (Weighted Model)",
+    subtitle = "How well can the weighted model recover the true scaling factors?",
+    x = "True Scaling Factor",
+    y = "Estimated Scaling Factor",
+    color = "Agent Type"
   ) +
-  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
-  theme_minimal() +
-  theme(legend.position = "none")  # Hide legend due to many agents
+  theme_minimal()
 
-# Display posterior predictive checks
-p_group_ppc
-p_individual_ppc
+# 2. Weight ratio recovery (weighted model only)
+p3 <- ggplot(recovery_data, aes(x = true_weight_ratio, y = est_ratio_weighted, color = model_type)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Weight Ratio Recovery (Weighted Model)",
+    subtitle = "How well can the weighted model recover the true weight ratios?",
+    x = "True Weight Ratio (Direct/Social)",
+    y = "Estimated Weight Ratio",
+    color = "Agent Type"
+  ) +
+  theme_minimal()
 
-# Calculate overall prediction accuracy
-prediction_accuracy <- mean((pred_probs > 0.5) == multilevel_sim_data$choice_binary)
-cat("Overall prediction accuracy:", round(prediction_accuracy * 100, 1), "%\n")
+# Arrange plots
+recovery_plots <- p1 + p2 + p3 + plot_layout(ncol = 2)
+print(recovery_plots)
 ```
 
-## Model Comparison
+### Model Comparison
 
-Finally, let's compare our models to determine which one better captures the data:
+Now that we've fitted both models, we can formally compare them to see which better explains the observed data. We'll use Leave-One-Out Cross-Validation (LOO-CV) to estimate each model's predictive accuracy.
+
+In a real application, we wouldn't know in advance whether individuals use simple or weighted integration strategies. Model comparison helps us determine which cognitive model is more consistent with observed behavior.
 
 ```{r}
 # Calculate LOO-CV for model comparison
+# This evaluates how well each model predicts held-out data
+
+# For simple model
 loo_simple <- fit_simple_ml$loo()
+
+# For weighted model
 loo_weighted <- fit_weighted_ml$loo()
 
 # Compare models
@@ -3197,87 +3374,980 @@ print(loo_comparison)
 
 # Calculate model weights
 model_weights <- loo_model_weights(list(
-  "Simple Beta-Binomial" = loo_simple,
-  "Weighted Beta-Binomial" = loo_weighted
+  "Simple Integration" = loo_simple,
+  "Weighted Integration" = loo_weighted
 ))
 
-# Create comparison visualization
-comparison_data <- tibble(
+# Print model weights
+print(model_weights)
+
+# Create a visualization of model comparison
+model_comp_data <- tibble(
   model = names(model_weights),
   weight = as.numeric(model_weights)
 )
 
-ggplot(comparison_data, aes(x = model, y = weight, fill = model)) +
+p_model_comp <- ggplot(model_comp_data, aes(x = model, y = weight, fill = model)) +
   geom_col() +
   geom_text(aes(label = scales::percent(weight, accuracy = 0.1)), 
             vjust = -0.5, size = 5) +
-  scale_fill_brewer(palette = "Set1") +
   labs(
-    title = "Model Comparison via LOO-CV",
+    title = "Model Comparison Using LOO-CV",
     subtitle = "Higher weights indicate better predictive performance",
     x = NULL,
     y = "Model Weight"
   ) +
+  scale_fill_brewer(palette = "Set1") +
   theme_minimal() +
   theme(legend.position = "none")
+
+print(p_model_comp)
+
+# Compare model performance by agent type
+# Calculate pointwise ELPD values for each model
+elpd_simple <- loo_simple$pointwise[, "elpd_loo"]
+elpd_weighted <- loo_weighted$pointwise[, "elpd_loo"]
+
+# Aggregate by agent
+elpd_by_agent <- multilevel_sim_data %>%
+  dplyr::select(agent_id, model_type) %>%
+  distinct() %>%
+  mutate(
+    elpd_simple = NA_real_,
+    elpd_weighted = NA_real_
+  )
+
+# Calculate ELPD sums by agent
+for (j in 1:nrow(elpd_by_agent)) {
+  agent <- elpd_by_agent$agent_id[j]
+  
+  # Find rows for this agent
+  agent_rows <- which(multilevel_sim_data$agent_id == agent)
+  
+  # Sum ELPD values for this agent
+  elpd_by_agent$elpd_simple[j] <- sum(elpd_simple[agent_rows])
+  elpd_by_agent$elpd_weighted[j] <- sum(elpd_weighted[agent_rows])
+}
+
+# Calculate ELPD difference (positive = weighted model is better)
+elpd_by_agent <- elpd_by_agent %>%
+  mutate(
+    elpd_diff = elpd_weighted - elpd_simple,
+    better_model = ifelse(elpd_diff > 0, "Weighted", "Simple")
+  )
+
+# Create visualization of model preference by agent type
+p_agent_comp <- ggplot(elpd_by_agent, aes(x = model_type, y = elpd_diff, fill = better_model)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, height = 0, alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Model Preference by Agent Type",
+    subtitle = "Positive values favor the weighted model; negative values favor the simple model",
+    x = "True Agent Type",
+    y = "ELPD Difference (Weighted - Simple)",
+    fill = "Preferred Model"
+  ) +
+  scale_fill_manual(values = c("Simple" = "blue", "Weighted" = "red")) +
+  theme_minimal()
+
+print(p_agent_comp)
+
+# Calculate classification accuracy
+# How often does the better-fitting model match the true generating model?
+classification <- elpd_by_agent %>%
+  mutate(
+    # For simple agents, the simple model should be better
+    correct_classification = case_when(
+      model_type == "simple" & better_model == "Simple" ~ TRUE,
+      model_type == "weighted" & better_model == "Weighted" ~ TRUE,
+      TRUE ~ FALSE
+    )
+  )
+
+# Calculate overall accuracy and by agent type
+overall_accuracy <- mean(classification$correct_classification)
+accuracy_by_type <- classification %>%
+  group_by(model_type) %>%
+  summarize(
+    n = n(),
+    correct = sum(correct_classification),
+    accuracy = correct / n,
+    .groups = "drop"
+  )
+
+# Print classification results
+cat("\nModel Classification Accuracy:\n")
+cat("Overall accuracy:", scales::percent(overall_accuracy), "\n\n")
+
+print(knitr::kable(accuracy_by_type, caption = "Classification Accuracy by Agent Type"))
 ```
 
 
-## Extensions and Applications
+## Dynamic Bayesian Evidence Integration: Sequential Updating Models
 
-The multilevel Bayesian framework we've developed can be extended in several important ways:
+In real-world learning scenarios, people continuously update their beliefs as they gather new evidence. While our previous models considered decision-making based on static evidence, a more realistic approach is to incorporate sequential updating where beliefs evolve over time. Let's develop an extension of our Bayesian evidence integration models that captures how agents dynamically update their beliefs across trials.
 
+### Sequential Bayesian Updating: The Theoretical Framework
 
+In sequential Bayesian updating, an agent's posterior belief from one trial becomes the prior for the next trial. This creates a continuous learning process where the agent's beliefs evolve over time based on observed evidence.
+The key components of a sequential updating model are:
 
-### Time-Varying Weights
+* Initial prior belief - The agent's belief before encountering any evidence
 
-Evidence weights might change over time as participants learn about the reliability of different sources:
+* Trial-by-trial updating - How beliefs are updated after each new piece of evidence
+
+* Response mechanism - How updated beliefs translate into observable choices
+
+Let's implement this framework in Stan, starting with the single-agent version and then extending to a multilevel model.
+
+### Single-Agent Sequential Updating Model
+
+```{r 10-sequential-single-agent-stan}
+
+# Stan code for a sequential Bayesian updating model
+sequential_updating_stan <- "
+// Sequential Bayesian Updating Model
+// This model tracks how an agent updates beliefs across a sequence of trials
+data {
+  int<lower=1> T;                        // Number of trials
+  array[T] int<lower=0, upper=1> choice; // Choices (0=red, 1=blue)
+  array[T] int<lower=0> blue1;           // Direct evidence (blue marbles) on each trial
+  array[T] int<lower=0> total1;          // Total direct evidence on each trial
+  array[T] int<lower=0> blue2;           // Social evidence (blue signals) on each trial
+  array[T] int<lower=0> total2;          // Total social evidence on each trial
+}
+
+parameters {
+  real<lower=0> total_weight;             // Overall weight given to evidence
+  real<lower=0, upper=1> weight_prop;     // Proportion of weight for direct evidence
+  real<lower=0> alpha;                    // Learning rate parameter
+}
+
+transformed parameters {
+  // Calculate weights for each evidence source
+  real weight_direct = total_weight * weight_prop;
+  real weight_social = total_weight * (1 - weight_prop);
+  
+  // Variables to track belief updating across trials
+  vector<lower=0, upper=1>[T] belief;     // Belief in blue on each trial
+  vector<lower=0>[T] alpha_param;         // Beta distribution alpha parameter
+  vector<lower=0>[T] beta_param;          // Beta distribution beta parameter
+  
+  // Initial belief parameters (uniform prior)
+  alpha_param[1] = 1.0;
+  beta_param[1] = 1.0;
+  
+  // Calculate belief for first trial
+  belief[1] = alpha_param[1] / (alpha_param[1] + beta_param[1]);
+  
+  // Update beliefs across trials
+  for (t in 2:T) {
+    // Calculate weighted evidence from previous trial
+    real weighted_blue1 = blue1[t-1] * weight_direct;
+    real weighted_red1 = (total1[t-1] - blue1[t-1]) * weight_direct;
+    real weighted_blue2 = blue2[t-1] * weight_social;
+    real weighted_red2 = (total2[t-1] - blue2[t-1]) * weight_social;
+    
+    // Update belief with learning rate
+    // alpha controls how much new evidence affects the belief
+    alpha_param[t] = alpha_param[t-1] + alpha * (weighted_blue1 + weighted_blue2);
+    beta_param[t] = beta_param[t-1] + alpha * (weighted_red1 + weighted_red2);
+    
+    // Calculate updated belief
+    belief[t] = alpha_param[t] / (alpha_param[t] + beta_param[t]);
+  }
+}
+
+model {
+  // Priors for parameters
+  target += lognormal_lpdf(total_weight | 0, 0.5);  // Prior centered around 1.0
+  target += beta_lpdf(weight_prop | 1, 1);          // Uniform prior on proportion
+  target += lognormal_lpdf(alpha | -1, 0.5);        // Prior on learning rate (typically < 1)
+  
+  // Likelihood
+  for (t in 1:T) {
+    // Model choice as a function of current belief
+    target += bernoulli_lpmf(choice[t] | belief[t]);
+  }
+}
+
+generated quantities {
+  // Log likelihood for model comparison
+  vector[T] log_lik;
+  
+  // Posterior predictions
+  array[T] int pred_choice;
+  
+  for (t in 1:T) {
+    // Generate predicted choices
+    pred_choice[t] = bernoulli_rng(belief[t]);
+    
+    // Calculate log likelihood
+    log_lik[t] = bernoulli_lpmf(choice[t] | belief[t]);
+  }
+}
+"
+
+# Write the model to a file
+write_stan_file(
+  sequential_updating_stan,
+  dir = "stan/",
+  basename = "10_sequential_updating.stan"
+)
+```
+
+### Multilevel Sequential Updating Model
+
+Now let's extend this to a multilevel model that captures individual differences in learning rates and evidence weighting:
 
 ```{r}
-#// Dynamically updated weights
-#weight_direct[j, t] = weight_direct_baseline[j] * (1 + learning_rate * prediction_error[j, t-1]);
+# Stan code for a multilevel sequential Bayesian updating model
+multilevel_sequential_stan <- "
+// Multilevel Sequential Bayesian Updating Model
+// This model captures individual differences in sequential belief updating
+data {
+  int<lower=1> N;                        // Total number of observations
+  int<lower=1> J;                        // Number of agents
+  int<lower=1> T;                        // Maximum number of trials per agent
+  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation
+  array[N] int<lower=1, upper=T> trial_id; // Trial number for each observation
+  array[N] int<lower=0, upper=1> choice;   // Choices (0=red, 1=blue)
+  array[N] int<lower=0> blue1;             // Direct evidence (blue marbles)
+  array[N] int<lower=0> total1;            // Total direct evidence
+  array[N] int<lower=0> blue2;             // Social evidence (blue signals)
+  array[N] int<lower=0> total2;            // Total social evidence
+  // Additional data for tracking trial sequences
+  array[J] int<lower=1, upper=T> trials_per_agent; // Number of trials for each agent
+}
+
+parameters {
+  // Population-level parameters
+  real mu_total_weight;                   // Population mean log total weight
+  real mu_weight_prop_logit;              // Population mean logit weight proportion
+  real mu_alpha_log;                      // Population mean log learning rate
+  
+  // Population-level standard deviations
+  vector<lower=0>[3] tau;                 // SDs for [total_weight, weight_prop, alpha]
+  
+  // Correlation matrix for individual parameters (optional)
+  cholesky_factor_corr[3] L_Omega;        // Cholesky factor of correlation matrix
+  
+  // Individual-level variations (non-centered parameterization)
+  matrix[3, J] z;                         // Standardized individual parameters
+}
+
+transformed parameters {
+  // Individual-level parameters
+  vector<lower=0>[J] total_weight;        // Total evidence weight for each agent
+  vector<lower=0, upper=1>[J] weight_prop; // Weight proportion for each agent
+  vector<lower=0>[J] alpha;               // Learning rate for each agent
+  vector<lower=0>[J] weight_direct;       // Direct evidence weight for each agent
+  vector<lower=0>[J] weight_social;       // Social evidence weight for each agent
+  
+  // Individual beliefs for each trial
+  // We'll use a ragged structure due to varying trial counts
+  array[J, T] real belief;                // Belief in blue for each agent on each trial
+  
+  // Transform parameters to natural scale
+  matrix[3, J] theta = diag_pre_multiply(tau, L_Omega) * z;  // Non-centered parameterization
+  
+  for (j in 1:J) {
+    // Transform individual parameters to appropriate scales
+    total_weight[j] = exp(mu_total_weight + theta[1, j]);
+    weight_prop[j] = inv_logit(mu_weight_prop_logit + theta[2, j]);
+    alpha[j] = exp(mu_alpha_log + theta[3, j]);
+    
+    // Calculate derived weights
+    weight_direct[j] = total_weight[j] * weight_prop[j];
+    weight_social[j] = total_weight[j] * (1 - weight_prop[j]);
+    
+    // Initialize belief tracking for each agent
+    real alpha_param = 1.0;  // Initial beta distribution parameters
+    real beta_param = 1.0;
+    
+    // Calculate initial belief
+    belief[j, 1] = alpha_param / (alpha_param + beta_param);
+    
+    // Process trials for this agent (skipping the first trial since we initialized it above)
+    for (t in 2:trials_per_agent[j]) {
+      // Find the previous trial's data for this agent
+      int prev_idx = 0;
+      
+      // Search for previous trial (this is a simplification; more efficient approaches exist)
+      for (i in 1:N) {
+        if (agent_id[i] == j && trial_id[i] == t-1) {
+          prev_idx = i;
+          break;
+        }
+      }
+      
+      if (prev_idx > 0) {
+        // Calculate weighted evidence from previous trial
+        real weighted_blue1 = blue1[prev_idx] * weight_direct[j];
+        real weighted_red1 = (total1[prev_idx] - blue1[prev_idx]) * weight_direct[j];
+        real weighted_blue2 = blue2[prev_idx] * weight_social[j];
+        real weighted_red2 = (total2[prev_idx] - blue2[prev_idx]) * weight_social[j];
+        
+        // Update belief parameters with learning rate
+        alpha_param = alpha_param + alpha[j] * (weighted_blue1 + weighted_blue2);
+        beta_param = beta_param + alpha[j] * (weighted_red1 + weighted_red2);
+      }
+      
+      // Calculate updated belief
+      belief[j, t] = alpha_param / (alpha_param + beta_param);
+    }
+  }
+}
+
+model {
+  // Priors for population parameters
+  target += normal_lpdf(mu_total_weight | 0, 1);         // Population log total weight
+  target += normal_lpdf(mu_weight_prop_logit | 0, 1);    // Population logit weight proportion
+  target += normal_lpdf(mu_alpha_log | -1, 1);           // Population log learning rate
+  
+  // Priors for population standard deviations
+  target += exponential_lpdf(tau | 2);                   // Conservative prior for SDs
+  
+  // Prior for correlation matrix
+  target += lkj_corr_cholesky_lpdf(L_Omega | 2);         // LKJ prior on correlations
+  
+  // Prior for standardized individual parameters
+  target += std_normal_lpdf(to_vector(z));               // Standard normal prior on z-scores
+  
+  // Likelihood
+  for (i in 1:N) {
+    int j = agent_id[i];                                  // Agent ID
+    int t = trial_id[i];                                  // Trial number
+    
+    // Model choice as a function of current belief
+    target += bernoulli_lpmf(choice[i] | belief[j, t]);
+  }
+}
+
+generated quantities {
+  // Transform population parameters to natural scale for interpretation
+  real<lower=0> pop_total_weight = exp(mu_total_weight);
+  real<lower=0, upper=1> pop_weight_prop = inv_logit(mu_weight_prop_logit);
+  real<lower=0> pop_alpha = exp(mu_alpha_log);
+  real<lower=0> pop_weight_direct = pop_total_weight * pop_weight_prop;
+  real<lower=0> pop_weight_social = pop_total_weight * (1 - pop_weight_prop);
+  
+  // Correlation matrix for individual differences
+  matrix[3, 3] Omega = multiply_lower_tri_self_transpose(L_Omega);
+  
+  // Log likelihood for model comparison
+  vector[N] log_lik;
+  
+  // Posterior predictions
+  array[N] int pred_choice;
+  
+  for (i in 1:N) {
+    int j = agent_id[i];
+    int t = trial_id[i];
+    
+    // Generate predicted choices
+    pred_choice[i] = bernoulli_rng(belief[j, t]);
+    
+    // Calculate log likelihood
+    log_lik[i] = bernoulli_lpmf(choice[i] | belief[j, t]);
+  }
+}
+"
+
+# Write the model to a file
+write_stan_file(
+  multilevel_sequential_stan,
+  dir = "stan/",
+  basename = "10_multilevel_sequential_updating.stan"
+)
 ```
 
-### Group Comparisons
-
-The framework allows for comparing different populations (e.g., clinical vs. control groups):
+### Generating Data for the Sequential Model
+To test our sequential updating model, we need to generate data that involves a sequence of decisions where beliefs are updated over time. Here's how we can simulate such data:
 
 ```{r}
-# // In the parameters block
-# real mu_direct_group1;
-# real mu_direct_group2;
-# real<lower=0> sigma_direct_group1;
-# real<lower=0> sigma_direct_group2;
-# 
-# // In the model block
-# for (j in 1:J1) {  // Group 1
-#   theta_j[j] ~ normal(mu_direct_group1, sigma_direct_group1);
-# }
-# for (j in (J1+1):(J1+J2)) {  // Group 2
-#   theta_j[j] ~ normal(mu_direct_group2, sigma_direct_group2);
-# }
+# Function to simulate sequential updating agent behavior
+simulate_sequential_agent <- function(n_trials, 
+                                     weight_direct, 
+                                     weight_social, 
+                                     learning_rate,
+                                     p_blue_transitions = c(0.7, 0.3)) {
+  # p_blue_transitions = c(p(blue|previous=blue), p(blue|previous=red))
+  # This creates a Markov process for the underlying jar probabilities
+  
+  # Initialize results
+  results <- tibble(
+    trial = 1:n_trials,
+    true_p_blue = NA_real_,        # True probability of blue
+    jar_state = NA_integer_,       # Which jar: 1=mostly blue, 0=mostly red
+    blue1 = NA_integer_,           # Direct evidence (blue marbles)
+    total1 = NA_integer_,          # Total direct evidence
+    blue2 = NA_integer_,           # Social evidence (blue signals)
+    total2 = NA_integer_,          # Total social evidence
+    belief = NA_real_,             # Agent's belief that next marble is blue
+    choice = NA_integer_           # Agent's choice (1=blue, 0=red)
+  )
+  
+  # Initialize belief tracking variables
+  alpha_param <- 1.0
+  beta_param <- 1.0
+  
+  # Set initial jar state randomly
+  results$jar_state[1] <- rbinom(1, 1, 0.5)
+  results$true_p_blue[1] <- ifelse(results$jar_state[1] == 1, 0.8, 0.2)
+  
+  # Generate the sequence of jar states (Markov process)
+  for (t in 2:n_trials) {
+    # Transition probability depends on previous state
+    p_blue <- p_blue_transitions[2 - results$jar_state[t-1]]
+    results$jar_state[t] <- rbinom(1, 1, p_blue)
+    results$true_p_blue[t] <- ifelse(results$jar_state[t] == 1, 0.8, 0.2)
+  }
+  
+  # Generate evidence and choices for each trial
+  for (t in 1:n_trials) {
+    # Generate direct evidence (8 marbles per trial)
+    results$total1[t] <- 8
+    results$blue1[t] <- rbinom(1, results$total1[t], results$true_p_blue[t])
+    
+    # Generate social evidence (3 signals per trial)
+    results$total2[t] <- 3
+    results$blue2[t] <- rbinom(1, results$total2[t], results$true_p_blue[t])
+    
+    # Calculate current belief based on previous evidence
+    if (t == 1) {
+      # First trial - start with uniform prior
+      results$belief[t] <- 0.5
+    } else {
+      # Calculate weighted evidence from previous trial
+      weighted_blue1 <- results$blue1[t-1] * weight_direct
+      weighted_red1 <- (results$total1[t-1] - results$blue1[t-1]) * weight_direct
+      weighted_blue2 <- results$blue2[t-1] * weight_social
+      weighted_red2 <- (results$total2[t-1] - results$blue2[t-1]) * weight_social
+      
+      # Update belief parameters with learning rate
+      alpha_param <- alpha_param + learning_rate * (weighted_blue1 + weighted_blue2)
+      beta_param <- beta_param + learning_rate * (weighted_red1 + weighted_red2)
+      
+      # Calculate updated belief
+      results$belief[t] <- alpha_param / (alpha_param + beta_param)
+    }
+    
+    # Generate choice based on current belief
+    results$choice[t] <- rbinom(1, 1, results$belief[t])
+  }
+  
+  return(results)
+}
+
+# Simulate data for multiple agents with different parameters
+set.seed(42)
+
+# Number of agents and trials
+n_agents <- 20
+n_trials <- 50
+
+# Create agent parameters
+agent_params <- tibble(
+  agent_id = 1:n_agents,
+  # Generate random parameters
+  weight_direct = rlnorm(n_agents, meanlog = 0, sdlog = 0.3),
+  weight_social = rlnorm(n_agents, meanlog = -0.2, sdlog = 0.3),
+  learning_rate = rlnorm(n_agents, meanlog = -1, sdlog = 0.5)  # Typically < 1
+)
+
+# Simulate data for all agents
+sequential_sim_data <- map_dfr(1:n_agents, function(i) {
+  agent_data <- simulate_sequential_agent(
+    n_trials = n_trials,
+    weight_direct = agent_params$weight_direct[i],
+    weight_social = agent_params$weight_social[i],
+    learning_rate = agent_params$learning_rate[i]
+  )
+  
+  # Add agent ID
+  agent_data$agent_id <- i
+  
+  return(agent_data)
+})
+
+# View data summary
+sequential_summary <- sequential_sim_data %>%
+  group_by(agent_id) %>%
+  summarize(
+    n_trials = n(),
+    mean_belief = mean(belief),
+    prop_blue_choice = mean(choice),
+    accuracy = mean(choice == jar_state),
+    .groups = "drop"
+  )
+
+# Join with true parameters
+sequential_summary <- sequential_summary %>%
+  left_join(agent_params, by = "agent_id")
+
+# Print summary
+head(sequential_summary)
+
+# Visualize belief updating for a few agents
+selected_agents <- c(1, 5, 10)
+
+p_belief_updating <- sequential_sim_data %>%
+  filter(agent_id %in% selected_agents) %>%
+  ggplot(aes(x = trial, y = belief, color = factor(agent_id), group = agent_id)) +
+  geom_line(size = 1) +
+  geom_point(aes(shape = factor(jar_state)), size = 3) +
+  scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Mostly Red Jar", "Mostly Blue Jar")) +
+  ylim(0, 1) +
+  labs(
+    title = "Sequential Belief Updating",
+    subtitle = "Belief evolution across trials with changing jar probabilities",
+    x = "Trial",
+    y = "Belief (Probability of Blue)",
+    color = "Agent ID",
+    shape = "True Jar State"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(p_belief_updating)
+
+# Prepare data for Stan fitting
+stan_data_sequential <- list(
+  N = nrow(sequential_sim_data),
+  J = n_agents,
+  T = n_trials,
+  agent_id = sequential_sim_data$agent_id,
+  trial_id = sequential_sim_data$trial,
+  choice = sequential_sim_data$choice,
+  blue1 = sequential_sim_data$blue1,
+  total1 = sequential_sim_data$total1,
+  blue2 = sequential_sim_data$blue2,
+  total2 = sequential_sim_data$total2,
+  trials_per_agent = rep(n_trials, n_agents)
+)
 ```
 
-## Cognitive Implications of Multilevel Bayesian Models
+### Fitting and Evaluating the Sequential Models
 
-Our multilevel models reveal several important insights about cognitive processing:
+Now we can fit the models to our simulated data:
 
-1. **Individual Variability**: There are substantial individual differences in how people weigh direct versus social evidence, suggesting different cognitive "styles" or strategies.
+```{r}
+# Check if we need to regenerate model fits
+if (regenerate_simulations) {
+  # Compile Stan models
+  mod_seq_single <- cmdstan_model(
+    file.path("stan/10_sequential_updating.stan"),
+    cpp_options = list(stan_threads = TRUE)
+  )
+  
+  mod_seq_multilevel <- cmdstan_model(
+    file.path("stan/10_multilevel_sequential_updating.stan"),
+    cpp_options = list(stan_threads = TRUE)
+  )
+  
+  # Fit the single-agent model to one agent's data
+  # For demonstration, we'll use the first agent
+  agent1_data <- filter(sequential_sim_data, agent_id == 1)
+  
+  stan_data_single <- list(
+    T = nrow(agent1_data),
+    choice = agent1_data$choice,
+    blue1 = agent1_data$blue1,
+    total1 = agent1_data$total1,
+    blue2 = agent1_data$blue2,
+    total2 = agent1_data$total2
+  )
+  
+  fit_seq_single <- mod_seq_single$sample(
+    data = stan_data_single,
+    seed = 42,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 1,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 200,
+    adapt_delta = 0.9
+  )
+  
+  # Fit the multilevel model to all agents' data
+  fit_seq_multilevel <- mod_seq_multilevel$sample(
+    data = stan_data_sequential,
+    seed = 43,
+    chains = 2,
+    parallel_chains = 2,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    threads_per_chain = 1,
+    refresh = 200,
+    adapt_delta = 0.95
+  )
+  
+  # Save model fits
+  fit_seq_single$save_object("simmodels/fit_sequential_single.rds")
+  fit_seq_multilevel$save_object("simmodels/fit_sequential_multilevel.rds")
+  
+  cat("Models fitted and saved.\n")
+} else {
+  # Load existing model fits
+  fit_seq_single <- readRDS("simmodels/fit_sequential_single.rds")
+  fit_seq_multilevel <- readRDS("simmodels/fit_sequential_multilevel.rds")
+  
+  cat("Loaded existing model fits.\n")
+}
 
-2. **Population Regularities**: Despite individual variation, there are identifiable population-level patterns in evidence integration.
+# Check for convergence issues
+cat("Checking convergence for single-agent model:\n")
+print(fit_seq_single$summary(c("total_weight", "weight_prop", "alpha")))
 
-3. **Parameter Correlations**: The correlation between direct and social evidence weights suggests potential cognitive constraints or trade-offs in information processing.
+cat("\nChecking convergence for multilevel model (population parameters):\n")
+print(fit_seq_multilevel$summary(c("pop_total_weight", "pop_weight_prop", "pop_alpha")))
 
-4. **Source Reliability Assessment**: Different weightings may reflect individuals' implicit judgments about the reliability of different information sources.
+# Extract posterior samples
+draws_seq_single <- as_draws_df(fit_seq_single$draws())
+draws_seq_multilevel <- as_draws_df(fit_seq_multilevel$draws())
 
-5. **Prediction Accuracy**: The ability of our models to predict individual choices confirms that Bayesian integration is a plausible mechanism for human decision-making under uncertainty.
+# Examine parameter recovery for the single agent
+agent1_params <- agent_params %>% filter(agent_id == 1)
+agent1_recovery <- tibble(
+  parameter = c("weight_direct", "weight_social", "learning_rate"),
+  true_value = c(
+    agent1_params$weight_direct, 
+    agent1_params$weight_social, 
+    agent1_params$learning_rate
+  ),
+  estimated = c(
+    mean(draws_seq_single$weight_direct),
+    mean(draws_seq_single$weight_social),
+    mean(draws_seq_single$alpha)
+  ),
+  error = estimated - true_value,
+  pct_error = 100 * error / true_value
+)
 
-## Conclusion
+# Print recovery results
+cat("\nParameter recovery for Agent 1:\n")
+print(agent1_recovery)
 
-Multilevel Bayesian models provide a powerful framework for understanding individual differences in cognitive processes. By simultaneously modeling both population-level trends and individual variations, these models allow us to:
+# Evaluate population-level recovery
+pop_recovery <- tibble(
+  parameter = c("mean_weight_direct", "mean_weight_social", "mean_learning_rate"),
+  true_value = c(
+    mean(agent_params$weight_direct),
+    mean(agent_params$weight_social),
+    mean(agent_params$learning_rate)
+  ),
+  estimated = c(
+    mean(draws_seq_multilevel$pop_weight_direct),
+    mean(draws_seq_multilevel$pop_weight_social),
+    mean(draws_seq_multilevel$pop_alpha)
+  ),
+  error = estimated - true_value,
+  pct_error = 100 * error / true_value
+)
 
-1. Identify common cognitive mechanisms across individuals
-2. Quantify individual differences in strategy and information weighting
-3. Make predictions about new individuals from the same population
-4. Test hypotheses about the factors that influence evidence integration
+# Print population recovery results
+cat("\nPopulation parameter recovery:\n")
+print(pop_recovery)
 
+# Extract individual parameter estimates
+n_chains <- length(unique(draws_seq_multilevel$.chain))
+n_iterations <- nrow(draws_seq_multilevel) / n_chains
+n_samples <- n_chains * n_iterations
+
+weight_direct_samples <- matrix(NA, nrow = n_samples, ncol = n_agents)
+weight_social_samples <- matrix(NA, nrow = n_samples, ncol = n_agents)
+alpha_samples <- matrix(NA, nrow = n_samples, ncol = n_agents)
+
+for (j in 1:n_agents) {
+  weight_direct_samples[, j] <- draws_seq_multilevel[[paste0("weight_direct[", j, "]")]]
+  weight_social_samples[, j] <- draws_seq_multilevel[[paste0("weight_social[", j, "]")]]
+  alpha_samples[, j] <- draws_seq_multilevel[[paste0("alpha[", j, "]")]]
+}
+
+# Calculate posterior means
+weight_direct_est <- colMeans(weight_direct_samples)
+weight_social_est <- colMeans(weight_social_samples)
+alpha_est <- colMeans(alpha_samples)
+
+# Create recovery data for all agents
+recovery_data <- tibble(
+  agent_id = 1:n_agents,
+  # True parameters
+  true_weight_direct = agent_params$weight_direct,
+  true_weight_social = agent_params$weight_social,
+  true_learning_rate = agent_params$learning_rate,
+  # Estimated parameters
+  est_weight_direct = weight_direct_est,
+  est_weight_social = weight_social_est,
+  est_learning_rate = alpha_est
+)
+
+# Calculate recovery metrics
+recovery_data <- recovery_data %>%
+  mutate(
+    error_direct = est_weight_direct - true_weight_direct,
+    error_social = est_weight_social - true_weight_social,
+    error_learning = est_learning_rate - true_learning_rate,
+    
+    pct_error_direct = 100 * error_direct / true_weight_direct,
+    pct_error_social = 100 * error_social / true_weight_social,
+    pct_error_learning = 100 * error_learning / true_learning_rate
+  )
+
+# Create recovery plots
+p_recovery <- recovery_data %>%
+  pivot_longer(
+    cols = c(starts_with("true_"), starts_with("est_")),
+    names_to = c("type", "parameter"),
+    names_pattern = "(true|est)_(.*)"
+  ) %>%
+  pivot_wider(
+    names_from = type,
+    values_from = value
+  ) %>%
+  mutate(
+    parameter = factor(
+      parameter,
+      levels = c("weight_direct", "weight_social", "learning_rate"),
+      labels = c("Direct Evidence Weight", "Social Evidence Weight", "Learning Rate")
+    )
+  ) %>%
+  ggplot(aes(x = true, y = est)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  facet_wrap(~ parameter, scales = "free") +
+  labs(
+    title = "Parameter Recovery for Sequential Updating Model",
+    subtitle = "Comparing true parameter values to posterior means",
+    x = "True Parameter Value",
+    y = "Estimated Parameter Value"
+  ) +
+  theme_minimal()
+
+# Display recovery plot
+print(p_recovery)
+
+# Examine posterior predictive checks
+# Extract belief trajectories
+belief_samples <- array(NA, dim = c(n_samples, n_agents, n_trials))
+
+for (j in 1:n_agents) {
+  for (t in 1:n_trials) {
+    belief_samples[, j, t] <- draws_seq_multilevel[[paste0("belief[", j, ",", t, "]")]]
+  }
+}
+
+# Calculate mean and credible intervals for beliefs
+belief_summary <- tibble(
+  agent_id = rep(rep(1:n_agents, each = n_trials), 3),
+  trial = rep(rep(1:n_trials, n_agents), 3),
+  statistic = rep(c("mean", "lower", "upper"), each = n_agents * n_trials),
+  value = c(
+    # Mean belief across samples
+    apply(belief_samples, c(2, 3), mean) %>% as.vector(),
+    # Lower 95% CI
+    apply(belief_samples, c(2, 3), quantile, 0.025) %>% as.vector(),
+    # Upper 95% CI
+    apply(belief_samples, c(2, 3), quantile, 0.975) %>% as.vector()
+  )
+)
+
+# Reshape for plotting
+belief_wider <- belief_summary %>%
+  pivot_wider(
+    names_from = statistic,
+    values_from = value
+  )
+
+# Visualize belief trajectories for selected agents
+p_belief_trajectories <- belief_wider %>%
+  filter(agent_id %in% selected_agents) %>%
+  left_join(sequential_sim_data %>% 
+              dplyr::select(agent_id, trial, true_p_blue, jar_state), 
+            by = c("agent_id", "trial")) %>%
+  ggplot() +
+  # Add true jar state as background
+  geom_rect(aes(xmin = trial - 0.5, xmax = trial + 0.5, 
+                ymin = -Inf, ymax = Inf, 
+                fill = factor(jar_state)), alpha = 0.2) +
+  # Add posterior belief intervals
+  geom_ribbon(aes(x = trial, ymin = lower, ymax = upper, group = agent_id), 
+              alpha = 0.3, fill = "blue") +
+  # Add mean posterior belief
+  geom_line(aes(x = trial, y = mean, color = factor(agent_id)), size = 1) +
+  # Add true belief from simulation
+  geom_line(data = sequential_sim_data %>% filter(agent_id %in% selected_agents),
+            aes(x = trial, y = belief, group = agent_id), 
+            linetype = "dashed") +
+  # Add true choices
+  geom_point(data = sequential_sim_data %>% filter(agent_id %in% selected_agents),
+             aes(x = trial, y = choice, shape = "Actual Choice"), size = 2) +
+  # Styling
+  facet_wrap(~ agent_id, ncol = 1) +
+  scale_fill_manual(values = c("0" = "pink", "1" = "lightblue"), 
+                  labels = c("Mostly Red Jar", "Mostly Blue Jar"),
+                  name = "True Jar State") +
+    scale_color_brewer(palette = "Dark2", name = "Agent ID") +
+  scale_shape_manual(values = c("Actual Choice" = 4)) +
+  ylim(0, 1) +
+  labs(
+    title = "Belief Updating Over Time",
+    subtitle = "Blue ribbons show 95% credible intervals of estimated beliefs\nDashed lines show true simulated beliefs",
+    x = "Trial",
+    y = "Belief/Choice Probability",
+    shape = ""
+  ) +
+  theme_minimal()
+
+# Display belief trajectories
+print(p_belief_trajectories)
+
+# Compare learning styles across agents
+learning_styles <- recovery_data %>%
+  mutate(
+    relative_weight = est_weight_direct / est_weight_social,
+    learning_speed = est_learning_rate
+  )
+
+p_learning_styles <- ggplot(learning_styles, aes(x = relative_weight, y = learning_speed)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(aes(label = agent_id), hjust = -0.3, vjust = 0.3, size = 3) +
+  labs(
+    title = "Individual Learning Styles",
+    subtitle = "Mapping agents by their evidence weighting and learning speed",
+    x = "Relative Weight (Direct/Social)",
+    y = "Learning Rate"
+  ) +
+  theme_minimal()
+
+print(p_learning_styles)
+
+# Calculate correlations between estimated parameters
+param_correlations <- cor(
+  cbind(
+    learning_styles$est_weight_direct,
+    learning_styles$est_weight_social,
+    learning_styles$est_learning_rate
+  )
+)
+
+colnames(param_correlations) <- rownames(param_correlations) <- 
+  c("Weight (Direct)", "Weight (Social)", "Learning Rate")
+
+# Extract population-level parameter correlations from the model
+correlation_matrix <- matrix(NA, nrow = 3, ncol = 3)
+for (i in 1:3) {
+  for (j in 1:3) {
+    correlation_matrix[i, j] <- mean(draws_seq_multilevel[[paste0("Omega[", i, ",", j, "]")]])
+  }
+}
+
+colnames(correlation_matrix) <- rownames(correlation_matrix) <- 
+  c("Total Weight", "Weight Prop", "Learning Rate")
+
+cat("\nEstimated parameter correlations:\n")
+print(param_correlations)
+
+cat("\nPopulation-level parameter correlations:\n")
+print(correlation_matrix)
+```
+
+## Sequential Bayesian Evidence Integration Models
+
+### Understanding Belief Updating Over Time
+
+Real-world learning rarely happens all at once - it's a dynamic process where our beliefs evolve as we gather new evidence over time. The sequential Bayesian models we've developed capture this dynamic learning process by tracking how beliefs are updated from trial to trial.
+
+### The Sequential Updating Framework
+
+Our sequential updating models build on the static evidence integration models from earlier, but with a crucial difference: beliefs are continuously updated based on new evidence. This creates a recursive structure where:
+
+* The agent starts with some initial belief (prior)
+
+* After observing evidence, they update their belief (posterior)
+
+* This posterior becomes the prior for the next trial
+
+* The process repeats for each new piece of evidence
+
+The key parameters that govern this updating process are:
+
+* Evidence weights (weight_direct and weight_social): How much influence each type of evidence has
+
+* Learning rate (alpha): How quickly beliefs change in response to new evidence
+
+The learning rate parameter is particularly important - it determines whether an agent is conservative (low learning rate) or responsive (high learning rate) to new information. A learning rate near 1.0 means the agent fully incorporates new evidence, while a rate closer to 0 means the agent makes only small adjustments to beliefs.
+
+### Mathematical Formulation
+
+For each trial t, the agent's belief is updated according to:
+
+α_t = α_t − 1 + λ × (w_d × E_d, t − 1 + w_s × E_s, t − 1)
+
+β_t = β_t − 1 + λ × (w_d × (T_d, t−1−E_d, t−1) + w_s × (T_s,t−1−E_s,t−1))
+
+Belief_t = α_t α_t + β_t
+
+Where:
+
+α_t and β_t are the parameters of the Beta distribution representing the belief at trial t
+
+λ is the learning rate
+
+w_d and w_s are the weights for direct and social evidence
+
+E_{d,t−1}  and E_{s,t-1} are the counts of blue marbles/signals in the previous trial
+
+T_{d,t-1} and T_{s,t-1} are the total counts of marbles/signals in the previous trial
+
+### Moving from Single-Agent to Multilevel
+
+The multilevel extension allows us to model individual differences in learning while still leveraging the commonalities across individuals. This approach:
+
+* Captures individual learning styles: Some people may learn faster, others may weight certain evidence types more heavily
+
+* Models population distributions: Helps understand the typical learning patterns and the range of variation
+Improves parameter estimation: Especially for individuals with limited or noisy data
+
+The multilevel structure adds substantial complexity to the model implementation, requiring careful handling of:
+
+Trial sequences: Each agent has their own sequence of trials and updating process
+Parameter correlations: Learning rate might correlate with evidence weighting
+Computational efficiency: Sequential updating creates dependencies that make parallelization challenging
+
+Interpreting Model Results
+Our simulation and model fitting reveal several important insights:
+Parameter Recovery
+The model successfully recovers the key cognitive parameters:
+
+Evidence weights: How much individuals trust different information sources
+Learning rate: How quickly they update their beliefs
+
+This validates that our model can meaningfully measure these cognitive processes from observed choices.
+Learning Style Differences
+The scatterplot of learning styles shows a two-dimensional space of cognitive strategies:
+
+The x-axis represents relative weighting of direct vs. social evidence
+The y-axis represents learning speed (how quickly beliefs change)
+
+This creates a typology of learners:
+
+Fast direct learners: Rapidly update based primarily on their own observations
+Cautious social learners: Slowly incorporate information, with emphasis on social cues
+Balanced adapters: Moderate learning rate with equal weighting of evidence sources
+
+Belief Trajectories
+The plots of belief trajectories over time reveal how individuals track changing environmental statistics:
+
+The shaded regions show the model's uncertainty about beliefs
+The comparison with true simulated beliefs validates the model's ability to recover learning dynamics
+The background coloring shows how beliefs align with true environmental states (jar probabilities)
+
+Parameter Correlations
+The correlation matrix reveals relationships between cognitive parameters:
+
+A negative correlation between learning rate and total evidence weight would suggest compensatory strategies (fast updating with conservative evidence weighting, or slow updating with strong evidence weighting)
+Correlations between direct and social weights might indicate general trust or skepticism toward evidence

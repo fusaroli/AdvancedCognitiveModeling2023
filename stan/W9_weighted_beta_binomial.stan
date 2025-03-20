@@ -9,15 +9,19 @@ data {
 }
 
 parameters {
-  // Using inverse logit for better numeric properties
-  real<lower=0> weight_direct;           // Direct evidence weight
-  real<lower=0> weight_social;           // Social evidence weight
+  real<lower=0> total_weight;         // Total influence of all evidence
+  real<lower=0, upper=1> weight_prop; // Proportion of weight for direct evidence
+}
+
+transformed parameters {
+  real<lower=0> weight_direct = total_weight * weight_prop;
+  real<lower=0> weight_social = total_weight * (1 - weight_prop);
 }
 
 model {
   // Priors
-  target += normal_lpdf(weight_direct | 1, 0.3);  // Exponential prior with mean 1
-  target += normal_lpdf(weight_social | 1, 0.3);  // Exponential prior with mean 1
+  target += gamma_lpdf(total_weight | 2, 1);  // Centered around 2 with reasonable spread
+  target += beta_lpdf(weight_prop | 1, 1);    // Uniform prior on proportion
   
   // Each observation is a separate decision
   for (i in 1:N) {
@@ -43,6 +47,8 @@ generated quantities {
   // Log likelihood and predictions
   vector[N] log_lik;
   array[N] int posterior_pred_choice;
+  real weight_direct_prior = normal_rng(1, 0.3);
+  real weight_social_prior = normal_rng(1, 0.3);
   
   for (i in 1:N) {
     real weighted_blue1 = blue1[i] * weight_direct;
