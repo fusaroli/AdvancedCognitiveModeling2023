@@ -15,31 +15,50 @@ data {
 }
 
 parameters {
+  // Population-level parameters for agents' preconceptions
+  real mu_alpha_prior;                   // Population mean for alpha prior
+  real<lower=0> sigma_alpha_prior;       // Population SD for alpha prior
+  real mu_beta_prior;                    // Population mean for beta prior
+  real<lower=0> sigma_beta_prior;        // Population SD for beta prior
+  
   // Population-level parameter for overall scaling
   real mu_scaling;                       // Population mean scaling factor (log scale)
   real<lower=0> sigma_scaling;           // Population SD of scaling
   
   // Individual-level (random) effects
+  vector[J] z_alpha_prior;               // Standardized individual deviations for alpha prior
+  vector[J] z_beta_prior;                // Standardized individual deviations for beta prior
   vector[J] z_scaling;                   // Standardized individual deviations
+  
 }
 
 transformed parameters {
   // Individual-level parameters
   vector<lower=0>[J] scaling_factor;     // Individual scaling factors
+  vector<lower=0>[J] alpha_prior;        // Individual alpha prior
+  vector<lower=0>[J] beta_prior;         // Individual beta prior
   
   // Non-centered parameterization for scaling factor
   for (j in 1:J) {
+    alpha_prior[j] = exp(mu_alpha_prior + z_alpha_prior[j] * sigma_alpha_prior);
+    beta_prior[j] = exp(mu_beta_prior + z_beta_prior[j] * sigma_beta_prior);
     scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
   }
 }
 
 model {
   // Priors for population parameters
-  mu_scaling ~ normal(0, 1);             // Prior for log scaling factor
-  sigma_scaling ~ exponential(2);        // Prior for between-subject variability
+  target += lognormal_lpdf(mu_alpha_prior | 0, 1);         // Prior for population mean of alpha prior
+  target += exponential_lpdf(sigma_alpha_prior | 1);       // Prior for population SD of alpha prior
+  target += lognormal_lpdf(mu_beta_prior | 0, 1);          // Prior for population mean of beta prior
+  target += exponential_lpdf(sigma_beta_prior | 1);        // Prior for population SD of beta prior
+  target += normal_lpdf(mu_scaling | 0, 1);             // Prior for log scaling factor
+  target += exponential_lpdf(sigma_scaling | 2);        // Prior for between-subject variability
   
   // Prior for standardized random effects
   z_scaling ~ std_normal();              // Standard normal prior
+  z_alpha_prior ~ std_normal();          // Standard normal prior
+  z_beta_prior ~ std_normal();           // Standard normal prior
   
   // Likelihood
   for (i in 1:N) {
@@ -54,8 +73,8 @@ model {
     real weighted_red2 = (total2[i] - blue2[i]) * scale;
     
     // Calculate Beta parameters for posterior
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Use beta-binomial distribution to model the choice
     target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -83,8 +102,8 @@ generated quantities {
     real weighted_red2 = (total2[i] - blue2[i]) * scale;
     
     // Calculate Beta parameters
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Generate predictions using beta-binomial
     pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);

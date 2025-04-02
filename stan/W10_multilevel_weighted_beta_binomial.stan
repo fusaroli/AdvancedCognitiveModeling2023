@@ -15,6 +15,13 @@ data {
 }
 
 parameters {
+  
+  // Population-level parameters for agents' preconceptions
+  real mu_alpha_prior;                   // Population mean for alpha prior
+  real<lower=0> sigma_alpha_prior;       // Population SD for alpha prior
+  real mu_beta_prior;                    // Population mean for beta prior
+  real<lower=0> sigma_beta_prior;        // Population SD for beta prior
+  
   // Population-level parameters
   real mu_weight_ratio;                  // Population mean for relative weight (direct/social) - log scale
   real mu_scaling;                       // Population mean for overall scaling - log scale
@@ -60,6 +67,8 @@ model {
   // Priors for individual random effects
   z_weight_ratio ~ std_normal();         // Standard normal prior for weight ratio z-scores
   z_scaling ~ std_normal();              // Standard normal prior for scaling z-scores
+  z_alpha_prior ~ std_normal();          // Standard normal prior
+  z_beta_prior ~ std_normal();           // Standard normal prior
   
   // Likelihood
   for (i in 1:N) {
@@ -74,8 +83,8 @@ model {
     real weighted_red2 = (total2[i] - blue2[i]) * w_social;
     
     // Calculate Beta parameters for Bayesian integration
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Use beta-binomial distribution to model the choice
     target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -107,8 +116,8 @@ generated quantities {
     real weighted_red2 = (total2[i] - blue2[i]) * w_social;
     
     // Calculate Beta parameters
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Generate predictions using beta-binomial
     pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);

@@ -1,0 +1,523 @@
+---
+title: "14-CategorizationModelsComparison"
+output: html_document
+date: "2025-03-21"
+---
+# Comparing Categorization Models: Exemplar, Prototype, and Rule-Based Approaches
+
+## Three Perspectives on Categorization
+
+Throughout this module, we've explored three major approaches to modeling categorization:
+
+1. **Exemplar Models (GCM)**: Categories are represented by storing individual examples, and categorization decisions are based on similarity to these stored exemplars.
+
+2. **Prototype Models (Kalman Filter)**: Categories are represented by their central tendencies or prototypes, which are dynamically updated as new examples are encountered.
+
+3. **Rule-Based Models (Bayesian Particle Filter)**: Categories are represented by explicit rules that define category boundaries, with rules discovered through hypothesis testing.
+
+Each approach captures different aspects of human categorization and makes distinct predictions about behavior. In this section, we'll systematically compare these models to understand their relative strengths, limitations, and complementary insights.
+
+## Theoretical Comparison
+
+### Core Assumptions
+
+| Model Type | Category Representation | Decision Process | Learning Mechanism |
+|------------|-------------------------|------------------|-------------------|
+| **Exemplar** | Individual instances | Similarity to all stored exemplars | Storage of examples with attention learning |
+| **Prototype** | Central tendency | Similarity to category prototype | Incremental prototype updating |
+| **Rule-Based** | Decision boundaries | Application of rules | Hypothesis testing and rule discovery |
+
+### Psychological Processes
+
+| Model Type | Attention | Memory | Generalization |
+|------------|-----------|--------|---------------|
+| **Exemplar** | Continuous weights across dimensions | Detailed memory for specific examples | Similarity-based, with sensitivity to specific exemplars |
+| **Prototype** | Implicit through prototype uncertainty | Abstract summary representation | Centered around prototype, less sensitive to specific examples |
+| **Rule-Based** | Selective focus on rule-relevant dimensions | Memory for rules, not examples | Sharp boundaries defined by rules |
+
+## Mathematical Comparison
+
+Here we'll compare the mathematical formulations of each model type, focusing on how they calculate the probability of assigning a stimulus to a category.
+
+### Exemplar Model (GCM)
+
+The GCM calculates categorization probability as:
+
+$$P(C_A|x) = \frac{\sum_{i \in A} \eta(x, x_i)}{\sum_{i \in A} \eta(x, x_i) + \sum_{j \in B} \eta(x, x_j)}$$
+
+Where:
+- $\eta(x, x_i) = e^{-c \cdot d(x, x_i)}$ is the similarity between stimulus $x$ and exemplar $x_i$
+- $d(x, x_i) = \sum_{m} w_m |x_m - x_{i,m}|$ is the weighted distance between the stimulus and exemplar
+- $c$ is the sensitivity parameter
+- $w_m$ are attention weights for each dimension
+
+### Prototype Model (Kalman Filter)
+
+The Kalman filter prototype model calculates categorization probability using:
+
+$$P(C_A|x) = \frac{e^{-\frac{1}{2}(x-\mu_A)^T(\Sigma_A+R)^{-1}(x-\mu_A)}}{e^{-\frac{1}{2}(x-\mu_A)^T(\Sigma_A+R)^{-1}(x-\mu_A)} + e^{-\frac{1}{2}(x-\mu_B)^T(\Sigma_B+R)^{-1}(x-\mu_B)}}$$
+
+Where:
+- $\mu_A$ is the prototype (mean) of category A
+- $\Sigma_A$ is the uncertainty (covariance) of category A
+- $R$ is the observation noise
+
+### Rule-Based Model (Bayesian Particle Filter)
+
+The rule-based model calculates categorization probability as:
+
+$$P(C_A|x) = \sum_r P(C_A|x,r) \cdot P(r)$$
+
+Where:
+- $P(C_A|x,r)$ is the probability of category A given stimulus $x$ under rule $r$
+- $P(r)$ is the probability (weight) assigned to rule $r$
+- For deterministic rules with noise: $P(C_A|x,r) = 1-\epsilon$ if rule $r$ predicts category A, and $\epsilon$ otherwise
+
+## Empirical Comparison
+
+Let's directly compare how the three models perform on our categorization task:
+
+```r
+# Function to compare model performance across all three model types
+compare_models <- function() {
+  # Parameters for each model
+  gcm_params <- list(w = c(0.5, 0.5), c = 1.0)
+  prototype_params <- list(r_value = 1.0)
+  rule_params <- list(n_particles = 100, n_dimensions = 2, error_prob = 0.1)
+  
+  # Get observations and categories
+  observations <- as.matrix(experiment[, c("height", "position")])
+  categories <- experiment$category
+  
+  # Run each model
+  gcm_responses <- gcm(gcm_params$w, gcm_params$c, observations, categories)
+  prototype_responses <- prototype_kalman(prototype_params$r_value, observations, categories)
+  rule_responses <- rule_particle_filter(
+    rule_params$n_particles, 
+    rule_params$n_dimensions, 
+    rule_params$error_prob, 
+    observations, 
+    categories
+  )
+  
+  # Calculate accuracy for each model
+  gcm_accuracy <- mean(gcm_responses == categories)
+  prototype_accuracy <- mean(prototype_responses == categories)
+  rule_accuracy <- mean(rule_responses == categories)
+  
+  # Create results dataframe
+  results <- tibble(
+    trial = 1:length(categories),
+    category = categories,
+    gcm_response = gcm_responses,
+    prototype_response = prototype_responses,
+    rule_response = rule_responses,
+    gcm_correct = gcm_responses == categories,
+    prototype_correct = prototype_responses == categories,
+    rule_correct = rule_responses == categories,
+    gcm_cum_acc = cumsum(gcm_correct) / seq_along(gcm_correct),
+    prototype_cum_acc = cumsum(prototype_correct) / seq_along(prototype_correct),
+    rule_cum_acc = cumsum(rule_correct) / seq_along(rule_correct)
+  )
+  
+  return(list(
+    results = results,
+    accuracy = c(gcm = gcm_accuracy, prototype = prototype_accuracy, rule = rule_accuracy)
+  ))
+}
+
+# Compare models
+comparison <- compare_models()
+
+# Visualize learning curves
+ggplot(comparison$results %>% pivot_longer(
+    cols = c(gcm_cum_acc, prototype_cum_acc, rule_cum_acc),
+    names_to = "model",
+    values_to = "accuracy"
+  ) %>% mutate(
+    model = factor(model, 
+                 levels = c("gcm_cum_acc", "prototype_cum_acc", "rule_cum_acc"),
+                 labels = c("Exemplar (GCM)", "Prototype (Kalman)", "Rule-Based (Particle)"))
+  )) +
+  geom_line(aes(trial, accuracy, color = model), size = 1) +
+  labs(
+    title = "Learning Curves for Different Categorization Models",
+    x = "Trial",
+    y = "Cumulative Accuracy",
+    color = "Model Type"
+  ) +
+  theme_minimal() +
+  ylim(0.4, 1.0)
+
+# Visualize overall accuracy
+ggplot(tibble(
+  model = c("Exemplar (GCM)", "Prototype (Kalman)", "Rule-Based (Particle)"),
+  accuracy = comparison$accuracy
+)) +
+  geom_col(aes(model, accuracy, fill = model), alpha = 0.7) +
+  geom_text(aes(model, accuracy, label = scales::percent(accuracy, accuracy = 0.1)),
+           vjust = -0.5) +
+  labs(
+    title = "Overall Accuracy Comparison",
+    x = "Model Type",
+    y = "Accuracy"
+  ) +
+  ylim(0, 1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+### Decision Boundary Comparison
+
+Another enlightening way to compare the models is to visualize their decision boundaries:
+
+```r
+# Create a grid of points in the stimulus space
+grid_points <- expand.grid(
+  position = seq(min(stimuli$position) - 0.5, max(stimuli$position) + 0.5, length.out = 50),
+  height = seq(min(stimuli$height) - 0.5, max(stimuli$height) + 0.5, length.out = 50)
+)
+
+# Get model predictions for grid points
+gcm_preds <- get_gcm_predictions(
+  w = c(0.5, 0.5), 
+  c = 1.0,
+  training_obs = as.matrix(stimuli[, c("height", "position")]),
+  training_cat = as.numeric(as.character(stimuli$category))
+)
+
+prototype_preds <- get_prototype_predictions(
+  r_value = 1.0,
+  training_obs = as.matrix(stimuli[, c("height", "position")]),
+  training_cat = as.numeric(as.character(stimuli$category))
+)
+
+rule_preds <- get_rule_predictions(
+  n_particles = 100,
+  n_dimensions = 2,
+  error_prob = 0.1,
+  training_obs = as.matrix(stimuli[, c("height", "position")]),
+  training_cat = as.numeric(as.character(stimuli$category))
+)
+
+# Combine predictions
+decision_data <- grid_points %>%
+  mutate(
+    gcm_prob = gcm_preds,
+    prototype_prob = prototype_preds,
+    rule_prob = rule_preds,
+    gcm_decision = gcm_prob > 0.5,
+    prototype_decision = prototype_prob > 0.5,
+    rule_decision = rule_prob > 0.5
+  )
+
+# Create decision boundary plots
+p1 <- ggplot() +
+  geom_tile(data = decision_data, 
+            aes(position, height, fill = gcm_decision), 
+            alpha = 0.3) +
+  stat_contour(data = decision_data, 
+               aes(position, height, z = gcm_prob),
+               breaks = 0.5, color = "black", size = 1) +
+  geom_point(data = stimuli, 
+             aes(position, height, color = category),
+             size = 3) +
+  scale_fill_manual(values = c("FALSE" = "tomato", "TRUE" = "skyblue")) +
+  labs(
+    title = "Exemplar Model (GCM)",
+    x = "Position",
+    y = "Height"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot() +
+  geom_tile(data = decision_data, 
+            aes(position, height, fill = prototype_decision), 
+            alpha = 0.3) +
+  stat_contour(data = decision_data, 
+               aes(position, height, z = prototype_prob),
+               breaks = 0.5, color = "black", size = 1) +
+  geom_point(data = stimuli, 
+             aes(position, height, color = category),
+             size = 3) +
+  scale_fill_manual(values = c("FALSE" = "tomato", "TRUE" = "skyblue")) +
+  labs(
+    title = "Prototype Model (Kalman)",
+    x = "Position",
+    y = "Height"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p3 <- ggplot() +
+  geom_tile(data = decision_data, 
+            aes(position, height, fill = rule_decision), 
+            alpha = 0.3) +
+  stat_contour(data = decision_data, 
+               aes(position, height, z = rule_prob),
+               breaks = 0.5, color = "black", size = 1) +
+  geom_point(data = stimuli, 
+             aes(position, height, color = category),
+             size = 3) +
+  scale_fill_manual(values = c("FALSE" = "tomato", "TRUE" = "skyblue")) +
+  labs(
+    title = "Rule-Based Model (Particle)",
+    x = "Position",
+    y = "Height"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Combine plots
+p1 + p2 + p3
+```
+
+This visualization highlights the distinctive decision boundaries created by each model type:
+
+1. **Exemplar Model (GCM)**: Creates complex, potentially non-linear boundaries based on similarity to all exemplars.
+
+2. **Prototype Model (Kalman)**: Creates smoother, more regular boundaries based on distance from category prototypes.
+
+3. **Rule-Based Model (Particle)**: Creates rectangular, axis-aligned boundaries based on the best-fitting rules.
+
+## Different Predictions for Critical Test Items
+
+Beyond overall performance, the three model types make different predictions for specific types of test items. These differences can be used to empirically distinguish between the models.
+
+Let's examine several critical test item types and how each model would respond:
+
+### 1. Prototype vs. Exception Items
+
+Consider two types of test items:
+- **Prototype-like**: Items very close to the category prototype
+- **Exception**: Items similar to specific exemplars but distant from the prototype
+
+```r
+# Create test items
+prototype_item <- c(3.5, 2.5)  # Close to category 1 prototype
+exception_item <- c(1.8, 3.8)  # Similar to an exception in category 1
+
+# Get model predictions
+get_model_predictions <- function(test_item) {
+  # Exemplar model prediction
+  gcm_pred <- sum(exemplar_model_predict(test_item, 
+                                       as.matrix(stimuli[, c("height", "position")]),
+                                       as.numeric(as.character(stimuli$category)),
+                                       w = c(0.5, 0.5),
+                                       c = 1.0))
+  
+  # Prototype model prediction
+  prototype_pred <- prototype_model_predict(test_item,
+                                         as.matrix(stimuli[, c("height", "position")]),
+                                         as.numeric(as.character(stimuli$category)),
+                                         r_value = 1.0)
+  
+  # Rule-based model prediction
+  rule_pred <- rule_model_predict(test_item,
+                               as.matrix(stimuli[, c("height", "position")]),
+                               as.numeric(as.character(stimuli$category)),
+                               n_particles = 100,
+                               n_dimensions = 2,
+                               error_prob = 0.1)
+  
+  return(tibble(
+    model = c("Exemplar (GCM)", "Prototype (Kalman)", "Rule-Based (Particle)"),
+    probability = c(gcm_pred, prototype_pred, rule_pred)
+  ))
+}
+
+# Get predictions for both items
+prototype_predictions <- get_model_predictions(prototype_item) %>%
+  mutate(item_type = "Prototype-like")
+
+exception_predictions <- get_model_predictions(exception_item) %>%
+  mutate(item_type = "Exception")
+
+# Combine and visualize
+rbind(prototype_predictions, exception_predictions) %>%
+  ggplot(aes(model, probability, fill = model)) +
+  geom_col() +
+  facet_wrap(~ item_type) +
+  labs(
+    title = "Model Predictions for Critical Test Items",
+    x = "Model",
+    y = "Probability of Category 1",
+    fill = "Model"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The key contrast here is that:
+- **Exemplar models** predict high categorization accuracy for both prototype and exception items
+- **Prototype models** predict high accuracy for prototype items but poor performance on exceptions
+- **Rule-based models** depend on whether the items fall on the same side of the decision boundary
+
+### 2. Linear vs. Non-Linear Boundaries
+
+Another diagnostic test involves category structures with different boundary types:
+- **Linear-separable**: Categories can be separated by a straight line
+- **Non-linear**: Categories require a curved or complex boundary
+
+Each model type has different abilities to learn these structures:
+- **Exemplar models** can learn both linear and non-linear boundaries
+- **Prototype models** struggle with non-linear boundaries
+- **Rule-based models** with simple rules struggle with non-linear boundaries but can approximate them with multiple rules
+
+### 3. Feature Correlation Sensitivity
+
+A third discriminating case involves sensitivity to correlations between features:
+- **Exemplar models** naturally capture feature correlations through stored examples
+- **Prototype models** can capture correlations in the covariance matrix
+- **Rule-based models** with simple rules don't naturally represent correlations but can with complex combination rules
+
+## Quantitative Model Comparison
+
+To formally compare the three models, we can use Bayesian model comparison techniques like LOO-CV (Leave-One-Out Cross-Validation).
+
+```r
+# Calculate LOO for all models
+loo_gcm <- loo(extract_log_lik(gcm_fit))
+loo_prototype <- loo(extract_log_lik(prototype_fit))
+loo_rule <- loo(extract_log_lik(rule_fit))
+
+# Compare models
+model_comparison <- loo_compare(loo_gcm, loo_prototype, loo_rule)
+print(model_comparison)
+
+# Calculate model weights
+model_weights <- loo_model_weights(list(
+  Exemplar = loo_gcm,
+  Prototype = loo_prototype,
+  Rule = loo_rule
+))
+
+# Visualize model weights
+ggplot(tibble(
+  model = names(model_weights),
+  weight = as.numeric(model_weights)
+)) +
+  geom_col(aes(model, weight, fill = model), alpha = 0.7) +
+  geom_text(aes(model, weight, label = scales::percent(weight, accuracy = 0.1)),
+           vjust = -0.5) +
+  labs(
+    title = "Model Weights from LOO-CV Comparison",
+    subtitle = "Higher values indicate better predictive performance",
+    x = NULL,
+    y = "Model Weight"
+  ) +
+  ylim(0, 1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+This comparison would tell us which model best predicts human categorization behavior in our task, accounting for both fit to the data and model complexity.
+
+## Performance on Different Category Structures
+
+Different category structures can favor different models. Let's compare how the models perform on three distinct structures:
+
+1. **Family Resemblance**: Categories defined by overall similarity to a prototype, with no single necessary feature
+2. **Rule-Based**: Categories defined by a simple rule (e.g., "height > 2.5")
+3. **Information Integration**: Categories defined by integrating information from multiple dimensions
+
+For each structure, we can:
+- Generate appropriate stimuli
+- Simulate human-like categorization behavior
+- Fit all three models
+- Compare their fit
+
+This would reveal which model best accounts for which type of category structure, informing our understanding of when different cognitive processes might be engaged.
+
+## Individual Differences in Categorization Strategy
+
+An important aspect of categorization is that different individuals may use different strategies even for the same category structure. Our three model types can capture different patterns of individual differences:
+
+1. **Exemplar Model**: Individual differences in attention weights and sensitivity
+2. **Prototype Model**: Individual differences in observation noise and initial uncertainty
+3. **Rule-Based Model**: Individual differences in rule complexity preference and error tolerance
+
+By fitting all three models to individual participants' data, we can:
+- Identify which model best describes each participant
+- Examine patterns of strategy use across participants
+- Potentially discover subgroups of participants who approach the task differently
+
+This multilevel approach acknowledges the heterogeneity in human categorization strategies and avoids forcing a one-size-fits-all model.
+
+## Process-Level Predictions
+
+Beyond categorization decisions, our models make different process-level predictions that can be empirically tested:
+
+### Response Times
+
+- **Exemplar Model**: Predicts slower responses for items similar to exemplars from both categories
+- **Prototype Model**: Predicts faster responses for prototype-near items, slower for boundary items
+- **Rule-Based Model**: Predicts consistent response times regardless of proximity to boundary (for simple rules)
+
+### Eye Movements
+
+- **Exemplar Model**: Predicts attention to all relevant dimensions
+- **Prototype Model**: Similar to exemplar predictions but less sensitive to specific examples
+- **Rule-Based Model**: Predicts focused attention on rule-relevant dimensions
+
+### Learning Curves
+
+- **Exemplar Model**: Predicts gradual, continuous improvement
+- **Prototype Model**: Predicts relatively rapid initial learning followed by asymptotic improvement
+- **Rule-Based Model**: Predicts more abrupt improvements as correct rules are discovered
+
+Collecting these process measures provides additional constraints for distinguishing between models, even when they make similar predictions about categorization decisions.
+
+## The Case for Multiple Systems
+
+Given the various strengths and limitations of each model type, recent theoretical approaches have moved toward multiple-system accounts of categorization. These theories propose that humans have access to multiple categorization systems that may operate in parallel or be engaged depending on the task.
+
+For example, the COVIS model (Competition between Verbal and Implicit Systems) proposes two distinct categorization systems:
+
+1. **Explicit System**: Rule-based, dependent on working memory and executive functions
+2. **Implicit System**: Similarity-based, operating outside of conscious awareness
+
+Other hybrid approaches include:
+
+- **ATRIUM**: Attention to Rules and Instances in a Unified Model
+- **SUSTAIN**: Supervised and Unsupervised STratified Adaptive Incremental Network
+- **Bayesian Nonparametric Models**: Allowing flexible combinations of rules and similarity
+
+These approaches suggest that the debate between exemplar, prototype, and rule-based models might be resolved by recognizing that all three processes can contribute to human categorization, depending on the task, instructions, and individual differences.
+
+## Practical Implications of Model Differences
+
+The differences between these models have important practical implications:
+
+### Education and Training
+
+- **If learning is exemplar-based**: Provide diverse examples that span the category
+- **If learning is prototype-based**: Highlight typical examples that represent category centers
+- **If learning is rule-based**: Explicitly teach rules and boundary conditions
+
+### Assessment
+
+- **Exemplar models** predict better transfer to items similar to training examples
+- **Prototype models** predict better performance on typical but previously unseen items
+- **Rule-based models** predict sharp distinctions between rule-consistent and rule-violating items
+
+### Intervention Design
+
+- **For exemplar-based categories**: Focus on expanding the set of stored examples
+- **For prototype-based categories**: Clarify the central tendency of each category
+- **For rule-based categories**: Make rules explicit and practice rule application
+
+## Conclusion: Complementary Insights from Multiple Models
+
+Rather than viewing exemplar, prototype, and rule-based models as competing alternatives, we can appreciate the complementary insights they provide:
+
+1. **Exemplar Models** highlight the importance of specific experiences and memory in categorization, showing how new items are compared to remembered examples.
+
+2. **Prototype Models** emphasize the cognitive efficiency of abstract representations, demonstrating how we can maintain summary information without storing every example.
+
+3. **Rule-Based Models** capture the human ability to form explicit hypotheses and test them against evidence, reflecting the role of language and explicit reasoning in categorization.
+
+Together, these different modeling approaches provide a richer understanding of the complex cognitive processes involved in human categorization than any single approach alone could offer.
+
+The future of categorization modeling likely lies not in determining which of these approaches is "correct," but in understanding when and how each type of process contributes to human category learning and use, and how these processes interact and complement each other in everyday cognition.

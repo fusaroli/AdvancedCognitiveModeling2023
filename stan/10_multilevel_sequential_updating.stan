@@ -20,7 +20,7 @@ parameters {
   // Population-level parameters
   real mu_total_weight;                   // Population mean log total weight
   real mu_weight_prop_logit;              // Population mean logit weight proportion
-  real mu_alpha_log;                      // Population mean log learning rate
+  real mu_learning_log;                      // Population mean log learning rate
   
   // Population-level standard deviations
   vector<lower=0>[3] tau;                 // SDs for [total_weight, weight_prop, alpha]
@@ -36,7 +36,7 @@ transformed parameters {
   // Individual-level parameters
   vector<lower=0>[J] total_weight;        // Total evidence weight for each agent
   vector<lower=0, upper=1>[J] weight_prop; // Weight proportion for each agent
-  vector<lower=0>[J] alpha;               // Learning rate for each agent
+  vector<lower=0>[J] learning;               // Learning rate for each agent
   vector<lower=0>[J] weight_direct;       // Direct evidence weight for each agent
   vector<lower=0>[J] weight_social;       // Social evidence weight for each agent
   
@@ -51,7 +51,7 @@ transformed parameters {
     // Transform individual parameters to appropriate scales
     total_weight[j] = exp(mu_total_weight + theta[1, j]);
     weight_prop[j] = inv_logit(mu_weight_prop_logit + theta[2, j]);
-    alpha[j] = exp(mu_alpha_log + theta[3, j]);
+    learning[j] = exp(mu_learning_log + theta[3, j]);
     
     // Calculate derived weights
     weight_direct[j] = total_weight[j] * weight_prop[j];

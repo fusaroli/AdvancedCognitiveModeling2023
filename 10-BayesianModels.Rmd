@@ -1069,12 +1069,21 @@ data {
   array[N] int<lower=0> total2;        // Total social evidence (total signals)
 }
 
+parameters{
+  real<lower = 0> alpha_prior;                    // Prior alpha parameter
+  real<lower = 0> beta_prior;                     // Prior beta parameter
+}
+
 model {
+
+  target += lognormal_lpdf(alpha_prior | 0, 1); // Prior on alpha_prior, the agent bias towards blue
+  target += lognormal_lpdf(beta_prior | 0, 1);  // Prior on beta_prior, the agent bias towards red
+
   // Each observation is a separate decision
   for (i in 1:N) {
     // Calculate Beta parameters for posterior belief distribution
-    real alpha_post = 1 + blue1[i] + blue2[i];
-    real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+    real alpha_post = alpha_prior + blue1[i] + blue2[i];
+    real beta_post = beta_prior + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
     
     // Use beta_binomial distribution which integrates over all possible values
     // of the rate parameter weighted by their posterior probability
@@ -1095,8 +1104,8 @@ generated quantities {
     prior_pred_choice[i] = beta_binomial_rng(1, 1, 1);
     
     // For posterior predictions, use integrated evidence
-    real alpha_post = 1 + blue1[i] + blue2[i];
-    real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+    real alpha_post = alpha_prior + blue1[i] + blue2[i];
+    real beta_post = beta_prior + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
     
     // Generate predictions using the complete beta-binomial model
     posterior_pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
@@ -1119,6 +1128,8 @@ data {
 }
 
 parameters {
+  real<lower = 0> alpha_prior;                    // Prior alpha parameter
+  real<lower = 0> beta_prior;                     // Prior beta parameter
   real<lower=0> total_weight;         // Total influence of all evidence
   real<lower=0, upper=1> weight_prop; // Proportion of weight for direct evidence
 }
@@ -1130,6 +1141,8 @@ transformed parameters {
 
 model {
   // Priors
+  target += lognormal_lpdf(alpha_prior | 0, 1); // Prior on alpha_prior
+  target += lognormal_lpdf(beta_prior | 0, 1);  // Prior on beta_prior
   target += lognormal_lpdf(total_weight | .8, .4);  // Centered around 2 with reasonable spread and always positive
   target += beta_lpdf(weight_prop | 1, 1);    // Uniform prior on proportion
   
@@ -1142,8 +1155,8 @@ model {
     real weighted_red2 = (total2[i] - blue2[i]) * weight_social;
     
     // Calculate Beta parameters for this decision
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior + weighted_red1 + weighted_red2;
     
     // Use beta_binomial distribution to integrate over the full posterior
     target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -1155,6 +1168,10 @@ generated quantities {
   vector[N] log_lik;
   array[N] int posterior_pred_choice;
   array[N] int prior_pred_choice;
+  
+  // Sample the agent's preconceptions
+  real alpha_prior_prior = lognormal_rng(0, 1);
+  real beta_prior_prior = lognormal_rng(0, 1);
   
   // Sample from priors for the reparameterized model
   real<lower = 0> total_weight_prior = lognormal_rng(.8, .4);
@@ -1172,8 +1189,8 @@ generated quantities {
     real weighted_blue2 = blue2[i] * weight_social;
     real weighted_red2 = (total2[i] - blue2[i]) * weight_social;
     
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior + weighted_red1 + weighted_red2;
     
     // Log likelihood using beta_binomial
     log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -1187,8 +1204,8 @@ generated quantities {
     real prior_weighted_blue2 = blue2[i] * weight_social_prior;
     real prior_weighted_red2 = (total2[i] - blue2[i]) * weight_social_prior;
     
-    real alpha_prior = 1 + prior_weighted_blue1 + prior_weighted_blue2;
-    real beta_prior = 1 + prior_weighted_red1 + prior_weighted_red2;
+    real alpha_prior_preds = alpha_prior + prior_weighted_blue1 + prior_weighted_blue2;
+    real beta_prior_preds = beta_prior + prior_weighted_red1 + prior_weighted_red2;
     
     // Generate predictions from the prior
     prior_pred_choice[i] = beta_binomial_rng(1, alpha_prior, beta_prior);
@@ -2443,7 +2460,7 @@ simple_population_scaling_sd <- 0.3      # SD of scaling factor (log-scale)
 # Define population parameters for weighted model
 weighted_population_scaling_mean <- 1.5   # Mean scaling factor (log-scale)
 weighted_population_scaling_sd <- 0.3     # SD of scaling factor (log-scale)
-weighted_population_ratio_mean <- 0.0     # Mean weight ratio (log-scale, 0 = equal weights)
+weighted_population_ratio_mean <- 1     # Mean weight ratio (log-scale, 0 = equal weights)
 weighted_population_ratio_sd <- 0.5       # SD of weight ratio (log-scale)
 
 # Generate agent parameters for simple model
@@ -2859,31 +2876,50 @@ data {
 }
 
 parameters {
+  // Population-level parameters for agents' preconceptions
+  real mu_alpha_prior;                   // Population mean for alpha prior
+  real<lower=0> sigma_alpha_prior;       // Population SD for alpha prior
+  real mu_beta_prior;                    // Population mean for beta prior
+  real<lower=0> sigma_beta_prior;        // Population SD for beta prior
+  
   // Population-level parameter for overall scaling
   real mu_scaling;                       // Population mean scaling factor (log scale)
   real<lower=0> sigma_scaling;           // Population SD of scaling
   
   // Individual-level (random) effects
+  vector[J] z_alpha_prior;               // Standardized individual deviations for alpha prior
+  vector[J] z_beta_prior;                // Standardized individual deviations for beta prior
   vector[J] z_scaling;                   // Standardized individual deviations
+  
 }
 
 transformed parameters {
   // Individual-level parameters
   vector<lower=0>[J] scaling_factor;     // Individual scaling factors
+  vector<lower=0>[J] alpha_prior;        // Individual alpha prior
+  vector<lower=0>[J] beta_prior;         // Individual beta prior
   
   // Non-centered parameterization for scaling factor
   for (j in 1:J) {
+    alpha_prior[j] = exp(mu_alpha_prior + z_alpha_prior[j] * sigma_alpha_prior);
+    beta_prior[j] = exp(mu_beta_prior + z_beta_prior[j] * sigma_beta_prior);
     scaling_factor[j] = exp(mu_scaling + z_scaling[j] * sigma_scaling);
   }
 }
 
 model {
   // Priors for population parameters
-  mu_scaling ~ normal(0, 1);             // Prior for log scaling factor
-  sigma_scaling ~ exponential(2);        // Prior for between-subject variability
+  target += lognormal_lpdf(mu_alpha_prior | 0, 1);         // Prior for population mean of alpha prior
+  target += exponential_lpdf(sigma_alpha_prior | 1);       // Prior for population SD of alpha prior
+  target += lognormal_lpdf(mu_beta_prior | 0, 1);          // Prior for population mean of beta prior
+  target += exponential_lpdf(sigma_beta_prior | 1);        // Prior for population SD of beta prior
+  target += normal_lpdf(mu_scaling | 0, 1);             // Prior for log scaling factor
+  target += exponential_lpdf(sigma_scaling | 2);        // Prior for between-subject variability
   
   // Prior for standardized random effects
   z_scaling ~ std_normal();              // Standard normal prior
+  z_alpha_prior ~ std_normal();          // Standard normal prior
+  z_beta_prior ~ std_normal();           // Standard normal prior
   
   // Likelihood
   for (i in 1:N) {
@@ -2898,8 +2934,8 @@ model {
     real weighted_red2 = (total2[i] - blue2[i]) * scale;
     
     // Calculate Beta parameters for posterior
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Use beta-binomial distribution to model the choice
     target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -2927,8 +2963,8 @@ generated quantities {
     real weighted_red2 = (total2[i] - blue2[i]) * scale;
     
     // Calculate Beta parameters
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Generate predictions using beta-binomial
     pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
@@ -2970,6 +3006,13 @@ data {
 }
 
 parameters {
+  
+  // Population-level parameters for agents' preconceptions
+  real mu_alpha_prior;                   // Population mean for alpha prior
+  real<lower=0> sigma_alpha_prior;       // Population SD for alpha prior
+  real mu_beta_prior;                    // Population mean for beta prior
+  real<lower=0> sigma_beta_prior;        // Population SD for beta prior
+  
   // Population-level parameters
   real mu_weight_ratio;                  // Population mean for relative weight (direct/social) - log scale
   real mu_scaling;                       // Population mean for overall scaling - log scale
@@ -3015,6 +3058,8 @@ model {
   // Priors for individual random effects
   z_weight_ratio ~ std_normal();         // Standard normal prior for weight ratio z-scores
   z_scaling ~ std_normal();              // Standard normal prior for scaling z-scores
+  z_alpha_prior ~ std_normal();          // Standard normal prior
+  z_beta_prior ~ std_normal();           // Standard normal prior
   
   // Likelihood
   for (i in 1:N) {
@@ -3029,8 +3074,8 @@ model {
     real weighted_red2 = (total2[i] - blue2[i]) * w_social;
     
     // Calculate Beta parameters for Bayesian integration
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Use beta-binomial distribution to model the choice
     target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -3062,8 +3107,8 @@ generated quantities {
     real weighted_red2 = (total2[i] - blue2[i]) * w_social;
     
     // Calculate Beta parameters
-    real alpha_post = 1 + weighted_blue1 + weighted_blue2;
-    real beta_post = 1 + weighted_red1 + weighted_red2;
+    real alpha_post = alpha_prior[agent_id[i]] + weighted_blue1 + weighted_blue2;
+    real beta_post = beta_prior[agent_id[i]] + weighted_red1 + weighted_red2;
     
     // Generate predictions using beta-binomial
     pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
@@ -3420,10 +3465,8 @@ elpd_by_agent <- multilevel_sim_data %>%
 # Calculate ELPD sums by agent
 for (j in 1:nrow(elpd_by_agent)) {
   agent <- elpd_by_agent$agent_id[j]
-  
   # Find rows for this agent
   agent_rows <- which(multilevel_sim_data$agent_id == agent)
-  
   # Sum ELPD values for this agent
   elpd_by_agent$elpd_simple[j] <- sum(elpd_simple[agent_rows])
   elpd_by_agent$elpd_weighted[j] <- sum(elpd_weighted[agent_rows])
@@ -3437,19 +3480,19 @@ elpd_by_agent <- elpd_by_agent %>%
   )
 
 # Create visualization of model preference by agent type
-p_agent_comp <- ggplot(elpd_by_agent, aes(x = model_type, y = elpd_diff, fill = better_model)) +
-  geom_boxplot() +
-  geom_jitter(width = 0.2, height = 0, alpha = 0.5) +
+
+p_agent_comp <- ggplot(elpd_by_agent, aes(x = agent_id, y = elpd_diff, color = model_type)) +
+  geom_point() +
   geom_hline(yintercept = 0, linetype = "dashed") +
   labs(
     title = "Model Preference by Agent Type",
     subtitle = "Positive values favor the weighted model; negative values favor the simple model",
     x = "True Agent Type",
     y = "ELPD Difference (Weighted - Simple)",
-    fill = "Preferred Model"
+    color = "Preferred Model"
   ) +
-  scale_fill_manual(values = c("Simple" = "blue", "Weighted" = "red")) +
   theme_minimal()
+
 
 print(p_agent_comp)
 
@@ -3521,7 +3564,7 @@ data {
 parameters {
   real<lower=0> total_weight;             // Overall weight given to evidence
   real<lower=0, upper=1> weight_prop;     // Proportion of weight for direct evidence
-  real<lower=0> alpha;                    // Learning rate parameter
+  real<lower=0> learning;                    // Learning rate parameter
 }
 
 transformed parameters {
@@ -3551,8 +3594,8 @@ transformed parameters {
     
     // Update belief with learning rate
     // alpha controls how much new evidence affects the belief
-    alpha_param[t] = alpha_param[t-1] + alpha * (weighted_blue1 + weighted_blue2);
-    beta_param[t] = beta_param[t-1] + alpha * (weighted_red1 + weighted_red2);
+    alpha_param[t] = alpha_param[t-1] + learning * (weighted_blue1 + weighted_blue2);
+    beta_param[t] = beta_param[t-1] + learning * (weighted_red1 + weighted_red2);
     
     // Calculate updated belief
     belief[t] = alpha_param[t] / (alpha_param[t] + beta_param[t]);
@@ -3625,7 +3668,7 @@ parameters {
   // Population-level parameters
   real mu_total_weight;                   // Population mean log total weight
   real mu_weight_prop_logit;              // Population mean logit weight proportion
-  real mu_alpha_log;                      // Population mean log learning rate
+  real mu_learning_log;                      // Population mean log learning rate
   
   // Population-level standard deviations
   vector<lower=0>[3] tau;                 // SDs for [total_weight, weight_prop, alpha]
@@ -3641,7 +3684,7 @@ transformed parameters {
   // Individual-level parameters
   vector<lower=0>[J] total_weight;        // Total evidence weight for each agent
   vector<lower=0, upper=1>[J] weight_prop; // Weight proportion for each agent
-  vector<lower=0>[J] alpha;               // Learning rate for each agent
+  vector<lower=0>[J] learning;               // Learning rate for each agent
   vector<lower=0>[J] weight_direct;       // Direct evidence weight for each agent
   vector<lower=0>[J] weight_social;       // Social evidence weight for each agent
   
@@ -3656,7 +3699,7 @@ transformed parameters {
     // Transform individual parameters to appropriate scales
     total_weight[j] = exp(mu_total_weight + theta[1, j]);
     weight_prop[j] = inv_logit(mu_weight_prop_logit + theta[2, j]);
-    alpha[j] = exp(mu_alpha_log + theta[3, j]);
+    learning[j] = exp(mu_learning_log + theta[3, j]);
     
     // Calculate derived weights
     weight_direct[j] = total_weight[j] * weight_prop[j];

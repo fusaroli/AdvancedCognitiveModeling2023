@@ -11,12 +11,21 @@ data {
   array[N] int<lower=0> total2;        // Total social evidence (total signals)
 }
 
+parameters{
+  real<lower = 0> alpha_prior;                    // Prior alpha parameter
+  real<lower = 0> beta_prior;                     // Prior beta parameter
+}
+
 model {
+
+  target += lognormal_lpdf(alpha_prior | 0, 1); // Prior on alpha_prior, the agent bias towards blue
+  target += lognormal_lpdf(beta_prior | 0, 1);  // Prior on beta_prior, the agent bias towards red
+
   // Each observation is a separate decision
   for (i in 1:N) {
     // Calculate Beta parameters for posterior belief distribution
-    real alpha_post = 1 + blue1[i] + blue2[i];
-    real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+    real alpha_post = alpha_prior + blue1[i] + blue2[i];
+    real beta_post = beta_prior + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
     
     // Use beta_binomial distribution which integrates over all possible values
     // of the rate parameter weighted by their posterior probability
@@ -37,8 +46,8 @@ generated quantities {
     prior_pred_choice[i] = beta_binomial_rng(1, 1, 1);
     
     // For posterior predictions, use integrated evidence
-    real alpha_post = 1 + blue1[i] + blue2[i];
-    real beta_post = 1 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+    real alpha_post = alpha_prior + blue1[i] + blue2[i];
+    real beta_post = beta_prior + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
     
     // Generate predictions using the complete beta-binomial model
     posterior_pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);

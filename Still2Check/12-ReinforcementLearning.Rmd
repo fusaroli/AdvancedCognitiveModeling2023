@@ -4,8 +4,13 @@ output: html_document
 date: "2024-02-14"
 ---
 
-```{r setup, include=FALSE}
+```{r RL_setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+# Flag to control whether to regenerate simulations
+# Set this to TRUE when you need to rerun time-consuming simulations
+regenerate_simulations <- FALSE
+
+# Load necessary packages
 pacman::p_load(
     tidyverse,
     future,
@@ -19,184 +24,497 @@ pacman::p_load(
 
 # Reinforcement Learning
 
-Reinforcement learning (RL) represents one of the most fundamental ways that organisms and artificial agents learn from experience. RL provides a nuanced framework for updating behavior based on feedback, which subsumes both biased random agents and the Win-Stay-Lose-Shift strategies we explored previously. In other words, extreme values of the model parameters (learning rate) are mathematically equivalent to the previous models. Rather than simply switching after failures, RL agents gradually adjust their expectations and behavior based on the difference between what they expected and what actually happened.
+## Introduction to Reinforcement Learning
+
+Reinforcement learning (RL) represents one of the most fundamental ways that organisms and artificial agents learn from experience. At its core, RL is about learning what actions to take in different situations to maximize cumulative reward. Unlike supervised learning, where an agent learns from labeled examples, RL agents learn through trial and error interactions with an environment.
+
+The RL framework provides a nuanced approach for updating behavior based on feedback, which subsumes both biased random agents and the Win-Stay-Lose-Shift strategies we explored previously. In fact, extreme values of the model parameters (particularly the learning rate) are mathematically equivalent to these simpler models. Rather than simply switching after failures, RL agents gradually adjust their expectations and behavior based on the difference between what they expected and what actually happened.
+
 This approach closely mirrors how humans and animals learn in many situations. When we try a new restaurant, we don't just categorize it as "good" or "bad" - we develop a sense of how good it is compared to our expectations, and this shapes how likely we are to return. Similarly, when playing games or sports, we develop nuanced preferences for different strategies based on their history of success.
-In this chapter, we'll implement a version of the Rescorla-Wagner model, one of the most influential RL models in cognitive science. This model, originally developed to explain animal learning, has proven remarkably useful in understanding human learning and decision-making across many domains. 
 
-[Missing additional RL models]
+In this chapter, we'll implement the Rescorla-Wagner model, one of the most influential RL models in cognitive science. This model, originally developed to explain classical conditioning in animals, has proven remarkably useful in understanding human learning and decision-making across many domains. We'll also explore variations of this model, including asymmetric learning rates and hierarchical (multilevel) extensions.
 
-```{r Functions}
+## Key Components of Reinforcement Learning
 
+RL models typically consist of the following key components:
+
+1. **Value representation**: Estimates of how good different actions or states are
+2. **Learning mechanism**: How these value estimates get updated based on experience
+3. **Action selection**: How the agent chooses actions based on its value estimates
+4. **Exploration strategy**: How the agent balances exploiting known rewards versus exploring uncertain options
+
+## Core RL Functions
+
+First, let's define the fundamental functions that will power our RL model. We need two key components:
+
+1. A way to convert value differences into choice probabilities (softmax function)
+2. A mechanism to update value estimates based on feedback (value update function)
+
+```{r RL_functions}
+# Softmax function converts value differences into choice probabilities
+# Parameters:
+#   x: Value difference between options
+#   tau: Temperature parameter controlling decision determinism
+# Higher tau = more deterministic choice of higher value option
+# Lower tau = more random exploration
 softmax <- function(x, tau) {
   outcome = 1 / (1 + exp(-tau * x))
   return(outcome)
 }
 
-ValueUpdate = function(value, alpha, choice, feedback) {
+# Value update function implements the Rescorla-Wagner learning rule
+# Parameters:
+#   value: Vector of current value estimates for each option
+#   alpha: Learning rate (0-1) controlling how quickly values update
+#   choice: Which option was chosen (0 or 1)
+#   feedback: Reward/punishment received (-1 to 1)
+ValueUpdate <- function(value, alpha, choice, feedback) {
+  # Calculate prediction error (PE) - the difference between 
+  # what happened (feedback) and what was expected (value)
+  PE <- feedback - value[choice + 1]
   
-  PE <- feedback - value
-  
+  # Update value of option 1 if it was chosen (choice = 0)
   v1 <- value[1] + alpha * (1 - choice) * (feedback - value[1])
-
-  v2 <- value[2] + alpha * (choice) * (feedback - value[2])
   
+  # Update value of option 2 if it was chosen (choice = 1)
+  v2 <- value[2] + alpha * choice * (feedback - value[2])
+  
+  # Return the updated value vector
   updatedValue <- c(v1, v2)
   
   return(updatedValue)
 }
 ```
 
-This softmax function converts raw value differences into choice probabilities. The tau parameter controls how deterministically the agent chooses the higher-valued option - high values of tau lead to more deterministic choice, while low values lead to more random exploration.
+The softmax function is a key component that transforms raw value differences into choice probabilities. It's particularly useful in RL because:
 
-The ValueUpdate function implements the core learning mechanism. Let's break down how it works:
+1. It implements a principled form of the exploration-exploitation tradeoff through the temperature parameter (tau)
+2. It allows for probabilistic choices, matching the stochastic nature of human and animal behavior
+3. It can represent anything from completely random choice (tau approaching 0) to strictly deterministic choice (tau approaching infinity)
 
-* It calculates the prediction error (PE) - the difference between what happened (feedback) and what was expected (value)
+The ValueUpdate function implements the core learning mechanism of the Rescorla-Wagner model. Let's break down how it works:
 
-* It updates the value estimates using this PE, weighted by the learning rate (alpha)
+1. It calculates the prediction error (PE) - the difference between what happened (feedback) and what was expected (value)
+2. It updates the value estimates using this PE, weighted by the learning rate (alpha)
+3. Only the chosen option's value gets updated, since we don't learn about options we didn't choose
+4. The learning rate (alpha) controls how quickly values change in response to new information
 
-* Only the chosen option's value gets updated, since we don't learn about options we didn't choose
+## Defining Basic Simulation Parameters
 
-## Defining parameters
+Let's define the basic parameters for our simulations:
 
-```{r }
+```{r RL_parameters}
+# Number of agents and trials in our simulations
 agents <- 100
 trials <- 120
 ```
 
-## Simulating with alpha 0.9 and p 0.9
+## Basic RL Agent Simulation
 
-```{r }
-value <- c(0,0)
-alpha <- 0.9
-temperature <- 1
-choice <- 0
-feedback <- -1
-p <- 0.9 # probability that choice 0 gives a prize (1-p is probability that choice 1 gives a prize)
+Now, let's first see a simple example of how an RL agent behaves in a basic task. We'll simulate an agent with a high learning rate (0.9) and observe its learning trajectory.
 
-ValueUpdate(value, alpha, choice, feedback)
+```{r RL_simple_simulation}
+# Initialize values, parameters, and containers
+value <- c(0, 0)  # Initial value estimates
+alpha <- 0.9      # Learning rate
+temperature <- 1  # Temperature parameter for softmax
+p <- 0.9          # Probability that option 0 gives a reward
 
+# Create a data frame to store simulation results
 d <- tibble(trial = rep(NA, trials),
             choice = rep(NA, trials), 
             value1 = rep(NA, trials), 
             value2 = rep(NA, trials), 
             feedback = rep(NA, trials))
 
+# Generate a sequence of rewards (1=reward based on choice 0)
+# This simulates the environment's response to the agent's choices
+set.seed(123)  # For reproducibility
 Bot <- rbinom(trials, 1, p)
 
+# Run the simulation through all trials
 for (i in 1:trials) {
+    # For demonstration, force choice 1 to see how values update
+    # In real simulation, this would be: choice <- rbinom(1, 1, softmax(value[2] - value[1], temperature))
+    choice <- 1 
     
-    choice <- 1 #rbinom(1, 1, softmax(value[2] - value[1], temperature))
+    # Determine feedback based on choice and environment
     feedback <- ifelse(Bot[i] == choice, 1, -1)
+    
+    # Update values based on choice and feedback
     value <- ValueUpdate(value, alpha, choice, feedback)
+    
+    # Store results
     d$choice[i] <- choice
     d$value1[i] <- value[1]
     d$value2[i] <- value[2]
     d$feedback[i] <- feedback
-  
 }
 
+# Add trial numbers and shifted feedback for visualization
 d <- d %>% mutate(
   trial = seq(trials),
-  prevFeedback = lead(feedback))
+  prevFeedback = lead(feedback)  # Shift feedback to match with next trial's values
+)
 
+# Visualize the first 20 trials to see learning in action
 ggplot(subset(d, trial < 21)) + 
-  geom_line(aes(trial, value1), color = "green") + 
-  geom_line(aes(trial, value2), color = "blue") +
-  geom_line(aes(trial, prevFeedback), color = "red") +
-  theme_bw()
+  geom_line(aes(trial, value1, color = "Option 1 Value"), size = 1) + 
+  geom_line(aes(trial, value2, color = "Option 2 Value"), size = 1) +
+  geom_line(aes(trial, prevFeedback, color = "Feedback"), size = 1) +
+  scale_color_manual(values = c("Option 1 Value" = "green", 
+                                "Option 2 Value" = "blue", 
+                                "Feedback" = "red"),
+                     name = "Signal") +
+  ylim(-1, 1) +
+  labs(title = "Learning Trajectory of RL Agent",
+       subtitle = "With alpha=0.9, consistently choosing option 1",
+       x = "Trial", 
+       y = "Value / Feedback") +
+  theme_bw() +
+  theme(legend.position = "bottom")
 ```
 
-## Simulating with p = 0.75
+In this simulation, we've forced the agent to consistently choose option 1 (blue line) to clearly illustrate how value estimates change in response to feedback. Notice how:
 
-```{r}
-# Let's imagine a situation where the underlying rate is 0.75
+1. The value estimate for option 1 (blue line) fluctuates as the agent receives inconsistent feedback
+2. Option 1's value quickly adjusts following each feedback, showing the high learning rate (0.9)
+3. Option 0's value (green line) never changes because it's never chosen
 
-alpha <- 0.9
-temperature <- 5
-choice <- 0
-feedback <- -1
-p <- 0.75 # probability that choice 0 gives a prize (1-p is probability that choice 1 gives a prize)
+This simple demonstration shows the basic mechanics of the RL agent, but in reality, agents would choose based on their current value estimates. Let's explore more realistic simulations next.
 
+## Exploring Parameter Space
 
+Now, let's more comprehensively explore how different learning rates (alpha) and temperature parameters affect RL agent behavior in an environment where one option has a higher reward probability (p = 0.75).
 
-df <- NULL
-n <- 1
-for (temperature in c(0.01, 0.5, 1, 5, 10, 15)) {
+```{r RL_parameter_exploration}
+# Probability that option 0 gives a reward (1-p for option 1)
+p <- 0.75
+
+# Generate a sequence of rewards to be used across all simulations
+set.seed(42)  # For reproducibility
+Bot <- rbinom(trials, 1, p)
+
+# Check if simulation data already exists
+sim_file <- "simdata/W11_RL_parameter_exploration.rds"
+
+if (regenerate_simulations || !file.exists(sim_file)) {
+  # Initialize container for all results
+  df <- NULL
+  n <- 1  # Agent counter
   
-  for (alpha in seq(0.1, 1, 0.1)) {
+  # Loop through different temperature values
+  for (temperature in c(0.01, 0.5, 1, 5, 10, 15)) {
     
-    value <- c(0,0)
-    d <- tibble(trial = rep(NA, trials),
-                choice = rep(NA, trials), 
-                value1 = rep(NA, trials), 
-                value2 = rep(NA, trials), 
-                feedback = rep(NA, trials),
-                alpha = rep(NA, trials),
-                temperature = rep(NA, trials),
-                agent = n)
-    
-    for (i in 1:trials) {
+    # Loop through different alpha values
+    for (alpha in seq(0.1, 1, 0.1)) {
       
-      choice <- rbinom(1, 1, softmax(value[2] - value[1], temperature))
-      feedback <- ifelse(Bot[i] == choice, 1, -1)
-      value <- ValueUpdate(value, alpha, choice, feedback)
-      d$trial[i] <- i
-      d$choice[i] <- choice
-      d$value1[i] <- value[1]
-      d$value2[i] <- value[2]
-      d$feedback[i] <- feedback
-      d$alpha[i] <- alpha
-      d$temperature[i] <- temperature
+      # Initialize values for this agent
+      value <- c(0, 0)
+      d <- tibble(trial = rep(NA, trials),
+                  choice = rep(NA, trials), 
+                  value1 = rep(NA, trials), 
+                  value2 = rep(NA, trials), 
+                  feedback = rep(NA, trials),
+                  alpha = rep(NA, trials),
+                  temperature = rep(NA, trials),
+                  agent = n)
       
+      # Run trials for this parameter combination
+      for (i in 1:trials) {
+        # Make choice based on current values and temperature
+        choice <- rbinom(1, 1, softmax(value[2] - value[1], temperature))
+        
+        # Get feedback based on choice and environment
+        feedback <- ifelse(Bot[i] == choice, 1, -1)
+        
+        # Update values
+        value <- ValueUpdate(value, alpha, choice, feedback)
+        
+        # Store results
+        d$trial[i] <- i
+        d$choice[i] <- choice
+        d$value1[i] <- value[1]
+        d$value2[i] <- value[2]
+        d$feedback[i] <- feedback
+        d$alpha[i] <- alpha
+        d$temperature[i] <- temperature
+      }
+      
+      # Combine with previous results
+      if (exists("df")) {
+        df <- rbind(df, d)
+      } else {
+        df <- d
+      }
+      
+      # Increment agent counter
+      n <- n + 1
     }
-    if (exists("df")) {df <- rbind(df, d)} else {df <- d}
-    n <- n + 1
   }
+  
+  # Calculate additional metrics
+  df <- df %>% group_by(alpha, temperature) %>% mutate(
+    prevFeedback = lead(feedback),
+    rate = cumsum(choice) / seq_along(choice),  # Proportion of choice=1
+    performance = cumsum(ifelse(feedback == 1, 1, 0)) / seq_along(feedback)  # Proportion of rewards
+  )
+  
+  # Save the simulation results
+  saveRDS(df, sim_file)
+  cat("Saved parameter exploration results to", sim_file, "\n")
+} else {
+  # Load existing results
+  df <- readRDS(sim_file)
+  cat("Loaded parameter exploration results from", sim_file, "\n")
 }
-df <- df %>% group_by(alpha, temperature) %>% mutate(
-  prevFeedback = lead(feedback))
+```
 
+Now, let's visualize how learning rates affect value estimates by looking at a subset of our simulations with very low temperature (nearly deterministic choice).
+
+```{r RL_value_visualization}
+# Extract data for a subset of agents with low temperature
 d1 <- df %>% subset(trial < 21 & temperature == 0.01)
 
+# Plot value tracking for different learning rates
 ggplot() + 
-  geom_line(data = subset(d1, alpha == 1), aes(trial, prevFeedback), color = "red") +
-  geom_line(data = subset(d1, alpha == 0.9), aes(trial, value2), color = "purple") +
-  geom_line(data = subset(d1, alpha == 0.5), aes(trial, value2), color = "blue") +
-  geom_line(data = subset(d1, alpha == 0.2), aes(trial, value2), color = "green") +
-  theme_bw()
-
-df <- df %>% group_by(alpha, temperature) %>% mutate(
-  rate = cumsum(choice) / seq_along(choice),
-  performance = cumsum(feedback) / seq_along(feedback)
-)
-
-ggplot(subset(df, trial < 41), aes(trial, performance, group = alpha, color = alpha)) +
-  geom_line(alpha = 0.5) +
-  facet_wrap(.~temperature) +
-  theme_bw()
-
-ggplot(subset(df, trial < 41), aes(trial, performance, group = temperature, color = temperature)) +
-  geom_line(alpha = 0.5) +
-  facet_wrap(.~alpha) +
-  theme_bw()
+  geom_line(data = subset(d1, alpha == 1), 
+            aes(trial, prevFeedback, color = "Feedback"), size = 1) +
+  geom_line(data = subset(d1, alpha == 0.9), 
+            aes(trial, value2, color = "α = 0.9"), size = 1) +
+  geom_line(data = subset(d1, alpha == 0.5), 
+            aes(trial, value2, color = "α = 0.5"), size = 1) +
+  geom_line(data = subset(d1, alpha == 0.2), 
+            aes(trial, value2, color = "α = 0.2"), size = 1) +
+  scale_color_manual(values = c("Feedback" = "red", 
+                               "α = 0.9" = "purple", 
+                               "α = 0.5" = "blue", 
+                               "α = 0.2" = "green"),
+                    name = "Signal") +
+  ylim(-1, 1) +
+  labs(title = "How Learning Rate Affects Value Updating",
+       subtitle = "Higher learning rates track feedback more closely but with more variance",
+       x = "Trial", 
+       y = "Value / Feedback") +
+  theme_bw() +
+  theme(legend.position = "bottom")
 ```
 
-## What about asymmetric learning?
+This visualization illustrates a key tradeoff in reinforcement learning: higher learning rates allow faster adaptation to changes but create more volatile estimates that are susceptible to random noise. Notice how:
 
-[Missing: simulations of RL with different alphas for positive and negative feedback]
+1. The α = 0.9 line (purple) closely tracks the feedback, but shows large fluctuations
+2. The α = 0.5 line (blue) shows a more moderate response, balancing adaptability with stability
+3. The α = 0.2 line (green) changes very gradually, providing stable estimates but slow adaptation
 
-## Model fitting: symmetric RL
+Now, let's look at how these parameters affect performance over time:
 
-```{r}
-d <- df %>% subset(alpha == 0.6 & temperature == 5)
+```{r RL_performance_by_alpha}
+# Plot performance by alpha for each temperature
+ggplot(subset(df, trial < 41), 
+       aes(trial, performance, group = alpha, color = alpha)) +
+  geom_line(alpha = 0.5) +
+  facet_wrap(.~temperature) +
+  scale_color_viridis_c(option = "plasma") +
+  labs(title = "Learning Performance by Alpha Value",
+       subtitle = "Across different temperature values",
+       x = "Trial", 
+       y = "Performance (% Reward)",
+       color = "Alpha") +
+  theme_bw() +
+  theme(legend.position = "right")
+```
 
-data <- list(
-  trials = trials,
-  choice = d$choice + 1,
-  feedback = d$feedback
-)
+```{r RL_performance_by_temperature}
+# Plot performance by temperature for each alpha
+ggplot(subset(df, trial < 41), 
+       aes(trial, performance, group = temperature, color = temperature)) +
+  geom_line(alpha = 0.5) +
+  facet_wrap(.~alpha) +
+  scale_color_viridis_c(option = "viridis") +
+  labs(title = "Learning Performance by Temperature Value",
+       subtitle = "Across different alpha values",
+       x = "Trial", 
+       y = "Performance (% Reward)",
+       color = "Temperature") +
+  theme_bw() +
+  theme(legend.position = "right")
+```
 
-stan_model <- "
+These visualizations reveal several important patterns:
+
+1. **Alpha effects**: At very low alpha values (0.1-0.2), learning is too slow to be effective within 40 trials. At very high values (0.9-1.0), performance can be unstable due to overreaction to individual outcomes. Values around 0.4-0.6 often achieve the best balance.
+
+2. **Temperature effects**: Very low temperature values (0.01) lead to nearly random performance since choice is almost independent of values. Very high values (10-15) produce nearly deterministic choice, which can lock into suboptimal patterns. Moderate values (1-5) often work best.
+
+3. **Interaction effects**: The optimal alpha depends on the temperature, and vice versa. For instance, with very high temperature, a moderate alpha is necessary to prevent getting stuck in suboptimal patterns.
+
+## Asymmetric Learning Rates
+
+An important extension to the basic RL model allows for different learning rates for positive and negative feedback. This asymmetry is well-documented in humans - we often learn differently from gains than from losses. Let's extend our model to incorporate this asymmetry.
+
+```{r RL_asymmetric_function}
+# Value update function with separate learning rates for positive and negative feedback
+ValueUpdateAsymmetric <- function(value, alpha_pos, alpha_neg, choice, feedback) {
+  # Calculate prediction error
+  PE <- feedback - value[choice + 1]
+  
+  # Determine which learning rate to use based on PE sign
+  alpha_effective <- ifelse(PE > 0, alpha_pos, alpha_neg)
+  
+  # Update value of option 1 if it was chosen (choice = 0)
+  v1 <- value[1] + alpha_effective * (1 - choice) * (feedback - value[1])
+  
+  # Update value of option 2 if it was chosen (choice = 1)
+  v2 <- value[2] + alpha_effective * choice * (feedback - value[2])
+  
+  # Return the updated value vector
+  updatedValue <- c(v1, v2)
+  
+  return(updatedValue)
+}
+```
+
+Now, let's simulate agents with different asymmetric learning rates to see how they perform.
+
+```{r RL_asymmetric_simulation}
+# Check if simulation data already exists
+sim_file <- "simdata/W11_RL_asymmetric_simulation.rds"
+
+if (regenerate_simulations || !file.exists(sim_file)) {
+  # Parameters for the asymmetric learning simulation
+  temperature_vals <- c(1, 5)
+  alpha_pos_vals <- c(0.2, 0.5, 0.8)
+  alpha_neg_vals <- c(0.2, 0.5, 0.8)
+  
+  # Create containers for results
+  asymm_df <- NULL
+  agent_id <- 1
+  
+  # Generate a consistent environment for all agents
+  set.seed(123)
+  Bot <- rbinom(trials, 1, 0.75)
+  
+  # Loop through parameter combinations
+  for (temp in temperature_vals) {
+    for (a_pos in alpha_pos_vals) {
+      for (a_neg in alpha_neg_vals) {
+        # Initialize values
+        value <- c(0, 0)
+        d <- tibble(
+          trial = rep(NA, trials),
+          choice = rep(NA, trials), 
+          value1 = rep(NA, trials), 
+          value2 = rep(NA, trials), 
+          feedback = rep(NA, trials),
+          alpha_pos = rep(NA, trials),
+          alpha_neg = rep(NA, trials),
+          temperature = rep(NA, trials),
+          agent = agent_id
+        )
+        
+        # Run trials for this parameter combination
+        for (i in 1:trials) {
+          # Make choice based on current values and temperature
+          choice <- rbinom(1, 1, softmax(value[2] - value[1], temp))
+          
+          # Get feedback
+          feedback <- ifelse(Bot[i] == choice, 1, -1)
+          
+          # Update values with asymmetric learning rates
+          value <- ValueUpdateAsymmetric(value, a_pos, a_neg, choice, feedback)
+          
+          # Store results
+          d$trial[i] <- i
+          d$choice[i] <- choice
+          d$value1[i] <- value[1]
+          d$value2[i] <- value[2]
+          d$feedback[i] <- feedback
+          d$alpha_pos[i] <- a_pos
+          d$alpha_neg[i] <- a_neg
+          d$temperature[i] <- temp
+        }
+        
+        # Combine with previous results
+        if (exists("asymm_df")) {
+          asymm_df <- rbind(asymm_df, d)
+        } else {
+          asymm_df <- d
+        }
+        
+        # Increment agent counter
+        agent_id <- agent_id + 1
+      }
+    }
+  }
+  
+  # Calculate additional metrics
+  asymm_df <- asymm_df %>% 
+    group_by(alpha_pos, alpha_neg, temperature) %>% 
+    mutate(
+      prevFeedback = lead(feedback),
+      rate = cumsum(choice) / seq_along(choice),
+      performance = cumsum(ifelse(feedback == 1, 1, 0)) / seq_along(feedback)
+    )
+  
+  # Save the simulation results
+  saveRDS(asymm_df, sim_file)
+  cat("Saved asymmetric simulation results to", sim_file, "\n")
+} else {
+  # Load existing results
+  asymm_df <- readRDS(sim_file)
+  cat("Loaded asymmetric simulation results from", sim_file, "\n")
+}
+```
+
+Let's examine the performance of agents with different asymmetric learning rates:
+
+```{r RL_asymmetric_performance}
+# Create a plot of performance by asymmetric learning rates
+asymm_df %>%
+  filter(trial <= 60) %>%  # Focus on early learning
+  mutate(
+    alpha_pos = as.factor(alpha_pos),
+    alpha_neg = as.factor(alpha_neg)
+  ) %>%
+  ggplot(aes(trial, performance, color = alpha_pos, linetype = alpha_neg)) +
+  geom_line(size = 1) +
+  facet_wrap(~temperature, labeller = labeller(
+    temperature = function(x) paste("Temperature =", x)
+  )) +
+  scale_color_viridis_d(option = "plasma", name = "α+ (positive)") +
+  scale_linetype_discrete(name = "α- (negative)") +
+  labs(
+    title = "Performance with Asymmetric Learning Rates",
+    subtitle = "Different combinations of positive and negative learning rates",
+    x = "Trial",
+    y = "Performance (% Reward)"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+The asymmetric learning rates reveal interesting patterns in learning dynamics:
+
+1. **Positive feedback sensitivity**: Higher values of α+ (positive learning rate) lead to quicker adoption of rewarding strategies.
+
+2. **Negative feedback sensitivity**: Higher values of α- (negative learning rate) lead to quicker abandonment of punishing strategies.
+
+3. **Optimal combinations**: The best performance often comes from balanced sensitivities to both positive and negative feedback, though this depends on the specific environment.
+
+4. **Temperature interaction**: The effects of asymmetric learning rates are modulated by the temperature parameter, with higher temperatures amplifying differences.
+
+This asymmetry provides a powerful way to model individual differences in learning. Some people are more sensitive to gains ("promotion-focused"), while others are more sensitive to losses ("prevention-focused"). These differences can be captured by different α+/α- ratios.
+
+## Fitting RL Models to Data
+
+Now that we understand how RL models behave, let's look at fitting these models to data. We'll start with the symmetric RL model and then move to more complex variants.
+
+### Symmetric RL Model in Stan
+
+First, let's implement the basic symmetric RL model in Stan:
+
+```{r RL_symmetric_stan_model}
+stan_symmetric_model <- "
 data {
     int<lower=1> trials;
     array[trials] int<lower=1,upper=2> choice;
@@ -224,7 +542,7 @@ model {
     value = initValue;
     
     for (t in 1:trials) {
-        theta = softmax( temperature * value); // action prob. computed via softmax
+        theta = softmax(temperature * value); // action prob. computed via softmax
         target += categorical_lpmf(choice[t] | theta);
         
         pe = feedback[t] - value[choice[t]]; // compute pe for chosen value only
@@ -250,7 +568,7 @@ generated quantities{
   log_lik = 0;
   
   for (t in 1:trials) {
-        theta = softmax( temperature * value); // action prob. computed via softmax
+        theta = softmax(temperature * value); // action prob. computed via softmax
         log_lik = log_lik + categorical_lpmf(choice[t] | theta);
         
         pe = feedback[t] - value[choice[t]]; // compute pe for chosen value only
@@ -260,65 +578,133 @@ generated quantities{
 }
 "
 
+# Write the Stan model to a file
 write_stan_file(
-  stan_model,
+  stan_symmetric_model,
   dir = "stan/",
   basename = "W11_RL_symmetric.stan")
 
+# Compile the model
 file <- file.path("stan/W11_RL_symmetric.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"), pedantic = TRUE)
-
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 1000,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
-
-# Same the fitted model
-samples$save_object("simmodels/W11_RL_symmetric.rds")
-
-samples$cmdstan_diagnose()
-samples$summary() 
-
-draws_df <- as_draws_df(samples$draws()) 
-
-ggplot(draws_df, aes(.iteration, alpha, group = .chain, color = .chain)) +
-  geom_line() +
-  theme_classic()
-
-ggplot(draws_df, aes(.iteration, temperature, group = .chain, color = .chain)) +
-  geom_line() +
-  theme_classic()
-
-
-ggplot(draws_df) +
-  geom_density(aes(alpha), fill = "blue", alpha = 0.3) +
-  geom_density(aes(alpha_prior), fill = "red", alpha = 0.3) +
-  xlab("Learning Rate") +
-  ylab("Posterior Density") +
-  theme_classic()
-
-ggplot(draws_df) +
-  geom_density(aes(temperature), fill = "blue", alpha = 0.3) +
-  geom_density(aes(temperature_prior), fill = "red", alpha = 0.3) +
-  xlab("(inverse) temperature") +
-  ylab("Posterior Density") +
-  theme_classic()
+mod_symmetric <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                              stanc_options = list("O1"), pedantic = TRUE)
 ```
 
-## Model fitting: asymmetric RL
+### Fitting the Symmetric Model
 
-```{r}
-stan_model <- "
+Let's fit the symmetric model to data from one of our simulated agents:
+
+```{r RL_fit_symmetric}
+# Use a subset of our simulation data for model fitting
+d <- df %>% subset(alpha == 0.6 & temperature == 5)
+
+# Prepare data for Stan
+data <- list(
+  trials = trials,
+  choice = d$choice + 1,  # Stan uses 1-indexed categories
+  feedback = d$feedback
+)
+
+# Check if model fit exists and regenerate if needed
+model_file <- "simmodels/W11_RL_symmetric.rds"
+if (regenerate_simulations || !file.exists(model_file)) {
+  samples_symmetric <- mod_symmetric$sample(
+    data = data,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    refresh = 500,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
+  
+  # Save the fitted model
+  samples_symmetric$save_object(model_file)
+  cat("Saved symmetric model fit to", model_file, "\n")
+} else {
+  # Load existing model fit
+  samples_symmetric <- readRDS(model_file)
+  cat("Loaded symmetric model fit from", model_file, "\n")
+}
+```
+
+### Visualizing Model Diagnostics
+
+Let's check the MCMC traceplots to ensure proper convergence:
+
+```{r RL_symmetric_diagnostics}
+# Extract posterior samples
+draws_df <- as_draws_df(samples_symmetric$draws())
+
+# Run basic diagnostics
+print(samples_symmetric$summary()) 
+
+# Plot MCMC trace for alpha
+p1 <- ggplot(draws_df, aes(.iteration, alpha, group = .chain, color = .chain)) +
+  geom_line() +
+  labs(title = "MCMC Trace - Alpha Parameter",
+       x = "Iteration", 
+       y = "Alpha Value") +
+  theme_classic()
+
+# Plot MCMC trace for temperature
+p2 <- ggplot(draws_df, aes(.iteration, temperature, group = .chain, color = .chain)) +
+  geom_line() +
+  labs(title = "MCMC Trace - Temperature Parameter",
+       x = "Iteration", 
+       y = "Temperature Value") +
+  theme_classic()
+
+# Display traces
+p1 + p2
+```
+
+### Posterior Distributions
+
+Let's also look at the posterior distributions for our parameters:
+
+```{r RL_symmetric_posteriors}
+# Plot posterior distribution for alpha
+p3 <- ggplot(draws_df) +
+  geom_density(aes(alpha), fill = "blue", alpha = 0.3) +
+  geom_density(aes(alpha_prior), fill = "red", alpha = 0.3) +
+  labs(title = "Posterior Distribution - Alpha Parameter",
+       subtitle = "Blue = posterior, Red = prior",
+       x = "Learning Rate (α)", 
+       y = "Density") +
+  theme_classic()
+
+# Plot posterior distribution for temperature
+p4 <- ggplot(draws_df) +
+  geom_density(aes(temperature), fill = "blue", alpha = 0.3) +
+  geom_density(aes(temperature_prior), fill = "red", alpha = 0.3) +
+  labs(title = "Posterior Distribution - Temperature Parameter",
+       subtitle = "Blue = posterior, Red = prior",
+       x = "Temperature (τ)", 
+       y = "Density") +
+  theme_classic()
+
+# Display posteriors
+p3 + p4
+```
+
+These posterior distributions show:
+
+1. For the alpha parameter, the model correctly identifies a learning rate around 0.6, which was the true value used to generate the data.
+
+2. For the temperature parameter, there's a clear peak around 5, which again matches the true value we used.
+
+3. Both parameters show substantial updating from the (uniform) prior distributions, indicating that the data is informative about these parameters.
+
+### Asymmetric RL Model in Stan
+
+Now let's implement and fit the asymmetric RL model, which has separate learning rates for positive and negative feedback:
+
+```{r RL_asymmetric_stan_model}
+stan_asymmetric_model <- "
 data {
     int<lower=1> trials;
     array[trials] int<lower=1,upper=2> choice;
@@ -331,8 +717,8 @@ transformed data {
 }
 
 parameters {
-    real<lower=0, upper=1> alpha_pos; // learning rate
-    real<lower=0, upper=1> alpha_neg; // learning rate
+    real<lower=0, upper=1> alpha_pos; // learning rate for positive feedback
+    real<lower=0, upper=1> alpha_neg; // learning rate for negative feedback
     real<lower=0, upper=20> temperature; // softmax inv.temp.
 }
 
@@ -348,118 +734,149 @@ model {
     value = initValue;
     
     for (t in 1:trials) {
-        theta = softmax( temperature * value); // action prob. computed via softmax
+        theta = softmax(temperature * value); // action prob. computed via softmax
         target += categorical_lpmf(choice[t] | theta);
         
         pe = feedback[t] - value[choice[t]]; // compute pe for chosen value only
         
-        if (pe < 0)
-          value[choice[t]] = value[choice[t]] + alpha_neg * pe; // update chosen V
         if (pe > 0)
-          value[choice[t]] = value[choice[t]] + alpha_pos * pe; // update chosen V
+          value[choice[t]] = value[choice[t]] + alpha_pos * pe; // update chosen V with positive PE
+        else
+          value[choice[t]] = value[choice[t]] + alpha_neg * pe; // update chosen V with negative PE
     }
     
+}
+
+generated quantities{
+  real<lower=0, upper=1> alpha_pos_prior;
+  real<lower=0, upper=1> alpha_neg_prior;
+  real<lower=0, upper=20> temperature_prior;
+  
+  real pe;
+  vector[2] value;
+  vector[2] theta;
+  
+  real log_lik;
+  
+  alpha_pos_prior = uniform_rng(0,1);
+  alpha_neg_prior = uniform_rng(0,1);
+  temperature_prior = uniform_rng(0,20);
+  
+  value = initValue;
+  log_lik = 0;
+  
+  for (t in 1:trials) {
+        theta = softmax(temperature * value); // action prob. computed via softmax
+        log_lik = log_lik + categorical_lpmf(choice[t] | theta);
+        
+        pe = feedback[t] - value[choice[t]]; // compute pe for chosen value only
+        
+        if (pe > 0)
+          value[choice[t]] = value[choice[t]] + alpha_pos * pe; // update with positive PE
+        else
+          value[choice[t]] = value[choice[t]] + alpha_neg * pe; // update with negative PE
+    }
 }
 "
 
+# Write the Stan model to a file
 write_stan_file(
-  stan_model,
+  stan_asymmetric_model,
   dir = "stan/",
   basename = "W11_RL_asymmetric.stan")
 
+# Compile the model
 file <- file.path("stan/W11_RL_asymmetric.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"), pedantic = TRUE)
-
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 2000,
-  iter_sampling = 2000,
-  refresh = 1000,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
-
-# Same the fitted model
-samples$save_object("simmodels/W11_RL_asymmetric.rds")
-
+mod_asymmetric <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                              stanc_options = list("O1"), pedantic = TRUE)
 ```
 
-## Model fitting: multilevel
+### Fitting the Asymmetric Model
 
-```{r}
-## Multilevel
-agents <- 100
-trials <- 120 
+Now let's fit our asymmetric model to the same data to see if it offers any improvement:
 
-df <- NULL
-for (agent in 1:agents) {
+```{r RL_fit_asymmetric}
+# Check if model fit exists and regenerate if needed
+model_file <- "simmodels/W11_RL_asymmetric.rds"
+if (regenerate_simulations || !file.exists(model_file)) {
+  samples_asymmetric <- mod_asymmetric$sample(
+    data = data,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 2000,
+    iter_sampling = 2000,
+    refresh = 500,
+    max_treedepth = 20,
+    adapt_delta = 0.99
+  )
   
-  temperature <- boot::inv.logit(rnorm(1, -2, 0.3))*20
-  alpha <- boot::inv.logit(rnorm(1, 1.1, 0.3))  
-    
-    value <- c(0,0)
-    d <- tibble(trial = rep(NA, trials),
-                choice = rep(NA, trials), 
-                value1 = rep(NA, trials), 
-                value2 = rep(NA, trials), 
-                feedback = rep(NA, trials),
-                alpha = alpha,
-                temperature = temperature,
-                agent = agent)
-    
-    for (i in 1:trials) {
-      
-      choice <- rbinom(1, 1, softmax(value[2] - value[1], temperature))
-      feedback <- ifelse(Bot[i] == choice, 1, -1)
-      value <- ValueUpdate(value, alpha, choice, feedback)
-      d$trial[i] <- i
-      d$choice[i] <- choice
-      d$value1[i] <- value[1]
-      d$value2[i] <- value[2]
-      d$feedback[i] <- feedback
-      d$alpha[i] <- alpha
-      d$temperature[i] <- temperature
-      
-    }
-    if (exists("df")) {df <- rbind(df, d)} else {df <- d}
-
+  # Save the fitted model
+  samples_asymmetric$save_object(model_file)
+  cat("Saved asymmetric model fit to", model_file, "\n")
+} else {
+  # Load existing model fit
+  samples_asymmetric <- readRDS(model_file)
+  cat("Loaded asymmetric model fit from", model_file, "\n")
 }
 
-df <- df %>% group_by(alpha, temperature) %>% mutate(
-  prevFeedback = lead(feedback))
+# Extract posterior samples
+draws_asymm_df <- as_draws_df(samples_asymmetric$draws())
 
-## Create the data
+# Display summary
+print(samples_asymmetric$summary())
+```
 
-trials <- trials
-agents <- agents
+### Comparing Symmetric and Asymmetric Models
 
-d_choice <- df %>% 
-  subset(select = c(agent, choice)) %>% 
-  mutate(row = rep(seq(trials),agents)) %>% 
-  pivot_wider(names_from = agent, values_from = choice)
+Let's compare the posterior distributions of our two models:
 
-d_feedback <- df %>% 
-  subset(select = c(agent, feedback)) %>% 
-  mutate(row = rep(seq(trials),agents)) %>% 
-  pivot_wider(names_from = agent, values_from = feedback)
-
-
-data <- list(
-  trials = trials,
-  agents = agents,
-  choice = as.matrix(d_choice[,2:(agents + 1)]),
-  feedback = as.matrix(d_feedback[,2:(agents + 1)])
+```{r RL_model_comparison}
+# Prepare data for comparison plot
+comparison_data <- bind_rows(
+  tibble(
+    model = "Symmetric",
+    alpha = draws_df$alpha,
+    alpha_type = "Single Alpha"
+  ),
+  tibble(
+    model = "Asymmetric",
+    alpha = draws_asymm_df$alpha_pos,
+    alpha_type = "Alpha Positive"
+  ),
+  tibble(
+    model = "Asymmetric",
+    alpha = draws_asymm_df$alpha_neg,
+    alpha_type = "Alpha Negative"
+  )
 )
 
-data$choice <- data$choice + 1
+# Plot comparison
+ggplot(comparison_data, aes(x = alpha, fill = alpha_type)) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = 0.6, linetype = "dashed") +  # True value used in data generation
+  labs(
+    title = "Comparing Learning Rate Parameters Between Models",
+    subtitle = "Dashed line shows true alpha value used to generate data",
+    x = "Learning Rate Value",
+    y = "Density",
+    fill = "Parameter Type"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
 
-stan_model <- "
+Since our data was generated with a symmetric learning rate, we would expect both alpha_pos and alpha_neg to be similar to the single alpha from the symmetric model. If there were true asymmetry in the data, we would see separation between these parameters.
+
+## Multilevel RL Model
+
+In real-world applications, we often collect data from multiple participants, each with their own learning parameters. A multilevel (hierarchical) model allows us to estimate individual parameters while sharing information across participants, resulting in more reliable estimates.
+
+Let's implement a multilevel RL model in Stan:
+
+```{r RL_multilevel_stan_model}
+stan_multilevel_model <- "
 data {
   int<lower=1> trials;
   int<lower=1> agents;
@@ -473,77 +890,334 @@ transformed data {
 }
 
 parameters {
-  real alphaM; // learning rate
-  real temperatureM; // softmax inv.temp.
-  vector<lower = 0>[2] tau;
-  matrix[2, agents] z_IDs;
-  cholesky_factor_corr[2] L_u;
+  real alphaM; // Population mean for learning rate (logit scale)
+  real temperatureM; // Population mean for temperature (logit scale)
+  vector<lower = 0>[2] tau; // Population SDs for each parameter
+  matrix[2, agents] z_IDs; // Standardized individual parameters (non-centered)
+  cholesky_factor_corr[2] L_u; // Cholesky factor of correlation matrix
 }
 
 transformed parameters {
+  // Individual-level parameters (using non-centered parameterization)
   matrix[agents,2] IDs;
   IDs = (diag_pre_multiply(tau, L_u) * z_IDs)';
 }
 
 model {
-  
+  // Define variables used in the loop
   real pe;
   vector[2] value;
   vector[2] theta;
   
-  target += normal_lpdf(alphaM | 0, 1);
-  target += normal_lpdf(temperatureM | 0, 1);
-  target += normal_lpdf(tau[1] | 0, .3)  -
-    normal_lccdf(0 | 0, .3);
-  target += normal_lpdf(tau[2] | 0, .3)  -
-    normal_lccdf(0 | 0, .3);
+  // Population-level priors
+  target += normal_lpdf(alphaM | 0, 1);  // Prior for mean learning rate
+  target += normal_lpdf(temperatureM | 0, 1);  // Prior for mean temperature
   
+  // Priors for population SDs (half-normal)
+  target += normal_lpdf(tau[1] | 0, .3) - normal_lccdf(0 | 0, .3);
+  target += normal_lpdf(tau[2] | 0, .3) - normal_lccdf(0 | 0, .3);
+  
+  // Prior for correlation matrix
   target += lkj_corr_cholesky_lpdf(L_u | 2);
+  
+  // Prior for standardized individual effects
   target += std_normal_lpdf(to_vector(z_IDs));
   
+  // Likelihood for each agent
   for (agent in 1:agents){
+    // Reset values at the start of each agent's trials
     value = initValue;
     
     for (t in 1:trials) {
-      theta = softmax( inv_logit(temperatureM + IDs[agent,2]) * 20 * value); // action prob. computed via softmax
+      // Calculate choice probabilities using agent-specific temperature
+      theta = softmax(inv_logit(temperatureM + IDs[agent,2]) * 20 * value);
+      
+      // Log probability of observed choice
       target += categorical_lpmf(choice[t, agent] | theta);
       
-      pe = feedback[t, agent] - value[choice[t, agent]]; // compute pe for chosen value only
-      value[choice[t, agent]] = value[choice[t, agent]] + inv_logit(alphaM + IDs[agent,1]) * pe; // update chosen V
+      // Calculate prediction error
+      pe = feedback[t, agent] - value[choice[t, agent]];
+      
+      // Update value using agent-specific learning rate
+      value[choice[t, agent]] = value[choice[t, agent]] + 
+                               inv_logit(alphaM + IDs[agent,1]) * pe;
     }
   }
-  
 }
 
+generated quantities {
+  // Population-level parameters on natural scale
+  real<lower=0, upper=1> alpha_pop = inv_logit(alphaM);
+  real<lower=0, upper=20> temp_pop = inv_logit(temperatureM) * 20;
+  
+  // Correlation between parameters
+  corr_matrix[2] Omega = multiply_lower_tri_self_transpose(L_u);
+  real alpha_temp_corr = Omega[1,2];
+  
+  // Individual parameters
+  array[agents] real<lower=0, upper=1> alpha_ind;
+  array[agents] real<lower=0, upper=20> temp_ind;
+  
+  // Extract individual parameters on natural scale
+  for (j in 1:agents) {
+    alpha_ind[j] = inv_logit(alphaM + IDs[j,1]);
+    temp_ind[j] = inv_logit(temperatureM + IDs[j,2]) * 20;
+  }
+}
 "
 
+# Write the Stan model to a file
 write_stan_file(
-  stan_model,
+  stan_multilevel_model,
   dir = "stan/",
   basename = "W11_RL_multilevel.stan")
 
-file <- file.path("stan/W11_RL_multilevel_asym_ref.stan")
-mod <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
-                     stanc_options = list("O1"), pedantic = TRUE)
-
-samples <- mod$sample(
-  data = data,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  threads_per_chain = 2,
-  iter_warmup = 500,
-  iter_sampling = 500,
-  refresh = 10,
-  output_dir = "simmodels",
-  max_treedepth = 20,
-  adapt_delta = 0.99,
-)
-
-# Same the fitted model
-samples$save_object("simmodels/W11_RL_multilevel.rds")
-
+# Compile the model
+file <- file.path("stan/W11_RL_multilevel.stan")
+mod_multilevel <- cmdstan_model(file, cpp_options = list(stan_threads = TRUE),
+                               stanc_options = list("O1"), pedantic = TRUE)
 ```
+
+Now, let's simulate data from multiple agents with different learning parameters and fit our multilevel model:
+
+```{r RL_multilevel_simulation}
+# Check if simulation data already exists
+sim_file <- "simdata/W11_RL_multilevel_data.rds"
+
+if (regenerate_simulations || !file.exists(sim_file)) {
+  # Parameters for simulation
+  n_agents <- 50  # Number of agents
+  n_trials <- 120  # Trials per agent
+  
+  # Generate population-level parameters (on logit scale)
+  alpha_logit_mean <- qlogit(0.6)  # Population mean learning rate
+  alpha_logit_sd <- 0.3  # Population SD for learning rate
+  temp_logit_mean <- qlogit(0.25)  # Population mean temperature (scaled to 0-1, will multiply by 20 later)
+  temp_logit_sd <- 0.3  # Population SD for temperature
+  
+  # Generate a sequence of rewards to use across all agents
+  set.seed(123)
+  Bot <- rbinom(n_trials, 1, 0.75)  # 75% probability of reward for option 0
+  
+  # Initialize container for all agents' data
+  ml_df <- NULL
+  
+  # Loop through agents
+  for (agent in 1:n_agents) {
+    # Sample individual parameters
+    alpha_logit <- rnorm(1, alpha_logit_mean, alpha_logit_sd)
+    temp_logit <- rnorm(1, temp_logit_mean, temp_logit_sd)
+    
+    # Convert to natural scale
+    alpha <- plogis(alpha_logit)
+    temperature <- plogis(temp_logit) * 20  # Scale to 0-20 range
+    
+    # Initialize values and data storage
+    value <- c(0, 0)
+    d <- tibble(
+      trial = 1:n_trials,
+      choice = NA_integer_,
+      value1 = NA_real_,
+      value2 = NA_real_,
+      feedback = NA_integer_,
+      alpha = alpha,
+      temperature = temperature,
+      agent = agent
+    )
+    
+    # Run trials for this agent
+    for (i in 1:n_trials) {
+      # Make choice based on current values and temperature
+      choice <- rbinom(1, 1, softmax(value[2] - value[1], temperature))
+      
+      # Get feedback
+      feedback <- ifelse(Bot[i] == choice, 1, -1)
+      
+      # Update values
+      value <- ValueUpdate(value, alpha, choice, feedback)
+      
+      # Store results
+      d$choice[i] <- choice
+      d$value1[i] <- value[1]
+      d$value2[i] <- value[2]
+      d$feedback[i] <- feedback
+    }
+    
+    # Combine with previous results
+    if (exists("ml_df")) {
+      ml_df <- rbind(ml_df, d)
+    } else {
+      ml_df <- d
+    }
+  }
+  
+  # Save the simulated data
+  saveRDS(ml_df, sim_file)
+  cat("Saved multilevel simulation data to", sim_file, "\n")
+} else {
+  # Load existing data
+  ml_df <- readRDS(sim_file)
+  cat("Loaded multilevel simulation data from", sim_file, "\n")
+}
+```
+
+Now, let's prepare the data for Stan fitting:
+
+```{r RL_prepare_multilevel_data}
+# Create data matrices for Stan
+choice_matrix <- ml_df %>%
+  select(agent, trial, choice) %>%
+  pivot_wider(
+    names_from = agent,
+    values_from = choice,
+    id_cols = trial
+  ) %>%
+  select(-trial) %>%
+  as.matrix() + 1  # Stan uses 1-indexed categories
+
+feedback_matrix <- ml_df %>%
+  select(agent, trial, feedback) %>%
+  pivot_wider(
+    names_from = agent,
+    values_from = feedback,
+    id_cols = trial
+  ) %>%
+  select(-trial) %>%
+  as.matrix()
+
+# Create Stan data list
+data_multilevel <- list(
+  trials = n_trials,
+  agents = n_agents,
+  choice = choice_matrix,
+  feedback = feedback_matrix
+)
+```
+
+Finally, let's fit the multilevel model:
+
+```{r RL_fit_multilevel}
+# Check if model fit exists and regenerate if needed
+model_file <- "simmodels/W11_RL_multilevel.rds"
+if (regenerate_simulations || !file.exists(model_file)) {
+  samples_multilevel <- mod_multilevel$sample(
+    data = data_multilevel,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    threads_per_chain = 2,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    refresh = 100,
+    max_treedepth = 15,
+    adapt_delta = 0.95
+  )
+  
+  # Save the fitted model
+  samples_multilevel$save_object(model_file)
+  cat("Saved multilevel model fit to", model_file, "\n")
+} else {
+  # Load existing model fit
+  samples_multilevel <- readRDS(model_file)
+  cat("Loaded multilevel model fit from", model_file, "\n")
+}
+
+# Extract posterior samples
+draws_ml <- as_draws_df(samples_multilevel$draws())
+
+# Show summary of population parameters
+print(samples_multilevel$summary(c("alpha_pop", "temp_pop", "alpha_temp_corr")))
+```
+
+### Visualizing Multilevel Model Results
+
+Let's visualize the individual parameter estimates and compare them to the true values:
+
+```{r RL_multilevel_visualization}
+# Extract true parameter values for each agent
+true_params <- ml_df %>%
+  group_by(agent) %>%
+  summarize(
+    true_alpha = first(alpha),
+    true_temp = first(temperature)
+  )
+
+# Extract estimated parameters for each agent
+alpha_ind_params <- draws_ml %>%
+  select(starts_with("alpha_ind")) %>%
+  summarize_all(mean) %>%
+  pivot_longer(
+    everything(), 
+    names_to = "param",
+    values_to = "est_alpha"
+  ) %>%
+  mutate(agent = as.integer(str_extract(param, "\\d+")))
+
+temp_ind_params <- draws_ml %>%
+  select(starts_with("temp_ind")) %>%
+  summarize_all(mean) %>%
+  pivot_longer(
+    everything(), 
+    names_to = "param",
+    values_to = "est_temp"
+  ) %>%
+  mutate(agent = as.integer(str_extract(param, "\\d+")))
+
+# Combine true and estimated parameters
+param_comparison <- true_params %>%
+  left_join(alpha_ind_params, by = "agent") %>%
+  left_join(temp_ind_params, by = "agent")
+
+# Create scatterplots for parameter recovery
+p1 <- ggplot(param_comparison, aes(x = true_alpha, y = est_alpha)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Learning Rate Parameter Recovery",
+    subtitle = "Perfect recovery would place all points on the dashed line",
+    x = "True Alpha",
+    y = "Estimated Alpha"
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(param_comparison, aes(x = true_temp, y = est_temp)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    title = "Temperature Parameter Recovery",
+    subtitle = "Perfect recovery would place all points on the dashed line",
+    x = "True Temperature",
+    y = "Estimated Temperature"
+  ) +
+  theme_minimal()
+
+# Display plots
+p1 + p2
+```
+
+### Examining Parameter Correlations
+
+The multilevel model also allows us to examine correlations between parameters:
+
+```{r RL_parameter_correlations}
+# Plot correlation between alpha and temperature parameters
+ggplot(param_comparison, aes(x = true_alpha, y = true_temp)) +
+  geom_point(color = "red", alpha = 0.5) +
+  geom_point(aes(x = est_alpha, y = est_temp), color = "blue", alpha = 0.5) +
+  labs(
+    title = "Correlation Between Learning Rate and Temperature",
+    subtitle = "Red = true values, Blue = estimated values",
+    x = "Learning Rate (Alpha)",
+    y = "Temperature"
+  ) +
+  theme_minimal()
+
+# Show the estimated correlation from the model
+cat("Estimated correlation between alpha and temperature:", 
+    mean(draws_ml$alpha_temp_corr), "\n")
+```
+
+Our multilevel model captures not just individual parameters but also their correlation structure, enabling richer insights into learning patterns across individuals.
 
 ## Alternative Models of Reinforcement Learning
 
@@ -551,30 +1225,40 @@ The basic Rescorla-Wagner model we've implemented represents just one approach t
 
 ### Counterfactual Learning
 
-In many situations, we learn not just from what happened, but also from what could have happened. For example, after choosing a restaurant and having a mediocre meal, we might see a friend's photos of delicious dishes from another restaurant they ate at. Counterfactual learning models capture how we update our preferences based on both experienced and foregone outcomes.
+In many situations, we learn not just from what happened, but also from what could have happened. For example, after choosing a restaurant and having a mediocre meal, we might see a friend's photos of delicious dishes from another restaurant. Counterfactual learning models capture how we update our preferences based on both experienced and foregone outcomes.
 
 In computational terms, counterfactual learning models modify the basic value update equation to include learning from unchosen options:
 
-CopyV(chosen) = V(chosen) + α(R(chosen) - V(chosen))
+V(chosen) = V(chosen) + α(R(chosen) - V(chosen))  
 V(unchosen) = V(unchosen) + α'(R(unchosen) - V(unchosen))
 
 Here, α' represents a potentially different learning rate for counterfactual outcomes, often smaller than α since indirect feedback may be less reliable or salient than direct experience.
 
+Counterfactual learning is particularly important in tasks where participants can observe outcomes from both chosen and unchosen options, like many economic decision-making tasks or social learning scenarios.
+
 ### Sequential Learning
 
 While our basic model treats each trial as independent, real-world learning often involves sequences of related decisions. Sequential learning models account for how previous choices and outcomes influence not just value estimates but also the learning process itself. For instance, after several successful choices in a row, we might become more confident and therefore less influenced by a single failure.
+
 These models often incorporate additional parameters to capture sequence effects:
 
 * Momentum terms that make agents more likely to repeat recent successful strategies
-
 * Pattern detection mechanisms that look for regularities in outcome sequences
-
 * Meta-learning processes that adjust learning rates based on recent experience
+
+Examples include models with adaptive learning rates that increase in volatile environments and decrease in stable ones, and models that track the uncertainty of value estimates to guide exploration.
 
 ### Model-Based Learning
 
-Perhaps the most sophisticated extension involves agents that build internal models of how their environment works, rather than just tracking reward statistics. These agents can simulate potential outcomes and plan sequences of actions, similar to how humans might mentally rehearse different strategies in a game. [Missing: details and refs]
+Perhaps the most sophisticated extension involves agents that build internal models of how their environment works, rather than just tracking reward statistics. These agents can simulate potential outcomes and plan sequences of actions, similar to how humans might mentally rehearse different strategies in a game.
 
+Model-based RL encompasses a wide range of algorithms but typically includes:
+
+1. A transition model that predicts how actions change the environment state
+2. A reward model that predicts the rewards associated with different states
+3. A planning mechanism that uses these models to simulate and evaluate possible action sequences
+
+The distinction between model-free approaches (like Rescorla-Wagner) and model-based approaches has been particularly important in neuroscience, where different brain regions appear to support these different types of learning.
 
 ## Adapting Learning Rates to Environmental Dynamics
 
@@ -585,17 +1269,13 @@ A crucial limitation of basic reinforcement learning models is their use of fixe
 In highly stable environments where true reward probabilities change rarely or never, optimal learning involves:
 
 * Initially high learning rates to quickly acquire accurate value estimates
-
 * Gradually decreasing learning rates as estimates become more reliable
-
 * Eventually very low learning rates to avoid being misled by random variation
 
 Conversely, volatile environments where reward probabilities change frequently require:
 
 * Consistently higher learning rates to track changing conditions
-
 * Greater willingness to update beliefs based on recent outcomes
-
 * Some mechanism to detect and respond to change points
 
 ### Seasonal or Cyclic Changes
@@ -609,11 +1289,23 @@ Many real-world environments show systematic patterns of change. Consider foragi
 More sophisticated models address this by incorporating:
 
 * Multiple timescales of learning (fast learning for current conditions, slow learning for general patterns)
-
 * Explicit representation of environmental structure (like seasonality)
-
 * Context-dependent learning rates that adapt to recognized patterns
 
 These considerations highlight how reinforcement learning models, while powerful, represent significant simplifications of real learning processes. Understanding their limitations helps us both interpret their results more carefully and develop more sophisticated models that better capture the complexity of human and animal learning.
 
-Reinforcement learning provides a powerful framework for understanding how agents learn from experience. Our implementation highlights both the elegance of the basic mechanism and the rich dynamics it can produce. While more sophisticated models exist, the core principles we've explored here - prediction errors, value updating, and the exploration-exploitation tradeoff - remain fundamental to understanding learning and decision-making.
+## Conclusion
+
+Reinforcement learning provides a powerful framework for understanding how agents learn from experience. Our implementation highlights both the elegance of the basic mechanism and the rich dynamics it can produce. The core principles we've explored - prediction errors, value updating, and the exploration-exploitation tradeoff - remain fundamental to understanding learning and decision-making in both biological and artificial systems.
+
+Key insights from our exploration include:
+
+1. **Parameter balance**: The interplay between learning rate and temperature parameters determines how agents balance adaptability with stability, and exploration with exploitation.
+
+2. **Asymmetric learning**: Different sensitivity to positive versus negative outcomes significantly impacts behavior and can capture important individual differences.
+
+3. **Individual variation**: Multilevel modeling reveals how learning parameters vary across individuals while sharing information to improve estimation.
+
+4. **Environmental adaptation**: Optimal learning strategies depend critically on environmental characteristics like stability, volatility, and structure.
+
+As cognitive modeling continues to advance, reinforcement learning models provide a crucial foundation for understanding the computational principles underlying adaptive behavior.
