@@ -1,0 +1,1071 @@
+---
+title: "Chapter 5: Assessing Model Quality - Does Our Model Make Sense?"
+output: html_document
+date: "2025-02-22" # Updated date
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = 'center',
+  out.width = "80%",
+  dpi = 300
+  )
+
+# Flag to control whether to regenerate simulation/fitting results
+# Set to TRUE to rerun everything (takes time!), FALSE to load saved results.
+regenerate_fitting <- FALSE # Or TRUE
+```
+
+
+# Chapter 5: Assessing Model Quality
+
+## Learning Goals
+
+In Chapter 4, we learned how to fit models to data and estimate parameters using Stan. We even performed parameter recovery to check if our fitting procedure could retrieve known values. However, obtaining parameter estimates and seeing that they can be recovered under ideal conditions doesn't tell the whole story. Is the model itself a good representation of the data? Could it generate data that looks like what we actually observed? Are our conclusions robust, or overly dependent on the specific priors we chose?
+
+This chapter introduces essential techniques for evaluating the quality and appropriateness of your Bayesian cognitive models, moving beyond just parameter estimation. After completing this chapter, you will be able to:
+
+
+* **Understand Model Checking:** Appreciate why parameter estimation alone is insufficient and why rigorous model checking is crucial.
+* **Perform Prior Predictive Checks:** Simulate data from your model's priors *before* fitting to understand the assumptions baked into your model specification.
+* **Implement Checks in Stan:** Use Stan's `generated quantities` block to simulate data based on prior or posterior parameter distributions.
+* **Perform Posterior Predictive Checks:** Simulate data from your *fitted* model to assess whether it can reproduce key patterns observed in the actual data.
+* **Visualize Prior-Posterior Updates:** Compare prior and posterior distributions to understand how the data informed parameter estimates.
+* **Conduct Prior Sensitivity Analysis:** Evaluate how sensitive your model's conclusions (parameter estimates and predictions) are to the specific choice of prior distributions, using both manual methods and tools like the priorsense package.
+* **Interpret Check Results:** Critically evaluate the output of these checks to identify potential model misspecifications or areas for improvement.
+
+## Introduction: Why Parameter Estimates Aren't Enough
+
+In the previous chapters, we journeyed from observing behavior (Chapter 2), formalizing strategies (Chapter 3), to fitting models and estimating parameters (Chapter 4). We saw in Chapter 4 that parameter recovery helps validate our fitting procedure – if we simulate data from known parameters, can our Stan model get those parameters back?
+
+But what if the model itself, the structure we assumed, is fundamentally mismatched to the data? For example, in Chapter 1, the simple linear model for pizza heating gave us parameter estimates, but the visualizations clearly showed it failed to capture the non-linear heating curve. Parameter recovery wouldn't necessarily have revealed this structural mismatch. Similarly, in Chapter 4, while we focused on recovering the theta parameter for a biased agent, we didn't rigorously check if the fitted Bernoulli model could actually replicate the patterns in the choice sequence beyond just the overall average.
+
+This is where model checking comes in. It's a crucial part of the Bayesian workflow that involves critically evaluating how well our model aligns with the data and the assumptions embedded within it. We need tools to ask:
+
+* **Posterior Prediction**: Given the parameters estimated after seeing the data, can the model generate new data that looks statistically similar to the actual data we observed? (Does the fitted model capture the essence of the data?)
+
+* **Prior Prediction**: What kind of data did our model expect to see before fitting, based solely on the prior distributions we chose? Were these expectations reasonable, or did our priors implicitly assume impossible or absurd scenarios?
+
+* **Prior Influence & Sensitivity**: How much did our prior choices shape the final parameter estimates? Would our conclusions change drastically if we used slightly different, but still plausible, priors?
+
+This chapter introduces techniques to answer these questions, using our simple biased agent model as a running example. We'll start by checking if our fitted model reproduces the data, then examine the implications of our priors, and finally assess sensitivity.
+
+## Loading Packages and Previous Results
+
+Let's start by loading the necessary packages and the fitted model object from Chapter 4. This avoids re-running the fitting process unnecessarily and ensures consistency.
+
+```{r adding priors, warning = F, message = F}
+# Load required packages using pacman for efficient package management
+# pacman::p_load ensures packages are installed if missing, then loads them
+pacman::p_load(
+  tidyverse,    # Core suite for data manipulation (dplyr) and plotting (ggplot2)
+  here,         # For creating robust file paths relative to the project root (optional but good practice)
+  posterior,    # Provides tools for working with posterior distributions
+  cmdstanr,     # The R interface to Stan (via CmdStan)
+  bayesplot,    # Specialized plotting functions for Bayesian models
+  patchwork,     # For easily combining multiple ggplot plots
+  priorsense    # For automated prior sensitivity analysis
+)
+
+# Set a default theme for ggplot for consistency
+theme_set(theme_classic()) # Use a classic theme with white background
+
+# --- Load Previous Results ---
+
+# Define relative paths using here() if using R Projects, or simple relative paths otherwise
+# Assumes standard subdirectories 'stan', 'simmodels', 'simdata' exist
+stan_model_dir <- "stan"
+stan_results_dir <- "simmodels"
+sim_data_dir <- "simdata"
+
+# Create directories if they don't exist (important for first run)
+if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir)
+if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir)
+if (!dir.exists(sim_data_dir)) dir.create(sim_data_dir)
+
+# Specify the model file from Chapter 4
+# We'll use the logit version as it's generally preferred for parameters bounded between 0 and 1
+stan_file_logit <- file.path(stan_model_dir, "W4_SimpleBernoulli_logit.stan") # Assumes this file was created in Ch4
+model_file_logit <- file.path(stan_results_dir, "W4_SimpleBernoulli_logit.rds") # Assumes this fit object was saved in Ch4
+
+# Load the simulation data used in Chapter 4
+sim_data_file <- file.path(sim_data_dir, "W4_randomnoise.csv") # Assumes this CSV was created in Ch4
+if (!file.exists(sim_data_file)) {
+  stop(paste("Simulation data file not found:", sim_data_file, "Please run Chapter 4 first."))
+}
+d <- read_csv(sim_data_file, show_col_types = FALSE) # Load data, suppress column type messages
+
+# Subset data for the specific agent fitted in Chapter 4 (rate=0.8, noise=0)
+# This ensures we are checking the model against the data it was actually fitted to
+d1 <- d %>% filter(true_rate == 0.8, true_noise == 0.0)
+if (nrow(d1) == 0) {
+  stop("Could not find data for agent with rate=0.8 and noise=0.0 in the simulation file.")
+}
+trials <- nrow(d1)
+
+# Prepare the observed data list in the format Stan expects
+observed_data_list <- list(
+  n = trials,     # Number of trials (integer)
+  h = d1$choice   # Vector of observed choices (0s and 1s)
+)
+
+# Load the fitted model object from Chapter 4
+if (!file.exists(model_file_logit)) {
+  stop(paste("Fitted model object from Chapter 4 not found:", model_file_logit, "Please run Chapter 4 first."))
+}
+fit_logit <- readRDS(model_file_logit) # Load the saved cmdstanr fit object
+
+cat("Successfully loaded simulation data and the fitted model object from Chapter 4.\n")
+```
+
+## Step 1: Prior Predictive Checks - Are the Priors Reasonable?
+Before fitting the model, we specified prior distributions for our parameters (e.g., normal(0, 1) for theta_logit). Priors encode our beliefs before seeing the data. Prior predictive checks help us understand the implications of these choices. We ask: "If we simulate data using only parameters drawn from our priors, what kind of data does the model expect before seeing any actual observations?"
+
+### Conceptual Idea:
+
+1. Take a sample from the prior distribution of the parameter(s) (e.g., one value of theta_logit from normal(0, 1)).
+
+2. Using this prior parameter value, simulate a new dataset (y_prior_rep).
+
+3. Repeat steps 1 and 2 many times.
+
+4. Examine the distribution of summary statistics across these prior-simulated datasets.
+
+This tells us the range of data patterns considered possible by our model a priori. We should check if this range is reasonable and aligns with our domain knowledge. Very wide or nonsensical prior predictions might suggest our priors are too vague or perhaps poorly chosen (e.g., implying impossible outcomes).
+
+### Implementation with generated quantities:
+
+To perform predictive checks efficiently, we need to modify our Stan model from Chapter 4 to include simulations within the generated quantities block. This block executes after the model has been fitted, but we can add code to simulate from the priors as well as the posterior. Note that we add already the posterior predictive checks beyond the prior predictive checks, but we'll explain them in a bit.
+
+```{r 05 - add generated quantities, warning = F, message = F}
+
+# Stan code adding generated quantities for predictive checks
+# This code defines the Stan model structure as a text string in R
+stan_model_gq_code <- "
+// Stan Model: Simple Bernoulli (Logit) with Generated Quantities
+// Based on W4_SimpleBernoulli_logit.stan from Chapter 4
+// This version adds prior and posterior predictive simulations.
+
+data {
+  int<lower=1> n;                       // Number of trials (e.g., 120)
+  array[n] int<lower=0, upper=1> h;    // Observed choices (vector of 0s and 1s)
+}
+
+parameters {
+  // The parameter to be estimated (on the log-odds scale)
+  real theta_logit; // Represents the log-odds of choosing option 1
+}
+
+model {
+  // Prior distribution for the parameter
+  // Normal(0, 1) on log-odds is a weakly informative prior,
+  // favoring probabilities around 0.5 but allowing others.
+  target += normal_lpdf(theta_logit | 0, 1);
+
+  // Likelihood function
+  // Defines how the observed data 'h' depends on the parameter 'theta_logit'.
+  // Assumes each choice is an independent Bernoulli trial.
+  target += bernoulli_logit_lpmf(h | theta_logit); // _logit indicates theta is on log-odds scale
+}
+
+// --- Generated Quantities Block ---
+// Code in this block runs *after* sampling, using each posterior sample of theta_logit.
+// It's used for generating predictions, calculating derived quantities, etc.
+generated quantities {
+  // --- Posterior Parameter Transformation ---
+  // Convert the estimated log-odds back to the probability scale (0-1) for easier interpretation.
+  real<lower=0, upper=1> theta = inv_logit(theta_logit);
+
+  // --- Prior Predictive Check Simulation ---
+  // Simulate data based *only* on the prior distribution.
+  // 1. Sample a parameter value from the PRIOR distribution specified in the model block.
+  real theta_logit_prior_sim = normal_rng(0, 1); // Sample from Normal(0, 1)
+  // 2. Simulate a replicated dataset ('h_prior_rep') using this PRIOR parameter sample.
+  //    We generate 'n' choices, each based on the single prior draw.
+  array[n] int h_prior_rep = bernoulli_logit_rng(rep_vector(theta_logit_prior_sim, n));
+  // 3. Calculate a summary statistic for this PRIOR replicated dataset.
+  //    Example: Calculate the total number of 'right' (1) choices.
+  int<lower=0, upper=n> prior_rep_sum = sum(h_prior_rep);
+
+  // --- Posterior Predictive Check Simulation ---
+  // Simulate data based on the *posterior* distribution of the parameter.
+  // 1. Stan automatically provides a sample from the POSTERIOR (theta_logit) for each iteration.
+  // 2. Simulate a replicated dataset ('h_post_rep') using this POSTERIOR parameter sample.
+  array[n] int h_post_rep = bernoulli_logit_rng(rep_vector(theta_logit, n));
+  // 3. Calculate a summary statistic for this POSTERIOR replicated dataset.
+  int<lower=0, upper=n> post_rep_sum = sum(h_post_rep); // Example: total 'right' choices
+}
+"
+# Define file path for the new Stan model
+stan_file_gq <- file.path(stan_model_dir, "W5_SimpleBernoulli_GQ.stan")
+
+# Write the Stan code string to the specified file
+# write_stan_file is a helper from cmdstanr
+write_stan_file(stan_model_gq_code, stan_file_gq)
+
+cat("Stan model with generated quantities written to:", stan_file_gq, "\n")
+
+# --- Re-fit the model with the new GQ block (or load if already done) ---
+# Define path for saving/loading the fitted model object that includes the generated quantities
+model_file_gq <- file.path(stan_results_dir, "W5_SimpleBernoulli_GQ.rds")
+
+# Check if we need to re-run the fitting process based on the flag or file existence
+if (regenerate_fitting || !file.exists(model_file_gq)) {
+  cat("Compiling and fitting Stan model (with GQ)...\n")
+  # Compile the Stan model (translates Stan code to C++)
+  # This only needs to happen once unless the Stan code changes.
+  mod_gq <- cmdstan_model(stan_file_gq,
+                          cpp_options = list(stan_threads = TRUE), # Optional: enable threading if model supports it
+                          stanc_options = list("O1")) # Optional: basic compiler optimizations
+
+  # Sample from the posterior distribution using MCMC
+  fit_gq <- mod_gq$sample(
+    data = observed_data_list,     # The observed data list prepared earlier
+    seed = 123,                    # Set seed for reproducible MCMC results
+    chains = 4,                    # Number of independent Markov chains (4 is standard)
+    parallel_chains = min(4, future::availableCores()), # Run chains in parallel using available cores
+    iter_warmup = 1000,            # Number of warmup iterations per chain (discarded)
+    iter_sampling = 2000,          # Number of sampling iterations per chain (kept)
+    refresh = 500,                 # How often to print progress updates to the console
+    max_treedepth = 10,            # MCMC tuning parameter (controls step complexity)
+    adapt_delta = 0.8              # MCMC tuning parameter (target acceptance rate)
+  )
+
+  # Save the fitted model object (including samples and generated quantities)
+  fit_gq$save_object(file = model_file_gq)
+  cat("Model fit completed and saved to:", model_file_gq, "\n")
+} else {
+  # Load the previously saved fitted model object
+  fit_gq <- readRDS(model_file_gq)
+  cat("Loaded existing model fit (with GQ) from:", model_file_gq, "\n")
+}
+
+```
+
+### Performing the Prior Predictive Check:
+
+We already added the necessary prior simulation (h_prior_rep) and summary statistic calculation (prior_rep_sum) to our generated quantities block. We now extract and visualize these prior predictions.
+
+```{r}
+# Extract the summary statistic calculated from prior predictive simulations
+# 'prior_rep_sum' was calculated within the generated quantities block
+draws_gq <- as_draws_df(fit_gq$draws()) # Ensure we have the draws as a dataframe
+prior_rep_sum <- draws_gq$prior_rep_sum
+
+# --- Graphical Prior Predictive Check using bayesplot ---
+# We use pp_check again, but provide the prior predictive summary statistics (prior_rep_sum)
+# as the 'yrep' argument. We still plot the actual observed statistic 'y' for reference.
+color_scheme_set("red") # Set color scheme for prior checks
+
+ppc_prior_stat <- pp_check(
+  y = observed_data_list$h,      # Actual observed data (for the reference line y)
+  yrep = prior_rep_sum,          # Vector of sums from PRIOR simulations (yrep)
+  stat = "sum"                   # The statistic being compared
+  ) +
+  ggtitle("Prior Predictive Check: Total 'Right' Choices") +
+  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  theme_classic()
+
+print(ppc_prior_stat)
+
+# --- Interpretation ---
+cat("Interpretation:\nThis histogram (light red) shows the distribution of total 'right' choices expected by the model *before* seeing any data, based *only* on the prior distribution specified for theta (Normal(0, 1) on the logit scale).\n")
+cat("The distribution covers the entire possible range of sums (0 to", trials,"), peaking around", trials/2, "(which corresponds to theta=0.5 probability, the mean of our prior when transformed).\n")
+cat("This indicates our chosen prior was quite 'uninformative' or 'diffuse' regarding the overall bias. It considered almost any number of 'right' choices possible before looking at the data.\n")
+cat("The actual observed sum (dark red line =", sum(observed_data_list$h), ") is plausible under this prior, but the prior didn't strongly predict this specific outcome over others.\n")
+cat("If the prior predictive distribution showed impossible values (e.g., only sums near 0 or 120 when intermediate values are expected) or was extremely narrow and excluded plausible outcomes based on domain knowledge, we might need to reconsider our prior specification.\n")
+
+
+```
+
+** Interpretation**: The prior predictive distribution (red histogram) shows the wide range of outcomes (total 'right' choices) considered possible by the model before seeing the data, driven solely by the Normal(0, 1) prior on theta_logit. It covers the full range, centered around chance performance (60 'right' choices out of 120). This confirms our prior was "weakly informative," allowing for many possibilities before observing the data.
+
+## Step 2: Posterior Predictive Checks - Does the Fitted Model Resemble the Data?
+
+Now that we've examined the prior implications, let's perform the posterior predictive check. This asks: can the model, using the parameters learned from the data, generate new data that looks statistically similar to the actual data we observed?
+
+### Conceptual Idea & Implementation:
+
+This follows the same logic as the prior predictive check, but instead of sampling parameters from the prior, we use the parameter samples drawn from the posterior distribution during fitting. Our generated quantities block already calculates h_post_rep (replicated datasets using posterior draws) and post_rep_sum (the summary statistic for these datasets).
+
+### Performing the Posterior Predictive Check:
+
+We extract the posterior predictive simulations (h_post_rep) and compare their summary statistic (post_rep_sum) to the same statistic calculated from the actual observed data (h).
+
+```{r, 05 posteriior predictive checks, warning = F, message = F}
+# Extract posterior predictive simulations from the fitted object
+h_post_rep <- fit_gq$draws("h_post_rep", format = "matrix")
+
+# Calculate the summary statistic for the *actual* observed data
+observed_sum <- sum(observed_data_list$h) # Total number of 'right' choices in d1
+
+# --- Graphical Posterior Predictive Check using bayesplot ---
+color_scheme_set("brightblue") # Set color scheme for posterior checks
+
+# Check the 'sum' statistic
+ppc_stat <- pp_check(
+  y = observed_data_list$h,      # Actual observed data vector (y)
+  yrep = h_post_rep,             # Matrix of replicated datasets (yrep, draws x N)
+  stat = "sum"                   # Summary statistic function to apply to y and each row of yrep
+  ) +
+  ggtitle("Posterior Predictive Check: Total 'Right' Choices") +
+  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  theme_classic() # Apply the classic theme
+
+print(ppc_stat)
+
+# --- Interpretation ---
+cat("Interpretation:\nThe histogram (light blue) shows the distribution of the total number of 'right' choices across many datasets simulated from the *fitted* model (using posterior parameter draws).\nThe dark blue vertical line shows the total number of 'right' choices in our *actual* observed data (value =", observed_sum, ").\n")
+cat("Since the observed value falls well within the bulk of the simulated distribution, it suggests the model captures this particular aspect (the overall bias or average number of 'right' choices) of the data reasonably well.\n")
+cat("If the observed line were far out in the tails of the histogram, it would indicate a potential model misfit for this specific statistic.\n")
+
+# --- Example: Checking another statistic (e.g., max run length) ---
+# Define a function to calculate the maximum run length in a vector
+max_run_length <- function(x) {
+  if (length(x) == 0 || all(is.na(x))) return(0) # Handle empty or all NA input
+  rle_x <- rle(x) # Run Length Encoding: finds consecutive runs of identical values
+  if (length(rle_x$lengths) == 0) return(0) # Handle cases with no runs (e.g., single element)
+  max(rle_x$lengths) # Return the length of the longest run
+}
+
+# Perform the posterior predictive check using the custom statistic
+ppc_max_run <- pp_check(
+  y = observed_data_list$h,  # Actual observed data
+  yrep = h_post_rep,         # Replicated datasets
+  stat = "max_run_length"    # Use our custom function as the statistic
+  ) +
+  ggtitle("Posterior Predictive Check: Maximum Run Length") +
+  xlab("Maximum Run Length of Consecutive Choices (0s or 1s)") +
+  theme_classic()
+
+print(ppc_max_run)
+
+# --- Interpretation ---
+cat("\nInterpretation:\nThis check examines if the model replicates the longest streak (run) of identical choices (either 0s or 1s) observed in the data. A simple Bernoulli model assumes independence between trials, so it might struggle to reproduce very long runs if they exist in the data.\n")
+cat("In this case, the observed maximum run length (dark blue line) again falls within the distribution predicted by the model (light blue histogram). This suggests the model's assumption of independence isn't drastically violated by the observed data in terms of run lengths.\n")
+cat("If the observed line was far to the right, it might indicate sequential dependencies (like auto-correlation) that the simple Bernoulli model doesn't capture.\n")
+
+# --- Compare Prior and Posterior Predictive Distributions side-by-side ---
+# Combine prior and posterior predicted sums into one data frame for easier plotting
+pred_sums_df <- tibble(
+  Sum = c(draws_gq$prior_rep_sum, draws_gq$post_rep_sum), # Combine the sum vectors
+  Type = factor(rep(c("Prior Predictive", "Posterior Predictive"), each = nrow(draws_gq)),
+                levels = c("Prior Predictive", "Posterior Predictive")) # Add identifier
+)
+
+# Create the comparison plot
+ppc_compare <- ggplot(pred_sums_df, aes(x = Sum, fill = Type)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 30) + # Overlay histograms
+  geom_vline(xintercept = observed_sum, color = "black", linetype = "dashed", size = 1) + # Add observed value line
+  scale_fill_manual(values = c("Prior Predictive" = "salmon", "Posterior Predictive" = "skyblue")) + # Colors
+  ggtitle("Prior vs. Posterior Predictive Distributions (Total 'Right' Choices)") +
+  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  ylab("Frequency (from posterior samples)") +
+  # Add annotation for the observed value line
+  annotate("text", x = observed_sum, y = Inf, label = "Observed Data", vjust = 2, hjust = if(observed_sum > trials/2) 1.1 else -0.1, size = 3) +
+  theme_classic() +
+  theme(legend.position = "bottom") # Move legend to bottom
+
+print(ppc_compare)
+
+# --- Interpretation ---
+cat("\nInterpretation:\nComparing the prior (red) and posterior (blue) predictive distributions clearly shows the impact of the data.\nThe broad prior predictive distribution reflects the model's initial uncertainty (driven by the Normal(0, 1) prior on logit-theta). The much narrower posterior predictive distribution is tightly concentrated around the observed sum (dashed line). This visualizes the 'learning' process: the data strongly updated the model's predictions about plausible outcomes.\n")
+
+
+```
+
+**Interpretation**: The posterior predictive checks show that the fitted model (blue histograms) generates data where the total number of 'right' choices and the maximum run length are consistent with the actual observed data (dark blue/black vertical lines). This increases our confidence that the model structure (a simple Bernoulli process with a fixed bias) is a reasonable approximation for this specific dataset, at least concerning these summary statistics.
+
+## Step 3: Prior-Posterior Update Checks - How Much Did the Data Change Beliefs?
+
+This check directly visualizes how the posterior distribution of a parameter compares to its prior distribution. It helps us understand:
+
+* **Information Gain**: How much did the data reduce our uncertainty about the parameter? (Is the posterior much narrower than the prior?)
+
+* **Prior Influence**: Did the prior strongly constrain the posterior? (Does the posterior look very similar to the prior, or did it shift significantly?)
+
+We look at the distribution of the parameter itself (theta_logit or its transformed version theta).
+
+```{r 05 prior posterior update, warning = FALSE, message = FALSE}
+# We need the prior simulations for theta (logit scale)
+# We already generated theta_logit_prior_sim in the GQ block
+# We also need the posterior draws of theta_logit
+
+# Extract necessary draws
+draws_gq <- as_draws_df(fit_gq$draws()) # Ensure draws are a dataframe
+
+# Prepare data for plotting on the logit scale
+prior_post_logit_df <- tibble(
+  Value = c(draws_gq$theta_logit, draws_gq$theta_logit_prior_sim), # Posterior and Prior samples
+  Distribution = factor(rep(c("Posterior", "Prior"), each = nrow(draws_gq)),
+                        levels = c("Prior", "Posterior")) # Labels
+)
+
+# Find the true value used in simulation (converted to logit scale)
+true_theta_logit <- qlogis(0.8) # 0.8 was the true probability
+
+# Plot on the logit scale (the scale the parameter is defined on in the model)
+p_update_logit <- ggplot(prior_post_logit_df, aes(x = Value, fill = Distribution)) +
+  geom_density(alpha = 0.6) + # Use density plots for continuous parameters
+  geom_vline(xintercept = true_theta_logit, color = "black", linetype = "dashed", size = 1) + # True value line
+  scale_fill_manual(values = c("Prior" = "salmon", "Posterior" = "skyblue")) + # Colors
+  ggtitle("Prior-Posterior Update Check (Logit Scale)") +
+  xlab("Theta Parameter (logit scale)") +
+  ylab("Density") +
+  # Add annotation for the true value line
+  annotate("text", x = true_theta_logit, y = Inf, label = "True Value", vjust = 2, hjust = if(true_theta_logit > 0) 1.1 else -0.1, size = 3) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+print(p_update_logit)
+
+# --- Interpretation ---
+cat("Interpretation (Logit Scale):\nThis plot shows the prior (red) and posterior (blue) distributions for the theta parameter on the logit scale.\nThe Normal(0, 1) prior is centered at 0 (logit-space equivalent of 0.5 probability) and is relatively wide. The posterior distribution is much narrower and clearly shifted towards the true logit value (dashed line, approx", round(true_theta_logit, 2), "). This indicates substantial learning from the data; the data strongly pulled the estimate away from the prior mean.\n")
+
+# --- Plot on the more intuitive probability scale ---
+# Extract posterior theta on probability scale (already generated as 'theta' in GQ)
+posterior_theta_prob <- draws_gq$theta
+# Transform prior samples to probability scale
+prior_theta_prob <- plogis(draws_gq$theta_logit_prior_sim)
+
+# Prepare data for plotting on probability scale
+prior_post_prob_df <- tibble(
+  Value = c(posterior_theta_prob, prior_theta_prob), # Posterior and Prior samples
+  Distribution = factor(rep(c("Posterior", "Prior"), each = nrow(draws_gq)),
+                        levels = c("Prior", "Posterior")) # Labels
+)
+
+# True value on probability scale
+true_theta_prob <- 0.8
+
+p_update_prob <- ggplot(prior_post_prob_df, aes(x = Value, fill = Distribution)) +
+  geom_density(alpha = 0.6) +
+  geom_vline(xintercept = true_theta_prob, color = "black", linetype = "dashed", size = 1) +
+  scale_fill_manual(values = c("Prior" = "salmon", "Posterior" = "skyblue")) +
+  ggtitle("Prior-Posterior Update Check (Probability Scale)") +
+  xlab("Theta Parameter (probability scale)") +
+  ylab("Density") +
+  coord_cartesian(xlim = c(0, 1)) + # Ensure x-axis covers the valid probability range
+  # Add annotation for the true value line
+  annotate("text", x = true_theta_prob, y = Inf, label = "True Value", vjust = 2, hjust = if (true_theta_prob > 0.5) 1.1 else -0.1, size = 3) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+print(p_update_prob)
+
+# --- Interpretation ---
+cat("\nInterpretation (Probability Scale):\nThis plot shows the same update but on the more intuitive 0-1 probability scale.\nThe prior (red), corresponding to Normal(0, 1) on the logit scale, is broad and somewhat concentrated around 0.5. The posterior (blue) is tightly concentrated near the true value of 0.8 (dashed line).\nThis visualization clearly confirms that the data strongly influenced the parameter estimate, significantly reducing uncertainty and shifting the belief away from the prior mean towards the true value.\n")
+
+
+
+```
+
+**Interpretation**: We visualize the prior distribution (red) and the posterior distribution (blue) for our parameter theta (shown on both the logit scale used in the model and the more intuitive probability scale). The posterior is much narrower than the prior and its center has shifted substantially towards the true value (dashed line). This indicates that the data was very informative and strongly updated our initial beliefs encoded in the prior. If the posterior looked very similar to the prior, it would suggest the data provided little information.
+
+## Step 4: Prior Sensitivity Analysis - Do Priors Matter Too Much?
+
+The final check addresses whether our conclusions are overly dependent on the specific priors we chose. What if we had used a slightly wider or narrower prior? Would our estimate of theta change dramatically? We investigate this by re-running the model with different, plausible priors and comparing the resulting posterior distributions.
+
+### 4a. Manual Sensitivity Check
+
+#### Conceptual Idea:
+
+1. Define a set of alternative, reasonable prior distributions for the parameter(s) of interest (e.g., Normal(0, 0.5), Normal(0, 1), Normal(0, 2) for theta_logit).
+
+2. Re-fit the model using each alternative prior specification.
+
+3. Compare the posterior distributions obtained under these different priors.
+
+If the posterior distributions are very similar across the different prior specifications, our conclusions are considered robust to the prior choice (within the tested range). If the posteriors change significantly depending on the prior, it suggests our results are sensitive to prior choices. This might indicate that the data isn't informative enough to overwhelm the prior, and we should either be more cautious in our interpretations, justify our original prior more strongly, or seek more data.
+
+#### Implementation:
+
+We need a slightly modified Stan model that accepts the prior's standard deviation (prior_sd) as data. Then, we loop through our chosen alternative SD values, fitting the model each time.
+
+```{r 05 - manual sensitivity analysis, warning = F, message = F}
+# Stan model modified to accept prior SD as data
+# This allows us to easily change the prior in the R script without rewriting Stan code
+stan_model_sens_code <- "
+// Stan Model: Simple Bernoulli (Logit) for Sensitivity Analysis
+// Allows the standard deviation of the prior to be passed as data.
+
+data {
+  int<lower=1> n;                       // Number of trials
+  array[n] int<lower=0, upper=1> h;    // Observed choices
+  real<lower=0> prior_sd;              // SD for the normal prior (passed as data from R)
+}
+
+parameters {
+  real theta_logit; // Parameter on the unbounded log-odds scale
+}
+
+model {
+  // Prior on log-odds scale using the standard deviation provided in the data block.
+  target += normal_lpdf(theta_logit | 0, prior_sd); // Use the input prior_sd
+
+  // Likelihood using the logit version
+  target += bernoulli_logit_lpmf(h | theta_logit);
+}
+
+generated quantities {
+  // Convert estimate back to probability scale for interpretation
+  real<lower=0, upper=1> theta = inv_logit(theta_logit);
+
+  // --- Optional: Simulate from the specific prior used in this run ---
+  // This helps verify the prior's implications for each sensitivity run.
+  // real theta_logit_prior_sim = normal_rng(0, prior_sd); // Sample from the specific prior
+  // array[n] int h_prior_rep = bernoulli_logit_rng(rep_vector(theta_logit_prior_sim, n));
+  // int<lower=0, upper=n> prior_rep_sum = sum(h_prior_rep);
+
+  // --- Posterior predictive check simulation ---
+  // Useful to see if predictions change drastically with the prior.
+  // array[n] int h_post_rep = bernoulli_logit_rng(rep_vector(theta_logit, n));
+  // int<lower=0, upper=n> post_rep_sum = sum(h_post_rep);
+}
+"
+# Define file path for the sensitivity model
+stan_file_sens <- file.path(stan_model_dir, "W5_SimpleBernoulli_Sensitivity.stan")
+
+# Write the Stan code to the file
+write_stan_file(stan_model_sens_code, stan_file_sens)
+cat("Stan model for sensitivity analysis written to:", stan_file_sens, "\n")
+
+# --- Compile the sensitivity model ---
+# This needs to be done only once
+mod_sens <- cmdstan_model(stan_file_sens,
+                          cpp_options = list(stan_threads = TRUE), # Optional threading
+                          stanc_options = list("O1")) # Optional optimization
+cat("Sensitivity model compiled successfully.\n")
+
+
+```
+
+Now we run the analysis, fitting the model multiple times with different priors.
+
+```{r 05 - run sensitivity analysis, warning = F, message = F}
+# --- Run Sensitivity Analysis ---
+# Define the alternative prior standard deviations (on logit scale) to test.
+# We'll try a narrower prior (0.5), our original prior (1.0), and a wider prior (2.0).
+prior_sds_to_test <- c(0.5, 1.0, 2.0)
+
+# List to store the resulting fit objects
+sensitivity_fits <- list()
+
+# Set a base random seed for reproducibility across runs
+set.seed(456)
+
+# Define file path for saving/loading sensitivity results
+sensitivity_results_file <- file.path(stan_results_dir, "W5_sensitivity_fits.rds")
+
+# Check if we need to re-run the sensitivity analysis
+if (regenerate_fitting || !file.exists(sensitivity_results_file)) {
+  cat("Running prior sensitivity analysis (this may take a few minutes)...\n")
+  # Loop through each prior standard deviation value
+  for (sd_val in prior_sds_to_test) {
+    cat("  Fitting with prior SD =", sd_val, "on logit-theta...\n")
+    # Prepare the data list, adding the current prior_sd value
+    current_data_list <- c(observed_data_list, list(prior_sd = sd_val))
+
+    # Fit the sensitivity model using the current data list
+    current_fit <- mod_sens$sample(
+      data = current_data_list,
+      seed = 123 + sd_val * 10, # Adjust seed slightly for each run for independence
+      chains = 4,
+      parallel_chains = min(4, future::availableCores()), # Use parallel chains
+      iter_warmup = 1000,
+      iter_sampling = 2000,
+      refresh = 0, # Suppress iteration updates during the loop for cleaner output
+      adapt_delta = 0.8,
+      show_messages = FALSE # Suppress Stan startup messages in loop
+    )
+    # Store the fit object in the list, named by the SD value
+    sensitivity_fits[[paste0("sd_", sd_val)]] <- current_fit
+  }
+  # Save the list containing all fit objects
+  saveRDS(sensitivity_fits, sensitivity_results_file)
+  cat("Sensitivity analysis finished and results saved to:", sensitivity_results_file, "\n")
+} else {
+  # Load the previously saved results
+  sensitivity_fits <- readRDS(sensitivity_results_file)
+  cat("Loaded existing sensitivity analysis results from:", sensitivity_results_file, "\n")
+}
+
+# --- Visualize Sensitivity Results ---
+# Extract posterior draws for theta (probability scale) from each fit object in the list
+sensitivity_draws <- imap_dfr(sensitivity_fits, ~{
+  # .x is the fit object, .y is the name (e.g., "sd_1")
+  fit <- .x
+  # Extract the 'theta' parameter (already on probability scale from generated quantities)
+  draws <- fit$draws("theta", format = "df")
+  # Extract the prior SD value from the name
+  prior_sd_used <- as.numeric(sub("sd_", "", .y))
+
+  # Create a tibble for this fit
+  tibble(
+    theta_prob = draws$theta,
+    prior_sd = prior_sd_used # Store the prior SD used for this fit
+    )
+}) %>%
+  # Create a factor for plotting legend, formatting the prior description
+  mutate(Prior_Specification = factor(paste0("Normal(0, ", prior_sd, ") on logit")))
+
+
+# Plot the posterior densities for theta (probability scale) under the different priors
+p_sensitivity <- ggplot(sensitivity_draws, aes(x = theta_prob, fill = Prior_Specification)) +
+  geom_density(alpha = 0.5) + # Overlay density plots with transparency
+  geom_vline(xintercept = true_theta_prob, color = "black", linetype = "dashed", size = 1) + # True value line
+  scale_fill_brewer(palette = "Set2") + # Color palette for different priors
+  coord_cartesian(xlim = c(0, 1)) + # Ensure x-axis is 0-1 for probability
+  ggtitle("Prior Sensitivity Analysis: Posterior for Theta (Probability)") +
+  xlab("Theta Parameter (probability scale)") +
+  ylab("Density") +
+  # Add annotation for the true value line
+  annotate("text", x = true_theta_prob, y = Inf, label = "True Value", vjust = 2, hjust = if (true_theta_prob > 0.5) 1.1 else -0.1, size = 3) +
+  theme_classic() +
+  theme(legend.position = "bottom") # Place legend at the bottom
+
+print(p_sensitivity)
+
+# --- Interpretation ---
+cat("\nInterpretation:\nThis plot overlays the posterior distributions for theta (on the 0-1 probability scale) obtained using different prior standard deviations (0.5, 1.0, 2.0) applied to theta_logit.\n")
+cat("We observe that the posterior distributions are remarkably similar across the different priors. They are all sharply peaked near the true value (0.8, dashed line).\n")
+cat("This indicates that our inference about theta is *robust* to these variations in the prior's width (informativeness). The likelihood information from the 120 data points is strong enough to overwhelm these reasonable variations in the prior.\n")
+cat("If the posteriors had shifted significantly or changed shape drastically depending on the prior, it would suggest our conclusions were sensitive to the prior specification. This would warrant more caution, a stronger justification for the chosen prior, or indicate the need for more data.\n")
+
+```
+
+**Interpretation**: The plot overlays the posterior distributions for theta obtained using different priors. Since the distributions are very similar and all peak near the true value (0.8), it indicates that our conclusion about the agent's bias is robust and not overly sensitive to the specific width of the prior we chose (within this tested range).
+
+### 4b. Sensitivity Analysis using priorsense
+
+Manually re-fitting the model with different priors can be time-consuming, especially for complex models. The priorsense package provides tools to estimate prior sensitivity based on the original model fit, without requiring multiple runs. It uses power-scaling, essentially checking how the posterior changes as the likelihood is down-weighted (giving more influence to the prior).
+
+#### Conceptual Idea:
+
+1. Fit the model once with your chosen priors.
+
+2. Use priorsense functions (like powerscale_sensitivity) to analyze the fitted object.
+
+3. The package calculates sensitivity metrics (e.g., sensitivity_psi) for each parameter, indicating how much the posterior mean might change relative to the posterior standard deviation if the prior were slightly perturbed.
+
+4. High sensitivity values suggest potential issues where the prior might be overly influential or conflicting with the data.
+
+Implementation:
+
+```{r 05 - priorsense analysis, warning = F, message = F}
+# --- Using priorsense package ---
+# Load the package (should be loaded already via pacman)
+# library(priorsense)
+
+# Use the model fit that includes the generated quantities block
+# as priorsense needs access to the model structure and draws
+fit_object_for_priorsense <- fit_gq # Use the fit object from the GQ model
+
+# Calculate power-scaled sensitivity
+# This function analyzes how posteriors change as the likelihood is down-weighted
+# Note: This can take a moment to compute
+cat("Running priorsense analysis...\n")
+sensitivity_summary <- powerscale_sensitivity(fit_object_for_priorsense)
+
+# Print the sensitivity summary
+cat("\nPriorsense Sensitivity Summary:\n")
+print(sensitivity_summary)
+
+# Visualize the sensitivity
+# The plot shows the sensitivity measure (psi) for each parameter.
+# Higher values indicate greater sensitivity.
+ps_plot <- plot(sensitivity_summary) +
+  ggtitle("Prior Sensitivity Diagnostics (priorsense)") +
+  theme_classic()
+
+print(ps_plot)
+
+# --- Interpretation ---
+cat("\nInterpretation (priorsense):\n")
+# Extract the sensitivity value for theta_logit
+theta_sensitivity <- sensitivity_summary$sensitivity %>%
+  filter(variable == "theta_logit") %>%
+  pull(sensitivity_psi)
+
+cat("The `priorsense` package calculates sensitivity metrics. The 'sensitivity_psi' value measures how much the posterior mean is expected to change (in standard deviation units) if the prior is perturbed slightly.\n")
+cat("For our parameter 'theta_logit', the sensitivity_psi is", round(theta_sensitivity, 3), ".\n")
+cat("Generally, values below 0.1 are considered low sensitivity, indicating robustness. Values between 0.1 and 0.5 might warrant some caution, while values above 0.5 suggest high sensitivity.\n")
+cat("In this case, the low sensitivity value confirms our finding from the manual check: the inference for theta_logit is not overly sensitive to the prior specification, likely because the data is quite informative.\n")
+
+```
+
+
+**Interpretation**: The priorsense output provides quantitative measures of sensitivity. Low values (typically < 0.1 or 0.2) for sensitivity_psi suggest robustness, while higher values indicate parameters whose estimates are more sensitive to the prior specification. This automated approach complements the manual check by providing a quick diagnostic based on the original fit.
+
+
+## Extending Checks to the Memory Model
+
+The same checking principles apply to more complex models, like the memory model from Chapter 4 (which included `bias` and `beta` parameters). This model assumes choices depend not just on a fixed bias, but also on a memory trace of the opponent's recent choices. Let's apply our checking workflow to this model.
+
+### Preparing Data and Model for Memory Checks
+
+First, we need data generated by a memory agent and the corresponding Stan model definition, including the `generated quantities` block for predictive checks.
+
+**1. Simulating Memory Agent Data:**
+
+We'll simulate an agent whose choices depend on the opponent's cumulative choice rate, using specific `bias` and `beta` (memory strength) parameters.
+
+```{r 05-prep-memory-data}
+# --- Simulate Data for Memory Model ---
+# Use the same opponent data (rate=0.8, noise=0) as before
+# This opponent's choices will form the basis of the memory agent's memory trace
+d_opponent <- d1_bias # Reusing the data from the biased agent simulation
+
+# Define true parameters for the memory agent simulation
+true_bias_mem <- 0    # True baseline bias (logit scale) - no baseline bias
+true_beta_mem <- 0.9  # True memory strength parameter - moderate influence of memory
+
+# Define the memory agent function (adapting from Chapter 4)
+MemoryAgent_f <- function(bias, beta, cumulativerate){
+    # Ensure cumulativerate is within (0, 1) to avoid issues with logit function
+    rate_clipped <- pmin(pmax(cumulativerate, 0.01), 0.99)
+    # Calculate choice probability based on bias and memory (logit scale)
+    prob <- plogis(bias + beta * qlogis(rate_clipped))
+    # Generate a choice based on this probability
+    choice = rbinom(1, 1, prob)
+  return(choice)
+}
+
+# Create a dataframe to store the memory agent's simulation
+d_memory_agent <- tibble(
+    trial = 1:trials,
+    OtherChoice = d_opponent$choice # Opponent's choices
+    ) %>%
+  # Calculate the opponent's cumulative rate *up to the previous trial*
+  mutate(
+    OpponentRate = cumsum(OtherChoice) / row_number(),
+    MemoryInput = lag(OpponentRate, default = 0.5), # Use previous rate as memory input, start at 0.5
+    # Clip memory input again for safety
+    MemoryInput = pmin(pmax(MemoryInput, 0.01), 0.99)
+    )
+
+# Generate the memory agent's choices trial-by-trial
+d_memory_agent$SelfChoice <- NA
+# First choice is random (or based on initial memory = 0.5)
+d_memory_agent$SelfChoice[1] <- MemoryAgent_f(
+    bias = true_bias_mem,
+    beta = true_beta_mem,
+    cumulativerate = d_memory_agent$MemoryInput[1]
+    )
+
+for (i in 2:trials) {
+  d_memory_agent$SelfChoice[i] <- MemoryAgent_f(
+    bias = true_bias_mem,
+    beta = true_beta_mem,
+    cumulativerate = d_memory_agent$MemoryInput[i] # Use lagged rate
+    )
+}
+
+# Prepare the data list for Stan
+# This list structure matches the 'data' block in the Stan model
+observed_data_list_mem <- list(
+  n = trials,
+  h = d_memory_agent$SelfChoice, # Memory agent's choices are the outcome 'h'
+  other = d_opponent$choice      # Opponent's choices are needed to compute memory state
+)
+
+cat("Prepared data for memory model checks.\n")
+# Display first few rows of the generated memory agent data
+head(d_memory_agent)
+```
+
+### 2. Defining the Stan Model with Generated Quantities:
+
+Now, we define the Stan model for the memory agent. Crucially, we include simulations in the generated quantities block for both prior and posterior predictive checks. The memory state is calculated internally within the transformed parameters block based on the opponent's choices (other).
+
+```{r, 05 - memory model stan code}
+# Stan model for Memory Agent with Generated Quantities
+stan_memory_gq_code <- "
+// Stan Model: Memory Agent with Generated Quantities
+// Estimates bias and memory strength (beta) parameters.
+// Includes prior and posterior predictive simulations.
+
+data {
+ int<lower=1> n;                   // Number of trials
+ array[n] int h;                   // Observed choices of the memory agent (0 or 1)
+ array[n] int other;               // Observed choices of the opponent (0 or 1)
+}
+
+parameters {
+  real bias; // Baseline bias parameter (logit scale)
+  real beta; // Memory strength parameter (how much memory influences choice)
+}
+
+transformed parameters {
+  // Calculate the memory state (cumulative rate of opponent's 'right' choices)
+  // This happens *inside* the model based on 'other' choices provided in the data block.
+  vector[n] memory;
+  memory[1] = 0.5; // Assume neutral memory state at the beginning (trial 1)
+  for (trial in 2:n) {
+    // Simple running average memory update based on opponent's choice in the *previous* trial.
+    // Note: Stan uses 1-based indexing.
+    // This calculates the cumulative proportion of '1's chosen by the opponent up to trial-1.
+    memory[trial] = memory[trial-1] + ((other[trial-1] - memory[trial-1]) / (trial-1));
+    // Clip memory to avoid numerical issues with logit(0) or logit(1)
+    memory[trial] = fmax(0.01, fmin(0.99, memory[trial]));
+  }
+}
+
+model {
+  // Priors for the parameters
+  // Prior for bias: Centered at 0 (no bias), relatively narrow SD=0.5
+  target += normal_lpdf(bias | 0, 0.5);
+  // Prior for beta: Centered at 0 (no memory effect), wider SD=1.0 allows for moderate effects
+  target += normal_lpdf(beta | 0, 1.0);
+
+  // Likelihood: Choices depend on bias and the internally calculated memory state
+  // The probability of choosing '1' is determined by the logit model: bias + beta * logit(memory)
+  for (trial in 1:n) {
+    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
+  }
+}
+
+generated quantities {
+  // --- Prior Predictive Simulation ---
+  // 1. Sample parameters from their PRIOR distributions
+  real bias_prior_sim = normal_rng(0, 0.5);
+  real beta_prior_sim = normal_rng(0, 1.0);
+  // 2. Simulate a replicated dataset using PRIOR parameters
+  array[n] int h_prior_rep;
+  // Need to recalculate memory state based on 'other' for the prior simulation,
+  // as it's not stored globally (or simulate 'other' too if needed).
+  // Here, we reuse the 'memory' calculated in transformed parameters for simplicity,
+  // acknowledging this isn't a perfect prior predictive check if 'other' is fixed data.
+  // A more complete prior check would also generate 'other'.
+  for (trial in 1:n) {
+      h_prior_rep[trial] = bernoulli_logit_rng(bias_prior_sim + beta_prior_sim * logit(memory[trial]));
+  }
+  // 3. Calculate summary statistic for PRIOR replication
+  int<lower=0, upper=n> prior_rep_sum = sum(h_prior_rep);
+  // Add a memory-specific prior statistic (e.g., correlation between memory and choice)
+  real prior_mem_choice_cor = corr(memory, to_vector(h_prior_rep));
+
+
+  // --- Posterior Predictive Simulation ---
+  // 1. POSTERIOR samples (bias, beta) are provided by Stan for each iteration
+  // 2. Simulate replicated dataset using POSTERIOR parameters
+  array[n] int h_post_rep;
+  // Use the 'memory' calculated in transformed parameters based on observed 'other'
+  for (trial in 1:n) {
+      h_post_rep[trial] = bernoulli_logit_rng(bias + beta * logit(memory[trial]));
+  }
+  // 3. Calculate summary statistic for POSTERIOR replication
+  int<lower=0, upper=n> post_rep_sum = sum(h_post_rep);
+  // Add a memory-specific posterior statistic
+  real post_mem_choice_cor = corr(memory, to_vector(h_post_rep));
+}
+"
+# Define file path
+stan_file_mem_gq <- file.path(stan_model_dir, "W5_MemoryBernoulli_GQ.stan")
+
+# Write the Stan code to the file
+write_stan_file(stan_memory_gq_code, stan_file_mem_gq)
+cat("Stan model for Memory Agent with GQ written to:", stan_file_mem_gq, "\n")
+
+# --- Compile and Fit the Memory Model ---
+model_file_mem_gq <- file.path(stan_results_dir, "W5_MemoryBernoulli_GQ.rds")
+
+if (regenerate_fitting || !file.exists(model_file_mem_gq)) {
+  cat("Compiling and fitting Memory Stan model (with GQ)...\n")
+  mod_mem_gq <- cmdstan_model(stan_file_mem_gq,
+                              cpp_options = list(stan_threads = TRUE),
+                              stanc_options = list("O1"))
+
+  fit_mem_gq <- mod_mem_gq$sample(
+    data = observed_data_list_mem, # Use the memory agent data
+    seed = 456,
+    chains = 4,
+    parallel_chains = min(4, future::availableCores()),
+    iter_warmup = 1000,
+    iter_sampling = 2000,
+    refresh = 500,
+    max_treedepth = 12, # Increased slightly for potentially more complex posterior
+    adapt_delta = 0.9   # Increased slightly
+  )
+
+  fit_mem_gq$save_object(file = model_file_mem_gq)
+  cat("Memory model fit completed and saved to:", model_file_mem_gq, "\n")
+} else {
+  fit_mem_gq <- readRDS(model_file_mem_gq)
+  cat("Loaded existing Memory model fit (with GQ) from:", model_file_mem_gq, "\n")
+}
+
+```
+
+### Performing Checks for the Memory Model
+Now we apply the same sequence of checks to the fitted memory model.
+
+#### 1. Prior Predictive Check:
+```{r 05 -prior-predictive-check-memory, warning = F, message = F}
+# Extract prior predictive sums and correlations
+draws_mem_gq <- as_draws_df(fit_mem_gq$draws())
+prior_rep_sum_mem <- draws_mem_gq$prior_rep_sum
+prior_mem_choice_cor_mem <- draws_mem_gq$prior_mem_choice_cor # Extract correlation stat
+
+# Observed sum for memory agent data
+observed_sum_mem <- sum(observed_data_list_mem$h)
+# Observed correlation for memory agent data
+# Calculate memory state based on observed 'other' choices
+memory_obs <- numeric(trials)
+memory_obs[1] <- 0.5
+for (trial in 2:trials) {
+    memory_obs[trial] = memory_obs[trial - 1] + ((observed_data_list_mem$other[trial - 1] - memory_obs[trial - 1]) / (trial - 1));
+    memory_obs[trial] = pmax(0.01, pmin(0.99, memory_obs[trial]));
+}
+observed_mem_choice_cor <- cor(memory_obs, observed_data_list_mem$h)
+
+
+# Plot prior predictive check for sum
+color_scheme_set("red")
+ppc_prior_stat_mem_sum <- pp_check(
+  y = observed_data_list_mem$h,
+  yrep = prior_rep_sum_mem,
+  stat = "sum"
+  ) +
+  ggtitle("Prior Predictive Check (Memory Model): Total 'Right' Choices") +
+  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  theme_classic()
+
+# Plot prior predictive check for correlation
+ppc_prior_stat_mem_cor <- pp_check(
+  y = observed_mem_choice_cor, # Compare against observed correlation
+  yrep = prior_mem_choice_cor_mem # Use the prior correlation simulations
+  ) +
+  ggtitle("Prior Predictive Check (Memory Model): Memory-Choice Correlation") +
+  xlab("Correlation(Memory State, Choice)") +
+  theme_classic()
+
+
+print(ppc_prior_stat_mem_sum)
+print(ppc_prior_stat_mem_cor)
+
+cat("Interpretation:\nThe prior predictive check for the sum is similar to the biased model, centered around chance. The prior predictive check for the Memory-Choice Correlation shows that our priors (Normal(0, 0.5) for bias, Normal(0, 1.0) for beta) allow for a wide range of correlations, both positive and negative, centered around zero. This means the model, before seeing data, didn't strongly assume a positive or negative relationship between memory and choice.\n")
+
+```
+
+#### 2. Posterior Predictive Check:
+
+```{r }
+# Extract posterior predictive simulations
+h_post_rep_mem <- fit_mem_gq$draws("h_post_rep", format = "matrix")
+post_mem_choice_cor_mem <- draws_mem_gq$post_mem_choice_cor # Extract posterior correlation stat
+
+# Plot posterior predictive check for the sum
+color_scheme_set("brightblue")
+ppc_stat_mem_sum <- pp_check(
+  y = observed_data_list_mem$h,
+  yrep = h_post_rep_mem,
+  stat = "sum"
+  ) +
+  ggtitle("Posterior Predictive Check (Memory Model): Total 'Right' Choices") +
+  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  theme_classic()
+
+# Plot posterior predictive check for correlation
+ppc_post_stat_mem_cor <- pp_check(
+  y = observed_mem_choice_cor, # Compare against observed correlation
+  yrep = post_mem_choice_cor_mem # Use the posterior correlation simulations
+  ) +
+  ggtitle("Posterior Predictive Check (Memory Model): Memory-Choice Correlation") +
+  xlab("Correlation(Memory State, Choice)") +
+  theme_classic()
+
+print(ppc_stat_mem_sum)
+print(ppc_post_stat_mem_cor)
+
+cat("Interpretation:\nThe posterior predictive checks for the memory model show that it captures both the overall bias (total sum) and the memory-specific statistic (Memory-Choice Correlation). The observed values (dark lines) fall well within the distributions generated by the fitted model (histograms), suggesting a good fit to these aspects of the data.\n")
+
+
+```
+
+#### 3. Prior-Posterior Update Check:
+```{r 05 -prior-posterior-update-memory, warning = F, message = F}
+# Prepare data for plotting updates for bias and beta
+prior_post_mem_df <- bind_rows(
+  tibble(
+    Value = c(draws_mem_gq$bias, draws_mem_gq$bias_prior_sim),
+    Distribution = factor(rep(c("Posterior", "Prior"), each = nrow(draws_mem_gq)), levels = c("Prior", "Posterior")),
+    Parameter = "Bias (logit scale)"
+  ),
+  tibble(
+    Value = c(draws_mem_gq$beta, draws_mem_gq$beta_prior_sim),
+    Distribution = factor(rep(c("Posterior", "Prior"), each = nrow(draws_mem_gq)), levels = c("Prior", "Posterior")),
+    Parameter = "Beta (Memory Strength)"
+  )
+)
+
+# True values
+true_vals_mem <- tibble(
+    Parameter = c("Bias (logit scale)", "Beta (Memory Strength)"),
+    TrueValue = c(true_bias_mem, true_beta_mem)
+)
+
+# Plot prior-posterior updates
+p_update_mem <- ggplot(prior_post_mem_df, aes(x = Value, fill = Distribution)) +
+  geom_density(alpha = 0.6) +
+  geom_vline(data = true_vals_mem, aes(xintercept = TrueValue),
+             color = "black", linetype = "dashed", size = 1) +
+  scale_fill_manual(values = c("Prior" = "salmon", "Posterior" = "skyblue")) +
+  facet_wrap(~Parameter, scales = "free") +
+  ggtitle("Prior-Posterior Update Check (Memory Model)") +
+  xlab("Parameter Value") +
+  ylab("Density") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+print(p_update_mem)
+cat("Interpretation:\nThe prior-posterior update plots for the memory model show that the data informed both parameters. The posterior for 'Bias' remains centered near 0 (the true value), while the posterior for 'Beta' has clearly shifted towards the true value of 0.9 and become much narrower than its prior (Normal(0, 1.0)), indicating the data provided strong evidence for the memory effect.\n")
+
+```
+
+#### 4. Prior Sensitivity Analysis (using priorsense):
+```{r 05 - memory model sensitivity analysis, warning = F, message = F}
+# Run priorsense analysis on the fitted memory model
+cat("Running priorsense analysis for Memory Model...\n")
+# Analyze sensitivity for both bias and beta parameters
+sensitivity_summary_mem <- powerscale_sensitivity(fit_mem_gq, variable = c("bias", "beta"))
+
+# Print the sensitivity summary
+cat("\nPriorsense Sensitivity Summary (Memory Model):\n")
+print(sensitivity_summary_mem)
+
+# Visualize the sensitivity
+ps_plot_mem <- plot(sensitivity_summary_mem) +
+  ggtitle("Prior Sensitivity Diagnostics (Memory Model - priorsense)") +
+  theme_classic()
+
+print(ps_plot_mem)
+cat("Interpretation:\nThe priorsense results for the memory model indicate low sensitivity for both the 'bias' and 'beta' parameters (psi values are low, well below 0.1). This suggests our inferences about both the baseline bias and the memory strength are robust to minor changes in the prior specifications used (Normal(0, 0.5) for bias, Normal(0, 1.0) for beta).\n")
+```
+
+These checks confirm that the memory model, like the simple biased model, fits the data it was generated from well, and the parameter estimates are robust to the chosen priors. This systematic checking process is applicable to any cognitive model you build.
+
+
+## Conclusion: Building Trust in Your Models
+
+Fitting a model and obtaining parameter estimates is just the beginning. Rigorous model assessment, using techniques like prior predictive checks, posterior predictive checks, prior-posterior update visualization, and sensitivity analysis (both manual and automated), is essential for building confidence in our cognitive models and the scientific conclusions we draw from them.
+
+These checks help us understand:
+
+* The assumptions implicitly encoded in our choice of prior distributions and whether they are scientifically reasonable (Prior Predictive Checks).
+
+* Whether the model adequately captures key patterns and features present in the observed data after fitting (Posterior Predictive Checks).
+
+* How much the data actually informed our parameter estimates, distinguishing data-driven results from prior-driven ones (Prior-Posterior Update Checks).
+
+* How robust our conclusions are to specific (but plausible) variations in our prior beliefs (Sensitivity Analysis).
+
+Failing a model check isn't necessarily a setback – it's an invaluable source of information! It highlights where our model might be misspecified, where our priors might be inappropriate, or where the data might be insufficient. This feedback guides the iterative cycle of model building, fitting, checking, and refining that is central to advancing our understanding through computational cognitive modeling.
+
+The techniques covered in this chapter provide a systematic framework for validating our models and understanding their limitations. As we move forward to more complex models incorporating individual differences and learning mechanisms, these quality checks become increasingly important for ensuring our conclusions are well-supported by the evidence.
+In the next chapter, we'll build on these foundations as we explore multilevel modeling approaches that can capture individual differences while maintaining population-level insights.

@@ -15,12 +15,8 @@ parameters {
 }
 
 model {
-  vector[N] mu;
-  
   // Physics-based temperature prediction
-  for (i in 1:N) {
-    mu[i] = Tinf + (Ti[rater[i]] - Tinf) * exp(-HOT[rater[i]] * time[i]);
-  }
+  vector[N] mu = Tinf + (Ti[rater] - Tinf) .* exp(-HOT[rater] .* time);
   
   // Prior distributions
   target += normal_lpdf(HOT | 0.005, 0.005);    // Prior for heating rate

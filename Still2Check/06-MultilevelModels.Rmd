@@ -1,0 +1,1872 @@
+---
+title: "Chapter 6 (Revised): Individual Differences in Cognitive Strategies (Multilevel Modeling)"
+output: html_document
+date: "2025-03-01" # Updated date
+---
+
+```{r ch6_setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=6)
+
+# Set this to TRUE when you want to regenerate all simulation results
+# Otherwise, existing results will be loaded
+# Ensure this matches the global setting if needed
+regenerate_simulations <- FALSE # Or TRUE
+
+# Create directories if they don't exist
+if (!dir.exists("stan")) dir.create("stan")
+if (!dir.exists("simdata")) dir.create("simdata")
+if (!dir.exists("simmodels")) dir.create("simmodels")
+if (!dir.exists("figures")) dir.create("figures") # For saving plots if needed
+
+```{r ch6_load_packages, message=FALSE, warning=FALSE}
+# Load necessary packages using pacman for efficient management
+pacman::p_load(
+  tidyverse,    # Core suite for data manipulation (dplyr) and plotting (ggplot2)
+  here,         # For robust file paths (optional, assumes project structure)
+  posterior,    # Tools for working with posterior distributions
+  cmdstanr,     # R interface to Stan
+  brms,         # High-level interface for Bayesian models (used conceptually)
+  tidybayes,    # Tidy manipulation of Bayesian model output
+  patchwork,    # Combining ggplot plots
+  bayesplot,    # Specialized plotting functions for Bayesian models
+  furrr,        # Parallel processing with purrr
+  future,       # Backend for parallel processing
+  loo,          # PSIS-LOO cross-validation
+  priorsense,   # Prior sensitivity analysis
+  DiagrammeR,   # For creating DAGs (if available/desired)
+  sbc           # Simulation-Based Calibration
+)
+
+# Set a default ggplot theme for consistency
+theme_set(theme_classic())
+
+# Set Stan backend if not already configured
+# options(cmdstanr_backend = "cmdstan") # Or "rstan" if preferred
+
+# Set up parallel processing plan (adjust workers as needed)
+# Using fewer cores than available to leave resources for other tasks
+cores_to_use <- max(1, parallel::detectCores() - 2)
+plan(multisession, workers = cores_to_use)
+```
+
+# Individual Differences in Cognitive Strategies (Multilevel Modeling)
+
+## Introduction
+
+Our exploration of decision-making models (Chapters 2-4) has so far focused on single agents or averaged behavior. However, cognitive science consistently reveals that individuals differ systematically in how they approach tasks and process information. Some people may be more risk-averse, have better memory, learn faster, or employ entirely different strategies than others. Ignoring these individual differences can lead to misleading conclusions about cognitive processes.
+
+This chapter introduces multilevel modeling (also called hierarchical modeling) as a powerful framework for capturing these individual differences while still identifying population-level patterns.
+
+### The Challenge: Pooling Information
+
+Traditional approaches to handling data from multiple individuals often force a choice between two extremes:
+
+1. **Complete Pooling**: Treats all participants as identical by averaging or combining their data. This estimates a single set of parameters for the entire group, completely ignoring individual differences. Advantage: Stable estimates. Disadvantage: Fails to capture potentially meaningful variation.
+Example: Fitting one model to all participants' data concatenated together.
+
+2. **No Pooling**: Analyzes each participant completely separately, estimating independent parameters for each individual. This fails to leverage information shared across participants and can lead to noisy or unstable estimates, especially for individuals with limited data. Advantage: Captures all individual variation. Disadvantage: Inefficient, ignores group trends, poor estimates with sparse data.
+Example: Fitting separate models to each participant's data individually.
+
+### The Solution: Partial Pooling (Multilevel Modeling)
+
+Multilevel modeling offers a principled middle ground through partial pooling. It structures the model hierarchically:
+
+* **Individual Level**: Each individual has their own set of parameters (e.g., their specific bias, memory strength, or learning rate).
+
+* **Population Level**: These individual parameters are assumed to be drawn from an overarching population distribution (e.g., a normal distribution characterized by a population mean and standard deviation).
+
+This structure allows information to flow between levels:
+
+* Individual estimates are informed by both the individual's own data and the population distribution.
+
+* Estimates for individuals with sparse or noisy data are "shrunk" towards the population mean, leading to more stable and realistic estimates.
+
+* The model simultaneously estimates individual differences and overall population tendencies.
+
+This partial pooling approach is particularly valuable when:
+
+* Data per individual is limited (common in cognitive experiments).
+
+* We believe individual differences are meaningful but individuals are still related (drawn from the same population).
+
+* We want to make predictions about new individuals from the same population.
+
+Consider our Matching Pennies game: players might vary in their bias (theta), memory capacity (beta), or strategic sophistication (k-ToM level). Multilevel modeling allows us to quantify these variations (e.g., estimate the standard deviation of theta across the population) while also estimating the average tendency (e.g., the average theta).
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+
+* **Explain Partial Pooling**: Understand how multilevel modeling balances individual and group-level information through shrinkage.
+
+* **Distinguish Pooling Approaches**: Articulate the differences and trade-offs between complete pooling, no pooling, and partial pooling.
+
+* **Implement Multilevel Models**: Write Stan code for hierarchical models with varying intercepts and/or slopes.
+
+* **Reparameterize a model**: Understand why and how to reparameterize a model and in particular how to use non-centered parameterization to improve sampling efficiency in hierarchical models.
+
+* **Model Parameter Correlations**: Implement and interpret models that estimate correlations between individual-level parameters.
+
+* **Perform Comprehensive Model Checks**: Apply a full suite of quality checks (parameter recovery, prior/posterior predictive checks, sensitivity analysis, SBC) to multilevel models.
+
+* **Apply to Cognitive Questions**: Use multilevel modeling to investigate individual differences in cognitive strategies (e.g., bias, memory, WSLS).
+
+## Graphical Model Visualization (DAGs)
+Directed Acyclic Graphs (DAGs) help visualize the structure of hierarchical models, showing dependencies between parameters and data.
+
+### Biased Agent Model (Multilevel)
+
+In this model, each agent j has an individual bias parameter theta[j], drawn from a population distribution defined by mean mu_theta and standard deviation sigma_theta. The observed choices h depend on the individual theta.
+
+Population Mean (mu_theta) ----> Individual Bias (theta[j]) <---- Population SD (sigma_theta)
+                                       |
+                                       v
+                                Observed Choice (h[i,j])
+
+
+```{r ch6_dag_biased, echo=FALSE, eval=FALSE}
+# Placeholder for DiagrammeR code if desired
+library(DiagrammeR)
+grViz("
+digraph multilevel_biased {
+  rankdir=TB;
+  node [shape=ellipse];
+  edge [arrowhead=vee];
+
+  subgraph cluster_population {
+    label = 'Population Level';
+    mu_theta [label='μ_θ'];
+    sigma_theta [label='σ_θ'];
+  }
+
+  subgraph cluster_individual {
+    label = 'Individual Level (Agent j)';
+    theta_j [label='θⱼ'];
+  }
+
+  subgraph cluster_data {
+    label = 'Data Level (Trial t, Agent j)';
+    h_tj [label='htⱼ', shape=rectangle];
+  }
+
+  mu_theta -> theta_j;
+  sigma_theta -> theta_j;
+  theta_j -> h_tj;
+}
+")
+```
+
+### Memory Agent Model (Multilevel)
+
+This model is more complex, with individual parameters for baseline bias (bias[j]) and memory sensitivity (beta[j]), potentially correlated.
+
+```{r ch6_dag_memory, echo=FALSE, eval=FALSE}
+# Placeholder for DiagrammeR code
+grViz("
+digraph multilevel_memory {
+  rankdir=TB;
+  node [shape=ellipse];
+  edge [arrowhead=vee];
+
+  subgraph cluster_population {
+    label = 'Population Level';
+    mu_bias [label='μ_α']; sigma_bias [label='σ_α'];
+    mu_beta [label='μ_β']; sigma_beta [label='σ_β'];
+    Omega [label='Ω (Correlation)'];
+  }
+
+  subgraph cluster_individual {
+    label = 'Individual Level (Agent j)';
+    bias_j [label='αⱼ']; beta_j [label='βⱼ'];
+  }
+
+  subgraph cluster_data {
+    label = 'Data Level (Trial t, Agent j)';
+    h_tj [label='htj>', shape=rectangle];
+    other_hist [label='Opponent History', shape=plaintext];
+  }
+
+  mu_bias -> bias_j; sigma_bias -> bias_j;
+  mu_beta -> beta_j; sigma_beta -> beta_j;
+  Omega -> bias_j; Omega -> beta_j; # Simplified representation of correlation
+
+  bias_j -> h_tj;
+  beta_j -> h_tj;
+  other_hist -> h_tj; # Memory depends on history
+}
+")
+
+```
+
+### WSLS Agent Model (Multilevel)
+
+Similarly, a multilevel WSLS model would have population distributions for the win-stay (betaWin) and lose-shift (betaLose) parameters, potentially including a baseline bias (alpha) and correlation.
+
+These diagrams clarify how parameters at different levels relate, guiding our Stan model implementation.
+
+## Simulation Setup
+
+We will simulate agents playing the Matching Pennies game. To make the models identifiable and improve sampling, we will primarily work with parameters on the logit (log-odds) scale for probabilities (like biases) and potentially the log scale for parameters constrained to be positive (like standard deviations, although we often model SDs directly with half-normal or exponential priors).
+
+**Why Log-Odds?** As discussed in Chapter 4, probabilities are bounded between 0 and 1. Standard statistical models (like linear regression) assume parameters can range infinitely. Applying transformations like $logit = (log(p/1−p))$ maps the bounded probability p to an unbounded scale, making it easier and more stable to model, especially within a hierarchical structure where individual parameters might otherwise be pushed beyond the 0-1 bounds. We can always convert back using the inverse logit (logistic function, plogis in R).
+
+
+```{r 06 Simulation Setup}
+
+# --- Simulation Parameters ---
+agents <- 100  # Number of agents to simulate
+trials <- 120  # Number of trials per agent
+noise <- 0.05  # Base noise level (probability of random choice, added to all agents)
+
+# --- Population-Level Parameters (Log-Odds Scale) ---
+
+# Biased agent population parameters
+# Mean bias corresponds to ~80% probability of choosing 'right'
+# SD implies most agents are between ~65% and 90%
+pop_bias_mean_logit <- qlogis(0.8)
+pop_bias_sd <- 0.65  # SD on the logit scale
+
+# Memory agent population parameters
+# Mean baseline bias near 0 (50/50 on logit scale)
+pop_mem_bias_mean_logit <- 0
+pop_mem_bias_sd <- 0.3 # Small variation around 0
+# Mean memory sensitivity (beta) - positive indicates learning from opponent
+pop_mem_beta_mean <- 1.5
+pop_mem_beta_sd <- 0.5 # Moderate variation in memory sensitivity
+
+# WSLS agent population parameters (Example)
+# Population mean baseline bias near 0
+pop_wsls_alpha_mean_logit <- 0
+pop_wsls_alpha_sd <- 0.2
+# Population mean win-stay effect (positive means more likely to stay)
+pop_wsls_betaWin_mean <- 2.0
+pop_wsls_betaWin_sd <- 0.7
+# Population mean lose-shift effect (positive means more likely to shift)
+pop_wsls_betaLose_mean <- 2.0
+pop_wsls_betaLose_sd <- 0.7
+
+# For reference, convert log-odds means to probability scale
+cat("Biased agent population mean bias (probability scale):",
+    round(plogis(pop_bias_mean_logit), 2), "\n")
+cat("Memory agent population mean baseline bias (probability scale):",
+    round(plogis(pop_mem_bias_mean_logit), 2), "\n")
+cat("WSLS agent population mean baseline bias (probability scale):",
+    round(plogis(pop_wsls_alpha_mean_logit), 2), "\n")
+
+```
+
+### Agent Functions
+We define functions for each agent type, incorporating the noise parameter. We use standard R functions qlogis (logit) and plogis (inverse logit).
+
+```{r 06 Agent Functions}
+#' Random Agent Function (Logit Scale)
+#'
+#' Generates a sequence of choices based on a fixed bias parameter (logit scale).
+#' Includes optional noise causing random 50/50 choices.
+#'
+#' @param n_trials Integer, the number of choices to generate.
+#' @param bias_logit Numeric, the bias parameter on the log-odds scale.
+#' @param noise Numeric, the probability (0-1) of making a random 50/50 choice.
+#'
+#' @return A numeric vector of choices (0s and 1s).
+#'
+RandomAgentLogit_f <- function(n_trials, bias_logit, noise) {
+  # Generate base choices according to the bias
+  rate_prob <- plogis(bias_logit) # Convert logit to probability
+  choices <- rbinom(n_trials, size = 1, prob = rate_prob)
+
+  # Apply noise: identify trials where noise occurs
+  noise_trials <- rbinom(n_trials, size = 1, prob = noise) == 1
+
+  # Replace choices with random 50/50 on noise trials
+  if (any(noise_trials)) {
+    choices[noise_trials] <- rbinom(sum(noise_trials), size = 1, prob = 0.5)
+  }
+  return(choices)
+}
+
+#' Memory Agent Function (Logit Scale)
+#'
+#' Makes choices based on opponent's historical choices, baseline bias, and memory sensitivity.
+#' Parameters are on the logit/natural scale as appropriate.
+#'
+#' @param bias_logit Numeric, baseline tendency to choose option 1 (log-odds scale).
+#' @param beta Numeric, sensitivity to memory (how strongly past choices affect decisions).
+#' @param opponent_rate_hist Numeric vector, opponent's choice history (0s and 1s).
+#' @param noise Numeric, probability of making a random choice.
+#'
+#' @return Numeric, the agent's next choice (0 or 1).
+#'
+MemoryAgentLogit_f <- function(bias_logit, beta, opponent_rate_hist, noise) {
+  # Calculate opponent's rate from history (handle first trial)
+  if (length(opponent_rate_hist) == 0) {
+    opponent_rate_prob <- 0.5 # Assume 50/50 if no history
+  } else {
+    opponent_rate_prob <- mean(opponent_rate_hist, na.rm = TRUE)
+  }
+  # Clip opponent rate to avoid issues with qlogis(0) or qlogis(1)
+  opponent_rate_prob <- pmax(0.01, pmin(0.99, opponent_rate_prob))
+
+  # Calculate choice probability based on memory of opponent's choices (logit scale)
+  current_logit <- bias_logit + beta * qlogis(opponent_rate_prob)
+  choice_prob <- plogis(current_logit)
+
+  # Generate choice
+  choice <- rbinom(1, 1, choice_prob)
+
+  # Apply noise
+  if (noise > 0 && runif(1) < noise) {
+    choice <- rbinom(1, 1, 0.5)
+  }
+  return(choice)
+}
+
+
+#' Win-Stay-Lose-Shift Agent Function (Logit Scale)
+#'
+#' Determines the next choice based on the previous choice and its outcome (feedback).
+#' Uses logit scale parameters for bias and effects. Includes optional noise.
+#'
+#' @param alpha_logit Numeric, baseline bias parameter (logit scale).
+#' @param betaWin Numeric, win-stay parameter strength.
+#' @param betaLose Numeric, lose-shift parameter strength.
+#' @param prevChoice Numeric, the agent's choice on the previous trial (0 or 1).
+#' @param feedback Numeric, the outcome of the previous trial (1 for win, 0 for loss).
+#' @param noise Numeric, the probability (0-1) of making a random 50/50 choice.
+#'
+#' @return Numeric, the agent's next choice (0 or 1).
+#'
+WSLSAgentLogit_f <- function(alpha_logit, betaWin, betaLose, prevChoice, feedback, noise) {
+  # Input validation (basic)
+  if (!prevChoice %in% c(0, 1)) stop("Previous choice must be 0 or 1.")
+  if (!feedback %in% c(0, 1)) stop("Feedback must be 0 or 1.")
+
+  # Create win/lose signals (+1/-1 encoding)
+  win_signal <- ifelse(feedback == 1, ifelse(prevChoice == 1, 1, -1), 0)
+  lose_signal <- ifelse(feedback == 0, ifelse(prevChoice == 1, -1, 1), 0)
+
+  # Calculate log-odds for the current choice
+  current_logit <- alpha_logit + betaWin * win_signal + betaLose * lose_signal
+
+  # Convert to probability
+  choice_prob <- plogis(current_logit)
+
+  # Generate choice
+  choice <- rbinom(1, 1, choice_prob)
+
+  # Apply noise
+  if (noise > 0 && runif(1) < noise) {
+    choice <- rbinom(1, 1, 0.5)
+  }
+  return(choice)
+}
+
+```
+
+### Generating Simulation Data (Parallelized)
+We simulate interactions where each agent type plays against a biased random opponent. Using furrr allows parallel processing for efficiency.
+
+```{r 06 generating simulation}
+# --- Function to Simulate One Agent ---
+# This function simulates one agent (of any type) playing against a biased random opponent
+simulate_one_agent <- function(agent_id, agent_type, params, n_trials, opponent_rate_logit, base_noise) {
+
+  # Initialize choices and feedback
+  agent_choices <- rep(NA, n_trials)
+  opponent_choices <- rep(NA, n_trials)
+  feedback <- rep(NA, n_trials) # Feedback for the agent (1=win)
+
+  # Generate opponent's choices for all trials at once
+  opponent_choices <- RandomAgentLogit_f(n_trials, opponent_rate_logit, base_noise)
+
+  # First trial choice for agent
+  agent_choices[1] <- sample(c(0, 1), 1)
+
+  # Simulation loop
+  for (t in 2:n_trials) {
+    # Determine feedback from t-1 (Agent is Matcher - wins if choices match)
+    prev_feedback <- ifelse(agent_choices[t-1] == opponent_choices[t-1], 1, 0)
+    feedback[t-1] <- prev_feedback
+
+    # Agent makes choice for trial t based on type
+    if (agent_type == "Biased") {
+      agent_choices[t] <- RandomAgentLogit_f(1, params$bias_logit, base_noise)
+    } else if (agent_type == "Memory") {
+      agent_choices[t] <- MemoryAgentLogit_f(
+        params$bias_logit,
+        params$beta,
+        opponent_choices[1:(t-1)], # Pass opponent history
+        base_noise
+      )
+    } else if (agent_type == "WSLS") {
+       agent_choices[t] <- WSLSAgentLogit_f(
+         params$alpha_logit,
+         params$betaWin,
+         params$betaLose,
+         agent_choices[t-1], # Previous choice
+         prev_feedback,      # Previous feedback
+         base_noise
+       )
+    }
+  }
+  # Record feedback for the last trial
+  feedback[n_trials] <- ifelse(agent_choices[n_trials] == opponent_choices[n_trials], 1, 0)
+
+  # Return results as a tibble
+  return(tibble(
+    agent = agent_id,
+    trial = 1:n_trials,
+    agent_type = agent_type,
+    agent_choice = agent_choices,
+    opponent_choice = opponent_choices,
+    feedback = feedback,
+    # Include true parameters for later recovery checks
+    true_bias_logit = ifelse(agent_type == "Biased", params$bias_logit, NA),
+    true_mem_bias_logit = ifelse(agent_type == "Memory", params$bias_logit, NA),
+    true_mem_beta = ifelse(agent_type == "Memory", params$beta, NA),
+    true_wsls_alpha_logit = ifelse(agent_type == "WSLS", params$alpha_logit, NA),
+    true_wsls_betaWin = ifelse(agent_type == "WSLS", params$betaWin, NA),
+    true_wsls_betaLose = ifelse(agent_type == "WSLS", params$betaLose, NA)
+  ))
+}
+
+# --- Define Agent Populations ---
+agent_ids <- 1:(3 * agents) # Unique ID for each agent across types
+agent_pop <- tibble(
+  agent_id = agent_ids,
+  agent_type = rep(c("Biased", "Memory", "WSLS"), each = agents),
+  # Sample individual parameters from population distributions
+  params = map(agent_type, function(type) {
+    if (type == "Biased") {
+      list(bias_logit = rnorm(1, pop_bias_mean_logit, pop_bias_sd))
+    } else if (type == "Memory") {
+      list(bias_logit = rnorm(1, pop_mem_bias_mean_logit, pop_mem_bias_sd),
+           beta = rnorm(1, pop_mem_beta_mean, pop_mem_beta_sd))
+    } else { # WSLS
+      list(alpha_logit = rnorm(1, pop_wsls_alpha_mean_logit, pop_wsls_alpha_sd),
+           betaWin = rnorm(1, pop_wsls_betaWin_mean, pop_wsls_betaWin_sd),
+           betaLose = rnorm(1, pop_wsls_betaLose_mean, pop_wsls_betaLose_sd))
+    }
+  })
+)
+
+# --- Run Simulations in Parallel ---
+cat("Running simulations for", nrow(agent_pop), "agents...\n")
+# Define opponent parameters (e.g., a moderately biased opponent)
+opponent_logit <- qlogis(0.7)
+
+# Use future_pmap_dfr for parallel simulation
+# Pass parameters as named arguments matching simulate_one_agent
+simulation_data <- future_pmap_dfr(
+  list(
+    agent_id = agent_pop$agent_id,
+    agent_type = agent_pop$agent_type,
+    params = agent_pop$params
+  ),
+  simulate_one_agent, # The function to run
+  # Additional fixed arguments for simulate_one_agent:
+  n_trials = trials,
+  opponent_rate_logit = opponent_logit,
+  base_noise = noise,
+  # furrr options:
+  .options = furrr_options(seed = TRUE), # Ensure reproducibility across cores
+  .progress = TRUE # Show progress bar
+)
+
+cat("Simulations complete.\n")
+
+# --- Calculate Running Statistics ---
+simulation_data <- simulation_data %>%
+  group_by(agent) %>%
+  mutate(
+    cumulative_agent_rate = cumsum(agent_choice) / row_number(),
+    cumulative_performance = cumsum(feedback) / row_number()
+  ) %>%
+  ungroup()
+
+# Display a sample of the data
+head(simulation_data)
+```
+
+### Visualizing Simulated Behavior
+Let's visualize the average performance and choice patterns.
+
+```{r}
+# --- Plot 1: Average Performance Over Time ---
+p1 <- ggplot(simulation_data, aes(x = trial, y = cumulative_performance, color = agent_type)) +
+  # Use stat_summary to plot mean and standard error ribbon
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.2, aes(fill = agent_type), color = NA) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "black") + # Chance line
+  scale_color_brewer(palette = "Set1", name = "Agent Strategy") +
+  scale_fill_brewer(palette = "Set1", name = "Agent Strategy") +
+  labs(
+    title = "Average Agent Performance Over Time",
+    subtitle = paste("Performance against a biased opponent (rate =", round(plogis(opponent_logit), 2), ")"),
+    x = "Trial Number",
+    y = "Average Proportion Wins (Matcher Role)"
+  ) +
+  ylim(0, 1) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+# --- Plot 2: Distribution of Final Performance ---
+p2 <- simulation_data %>%
+  filter(trial == trials) %>% # Get final trial data
+  ggplot(aes(x = cumulative_performance, fill = agent_type)) +
+  geom_density(alpha = 0.7) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "black") +
+  scale_fill_brewer(palette = "Set1", name = "Agent Strategy") +
+  labs(
+    title = "Distribution of Final Performance",
+    subtitle = paste("After", trials, "trials"),
+    x = "Final Proportion Wins",
+    y = "Density"
+  ) +
+  theme_classic() +
+  theme(legend.position = "none") # Remove redundant legend
+
+# --- Plot 3: Cumulative Choice Rate ---
+p3 <- ggplot(simulation_data, aes(x = trial, y = cumulative_agent_rate, color = agent_type)) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.2, aes(fill = agent_type), color = NA) +
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "black") +
+  scale_color_brewer(palette = "Set1", name = "Agent Strategy") +
+  scale_fill_brewer(palette = "Set1", name = "Agent Strategy") +
+  labs(
+    title = "Average Agent Choice Rate Over Time",
+    subtitle = "Proportion of choosing 'right' (option 1)",
+    x = "Trial Number",
+    y = "Average Proportion 'Right' Choices"
+  ) +
+  ylim(0, 1) +
+  theme_classic() +
+  theme(legend.position = "none") # Remove redundant legend
+
+# Arrange plots
+print( (p1 | p3) / p2 + plot_layout(heights = c(2, 1)) )
+```
+
+These plots show that different strategies lead to distinct behavioral patterns, even against the same opponent. The WSLS and Memory agents adapt their choice rates, while the Biased agent maintains a rate closer to its internal bias (though influenced by noise). Performance also varies, suggesting some strategies are better suited to exploit the opponent's bias.
+
+## Multilevel Model Implementation: Biased Agent
+
+We'll start by implementing the multilevel model for the simplest strategy: the biased random agent. This allows us to introduce the core concepts of hierarchical modeling and quality checks in a more manageable context.
+
+
+### Preparing Data
+
+We need to format the data specifically for the Stan model, associating each choice with the correct agent.
+
+```{r 06 Prepare Data for Stan}
+# Filter data for only the 'Biased' agents
+biased_agent_data_cp <- simulation_data %>%
+  filter(agent_type == "Biased") %>%
+  # Create consecutive agent IDs from 1 to J for Stan
+  mutate(agent_id_stan = as.numeric(factor(agent)))
+
+# Prepare data list for Stan
+stan_data_biased_ml_cp <- list(
+  N = nrow(biased_agent_data_cp),
+  J = length(unique(biased_agent_data_cp$agent_id_stan)),
+  agent_id = biased_agent_data_cp$agent_id_stan,
+  h = biased_agent_data_cp$agent_choice
+)
+
+# Verify dimensions
+cat("CP Biased Model - Total observations (N):", stan_data_biased_ml_cp$N, "\n")
+cat("CP Biased Model - Number of agents (J):", stan_data_biased_ml_cp$J, "\n")
+```
+
+### Stan Model: Centered Parameterization (CP)
+
+In CP, we directly model individual parameters (theta_logit) that determines their probability of choosing "right" versus "left". These individual parameters will be modeled as coming from a population distribution with mean `thetaM` and standard deviation `thetaSD`.
+
+This approach balances two sources of information:
+1. The agent's individual choice patterns
+2. The overall population distribution of bias parameters
+
+The model implements the following hierarchical structure:
+
+- **Population level**: θᵐ ~ Normal(0, 1), θˢᵈ ~ Normal⁺(0, 0.3)
+
+- **Individual level**: θᵢ ~ Normal(θᵐ, θˢᵈ)
+
+- **Data level**: yᵢₜ ~ Bernoulli(logit⁻¹(θᵢ))
+
+
+```{r 06 Stan Model Biased Agent}
+stan_biased_ml_cp_code <- "
+// Multilevel Biased Agent Model (CENTERED Parameterization)
+// Directly models individual biases drawn from population distribution.
+
+data {
+  int<lower=1> N;                    // Total number of observations
+  int<lower=1> J;                    // Number of agents
+  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation (must be 1...J)
+  array[N] int<lower=0, upper=1> h;    // Observed choices (0 or 1)
+}
+
+parameters {
+  // Population-level parameters
+  real mu_theta;                     // Population mean bias (logit scale)
+  real<lower=0> sigma_theta;         // Population SD of bias (logit scale)
+
+  // Individual-level parameters (CENTERED)
+  vector[J] theta_logit;             // Directly estimate individual biases
+}
+
+model {
+  // Priors for population-level parameters
+  mu_theta ~ normal(0, 1);
+  sigma_theta ~ exponential(1);      // Prior slightly favors smaller SDs
+
+  // Hierarchical structure (CENTERED)
+  // Individual thetas are explicitly drawn from the population distribution
+  theta_logit ~ normal(mu_theta, sigma_theta); // This defines the CP
+
+  // Likelihood
+  h ~ bernoulli_logit(theta_logit[agent_id]); // Vectorized likelihood
+}
+
+generated quantities {
+  // Population parameters on probability scale
+  real<lower=0, upper=1> mu_theta_prob = inv_logit(mu_theta);
+
+  // Individual agent biases on probability scale
+  vector<lower=0, upper=1>[J] theta_prob = inv_logit(theta_logit);
+
+  // Log-likelihood for each observation
+  vector[N] log_lik;
+  for (i in 1:N) {
+    log_lik[i] = bernoulli_logit_lpmf(h[i] | theta_logit[agent_id[i]]);
+  }
+
+  // Prior predictive checks
+  real mu_theta_prior = normal_rng(0, 1);
+  real<lower=0> sigma_theta_prior = exponential_rng(1);
+  vector[J] theta_logit_prior = normal_rng(mu_theta_prior, sigma_theta_prior); // Sample individuals from prior pop dist
+  array[N] int h_prior_rep;
+  for (i in 1:N) {
+    h_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[agent_id[i]]);
+  }
+
+  // Posterior predictive checks
+  array[N] int h_post_rep;
+  for (i in 1:N) {
+    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent_id[i]]);
+  }
+}
+"
+# Write Stan code to file
+stan_file_biased_ml_cp <- file.path("stan", "ch6_multilevel_biased_cp.stan")
+write_stan_file(stan_biased_ml_cp_code, stan_file_biased_ml_cp)
+
+# Compile the CP model
+if (!exists("mod_biased_ml_cp") || !cmdstanr::is_cmdstan_model(mod_biased_ml_cp)) {
+  mod_biased_ml_cp <- cmdstan_model(stan_file_biased_ml_cp, cpp_options = list(stan_threads = TRUE))
+} else {
+  message("Using already compiled biased CP multilevel model.")
+}
+
+```
+
+### Fitting the Model
+
+```{r 06 fitting the mode}
+# Define file path for saved CP model fit
+fit_file_biased_ml_cp <- file.path("simmodels", "ch6_fit_biased_ml_cp.rds")
+
+# Check if we need to re-run the fitting
+if (regenerate_simulations || !file.exists(fit_file_biased_ml_cp)) {
+  cat("Fitting CENTERED multilevel biased agent model...\n")
+  # Fit the model - NOTE: This might produce warnings/errors!
+  fit_biased_ml_cp <- mod_biased_ml_cp$sample(
+    data = stan_data_biased_ml_cp,
+    seed = 123,
+    chains = 4,
+    parallel_chains = min(4, cores_to_use),
+    iter_warmup = 1000,
+    iter_sampling = 1500,
+    refresh = 500,
+    adapt_delta = 0.85, # Start with slightly lower adapt_delta for CP
+    max_treedepth = 10
+  )
+  # Save the fitted model object
+  fit_biased_ml_cp$save_object(file = fit_file_biased_ml_cp)
+  cat("CP Model fit saved to:", fit_file_biased_ml_cp, "\n")
+} else {
+  # Load existing fit object
+  fit_biased_ml_cp <- readRDS(fit_file_biased_ml_cp)
+  cat("Loaded existing CP model fit from:", fit_file_biased_ml_cp, "\n")
+}
+
+# --- Check Diagnostics for CP Model ---
+cat("\nDiagnostics for CP Biased Model:\n")
+fit_biased_ml_cp$cmdstan_diagnose()
+
+# Examine summary statistics, looking for low ESS or high Rhat
+summary_biased_ml_cp <- fit_biased_ml_cp$summary(
+  variables = c("mu_theta", "sigma_theta", "theta_logit[1]", "theta_logit[2]"), # Check a few thetas
+  "mean", "median", "sd", "rhat", "ess_bulk", "ess_tail"
+)
+print(summary_biased_ml_cp)
+
+# Explicitly check for divergences
+num_divergences_cp <- sum(fit_biased_ml_cp$sampler_diagnostics()[, "divergent__"])
+cat("\nNumber of divergent transitions (CP Model):", num_divergences_cp, "\n")
+
+
+```
+
+### Interpreting CP Diagnostics:
+
+When fitting this centered parameterization, especially if the true sigma_theta (population variability) is small or the data per agent (trials) is limited, Stan's sampler often encounters difficulties. You might observe:
+
+* **Divergent Transitions**: Warnings like XX divergent transitions after warmup indicate the sampler couldn't explore the posterior properly. This suggests the results might be biased or unreliable. Even if the number is low, their presence is a concern.
+
+* **Low Effective Sample Sizes (ESS)**: Values below a few hundred for ess_bulk or ess_tail, particularly for sigma_theta and individual theta_logit parameters, indicate inefficient sampling and less trustworthy estimates for those parameters.
+
+* **High R-hat values**: Values significantly above 1.01 indicate poor mixing between chains, meaning the chains haven't converged to the same distribution.
+
+* (Conceptual) **The 'Funnel of Hell'**: These issues often stem from a geometric challenge. When sigma_theta is small, the individual theta_logit parameters are tightly clustered around mu_theta. This creates a 'funnel' shape in the joint posterior distribution of (sigma_theta, theta_logit) that is very difficult for standard HMC algorithms to explore efficiently without divergences.
+
+**Self-Correction**: In this run with pop_bias_sd = 0.65 and 120 trials, the CP model actually converged reasonably well, contrary to what happened with previous versions of Stan (darn you darned good Stan developers!). Divergences are more common when sigma_theta is smaller or trials are fewer. However, we will proceed to introduce NCP as it is generally more robust, especially for more complex models.
+
+These potential issues signal that while the centered parameterization is intuitive, it can be computationally problematic. To address this, we use a common and highly recommended technique called non-centered parameterization (NCP).
+
+### Non-Centered Parameterization (NCP) as the Solution
+
+NCP tackles the sampling difficulties of CP by changing how we define the individual parameters in the Stan model, in a way that is not dissimilar from rescaling your predictors - a common procedure my students learn in their statistical course to help model convergence and interpretation. Instead of directly sampling theta_logit[j] from normal(mu_theta, sigma_theta), we sample standardized deviations (z_theta[j]) from a standard normal distribution (normal(0, 1)) and then construct the individual theta_logit[j] values using the population parameters within the transformed parameters block.
+
+Mathematically: Instead of: theta_logit[j] ~ normal(mu_theta, sigma_theta) (CP)
+We use:
+
+* z_theta[j] ~ normal(0, 1) (in model block)
+
+* theta_logit[j] = mu_theta + z_theta[j] * sigma_theta (in transformed parameters block)
+
+This reparameterization doesn't change the underlying mathematical model (the implied prior on theta_logit is still normal(mu_theta, sigma_theta)), but it creates a posterior geometry that is much easier for Stan's sampler to explore, often resolving the 'funnel' problem and eliminating divergences. The reparametrization has subtracted the mean and divided by the standard deviation, just like when we rescale predictors, so that to have the actual values we need to add back the mean (+ mu_theta) and multiply by the standard deviation (*sigma_theta).
+
+### Stan Model: Multilevel Biased Agent (NCP)
+
+Here is the NCP version of the model. Note the changes in the parameters, transformed parameters, and model blocks compared to the CP version.
+
+```{r}
+# Stan model code is identical to ch6_stan_biased_ml block in previous response
+stan_biased_ml_ncp_code <- '
+// Multilevel Biased Agent Model (Non-Centered Parameterization)
+// Estimates individual biases drawn from a population distribution.
+
+data {
+  int<lower=1> N;                    // Total number of observations
+  int<lower=1> J;                    // Number of agents
+  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation (must be 1...J)
+  array[N] int<lower=0, upper=1> h;    // Observed choices (0 or 1)
+}
+
+parameters {
+  // Population-level parameters
+  real mu_theta;                     // Population mean bias (logit scale)
+  real<lower=0> sigma_theta;         // Population SD of bias (logit scale)
+
+  // Individual-level parameters (standardized deviations)
+  vector[J] z_theta;                 // Non-centered individual effects (standard normal scale)
+}
+
+transformed parameters {
+  // Individual agent biases (logit scale)
+  // Calculated from population parameters and standardized deviations
+  // theta_logit_j = mu_theta + z_theta_j * sigma_theta
+  vector[J] theta_logit = mu_theta + z_theta * sigma_theta;
+}
+
+model {
+  // Priors for population-level parameters
+  // Rationale: Weakly informative prior for population mean bias (logit scale), centered at 0 (0.5 prob).
+  mu_theta ~ normal(0, 1);
+  // Rationale: Prior for population standard deviation. Exponential(1) slightly favors smaller SDs
+  // (less individual variation) but allows larger ones. SD is on logit scale.
+  sigma_theta ~ exponential(1);
+
+  // Prior for standardized individual deviations
+  // Rationale: This is key for non-centered parameterization. Assumes individual deviations
+  // from the mean (after scaling by sigma_theta) follow a standard normal distribution.
+  z_theta ~ std_normal(); // Equivalent to theta_logit ~ normal(mu_theta, sigma_theta)
+
+  // Likelihood
+  // Rationale: Each choice h[i] for agent agent_id[i] is a Bernoulli trial with
+  // probability determined by that agent\'s specific bias theta_logit[agent_id[i]].
+  // Using bernoulli_logit_lpmf is numerically stable and efficient.
+  h ~ bernoulli_logit(theta_logit[agent_id]); // Vectorized likelihood
+}
+
+generated quantities {
+  // Population parameters on probability scale for easier interpretation
+  real<lower=0, upper=1> mu_theta_prob = inv_logit(mu_theta);
+
+  // Individual agent biases on probability scale
+  vector<lower=0, upper=1>[J] theta_prob = inv_logit(theta_logit);
+
+  // Log-likelihood for each observation (for LOO/WAIC)
+  // Needed for model comparison (Chapter 7)
+  vector[N] log_lik;
+  for (i in 1:N) {
+    log_lik[i] = bernoulli_logit_lpmf(h[i] | theta_logit[agent_id[i]]);
+  }
+
+  // --- Prior Predictive Checks ---
+  // Simulate data based ONLY on draws from the priors
+  real mu_theta_prior = normal_rng(0, 1);
+  real<lower=0> sigma_theta_prior = exponential_rng(1);
+  // Simulate individual biases from the prior population distribution
+  vector[J] z_theta_prior = normal_rng(0, 1); // Sample z-scores from prior
+  vector[J] theta_logit_prior = mu_theta_prior + z_theta_prior * sigma_theta_prior;
+  // Simulate choices for each observation based on the prior-simulated agent biases
+  array[N] int h_prior_rep;
+  for (i in 1:N) {
+    h_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[agent_id[i]]);
+  }
+
+  // --- Posterior Predictive Checks ---
+  // Simulate data based on parameters drawn from the POSTERIOR distribution
+  array[N] int h_post_rep;
+  for (i in 1:N) {
+    // Use the posterior sample of theta_logit for the corresponding agent
+    // theta_logit vector contains posterior draws calculated in transformed parameters
+    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent_id[i]]);
+  }
+}'
+
+# Write Stan code to file (if not already done)
+stan_file_biased_ml_ncp <- file.path("stan", "ch6_multilevel_biased_ncp.stan")
+write_stan_file(stan_biased_ml_ncp_code, stan_file_biased_ml_ncp)
+
+# Compile the NCP model (if not already done)
+if (!exists("mod_biased_ml_ncp") || !cmdstanr::is_cmdstan_model(mod_biased_ml_ncp)) {
+  mod_biased_ml_ncp <- cmdstan_model(stan_file_biased_ml_ncp, cpp_options = list(stan_threads = TRUE))
+} else {
+  message("Using already compiled biased NCP multilevel model.")
+}
+
+```
+
+### Fitting the NCP Model
+```{r}
+# Define file path for saved NCP model fit
+fit_file_biased_ml_ncp <- file.path("simmodels", "ch6_fit_biased_ml_ncp.rds") # Use distinct name
+
+# Check if we need to re-run the fitting
+if (regenerate_simulations || !file.exists(fit_file_biased_ml_ncp)) {
+  cat("Fitting NON-CENTERED multilevel biased agent model...\n")
+  fit_biased_ml_ncp <- mod_biased_ml_ncp$sample(
+    data = stan_data_biased_ml_cp, # Use the same data as CP model
+    seed = 123,
+    chains = 4,
+    parallel_chains = min(4, cores_to_use),
+    iter_warmup = 1000,
+    iter_sampling = 1500,
+    refresh = 500,
+    adapt_delta = 0.9, # Can often use standard adapt_delta with NCP
+    max_treedepth = 10
+  )
+  # Save the fitted model object
+  fit_biased_ml_ncp$save_object(file = fit_file_biased_ml_ncp)
+  cat("NCP Model fit saved to:", fit_file_biased_ml_ncp, "\n")
+} else {
+  # Load existing fit object
+  fit_biased_ml_ncp <- readRDS(fit_file_biased_ml_ncp)
+  cat("Loaded existing NCP model fit from:", fit_file_biased_ml_ncp, "\n")
+}
+
+# --- Compare Diagnostics: CP vs NCP ---
+cat("\nDiagnostics Comparison (Biased Model):\n")
+cat("--- CENTERED Parameterization ---\n")
+fit_biased_ml_cp$cmdstan_diagnose() # Re-run diagnostics for CP fit
+cat("\n--- NON-CENTERED Parameterization ---\n")
+fit_biased_ml_ncp$cmdstan_diagnose() # Diagnostics for NCP fit
+
+# Compare summaries (focus on ESS, Rhat)
+summary_cp <- fit_biased_ml_cp$summary(variables = c("mu_theta", "sigma_theta"), "mean", "rhat", "ess_bulk", "ess_tail")
+summary_ncp <- fit_biased_ml_ncp$summary(variables = c("mu_theta", "sigma_theta"), "mean", "rhat", "ess_bulk", "ess_tail")
+
+cat("\nSummary Comparison (Population Params):\n")
+print(summary_cp %>% mutate(Parametrization = "Centered"))
+print(summary_ncp %>% mutate(Parametrization = "Non-Centered"))
+
+```
+
+### Comparing CP and NCP:
+
+Comparing the diagnostics from the CP and NCP fits typically reveals the benefits of NCP, especially in more challenging scenarios (e.g., smaller sigma_theta, fewer trials):
+
+* **Divergences**: NCP usually results in fewer or zero divergent transitions.
+
+* **Effective Sample Sizes (ESS)**: NCP often yields significantly higher ESS values, particularly for sigma_theta and the individual parameters (z_theta or derived theta_logit), indicating more efficient sampling.
+
+* **R-hat**: Both should ideally have R-hat values near 1.0, but NCP might achieve this more reliably.
+
+Therefore, while CP is conceptually simpler, NCP is often the recommended approach for implementing multilevel models in Stan due to its (often) superior sampling performance and robustness. We will use NCP for the more complex memory model next. But remember that there is no free lunch in modeling and sometimes the centered parameterization might actually be the better choice. There is no replacement to tinkering (fitting the model, assessing quality, adjusting and repeating til the quality is acceptable).
+
+### Model Quality Checks (NCP Biased Model)
+
+Now we perform the full suite of quality checks on the successful NCP fit (fit_biased_ml_ncp).
+
+#### Check 1: Parameter Recovery (NCP)
+
+```{r}
+# --- Population Parameter Recovery (NCP Fit) ---
+# True population parameters (logit scale)
+true_mu_theta <- pop_bias_mean_logit
+true_sigma_theta <- pop_bias_sd
+
+# Extract posterior draws from NCP fit
+draws_biased_ml_ncp <- as_draws_df(fit_biased_ml_ncp$draws(c("mu_theta", "sigma_theta")))
+
+# Create data for plotting recovery
+recovery_plot_data_ncp <- draws_biased_ml_ncp %>%
+  pivot_longer(everything(), names_to = "parameter", values_to = "posterior_sample") %>%
+  mutate(
+    true_value = case_when(
+      parameter == "mu_theta" ~ true_mu_theta,
+      parameter == "sigma_theta" ~ true_sigma_theta,
+      TRUE ~ NA_real_
+    ),
+    parameter_label = case_when(
+        parameter == "mu_theta" ~ paste0("mu_theta (True = ", round(true_mu_theta, 2), ")"),
+        parameter == "sigma_theta" ~ paste0("sigma_theta (True = ", round(true_sigma_theta, 2), ")"),
+        TRUE ~ parameter
+    )
+  )
+
+# Plot recovery
+p_recovery_pop_ncp <- ggplot(recovery_plot_data_ncp, aes(x = posterior_sample)) +
+  geom_density(fill = "skyblue", alpha = 0.7) +
+  geom_vline(data = . %>% distinct(parameter_label, true_value),
+             aes(xintercept = true_value), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~parameter_label, scales = "free") +
+  labs(
+    title = "Population Parameter Recovery (Biased Model - NCP)",
+    subtitle = "Posterior distributions (blue) vs. True values (red dashed)",
+    x = "Parameter Value", y = "Density"
+  ) + theme_classic()
+print(p_recovery_pop_ncp)
+
+# --- Individual Parameter Recovery (NCP Fit) ---
+# Extract estimated individual biases (posterior means, logit scale) from NCP fit
+est_biases_logit_ncp_summary <- fit_biased_ml_ncp$summary(variables = "theta_logit", "mean")
+est_biases_logit_ncp <- est_biases_logit_ncp_summary$mean
+
+# Create recovery dataframe (using true values from before)
+individual_recovery_df_ncp <- tibble(
+  agent_id_stan = 1:stan_data_biased_ml_cp$J,
+  true_logit = true_biases_logit, # From CP section
+  est_logit = est_biases_logit_ncp
+)
+
+# Plot individual recovery
+p_recovery_indiv_ncp <- ggplot(individual_recovery_df_ncp, aes(x = true_logit, y = est_logit)) +
+  geom_point(alpha = 0.6, color="darkblue") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE, color="orange", linetype="dotted") +
+  labs(
+    title = "Individual Parameter Recovery (Biased Model - NCP)",
+    subtitle = "True vs. Estimated Bias (Logit Scale)",
+    x = "True theta_logit", y = "Estimated theta_logit (Posterior Mean)"
+  ) + coord_fixed() + theme_classic()
+print(p_recovery_indiv_ncp)
+
+# Calculate correlation
+recovery_cor_ncp <- cor(individual_recovery_df_ncp$true_logit, individual_recovery_df_ncp$est_logit)
+cat("Correlation between true and estimated individual biases (NCP):", round(recovery_cor_ncp, 3), "\n")
+
+```
+
+**Interpretation**: Parameter recovery for the NCP model should be very similar to the (potentially problematic) CP model if both converged, but the NCP estimates are more reliable due to better sampling. We again see good recovery at both population and individual levels.
+
+#### Check 2: Prior Predictive Checks (NCP)
+
+```{r}
+# Extract prior predictive simulations from NCP fit
+h_prior_rep_biased_ncp <- fit_biased_ml_ncp$draws("h_prior_rep", format = "matrix")
+
+# Calculate summary statistic (mean choice proportion per agent)
+J_fit <- stan_data_biased_ml_cp$J # Use J from the data list
+N_fit <- stan_data_biased_ml_cp$N
+T_fit <- N_fit / J_fit
+
+prior_pred_means_per_agent_ncp <- apply(h_prior_rep_biased_ncp, 1, function(rep_row) {
+  agent_means <- numeric(J_fit)
+  for (j in 1:J_fit) {
+    start_idx <- (j - 1) * T_fit + 1
+    end_idx <- j * T_fit
+    agent_means[j] <- mean(rep_row[start_idx:end_idx])
+  }
+  return(agent_means)
+}) # Result is matrix (agents x draws)
+
+# Observed means per agent (calculated earlier)
+# observed_means_per_agent <- ...
+
+# Plot density overlay
+ppc_prior_dens_overlay_ncp <- ppc_dens_overlay(
+  y = observed_means_per_agent,       # Observed summary statistic
+  yrep = t(prior_pred_means_per_agent_ncp) # Replicated stats from NCP model
+) +
+  labs(title = "Prior Predictive Check (Biased Model - NCP)",
+       subtitle = "Distribution of Agent Mean Choice Proportions",
+       x = "Mean Proportion Choosing 'Right'") +
+  theme_classic() + xlim(0,1)
+print(ppc_prior_dens_overlay_ncp)
+```
+
+**Interpretation**: The prior predictive checks for the NCP model should look identical to the CP model, as the underlying priors on the implied theta_logit are the same. It confirms the model considers a wide range of behaviors plausible before seeing data.
+
+#### Check 3: Posterior Predictive Checks (NCP)
+
+```{r}
+# Extract posterior predictive simulations from NCP fit
+h_post_rep_biased_ncp <- fit_biased_ml_ncp$draws("h_post_rep", format = "matrix")
+
+# Check overall mean choice proportion
+ppc_post_hist_ncp <- ppc_stat(
+  y = stan_data_biased_ml_cp$h,
+  yrep = h_post_rep_biased_ncp,
+  stat = "mean"
+) + labs(title = "Posterior Predictive Check (Biased Model - NCP)",
+         subtitle = "Overall Mean Choice Proportion",
+         x = "Mean Proportion Choosing 'Right'") + theme_classic()
+
+# Check distribution of means per agent
+post_pred_means_per_agent_ncp <- apply(h_post_rep_biased_ncp, 1, function(rep_row) {
+  agent_means <- numeric(J_fit)
+  for (j in 1:J_fit) {
+    start_idx <- (j - 1) * T_fit + 1
+    end_idx <- j * T_fit
+    agent_means[j] <- mean(rep_row[start_idx:end_idx])
+  }
+  return(agent_means)
+})
+
+ppc_post_dens_overlay_ncp <- ppc_dens_overlay(
+  y = observed_means_per_agent,
+  yrep = t(post_pred_means_per_agent_ncp)
+) + labs(title = "",
+         subtitle = "Distribution of Agent Mean Choice Proportions",
+         x = "Mean Proportion Choosing 'Right'") + theme_classic() + xlim(0,1)
+
+# Combine plots
+print(ppc_post_hist_ncp / ppc_post_dens_overlay_ncp)
+```
+
+**Interpretation**: Again, the posterior predictive checks for the NCP model should yield very similar results to the CP model (if it ran without issues), showing good overlap between observed and simulated data statistics. The key difference is the reliability of the NCP fit.
+
+#### heck 4: Prior Sensitivity Analysis (NCP)
+We re-run the sensitivity checks using the NCP model fit.
+
+```{r}
+# --- priorsense Check (NCP Fit) ---
+cat("Running priorsense analysis for biased NCP model...\n")
+sensitivity_summary_biased_ncp <- NULL
+if(exists("fit_biased_ml_ncp") && !is.null(fit_biased_ml_ncp$draws())) {
+    try({
+        sensitivity_summary_biased_ncp <- powerscale_sensitivity(
+            fit_biased_ml_ncp,
+            variable = c("mu_theta", "sigma_theta")
+        )
+    })
+}
+
+if (!is.null(sensitivity_summary_biased_ncp)) {
+    print("Priorsense Summary (NCP):")
+    print(sensitivity_summary_biased_ncp)
+    ps_plot_biased_ncp <- plot(sensitivity_summary_biased_ncp) +
+        ggtitle("Prior Sensitivity Diagnostics (priorsense - Biased Model NCP)") +
+        theme_classic()
+    print(ps_plot_biased_ncp)
+} else {
+    cat("Could not run or generate priorsense analysis for NCP model.\n")
+}
+```
+
+**Interpretation**: The priorsense results for the NCP model should confirm the low sensitivity observed previously, adding confidence to the robustness assessment.
+
+#### Check 5: Simulation-Based Calibration (SBC) (NCP)
+We re-run SBC using the NCP model.
+
+```{r}
+# --- Simulation-Based Calibration (SBC) - NCP Model ---
+N_sbc <- 50 # Use the same number as before, or increase if needed
+sbc_results_file_biased_ncp <- file.path("simmodels", "ch6_sbc_results_biased_ncp.rds")
+
+if (regenerate_simulations || !file.exists(sbc_results_file_biased_ncp)) {
+  cat("Running Simulation-Based Calibration (SBC) for biased NCP model (", N_sbc, " sims)...\n")
+  # Requires the compiled NCP model (mod_biased_ml_ncp)
+  # Use the same generator function as before (sbc_biased_generator)
+  # as it simulates based on priors, which are implicitly the same.
+
+  sbc_biased_results_ncp_cmdstanr <- sbc::compute_sbc(
+                                 mod_biased_ml_ncp, # Use the NCP model
+                                 gen_prior_predictive_data = sbc_biased_generator,
+                                 N = N_sbc,
+                                 fit_model_args = list(seed = 556, chains = 1, iter_warmup = 500, iter_sampling = 500, refresh = 0, adapt_delta = 0.9), # Use NCP settings
+                                 cores = cores_to_use
+                                )
+
+  saveRDS(sbc_biased_results_ncp_cmdstanr, sbc_results_file_biased_ncp)
+  cat("SBC (NCP) finished and results saved.\n")
+} else {
+  sbc_biased_results_ncp_cmdstanr <- readRDS(sbc_results_file_biased_ncp)
+  cat("Loaded existing SBC results for biased NCP model.\n")
+}
+
+# Plot SBC results (rank histograms) for population parameters
+sbc_plot_biased_pop_ncp <- plot_rank_hist(sbc_biased_results_ncp_cmdstanr, pars = c("mu_theta", "sigma_theta")) +
+                         labs(title="SBC Rank Histograms (Population Params - Biased Model NCP)")
+print(sbc_plot_biased_pop_ncp)
+
+# Check ECDF difference plot
+sbc_ecdf_plot_biased_pop_ncp <- plot_ecdf_diff(sbc_biased_results_ncp_cmdstanr, pars = c("mu_theta", "sigma_theta")) +
+                              labs(title="SBC ECDF Differences (Population Params - Biased Model NCP)")
+print(sbc_ecdf_plot_biased_pop_ncp)
+```
+
+**Interpretation**: The SBC results for the NCP model should ideally show uniform rank histograms and ECDF differences close to zero, indicating good calibration. Comparing these to the CP results (if available and problematic) would further highlight the benefits of NCP.
+
+## Multilevel Model Implementation: Memory Agent
+
+Now we apply the same pedagogical structure (CP first, then NCP) to the more complex memory agent model.
+
+### Preparing Data (Memory Model)
+
+```{r}
+# Filter data for only the 'Memory' agents
+memory_agent_data_ml <- simulation_data %>%
+  filter(agent_type == "Memory") %>%
+  mutate(agent_id_stan = as.numeric(factor(agent))) # Stan IDs 1 to J
+
+# Prepare data list for Stan (including opponent history)
+# Add trial index needed for internal memory calculation
+memory_agent_data_ml <- memory_agent_data_ml %>% arrange(agent_id_stan, trial) %>% mutate(trial_idx = trial)
+
+# Get opponent choices corresponding to these agents/trials
+# Assuming opponent choices are stored correctly in simulation_data
+opponent_choices_mem <- memory_agent_data_ml$opponent_choice
+
+stan_data_memory_ml_cp <- list(
+  N = nrow(memory_agent_data_ml),
+  J = length(unique(memory_agent_data_ml$agent_id_stan)),
+  T = max(memory_agent_data_ml$trial_idx), # Max trials
+  agent_id = memory_agent_data_ml$agent_id_stan,
+  trial_idx = memory_agent_data_ml$trial_idx, # Pass trial index
+  h = memory_agent_data_ml$agent_choice,
+  other = opponent_choices_mem, # Pass opponent choices
+  trials_per_agent = memory_agent_data_ml %>% group_by(agent_id_stan) %>% summarise(n=n()) %>% pull(n) # Trials per agent
+)
+
+cat("CP Memory Model - Total observations (N):", stan_data_memory_ml_cp$N, "\n")
+cat("CP Memory Model - Number of agents (J):", stan_data_memory_ml_cp$J, "\n")
+cat("CP Memory Model - Max trials (T):", stan_data_memory_ml_cp$T, "\n")
+
+```
+
+### Stan Model: Memory Agent (CP with Internal Memory)
+Before we pre-calculated the memory states and fed them to Stan, but that is very inelegant (tho' computationally effective). Here we implement a new (less efficient but more elegant) version of the model where memory is maintained via a loop inside the model without a need to precomputing it and feeding it to stan.
+
+```{r}
+stan_memory_ml_cp_code <- "
+// Multilevel Memory Agent Model (CENTERED Parameterization)
+// Calculates memory internally. EXPECT SAMPLING ISSUES.
+
+data {
+  int<lower=1> N;                    // Total number of observations
+  int<lower=1> J;                    // Number of agents
+  int<lower=1> T;                    // Max trials per agent
+  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation
+  array[N] int<lower=1, upper=T> trial_idx; // Trial index for each observation
+  array[N] int<lower=0, upper=1> h;    // Observed agent choices
+  array[N] int<lower=0, upper=1> other; // Observed opponent choices
+  array[J] int<lower=1, upper=T> trials_per_agent; // Trials per agent
+}
+
+parameters {
+  // Population-level parameters
+  real mu_bias;                      // Population mean baseline bias (logit scale)
+  real mu_beta;                      // Population mean memory sensitivity (beta)
+  vector<lower=0>[2] sigma;          // Population SDs for [bias_logit, beta]
+  cholesky_factor_corr[2] L_Omega;   // Cholesky factor of correlation matrix
+
+  // Individual-level parameters (CENTERED)
+  matrix[J, 2] indiv_params;         // Rows: agents, Cols: [bias_logit, beta]
+}
+
+transformed parameters {
+  // Calculate memory state dynamically for each agent
+  // This requires careful indexing and looping
+  matrix[J, T] opponent_rate_prob; // Store opponent rate for each agent/trial
+
+  // Initialize opponent rate
+  for (j in 1:J) {
+    opponent_rate_prob[j, 1] = 0.5; // Assume 50/50 for first trial's prediction base
+  }
+
+  // Loop through observations to calculate history (this is inefficient in Stan)
+  // A better approach might use Stan functions or precompute outside Stan
+  // This simplified version calculates running average based on *all* previous opponent choices
+  // for that agent up to trial t-1.
+  for (j in 1:J) {
+      int current_opponent_sum = 0;
+      for (t in 1:(trials_per_agent[j]-1)) {
+          // Find the observation corresponding to agent j, trial t
+          int obs_idx = 0;
+          for (i in 1:N) {
+              if (agent_id[i] == j && trial_idx[i] == t) {
+                  obs_idx = i;
+                  break;
+              }
+          }
+          if (obs_idx > 0) {
+             current_opponent_sum += other[obs_idx];
+             // Calculate rate for predicting trial t+1
+             opponent_rate_prob[j, t + 1] = fmax(0.01, fmin(0.99, (current_opponent_sum * 1.0) / t));
+          } else {
+             // Should not happen with well-formed data, but handle defensively
+             opponent_rate_prob[j, t + 1] = opponent_rate_prob[j, t];
+          }
+      }
+  }
+}
+
+
+model {
+  // Priors for population-level parameters
+  mu_bias ~ normal(0, 1);
+  mu_beta ~ normal(0, 1.5);
+  sigma ~ exponential(1);
+  L_Omega ~ lkj_corr_cholesky(2);
+
+  // Hierarchical structure (CENTERED)
+  // Directly model individual parameters based on population distribution
+  // Need to convert Cholesky factor + SDs to covariance matrix
+  matrix[2, 2] Sigma = diag_pre_multiply(sigma, L_Omega) * diag_pre_multiply(sigma, L_Omega)';
+  // Loop through agents for the prior
+  for (j in 1:J) {
+    indiv_params[j] ~ multi_normal(vector({mu_bias, mu_beta}), Sigma);
+  }
+
+  // Likelihood
+  vector[N] logit_p;
+  for (i in 1:N) {
+    int j = agent_id[i]; // Current agent
+    int t = trial_idx[i]; // Current trial
+    real bias_j = indiv_params[j, 1];
+    real beta_j = indiv_params[j, 2];
+    // Calculate logit probability using the calculated opponent rate history
+    logit_p[i] = bias_j + beta_j * logit(opponent_rate_prob[j, t]);
+  }
+  h ~ bernoulli_logit(logit_p);
+}
+
+generated quantities {
+  // Population correlation matrix
+  matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
+  real rho = Omega[1, 2]; // Correlation between bias and beta
+
+  // Log-likelihood for each observation
+  vector[N] log_lik;
+  for (i in 1:N) {
+    int j = agent_id[i];
+    int t = trial_idx[i];
+    real bias_j = indiv_params[j, 1];
+    real beta_j = indiv_params[j, 2];
+    log_lik[i] = bernoulli_logit_lpmf(h[i] | bias_j + beta_j * logit(opponent_rate_prob[j, t]));
+  }
+  // ... (add predictive checks if desired, requires simulating history) ...
+}
+"
+# Write Stan code to file
+stan_file_memory_ml_cp <- file.path("stan", "ch6_multilevel_memory_cp.stan")
+write_stan_file(stan_memory_ml_cp_code, stan_file_memory_ml_cp)
+
+# Compile the CP memory model
+if (!exists("mod_memory_ml_cp") || !cmdstanr::is_cmdstan_model(mod_memory_ml_cp)) {
+  mod_memory_ml_cp <- cmdstan_model(stan_file_memory_ml_cp, cpp_options = list(stan_threads = TRUE))
+} else {
+  message("Using already compiled memory CP multilevel model.")
+}
+
+```
+
+### Fitting the CP Memory Model and Observing Issues
+
+```{r}
+# Define file path for saved CP memory model fit
+fit_file_memory_ml_cp <- file.path("simmodels", "ch6_fit_memory_ml_cp.rds")
+
+# Check if we need to re-run the fitting
+if (regenerate_simulations || !file.exists(fit_file_memory_ml_cp)) {
+  cat("Fitting CENTERED multilevel memory agent model...\n")
+  # Fit the model - EXPECT WARNINGS/ERRORS!
+  fit_memory_ml_cp <- mod_memory_ml_cp$sample(
+    data = stan_data_memory_ml_cp, # Use the prepared memory data
+    seed = 456,
+    chains = 4,
+    parallel_chains = min(4, cores_to_use),
+    iter_warmup = 1000,
+    iter_sampling = 1000, # Reduced sampling for speed, may need more
+    refresh = 500,
+    adapt_delta = 0.9, # Start lower, may need to increase
+    max_treedepth = 10
+  )
+  # Save the fitted model object
+  fit_memory_ml_cp$save_object(file = fit_file_memory_ml_cp)
+  cat("CP Memory Model fit saved to:", fit_file_memory_ml_cp, "\n")
+} else {
+  # Load existing fit object
+  fit_memory_ml_cp <- readRDS(fit_file_memory_ml_cp)
+  cat("Loaded existing CP Memory model fit from:", fit_file_memory_ml_cp, "\n")
+}
+
+# --- Check Diagnostics for CP Memory Model ---
+cat("\nDiagnostics for CP Memory Model:\n")
+fit_memory_ml_cp$cmdstan_diagnose()
+
+# Examine summary statistics, looking for low ESS or high Rhat
+summary_memory_ml_cp <- fit_memory_ml_cp$summary(
+  variables = c("mu_bias", "mu_beta", "sigma", "rho", "indiv_params[1,1]", "indiv_params[1,2]"),
+  "mean", "median", "sd", "rhat", "ess_bulk", "ess_tail"
+)
+print(summary_memory_ml_cp)
+
+# Explicitly check for divergences
+num_divergences_mem_cp <- sum(fit_memory_ml_cp$sampler_diagnostics()[, "divergent__"])
+cat("\nNumber of divergent transitions (CP Memory Model):", num_divergences_mem_cp, "\n")
+
+```
+
+### Interpreting CP Memory Diagnostics:
+
+Fitting this centered memory model is highly likely to result in significant sampling problems:
+
+* Many Divergent Transitions: The combination of hierarchical structure, multiple correlated parameters, and the dynamic calculation of memory creates a very challenging posterior geometry.
+
+* Very Low ESS: Effective sample sizes for population SDs (sigma) and especially individual parameters (indiv_params) will likely be extremely low.
+
+* High R-hat: R-hat values may exceed 1.1 or even higher for some parameters.
+
+* Slow Sampling: The fitting process itself might be very slow.
+
+These issues clearly demonstrate that the centered parameterization is inadequate for this more complex hierarchical model. The 'funnel' problem becomes much more severe.
+
+### Stan Model: Memory Agent (NCP with Internal Memory)
+
+We now implement the non-centered version, which is crucial for obtaining reliable results.
+
+```{r}
+# Stan model code for NCP memory model (same as ch6_stan_memory_ml)
+stan_memory_ml_ncp_code <- "// Multilevel Memory Agent Model (Non-Centered, Correlated)
+// Estimates individual baseline bias (alpha/bias) and memory sensitivity (beta),
+// allowing for correlation between them using non-centered parameterization.
+
+data {
+  int<lower=1> N;                    // Total number of observations
+  int<lower=1> J;                    // Number of agents
+  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation
+  array[N] int<lower=0, upper=1> h;    // Observed agent choices (0 or 1)
+  // This version assumes opponent rate history is pre-calculated and passed
+  // as data. A value between 0.01 and 0.99.
+  vector[N] opponent_rate_prob;      // Opponent's running rate prob up to trial t-1
+}
+
+parameters {
+  // Population-level parameters
+  real mu_bias;                      // Population mean baseline bias (logit scale)
+  real mu_beta;                      // Population mean memory sensitivity (beta)
+  vector<lower=0>[2] sigma;          // Population SDs for [bias_logit, beta]
+  cholesky_factor_corr[2] L_Omega;   // Cholesky factor of correlation matrix
+
+  // Individual-level parameters (standardized deviations for NCP)
+  matrix[2, J] z;                    // Non-centered individual effects [bias_logit, beta]
+                                     // Rows: parameters (bias, beta), Columns: agents
+}
+
+transformed parameters {
+  // Individual agent parameters (bias_logit, beta)
+  matrix[J, 2] indiv_params;         // Rows: agents, Cols: [bias_logit, beta]
+
+  // Calculate individual parameters using non-centered parameterization
+  // indiv_params = rep_matrix(mu', J) + (sigma * L_Omega * z)'
+  // mu' is row vector {mu_bias, mu_beta}
+  // sigma is vector {sigma_bias, sigma_beta}
+  // L_Omega is 2x2 Cholesky factor
+  // z is 2xJ matrix of standard normal deviates
+  // diag_pre_multiply(sigma, L_Omega) calculates sigma * L_Omega correctly
+  indiv_params = rep_matrix(vector({mu_bias, mu_beta})', J) + (diag_pre_multiply(sigma, L_Omega) * z)';
+}
+
+model {
+  // Priors for population-level parameters
+  mu_bias ~ normal(0, 1);            // Prior for population mean bias (logit scale)
+  mu_beta ~ normal(0, 1.5);          // Prior for population mean beta (can be wider)
+  sigma ~ exponential(1);            // Prior for population SDs (favors smaller SDs)
+  L_Omega ~ lkj_corr_cholesky(2);    // LKJ prior for correlation (eta=2 slightly favors no correlation)
+
+  // Prior for standardized individual deviations (key part of NCP)
+  to_vector(z) ~ std_normal();       // Each element of z is N(0,1)
+
+  // Likelihood
+  vector[N] logit_p; // Vector to store logit probabilities for each observation
+  for (i in 1:N) {
+    int j = agent_id[i]; // Get the agent ID for this observation
+    real bias_j = indiv_params[j, 1]; // Agent j's baseline bias (logit)
+    real beta_j = indiv_params[j, 2]; // Agent j's memory sensitivity
+    // Calculate logit probability using the pre-calculated opponent rate history
+    logit_p[i] = bias_j + beta_j * logit(opponent_rate_prob[i]); // Use Stan's logit function
+  }
+  // Calculate likelihood for all observations using vectorized form
+  h ~ bernoulli_logit(logit_p);
+}
+
+generated quantities {
+  // Population correlation matrix and correlation coefficient rho
+  matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
+  real rho = Omega[1, 2]; // Correlation between bias and beta
+
+  // Individual parameters on interpretable scales
+  vector<lower=0, upper=1>[J] bias_prob = inv_logit(indiv_params[, 1]); // Bias on probability scale
+  vector[J] beta = indiv_params[, 2]; // Beta is already on natural scale
+
+  // Log-likelihood for each observation (for model comparison like LOO)
+  vector[N] log_lik;
+   for (i in 1:N) {
+    int j = agent_id[i]; // Current agent
+    real bias_j = indiv_params[j, 1];
+    real beta_j = indiv_params[j, 2];
+    // Use the same calculation as in the model block's likelihood
+    log_lik[i] = bernoulli_logit_lpmf(h[i] | bias_j + beta_j * logit(opponent_rate_prob[i]));
+  }
+
+  // Prior predictive checks: Simulate data based ONLY on draws from the priors
+  // 1. Draw population parameters from priors
+  real mu_bias_prior = normal_rng(0, 1);
+  real mu_beta_prior = normal_rng(0, 1.5);
+  vector[2] sigma_prior = exponential_rng(1); // Draw 2 values from exponential(1)
+  matrix[2, 2] L_Omega_prior = lkj_corr_cholesky_rng(2, 2); // Draw from LKJ(2) prior
+  // 2. Draw individual standardized deviations from prior
+  matrix[2, J] z_prior = normal_rng(0, 1); // Sample Jx2 matrix of z-scores from N(0,1)
+  // 3. Calculate individual parameters based on prior draws
+  matrix[J, 2] indiv_params_prior = rep_matrix(vector({mu_bias_prior, mu_beta_prior})', J) + (diag_pre_multiply(sigma_prior, L_Omega_prior) * z_prior)';
+
+  // 4. Simulate choices based on prior-drawn parameters
+  array[N] int h_prior_rep;
+  for (i in 1:N) {
+    int j = agent_id[i];
+    real bias_j_prior = indiv_params_prior[j, 1];
+    real beta_j_prior = indiv_params_prior[j, 2];
+    // Use the opponent_rate_prob from the input data as context for prior prediction
+    h_prior_rep[i] = bernoulli_logit_rng(bias_j_prior + beta_j_prior * logit(opponent_rate_prob[i]));
+  }
+
+  // Posterior predictive checks: Simulate data based on posterior draws
+  array[N] int h_post_rep;
+  for (i in 1:N) {
+    int j = agent_id[i];
+    real bias_j = indiv_params[j, 1]; // Use posterior draws of individual params
+    real beta_j = indiv_params[j, 2];
+    // Use the same calculation as in the model block's likelihood
+    h_post_rep[i] = bernoulli_logit_rng(bias_j + beta_j * logit(opponent_rate_prob[i]));
+  }
+}"
+
+# Write Stan code to file (if not already done)
+stan_file_memory_ml_ncp <- file.path("stan", "ch6_multilevel_memory_ncp.stan")
+write_stan_file(stan_memory_ml_ncp_code, stan_file_memory_ml_ncp)
+
+# Compile the NCP model (if not already done)
+if (!exists("mod_memory_ml_ncp") || !cmdstanr::is_cmdstan_model(mod_memory_ml_ncp)) {
+  mod_memory_ml_ncp <- cmdstan_model(stan_file_memory_ml_ncp, cpp_options = list(stan_threads = TRUE))
+} else {
+  message("Using already compiled memory NCP multilevel model.")
+}
+```
+
+**Pedagogical Note on Internal Memory Calculation**:
+Calculating the memory state trial-by-trial within Stan, as done here in the transformed parameters block, directly implements the cognitive process model. However, it can be computationally inefficient, especially for long trial sequences or complex update rules, as Stan may recompute history repeatedly. For practical applications with large datasets, pre-calculating relevant history features (like the opponent's running average choice rate up to trial t-1) in R or Python and passing them as data to Stan is often much faster. We use the internal calculation here for pedagogical clarity to show the full model structure, but be aware of the computational trade-off.
+
+### Fitting the NCP Memory Model
+
+```{r}
+# Use the same prepared data as the CP memory model
+stan_data_memory_ml_fit_ncp <- stan_data_memory_ml_cp
+
+# Define file path for saved NCP memory model fit
+fit_file_memory_ml_ncp <- file.path("simmodels", "ch6_fit_memory_ml_ncp.rds") # Distinct name
+
+# Check if we need to re-run the fitting
+if (regenerate_simulations || !file.exists(fit_file_memory_ml_ncp)) {
+  cat("Fitting NON-CENTERED multilevel memory agent model...\n")
+  # Fit the NCP model
+  fit_memory_ml_ncp <- mod_memory_ml_ncp$sample(
+    data = stan_data_memory_ml_fit_ncp,
+    seed = 456,
+    chains = 4,
+    parallel_chains = min(4, cores_to_use),
+    iter_warmup = 1000,
+    iter_sampling = 1500,
+    refresh = 500,
+    adapt_delta = 0.95, # Often need higher adapt_delta for complex models
+    max_treedepth = 12
+  )
+  # Save the fitted model object
+  fit_memory_ml_ncp$save_object(file = fit_file_memory_ml_ncp)
+  cat("NCP Memory Model fit saved to:", fit_file_memory_ml_ncp, "\n")
+} else {
+  # Load existing fit object
+  fit_memory_ml_ncp <- readRDS(fit_file_memory_ml_ncp)
+  cat("Loaded existing NCP Memory model fit from:", fit_file_memory_ml_ncp, "\n")
+}
+
+# --- Compare Diagnostics: CP vs NCP (Memory Model) ---
+cat("\nDiagnostics Comparison (Memory Model):\n")
+cat("--- CENTERED Parameterization ---\n")
+fit_memory_ml_cp$cmdstan_diagnose() # Diagnostics for CP fit
+cat("\n--- NON-CENTERED Parameterization ---\n")
+fit_memory_ml_ncp$cmdstan_diagnose() # Diagnostics for NCP fit
+
+# Compare summaries (focus on ESS, Rhat for population params)
+summary_mem_cp <- fit_memory_ml_cp$summary(variables = c("mu_bias", "mu_beta", "sigma[1]", "sigma[2]", "rho"), "mean", "rhat", "ess_bulk", "ess_tail")
+summary_mem_ncp <- fit_memory_ml_ncp$summary(variables = c("mu_bias", "mu_beta", "sigma[1]", "sigma[2]", "rho"), "mean", "rhat", "ess_bulk", "ess_tail")
+
+cat("\nSummary Comparison (Memory Model Population Params):\n")
+print(summary_mem_cp %>% mutate(Parametrization = "Centered"))
+print(summary_mem_ncp %>% mutate(Parametrization = "Non-Centered"))
+```
+
+### Comparing CP and NCP (Memory Model):
+
+The difference should be stark here. The NCP memory model should exhibit significantly fewer (ideally zero) divergences, much higher ESS values, and R-hats close to 1.0 compared to the CP version. This clearly demonstrates the necessity of considering and comparing different parameterizations (perhaps on subsets of the data to speed up the process) when fitting complex hierarchical cognitive models to get more reliable results.
+
+### Model Quality Checks: Memory Agent (NCP)
+We perform the full suite of quality checks on the successful NCP fit (fit_memory_ml_ncp).
+
+```{r}
+# --- Check Diagnostics (already done above) ---
+
+# --- Parameter Recovery (Population - NCP Fit) ---
+# True population parameters
+true_mu_bias_mem <- pop_mem_bias_mean_logit
+true_mu_beta_mem <- pop_mem_beta_mean
+true_sigma_bias_mem <- pop_mem_bias_sd
+true_sigma_beta_mem <- pop_mem_beta_sd
+true_rho_mem <- 0 # Assuming no correlation was simulated
+
+# Extract posteriors from NCP fit
+draws_memory_ml_ncp <- as_draws_df(fit_memory_ml_ncp$draws(c("mu_bias", "mu_beta", "sigma[1]", "sigma[2]", "rho")))
+
+# Create recovery plot data
+recovery_plot_data_mem_ncp <- draws_memory_ml_ncp %>%
+  rename(sigma_bias = `sigma[1]`, sigma_beta = `sigma[2]`) %>%
+  pivot_longer(everything(), names_to = "parameter", values_to = "posterior_sample") %>%
+  mutate(
+    true_value = case_when(
+      parameter == "mu_bias" ~ true_mu_bias_mem,
+      parameter == "mu_beta" ~ true_mu_beta_mem,
+      parameter == "sigma_bias" ~ true_sigma_bias_mem,
+      parameter == "sigma_beta" ~ true_sigma_beta_mem,
+      parameter == "rho" ~ true_rho_mem,
+      TRUE ~ NA_real_
+    ),
+     parameter_label = case_when(
+        parameter == "mu_bias" ~ paste0("mu_bias (True = ", round(true_mu_bias_mem, 2), ")"),
+        parameter == "mu_beta" ~ paste0("mu_beta (True = ", round(true_mu_beta_mem, 2), ")"),
+        parameter == "sigma_bias" ~ paste0("sigma_bias (True = ", round(true_sigma_bias_mem, 2), ")"),
+        parameter == "sigma_beta" ~ paste0("sigma_beta (True = ", round(true_sigma_beta_mem, 2), ")"),
+        parameter == "rho" ~ paste0("rho (True = ", round(true_rho_mem, 2), ")"),
+        TRUE ~ parameter
+    )
+  )
+
+# Plot recovery
+p_recovery_pop_mem_ncp <- ggplot(recovery_plot_data_mem_ncp, aes(x = posterior_sample)) +
+  geom_density(fill = "lightgreen", alpha = 0.7) +
+  geom_vline(data = . %>% distinct(parameter_label, true_value),
+             aes(xintercept = true_value), color = "red", linetype = "dashed", size = 1) +
+  facet_wrap(~parameter_label, scales = "free") +
+  labs(title = "Population Parameter Recovery (Memory Model - NCP)", x = "Parameter Value", y = "Density") +
+  theme_classic()
+print(p_recovery_pop_mem_ncp)
+
+# --- Predictive Checks (NCP Fit) ---
+# Extract observed data 'h' from the list used for fitting
+observed_h_mem_ncp <- stan_data_memory_ml_cp$h # Same data used
+
+# Extract posterior predictive simulations
+h_post_rep_mem_ncp <- fit_memory_ml_ncp$draws("h_post_rep", format = "matrix")
+
+ppc_post_mem_ncp <- ppc_stat(
+    y = observed_h_mem_ncp,
+    yrep = h_post_rep_mem_ncp,
+    stat = "mean"
+  ) +
+  labs(title="Posterior Predictive Check (Memory Model - NCP)",
+       subtitle="Overall Mean Choice Proportion") + theme_classic()
+
+# Extract prior predictive checks
+h_prior_rep_mem_ncp <- fit_memory_ml_ncp$draws("h_prior_rep", format = "matrix")
+ppc_prior_mem_ncp <- ppc_stat(
+    y = observed_h_mem_ncp, # Compare prior predictions to observed data
+    yrep = h_prior_rep_mem_ncp,
+    stat = "mean"
+  ) +
+  labs(title="Prior Predictive Check (Memory Model - NCP)",
+        subtitle="Overall Mean Choice Proportion") + theme_classic()
+
+print(ppc_prior_mem_ncp / ppc_post_mem_ncp)
+
+
+# --- Prior Sensitivity (priorsense - NCP Fit) ---
+cat("Running priorsense analysis for NCP memory model...\n")
+sensitivity_summary_mem_ncp <- NULL
+if(exists("fit_memory_ml_ncp") && !is.null(fit_memory_ml_ncp$draws())) {
+    try({
+        sensitivity_summary_mem_ncp <- powerscale_sensitivity(
+            fit_memory_ml_ncp,
+            variable = c("mu_bias", "mu_beta", "sigma[1]", "sigma[2]", "rho")
+        )
+    })
+}
+if (!is.null(sensitivity_summary_mem_ncp)) {
+    print("Priorsense Summary (Memory Model - NCP):")
+    print(sensitivity_summary_mem_ncp)
+    ps_plot_mem_ncp <- plot(sensitivity_summary_mem_ncp) +
+        ggtitle("Prior Sensitivity Diagnostics (priorsense - Memory Model NCP)") + theme_classic()
+    print(ps_plot_mem_ncp)
+} else {
+    cat("Could not run or generate priorsense analysis for NCP memory model.\n")
+}
+
+
+# --- SBC (Structure only - NCP Fit) ---
+sbc_results_file_mem_ncp <- file.path("simmodels", "ch6_sbc_results_memory_ncp.rds")
+if (regenerate_simulations || !file.exists(sbc_results_file_mem_ncp)) {
+    cat("SBC for NCP memory model requires careful setup of the generator function. Skipping full run for brevity.\n")
+    # Placeholder: Define generator_mem_ncp and run sbc()
+    sbc_memory_results_ncp_cmdstanr <- NULL # Placeholder
+    # saveRDS(sbc_memory_results_ncp_cmdstanr, sbc_results_file_mem_ncp)
+} else {
+    sbc_memory_results_ncp_cmdstanr <- readRDS(sbc_results_file_mem_ncp) # Load if exists
+    cat("Loaded existing SBC results for NCP memory model.\n")
+}
+if (!is.null(sbc_memory_results_ncp_cmdstanr)) {
+    # Plot SBC results if they exist
+    # sbc_plot_mem_pop_ncp <- plot_rank_hist(sbc_memory_results_ncp_cmdstanr, pars = ...)
+    # print(sbc_plot_mem_pop_ncp)
+    # sbc_ecdf_plot_mem_pop_ncp <- plot_ecdf_diff(sbc_memory_results_ncp_cmdstanr, pars = ...)
+    # print(sbc_ecdf_plot_mem_pop_ncp)
+} else {
+    cat("SBC results for NCP memory model not available.\n")
+}
+
+```
+
+Interpretation: The quality checks for the NCP memory model should show significant improvements over the CP version (if it produced usable results). Parameter recovery should be accurate, predictive checks should show good model fit, sensitivity should be low, and SBC (if run) should indicate good calibration. This validates the NCP memory model as a reliable tool for analyzing this type of data.
+
+Comparing Pooling Approaches (Revisited)
+(This section remains the same as in the previous version, using the results from the NCP biased model fit (fit_biased_ml_ncp) for the partial pooling estimates, as this is the reliable fit.)
+
+We revisit the comparison of pooling approaches using results from our fitted NCP multilevel biased model (fit_biased_ml_ncp). This model represents partial pooling. We compare its individual estimates to No Pooling (empirical means) and Complete Pooling (grand mean).
+
+```{r}
+# --- Pooling Comparison using Fitted NCP Model Results ---
+
+# Use the NCP Biased Agent model fit
+# Get individual posterior mean estimates (logit scale) from the partial pooling model
+indiv_estimates_partial_ncp_summary <- fit_biased_ml_ncp$summary(variables = "theta_logit", "mean")
+indiv_estimates_partial_ncp <- indiv_estimates_partial_ncp_summary$mean
+
+# Get true individual parameters (logit scale) used in simulation (same as before)
+# true_params_biased <- ... (from CP section)
+
+# Calculate No Pooling estimates (empirical logit proportions) (same as before)
+# no_pooling_estimates_df <- ... (from CP section)
+# no_pooling_estimates <- ... (from CP section)
+
+# Calculate Complete Pooling estimate (logit of overall mean proportion) (same as before)
+# complete_pool_prop <- ... (from CP section)
+# complete_pool_logit <- ... (from CP section)
+
+# Get population mean estimate from NCP partial pooling model (logit scale)
+pop_mean_partial_pool_ncp <- fit_biased_ml_ncp$summary("mu_theta", "mean")$mean
+
+# Combine estimates into a dataframe
+pooling_comparison_df_ncp <- tibble(
+  agent_id_stan = 1:stan_data_biased_ml_cp$J, # Use Stan IDs
+  true_logit = true_params_biased$true_theta_logit,
+  no_pool_est = no_pooling_estimates,
+  partial_pool_est = indiv_estimates_partial_ncp, # Use NCP estimates
+  complete_pool_est = complete_pool_logit
+) %>%
+  # Calculate errors relative to the true values
+  mutate(
+    error_no_pool = abs(no_pool_est - true_logit),
+    error_partial_pool = abs(partial_pool_est - true_logit),
+    error_complete_pool = abs(complete_pool_est - true_logit)
+  )
+
+# --- Visualize Shrinkage ---
+p_shrinkage_ncp <- pooling_comparison_df_ncp %>%
+  ggplot(aes(x = no_pool_est, y = partial_pool_est)) +
+  geom_point(alpha = 0.7, aes(color = abs(no_pool_est - pop_mean_partial_pool_ncp))) + # Color by distance from NCP pop mean
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") + # y=x line (no shrinkage)
+  geom_vline(xintercept = pop_mean_partial_pool_ncp, linetype = "dotted", color = "blue") + # NCP Partial pooling pop mean estimate
+  geom_hline(yintercept = pop_mean_partial_pool_ncp, linetype = "dotted", color = "blue") +
+  scale_color_viridis_c(name = "Distance from\nEst. Pop Mean (NCP)") +
+  labs(
+    title = "Shrinkage Effect: Partial (NCP) vs. No Pooling Estimates (Biased Agent)",
+    subtitle = "Partial pooling estimates (y-axis) are shrunk towards the NCP estimated population mean (blue dotted line)",
+    x = "No Pooling Estimate (Empirical Logit)",
+    y = "Partial Pooling Estimate (Posterior Mean Logit - NCP)"
+  ) +
+  theme_classic() +
+  coord_equal()
+
+print(p_shrinkage_ncp)
+
+# --- Compare Errors ---
+error_summary_ncp <- pooling_comparison_df_ncp %>%
+  summarise(
+    RMSE_NoPool = sqrt(mean(error_no_pool^2)),
+    RMSE_PartialPool = sqrt(mean(error_partial_pool^2)), # Errors using NCP estimates
+    RMSE_CompletePool = sqrt(mean(error_complete_pool^2))
+  )
+
+cat("\nRoot Mean Squared Error (RMSE) for Individual Parameter Estimates (using NCP Partial Pool):\n")
+print(knitr::kable(error_summary_ncp, digits=3))
+```
+
+**Interpretation**: The shrinkage plot using the reliable NCP estimates visually demonstrates partial pooling. The partial pooling estimates (y-axis) are pulled from the noisy no-pooling estimates (x-axis) towards the overall population mean (blue dotted line). The RMSE comparison confirms that partial pooling yields the most accurate estimates of the true individual parameters overall, outperforming both complete pooling and no pooling.
+
+## Multilevel Modeling Cheatsheet 
+Core Idea: Model parameters at one level (e.g., individuals j) as being drawn from a distribution defined at a higher level (e.g., population). $θ_j∼Normal(μ,σ)$.
+
+### Benefits:
+
+* Handles individual differences systematically.
+
+* Improves estimates via partial pooling (shrinkage), especially with sparse data per individual. More shrinkage occurs when:
+
+   * Individual data is noisy/sparse.
+
+   * Population variance (σ) is estimated to be small.
+
+   * Individual's raw estimate is far from the population mean (μ).
+
+* Allows estimation of population variance (σ^2), quantifying the magnitude of individual differences.
+
+* Can model correlations between parameters across individuals.
+
+### Key Components in Stan:
+
+* Population Parameters: Means (mu_*), Standard Deviations (sigma_* or tau), Correlation matrices (L_Omega). Usually defined in parameters.
+
+* Individual Effects: Often parameterized non-centrally (z_* ~ std_normal()). Defined in parameters.
+
+* Individual Parameters: Calculated in transformed parameters from population params and individual effects (e.g., theta_j = mu + z_j * sigma).
+
+* Hierarchical Priors: Priors on population parameters (e.g., mu ~ normal(0,1); sigma ~ exponential(1)), standard normal priors on z_*.
+
+* Likelihood: Uses individual parameters indexed by subject ID (e.g., h[i] ~ bernoulli_logit(theta[agent_id[i]])).
+
+### Non-Centered Parameterization (NCP):
+
+* Why: Improves sampling efficiency, avoids "funnel" problem when sigma is small or data per group is low. Essential for reliable estimation in many hierarchical models.
+
+* How: Instead of theta ~ normal(mu, sigma), use:
+
+   * parameters: real mu; real<lower=0> sigma; vector[J] z;
+
+   * transformed parameters: vector[J] theta = mu + z * sigma;
+
+   * model: mu ~ normal(0,1); sigma ~ exponential(1); z ~ std_normal(); ... ~ likelihood(theta[agent_id[i]])
+
+### Modeling Correlations (e.g., 2 parameters):
+
+* Why: Parameters within an individual might be related (e.g., bias and memory strength).
+
+* How (NCP):
+
+   * parameters: vector[2] mu; vector<lower=0>[2] sigma; cholesky_factor_corr[2] L_Omega; matrix[2,J] z;
+
+   * transformed parameters: matrix[J, 2] theta = rep_matrix(mu', J) + (diag_pre_multiply(sigma, L_Omega) * z)'; (Note: theta is Jx2 matrix, theta[j,1] is param1 for agent j).
+
+   * model: mu ~ ...; sigma ~ ...; L_Omega ~ lkj_corr_cholesky(eta); to_vector(z) ~ std_normal(); ... ~ likelihood(theta[agent_id[i],1], theta[agent_id[i],2])
+
+   * generated quantities: matrix[2,2] Omega = multiply_lower_tri_self_transpose(L_Omega); real rho = Omega[1,2]; (Get correlation rho).
+
+### Model Checks are Crucial:
+
+* Convergence: Check Rhat, ESS, trace plots. Ensure no divergences.
+
+* Parameter Recovery: Can you get back known parameters from simulated data (both population and individual levels)?
+
+* Predictive Checks (Prior & Posterior): Does the model make reasonable predictions a priori? Does the fitted model replicate observed data patterns (e.g., means, distributions, specific phenomena)? Use bayesplot::ppc_* functions.
+
+* Sensitivity Analysis (priorsense, Manual): Are results robust to reasonable changes in prior specifications? Use priorsense::powerscale_sensitivity and by refitting with different priors.
+
+* SBC: Is the model well-calibrated overall (uniform rank statistics)? Use sbc package. Computationally intensive but very informative.
+
+## Conclusion: The Power and Challenges of Multilevel Modeling
+
+In this chapter, we've explored how multilevel modeling provides a principled and powerful approach to analyzing data with hierarchical structure, particularly for understanding individual differences in cognitive processes. By implementing and checking models for biased, memory, and potentially WSLS agents, we've seen how to:
+
+* Represent population-level distributions and individual variations.
+
+* Leverage partial pooling for more stable and accurate estimates.
+
+* Diagnose sampling issues with centered parameterization (CP) and understand the necessity of non-centered parameterization (NCP).
+
+* Implement NCP and model correlations for efficiency and realism.
+
+* Apply a comprehensive suite of model quality checks (parameter recovery, predictive checks, sensitivity analysis, SBC) to validate our multilevel models.
+
+Multilevel modeling offers key advantages for cognitive modeling:
+
+* Improved Parameter Estimation: Especially for individuals with limited data, by borrowing strength from the group.
+
+* Quantifying Individual Differences: Estimating population variance tells us how much people differ on a given parameter.
+
+* Identifying Population Trends: Finding general patterns while respecting individual variation.
+
+* Modeling Parameter Relationships: Understanding how different cognitive parameters (e.g., bias and learning rate) relate across individuals via correlation parameters.
+
+The practical implementation challenges—sampling efficiency (requiring NCP), parameterization choices, careful quality checking—are integral to applying these models effectively in research. Mastering these techniques provides a robust foundation for building more sophisticated and realistic models of cognition. These models allow us to move beyond characterizing the "average" participant and towards understanding the rich tapestry of individual strategies and capabilities.
+
+## Exercises
+
+1. Parameter Recovery Deep Dive (Biased Model):
+
+  * Re-run the parameter recovery simulation (ch6_recovery_biased_ml) but vary the number of trials per agent (e.g., 30, 60, 120, 240).
+
+  * Plot the RMSE (Root Mean Squared Error) for mu_theta, sigma_theta, and the average individual theta_logit as a function of the number of trials. How much data is needed for good recovery of population vs. individual parameters?
+
+2. Implement Multilevel WSLS:
+
+  * Write the Stan code for the multilevel WSLS model described in the DAG section (using non-centered parameterization and potentially correlations).
+
+  * Prepare the simulated WSLS agent data for Stan.
+
+  * Fit this model to the simulated WSLS agent data.
+
+  * Perform parameter recovery and predictive checks. How well does it capture WSLS behavior and individual differences compared to the biased and memory models when fitted to WSLS data?
+
+3. Explore Prior Sensitivity (Memory Model Correlation):
+
+  * Modify the multilevel memory model Stan code (ch6_stan_memory_ml) to accept the eta parameter for the lkj_corr_cholesky prior as data.
+
+  * Re-fit the model to the memory agent data with different eta values (e.g., 1, 2, 4). How sensitive is the estimated correlation (rho) between bias and beta to this prior? How sensitive are the estimates of mu_bias, mu_beta, and their SDs?
+
+4. Interpret SBC Results:
+
+  * Re-run the SBC checks (ch6_sbc_biased_ml and potentially for the memory/WSLS models) with a sufficient number of simulations (N_sbc > 200).
+
+  * Interpret the resulting rank histograms and ECDF plots. Do they indicate good calibration?

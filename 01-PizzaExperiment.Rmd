@@ -1,10 +1,6 @@
----
-title: "01 - The Pizza Experiment"
-output: html_document
-date: "2025-01-31"
----
 
-```{r}
+
+```{r setup_01, include=FALSE}
 knitr::opts_chunk$set(
   warning = FALSE,        # Suppress warnings
   message = FALSE,        # Suppress package loading messages
@@ -18,59 +14,62 @@ knitr::opts_chunk$set(
 ```
 
 
-# Foundations
+# The Pizza Experiment
 
 ## From Pizza to Cognitive Models: An Introduction
 
-This chapter introduces core modeling concepts through an unexpected lens: the physics of pizza stone heating. While this might seem far removed from cognitive science, it provides an insightful introduction to the challenges and methodologies of modeling complex phenomena.
+This chapter introduces core modeling concepts through a delicious lens: the physics of pizza stone heating. While this might seem far removed from cognitive science, it provides an insightful introduction to the challenges and methodologies of modeling complex phenomena.
 
 ## Why Start with Pizza?
 
 Do I even need to answer that question? Because pizza, obviously.
 
-In any case, understanding how humans think and make decisions is arguably one of the most complex challenges in science. Rather than diving directly into this complexity, we begin with a more tractable problem: modeling how a pizza stone heats up in an oven. This seemingly simple process introduces us to key modeling concepts:
+Beyond the universal appeal of pizza, starting with a physical system like a heating pizza stone offers a tangible way to grasp core principles fundamental to cognitive modeling. Understanding human cognition involves tackling immense complexity – often dealing with hidden mental states, noisy behavioral data, and competing theories. Modeling a pizza stone allows us to isolate and understand key methodological challenges in a more constrained environment.
 
-- The importance of selecting appropriate levels of analysis
-- The role of prior knowledge in model development
-- The challenge of balancing model complexity with practical utility
-- The necessity of rigorous validation approaches
+First, it demonstrates how to bridge theory and math. We rely on *Prior Knowledge* — using Newton's Law of Cooling to structure our equations — just as cognitive scientists use theories of memory or attention to guide their models. This forces us to critically determine our *Levels of Analysis*: just as we simplify complex thermodynamics into a basic cooling formula, cognitive scientists must decide whether to model neurons, beliefs, or behavioral choices. 
 
-Through this concrete example, we can focus on understanding modeling principles without the added complexity of cognitive theory.
+It also highlights the problem of *Latent Variables*. Just as we cannot "see" a heating coefficient—only the noisy temperatures it produces—we cannot see a "learning rate" in the brain, only the choices it drives.
+
+Finally, this example acts as a sandbox for *Model Complexity* and *Validation*. We will explicitly compare detailed physics-based models against simpler statistical approximations to see which performs better on empirical data. This mirrors the central trade-off in cognitive science: balancing theoretical completeness with the practical utility of generating testable predictions from available data.
 
 
 ## Learning Objectives
 
-This first chpater is a bit odd, in that it pushes you straight into the deep waters of a complex example. I don't expect you to understand all the technicalities. But, by completing this tutorial, you will be able to better grasp the importance of generative modeling, that is, of modeling that is focused on the underlying mechanisms producing the data.
+This chapter uses the seemingly simple example of a heating pizza stone to introduce fundamental principles of computational modeling that are directly applicable to cognitive science. While the specific physics and code are illustrative, the core goals are to understand the *process* of modeling.
 
-On the side you might learn something about how to
-* Implement physics-based thermal modeling using R and Stan
-* Apply Bayesian inference to real-world temperature data
-* Compare different statistical models using posterior predictions
-* Create professional visualizations of temperature evolution
-* Make practical predictions about heating times under various conditions
+By completing this chapter, you will be able to:
+
+* **Appreciate Generative Modeling:** Understand the value of building models based on underlying mechanisms (like physics or cognitive processes) rather than just describing data patterns.
+
+* **Connect Theory and Data:** See how theoretical knowledge (physics laws) informs model structure and how data is used to estimate unknown model parameters (like the heating coefficient).
+
+* **Implement and Fit Models:** Gain initial experience implementing mathematical models in code (R and Stan) and using Bayesian inference (`brms`, `cmdstanr`) to fit them to empirical data.
+
+* **Evaluate Model Fit:** Learn basic techniques for visualizing model predictions against data and understand the limitations of purely statistical models compared to theory-driven ones.
+
+* **Recognize Modeling Trade-offs:** Understand the balance between model complexity, theoretical grounding, and practical utility through comparing statistical vs. physics-based approaches.
+
+* **Apply Modeling Principles:** Recognize how the steps taken here – data exploration, model building, parameter estimation, validation – form a general workflow applicable to cognitive modeling problems explored later in the course.
 
 Oh, and you'll probably get hungry as well!
 
 
 Required Packages
 
-```{r, required packages}
+```{r, required packages 01}
 
-required_packages <- c(
-  "tidyverse",  # For data manipulation and visualization
-  "brms",       # For Bayesian regression modeling
-  "bayesplot",  # For visualization of Bayesian models
-  "tidybayes",  # For working with Bayesian samples
-  "cmdstanr"    # For Stan implementation
+# 1. Ensure 'pacman' is installed
+if (!require("pacman")) install.packages("pacman")
+
+# 2. Load packages (pacman will verify, install if missing, and load them)
+pacman::p_load(
+  tidyverse,  # Core package for data manipulation and visualization
+  brms,       # Interface for Bayesian regression models using Stan
+  bayesplot,  # Convenient functions for plotting Bayesian model results
+  tidybayes,  # Utilities for working with Bayesian model outputs in a tidy format
+  cmdstanr,    # Backend interface for running Stan models efficiently
+  here        # For constructing file paths relative to project root
 )
-
-# Install and load packages
-for (pkg in required_packages) {
-  if (!require(pkg, character.only = TRUE)) {
-    install.packages(pkg)
-    library(pkg, character.only = TRUE)
-  }
-}
 
 ```
 
@@ -80,7 +79,7 @@ In this study, we collected temperature measurements from a pizza stone in a gas
 
 The measurements were taken as follows:
 
-```{r}
+```{r, 01 data}
 # Load and examine the data
 data <- tibble(
   Order = rep(0:18, 3),
@@ -117,7 +116,7 @@ knitr::kable(summary_stats, digits = 1)
 
 Let's visualize how the temperature evolves over time for each rater:
 
-```{r}
+```{r, 01 datav}
 ggplot(data, aes(x = Seconds/60, y = Temperature, color = Rater)) +
   geom_point(size = 3, alpha = 0.7) +
   geom_line(alpha = 0.5) +
@@ -154,21 +153,29 @@ Several interesting patterns emerge from our data:
 
 Let's examine the rate of temperature change:
 
-```{r}
-# Calculate temperature change rate
+```{r, 01 temp change}
+# --- Calculate Rate of Temperature Change ---
+# To understand how quickly the stone heats up, calculate the change rate per minute.
 data_with_rate <- data %>%
-  group_by(Rater) %>%
-  arrange(Seconds) %>%
+  group_by(Rater) %>% # Perform calculation separately for each rater
+  arrange(Seconds) %>% # Ensure data is sorted chronologically for lag function
   mutate(
-    temp_change = (Temperature - lag(Temperature)) / (Seconds - lag(Seconds)) * 60,
-    minutes = Seconds/60
+    # Calculate difference in temperature from previous measurement
+    delta_temp = Temperature - lag(Temperature),
+    # Calculate time elapsed since previous measurement
+    delta_secs = Seconds - lag(Seconds),
+    # Calculate rate in degrees C per second, then convert to degrees C per minute
+    temp_change_per_min = (delta_temp / delta_secs) * 60,
+    # Convert time to minutes for plotting
+    minutes = Seconds / 60
   ) %>%
-  filter(!is.na(temp_change))
+  # Remove rows where rate couldn't be calculated (i.e., the first row for each rater)
+  filter(!is.na(temp_change_per_min))
 
 # Visualize temperature change rate
-ggplot(data_with_rate, aes(x = minutes, y = temp_change, color = Rater)) +
+ggplot(data_with_rate, aes(x = minutes, y = temp_change_per_min, color = Rater)) +
   geom_point() +
-  geom_smooth(se = FALSE, span = 0.75) +
+  geom_line() +
   labs(
     title = "Rate of Temperature Change Over Time",
     subtitle = "Degrees Celsius per minute",
@@ -180,7 +187,7 @@ ggplot(data_with_rate, aes(x = minutes, y = temp_change, color = Rater)) +
   scale_color_brewer(palette = "Set1")
 ```
 
-This visualization reveals that the heating rate is highest in the first few minutes and gradually decreases as the stone temperature approaches the oven temperature. This aligns with Newton's Law of Cooling/Heating, which we will explore in the next section.
+This visualization reveals that the heating rate is (likely) highest in the first few minutes and gradually decreases as the stone temperature approaches the oven temperature. This aligns with Newton's Law of Cooling/Heating, which we will explore in the next section.
 
 ## Part 2: Initial Statistical Modeling
 
@@ -189,9 +196,18 @@ Before developing our physics-based model, let's explore how standard statistica
 ### Model Setup and Priors
 First, let's ensure we have a directory for our models and set up our computational parameters:
 
-```{r}
-# Create models directory if it doesn't exist
-dir.create("models", showWarnings = FALSE)
+```{r, 01 regr model setup}
+# --- Model Fitting Setup ---
+# Define relative paths for saving model objects and Stan code.
+linear_model_path <- here("models", "01_pizza_linear_model")
+lognormal_model_path <- here("models", "01_pizza_lognormal_model")
+stan_model_path <- here("models", "pizza_physics_model.stan")
+
+# Create the 'models' directory if it doesn't already exist
+if (!dir.exists("models")) {
+  dir.create("models")
+  message("Created 'models' directory.")
+}
 
 # Define computational parameters
 mc_settings <- list(
@@ -207,28 +223,33 @@ mc_settings <- list(
 
 We begin with a linear mixed-effects model, which assumes that temperature increases linearly with time but allows for different patterns across raters. This model includes both fixed effects (overall time trend) and random effects (rater-specific variations).
 
-```{r}
+```{r, 01 linear model}
+data_scaled <- data %>%
+  mutate(Minutes = Seconds / 60)
+
 # Define priors for linear model
 linear_priors <- c(
   prior(normal(15, 20), class = "Intercept"),  # Centered around room temperature
-  prior(normal(0, 1), class = "b"),          # Expected temperature change per second
-  prior(normal(0, 100), class = "sigma"),         # Residual variation
-  prior(normal(0, 100), class = "sd"),            # Random effects variation
+  prior(normal(0, 20), class = "b"),          # Expected temperature change per minute
+  prior(normal(0, 50), class = "sigma"),         # Residual variation
+  prior(normal(0, 50), class = "sd"),            # Random effects variation
   prior(lkj(3), class = "cor")                    # Random effects correlation
 )
 
-# Fit linear mixed-effects model
+# --- Linear Model ---
 linear_model <- brm(
-  Temperature ~ Seconds + (1 + Seconds | Rater),
-  data = data,
+  Temperature ~ Minutes + (1 + Minutes | Rater),
+  data = data_scaled,
   family = gaussian,
   prior = linear_priors,
   chains = mc_settings$chains,
   iter = mc_settings$iter,
-  seed = mc_settings$seed,
+  seed = mc_settings$seed, # Ensures reproducibility of MCMC sampling
   backend = mc_settings$backend,
-  file = "models/01_pizza_linear_model",
-  cores = 2,
+  file = linear_model_path, # Use relative path
+  file_refit = "on_change", # Refit if model code or data changes
+  cores = 2, # Specify cores used for parallel chains
+  # Increased adapt_delta and max_treedepth help prevent divergent transitions
   adapt_delta = 0.99,
   max_treedepth = 20
 )
@@ -239,7 +260,7 @@ summary(linear_model)
 # Generate predictions
 linear_preds <- fitted(
   linear_model,
-  newdata = data,
+  newdata = data_scaled,
   probs = c(0.025, 0.975)
 ) %>%
   as_tibble() %>%
@@ -250,36 +271,36 @@ linear_preds <- fitted(
 
 The lognormal model accounts for the fact that temperature changes might be proportional rather than additive, and ensures predictions cannot go below zero (I don't bring my oven out in the freezing cold!).
 
-```{r}
+```{r, 01 lognormal model}
 # Define priors for lognormal model
 lognormal_priors <- c(
-  prior(normal(2.7, 1), class = "Intercept"),     # Log scale for room temperature
-  prior(normal(0, 0.01), class = "b"),     # Expected log-scale change per second
+  prior(normal(2.7, 0.5), class = "Intercept"),     # Log scale for room temperature
+  prior(normal(0, 0.3), class = "b"),     # Expected log-scale change per minute
   prior(normal(0, 1), class = "sigma"),        # Log-scale residual variation
-  prior(normal(0, 1), class = "sd"),           # Random effects variation
+  prior(normal(0, 0.5), class = "sd"),           # Random effects variation
   prior(lkj(3), class = "cor")                   # Random effects correlation
 )
 
-# Fit lognormal mixed-effects model
+# --- Lognormal Model ---
 lognormal_model <- brm(
-  Temperature ~ Seconds + (1 + Seconds | Rater),
-  data = data,
-  family = lognormal,
+  Temperature ~ Minutes + (1 + Minutes | Rater),
+  data = data_scaled,
+  family = lognormal, # Use lognormal distribution
   prior = lognormal_priors,
   chains = mc_settings$chains,
   cores = 2,
   adapt_delta = 0.99,
   max_treedepth = 20,
   iter = mc_settings$iter,
-  seed = mc_settings$seed,
+  seed = mc_settings$seed, # Use the same seed for comparison if desired
   backend = mc_settings$backend,
-  file = "models/01_pizza_lognormal_model"
+  file = lognormal_model_path # Use relative path
 )
 
 # Generate predictions
 lognormal_preds <- fitted(
   lognormal_model,
-  newdata = data,
+  newdata = data_scaled,
   probs = c(0.025, 0.975)
 ) %>%
   as_tibble() %>%
@@ -288,7 +309,7 @@ lognormal_preds <- fitted(
 
 ### Model Comparison and Visualization
 Let's compare how these models fit our data:
-```{r}
+```{r, 01 model comparison}
 # Compare models using LOO
 model_comparison <- loo_compare(
   loo(linear_model),
@@ -367,8 +388,8 @@ I have seen worse models in my time, but they do seem to have important issues:
 
 * The lognormal mixed-effects model is completely off.
 
-Further, the models produce some divergences, which is often a sign that they are not well suited to the data.
-I suggest that the issue is that neither model incorporates our knowledge of heat transfer physics, which suggests an exponential approach to equilibrium temperature. This limitation motivates our next section, where we'll develop a physics-based model.
+Further, the lognormal model produce some divergences, which is often a sign that they are not well suited to the data.
+I would argue that the core issue is that neither model incorporates our knowledge of heat transfer physics, which suggests an exponential approach to equilibrium temperature. This limitation motivates our next section, where we'll develop a physics-based model.
 
 ## Part 3: Understanding the Physics Model
 
@@ -390,7 +411,7 @@ $k$ is thermal conductivity (W/m·K)
 $\nabla^2$ is the Laplacian operator
 $Q$ represents heat input from the oven (W/m³)
 
-While this equation provides a complete description of heat flow, we can significantly simplify our analysis by applying the lumped capacitance model. This simplification assumes that the temperature throughout the pizza stone remains uniform at any given time - not perfect, but a reasonable assumption given the stone's relatively thin profile and good thermal conductivity. This approach reduces our model to:
+While this equation provides a complete description of heat flow, we can significantly simplify our analysis by applying the lumped capacitance model. his simplification assumes that the stone conducts heat internally much faster than it absorbs it from the surface. This allows us to ignore the complex internal gradients ($\nabla^2T$) and focus purely on the surface heat transfer, reducing our model to:
 
 $$\frac{dT}{dt} = \frac{hA}{mc_p}(T_{\infty} - T)$$
 
@@ -400,7 +421,7 @@ $A$ is the surface area exposed to heat (m²)
 $m$ is the stone's mass (kg)
 $T_{\infty}$ is the oven temperature (K)
 
-This simplified equation relates the rate of temperature change to the difference between the current stone temperature T and the flame temperature T∞. The coefficient h represents the heat transfer coefficient between the flame and stone, A is the stone's surface area exposed to heat, m is its mass, and cp remains the specific heat capacity.
+This simplified equation relates the rate of temperature change to the difference between the current stone temperature T and the ambient temperature T∞ (as determined by the flame). The coefficient h represents the heat transfer coefficient between the ambient and stone, A is the stone's surface area exposed to heat, m is its mass, and cp remains the specific heat capacity.
 
 To solve this differential equation, we begin by separating variables:
 
@@ -420,7 +441,7 @@ Substituting this back and solving for temperature gives us:
 
 $$T = T_{\infty} + (T_i - T_{\infty})\exp\left(-\frac{hA}{mc_p}t\right)$$
 
-For practical reasons, we combine physical parameters into a single coefficient $\theta$:
+For practical reasons, we combine physical parameters into a single coefficient, which we will call HOT:
 
 $$HOT = \frac{hA}{mc_p}$$
 Giving our working equation:
@@ -430,10 +451,10 @@ This equation retains the essential physics while providing a practical model fo
 
 ## Part 4: Implementing the Physics-Based Model
 
-Having established the theoretical foundation for our heat transfer model, we now move to its practical implementation. We will use Stan to create a Bayesian implementation of our physics-based model, allowing us to account for measurement uncertainty and variation between raters.
+Having established the theoretical foundation, we now face a practical challenge: we cannot measure $h$, $A$, or $c_p$ directly during the bake. Instead, we must infer the aggregate parameter HOT from the noisy temperature data collected by our raters. This is where Stan comes in, enabling us to create a Bayesian implementation of our physics-based model, and to account for measurement uncertainty and variation between raters.
 First, we prepare our data for the Stan model. Our model requires initial temperatures, time measurements, and observed temperatures from each rater:
 
-```{r}
+```{r, 01 stan data}
 # Create data structure for Stan
 stan_data <- list(
   N = nrow(data %>% filter(!is.na(Temperature))),
@@ -450,7 +471,7 @@ stan_data <- list(
 
 Next, we implement our physics-based model in Stan. The model incorporates our derived equation while allowing for rater-specific heating coefficients:
 
-```{r}
+```{r, 01 stan model}
 stan_code <- "
 data {
   int<lower=0> N;                   // Number of observations
@@ -468,12 +489,8 @@ parameters {
 }
 
 model {
-  vector[N] mu;
-  
   // Physics-based temperature prediction
-  for (i in 1:N) {
-    mu[i] = Tinf + (Ti[rater[i]] - Tinf) * exp(-HOT[rater[i]] * time[i]);
-  }
+  vector[N] mu = Tinf + (Ti[rater] - Tinf) .* exp(-HOT[rater] .* time);
   
   // Prior distributions
   target += normal_lpdf(HOT | 0.005, 0.005);    // Prior for heating rate
@@ -484,11 +501,13 @@ model {
 }
 "
 
-# Save the model
-writeLines(stan_code, "models/pizza_physics_model.stan")
+# Save the Stan model code using the relative path
+writeLines(stan_code, stan_model_path)
 
-# Compile and fit the model
+# Compile and fit the Stan model using the relative path
+# Compilation happens once; subsequent runs load the compiled object if unchanged.
 mod <- cmdstan_model("models/pizza_physics_model.stan")
+
 fit <- mod$sample(
   data = stan_data,
   seed = 123,
@@ -500,7 +519,7 @@ fit <- mod$sample(
 The Stan implementation translates our mathematical model into a computational framework. We assign informative priors to our parameters based on physical understanding: the heating coefficient (HOT) is expected to be small but positive, while measurement error (sigma) follows an exponential distribution to ensure positivity while allowing for varying levels of uncertainty between raters.
 To visualize our model's predictions and assess its performance, we extract posterior samples and generate predictions across our time range:
 
-```{r}
+```{r, 01 physics model preds}
 # Extract draws
 post <- as_draws_df(fit$draws()) %>%
   dplyr::select(starts_with("HOT"), starts_with("sigma")) %>%
@@ -562,9 +581,13 @@ Our implementation combines the theoretical understanding developed in Part 3 wi
 
 ## Part 5: Model Analysis and Practical Applications
 
-Having implemented our physics-based model, we can now analyze its predictions and develop practical insights for pizza stone temperature management. A key question for pizza making is how long it takes to reach optimal cooking temperatures under different conditions.
-We begin by creating a function that calculates the time needed to reach a target temperature:
-```{r}
+Having fitted our physics-based model, we must first verify that it actually describes the data well (Validation) before we can use it to make predictions. Once we trust our estimates of the HOT parameter, we can develop practical insights for pizza stone management. A key question for any pizzaiolo is: How long must I wait before the stone is ready? To answer this, we don't need a new model; we simply need to look at our physics equation from a different angle. By rearranging our original cooling law to solve for time ($t$) instead of temperature ($T$), we create a predictive tool:
+
+$$t = -\frac{1}{HOT} \ln\left( \frac{T_{\text{target}} - T_{\infty}}{T_{\text{initial}} - T_{\infty}} \right)$$ 
+
+We will now implement this function in R to calculate precise waiting times under different conditions.
+
+```{r, 01 heating time function}
 time_to_temp <- function(target_temp, HOT, Ti, Tinf) {
   # Solve: target = Tinf + (Ti - Tinf) * exp(-HOT * t)
   # for t
@@ -572,8 +595,10 @@ time_to_temp <- function(target_temp, HOT, Ti, Tinf) {
   return(t/60)  # Convert seconds to minutes
 }
 ```
+
 To understand heating times across different oven conditions, we examine how varying flame temperatures affect the time needed to reach pizza-making temperatures. We extract the heating coefficients from our fitted model and analyze temperature scenarios:
-```{r}
+
+```{r, 01 heating time preds}
 # Extract HOT samples from our posterior
 hot_samples <- as_draws_df(fit$draws()) %>%
   dplyr::select(starts_with("HOT"))
@@ -628,34 +653,37 @@ ggplot(time_preds, aes(x = Tinf)) +
   theme_bw()
 ```
 
-Our analysis reveals several important insights for practical pizza making. First, the heating time decreases nonlinearly with flame temperature, showing diminishing returns at very high temperatures. 
-We can also observe differences between raters in their measured heating times. These variations likely stem from differences in measurement technique and location on the stone, highlighting the importance of consistent temperature monitoring practices.
+Our analysis reveals several important insights for practical pizza making. First, the heating time decreases non-linearly with flame temperature, showing diminishing returns at very high temperatures.
+We also observed differences between raters in their measured heating times. These variations likely stem from differences in measurement technique and location on the stone, highlighting the importance of consistent temperature monitoring practices. E.g. N measure the temperature at the boundary between flame and stone, which matches the model's assumptions better than R, who measures at the center of the stone.
+
 For practical application, we can provide specific heating guidelines based on our model. At a typical flame temperature of 800°C, the model predicts it will take approximately 20-30 minutes to reach optimal pizza-making temperature, assuming room temperature start. However, this time can vary significantly based on:
 
 * Initial stone temperature
 * Flame temperature and consistency
 * Environmental conditions.
 
-Can we really wait that long?
+Can we really wait that long? Well, the model is telling us that there are no shortcuts to the perfect crust!
 
-## Conclusion: From Pizza to Principles
+## Conclusion: From Pizza to Cognitive Principles
 
 The journey from modeling a heating pizza stone to understanding cognitive processes might seem unusual, but it illustrates fundamental principles that will guide us throughout this course.
 
-Through this seemingly simple physics problem, we have encountered the core challenges that cognitive scientists face daily. Just relying on standard statistical models is not enough. We need to understand the underlying generative processes. We discovered how choosing the right level of analysis shapes our understanding - just as we simplified complex heat equations into workable models, cognitive scientists must decide which aspects of the mental processes to model explicitly and which to abstract. We learned that even well-understood physical processes require careful statistical treatment, foreshadowing the challenges we will face with more complex cognitive phenomena.
+Through this seemingly simple physics problem, we have encountered core challenges faced daily by cognitive modelers:
 
-The pizza stone experiment also demonstrated the importance of rigorous methodology. We saw how multiple measurements from different raters revealed variability in our data, leading us to consider measurement error and individual differences - themes that will become crucial when studying human behavior. Our exploration of different statistical approaches, from simple linear models to more sophisticated Bayesian frameworks, established a foundation for the modeling techniques we will develop throughout this course.
+* *Levels of Analysis*: We saw how simplifying complex equations (heat diffusion) mirrors the need to choose the right level of abstraction when modeling cognition (e.g., neural vs. behavioral).
 
-Perhaps most importantly, this chapter starts showing that successful modeling requires balancing competing demands. We must weigh theoretical complexity against practical utility, statistical sophistication against interpretability, and mathematical elegance against real-world applicability. These trade-offs will become even more prominent as we move into modeling cognitive processes.
+* *Prior Knowledge*: We used physics laws to build a generative model, much like cognitive theories guide model development.
 
-As we progress through this course, we will encounter increasingly complex cognitive phenomena. The principles we learned here - careful data collection, thoughtful model specification, rigorous validation, and balanced interpretation - will serve as our guide. While human cognition presents challenges far beyond those of heating pizza stones, the fundamental approach remains the same: start with clear observations, build theoretically motivated models, and test them systematically against data.
+* *Validation*: We confronted the necessity of comparing model predictions to real data, a process central to testing theories.
 
-In the next chapter, we will begin applying these principles directly to cognitive processes, starting with simple decision-making tasks. The mathematical tools and statistical frameworks introduced here will provide the foundation for understanding how humans process information and make choices.
+* *Parameter Estimation*: We used the model to quantify an unobservable property (HOT) from noisy data, analogous to estimating latent cognitive parameters like learning rates or decision thresholds.
+
+Crucially, the comparison between purely statistical models (linear/lognormal) and the physics-based Stan model highlighted the value of mechanistic understanding. While the statistical models struggled to capture the saturation curve — often predicting impossible temperatures via extrapolation — the physics model offered deeper insight and robust predictions. This is a primary goal in cognitive modeling: we do not simply to describe *which* decisions were made, but we want to capture the underlying mechanism that can increase our understanding of *how* decisions were made, and generalize to novel unseen decisions.
+
+The pizza stone experiment also demonstrated the importance of rigorous methodology. We saw how multiple measurements from different raters revealed variability in our data, leading us to consider measurement error and individual differences—themes that will become crucial when studying human behavior.
+
+As we progress, these principles – careful data handling, theoretically motivated model specification (generative models), parameter estimation, rigorous validation, and balancing complexity – will be our guide. In the next chapter, we shift focus to cognition, applying these ideas to model strategic decision-making in the **Matching Pennies game**. We'll encounter similar challenges: translating verbal theories of strategy into formal models, simulating agent behavior, and beginning the process of fitting models to observed choices, using the statistical and computational tools introduced here.
 
 
-Finally, I hope you are hungry now. I know I am. Let's go and make some pizza!
-
-
-
-
+Finally, I hope this has whetted your appetite – both for pizza and for computational modeling!
 

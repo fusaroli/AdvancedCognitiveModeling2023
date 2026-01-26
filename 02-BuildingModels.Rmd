@@ -1,18 +1,25 @@
 
 # Building Models of Strategic Decision-Making
 
-## Learning goals
+## Learning Goals
 
+This chapter bridges the gap between observing behavior and developing testable theories. By the end of this chapter, using the Matching Pennies game as a case study, you will be able to:
 
-* Becoming more aware of the issue involved in theory building (and assessment); 
+* **Identify Key Modeling Steps:** Understand the process of moving from behavioral observations and participant reflections to formulating initial verbal theories of underlying cognitive strategies.
+* **Appreciate Theory Building Challenges:** Recognize common issues in theory development, such as the participant vs. researcher perspective, the need for simplification, and incorporating known cognitive constraints.
+* **Generate Candidate Models:** Propose several distinct verbal models (e.g., random choice, simple heuristics, memory-based strategies) that could plausibly explain behavior in a strategic decision-making task.
+* **Connect to Formalization:** Understand *why* translating these verbal models into precise, formal models (covered in the next chapter) is a necessary step for rigorous testing and simulation.
 
-* Identifying a small set of verbal models that we can then formalize in mathematical cognitive models and algorithms for simulations and model fitting.
+## Introduction: Observing Behavior to Theorize Mechanisms
 
-## Introduction
+Chapter 1 emphasized the importance of modeling underlying generative mechanisms. To do this for cognition, we first need a behavior to explain. This chapter uses the **Matching Pennies game** as our initial cognitive phenomenon. It's a simple strategic interaction, yet rich enough to illustrate the process of developing and refining cognitive models.
 
-In order to do computational models we need a phenomenon to study (and ideally some data), throughout the course you will be asked undergo several experiments, which provides specific behaviors to model.
+Our goal here is not yet to build the final computational models, but to practice the crucial preceding steps:
+1.  Observing behavior in a specific task (through experiments and data exploration).
+2.  Reflecting on potential cognitive strategies and constraints (drawing on observations, participant reports, and cognitive science principles).
+3.  Formulating initial *verbal* theories or candidate models that describe the potential underlying mechanisms.
 
-The matching pennies game provides a fun starting point for exploring cognitive modeling. This simple game allows us to examine how humans make decisions in strategic situations, while introducing fundamental concepts in model development and validation. Through this chapter, we will progress from observing actual gameplay behavior to developing formal models that capture decision-making processes.
+This process lays the groundwork for Chapter 3, where we will translate these verbal ideas into precise, formal models ready for simulation and testing.
 
 ## The Matching Pennies Game
 
@@ -50,60 +57,94 @@ Through the careful observation and discussion of gameplay we do in class, sever
 
 Below you can observe how a previous year of CogSci did against bots (computational agents) playing according to different strategies. Look at the plots below, where the x axes indicate trial, the y axes how many points the CogSci'ers scored (0 being chance, negative means being completely owned by the bots, positive owning the bot) and the different colors indicate different strategies employed by the bots. Strategy "-2" was a Win-Stay-Lose-Shift bot: when it got a +1, it repeated its previous move (e.g. right if it had just played right), otherwise it would perform the opposite move (e.g. left if it had just played right). Strategy "-1" was a biased Nash both, playing "right" 80% of the time. Strategy "0" indicates a reinforcement learning bot; "1" a bot assuming you were playing according to a reinforcement learning strategy and trying to infer your learning and temperature parameters; "2" a bot assuming you were following strategy "1" and trying to accordingly infer your parameters.
 
-```{r 01 plot collective performance in MP}
+```{r 02 plot collective performance in MP}
+# Load necessary libraries
 library(tidyverse)
-d <- read_csv("data/MP_MSc_CogSci22.csv") %>% 
-  mutate(BotStrategy = as.factor(BotStrategy))
 
-d$Role <- ifelse(d$Role == 0, "Matcher", "Hider")
+# --- Load and Prepare Data ---
+# Define the relative path to the data file
+# Assumes a 'data' subdirectory exists relative to the project root
+data_file_path <- file.path("data", "MP_MSc_CogSci22.csv")
 
-ggplot(d, aes(Trial, Payoff, group = BotStrategy, color = BotStrategy)) + 
-  geom_smooth(se = F) + 
-  theme_classic() + 
-  facet_wrap(.~Role)
+# Load the Matching Pennies data from a previous Cognitive Science class
+# This data shows student performance against bots with different strategies.
+d <- read_csv(data_file_path) %>%
+  # Convert BotStrategy to a factor for easier plotting and analysis
+  mutate(BotStrategy = as.factor(BotStrategy),
+         # Convert Role from numeric (0/1) to descriptive labels
+         Role = factor(Role, levels = c(0, 1), labels = c("Matcher", "Hider")))
 
+# --- Plot 1: Collective Performance Over Time ---
+# Visualize average payoff over trials, separated by Role (Matcher/Hider)
+# and colored by the strategy the Bot opponent used.
+# geom_smooth shows the trend without standard error ribbons (se=F).
+print( # Explicitly print ggplot objects within loops or functions if needed
+  ggplot(d, aes(x = Trial, y = Payoff, group = BotStrategy, color = BotStrategy)) +
+    geom_smooth(se = FALSE, method = "loess", span = 0.5) + # Using loess smoothing
+    geom_hline(yintercept = 0, linetype = "dashed") + # Add line for chance performance
+    facet_wrap(~Role) + # Separate plots for Matcher and Hider roles
+    labs(
+      title = "Average Student Performance vs. Bots Over Time",
+      subtitle = "Payoff per trial against different bot strategies",
+      x = "Trial Number",
+      y = "Average Payoff (Points)",
+      color = "Bot Strategy"
+    ) +
+    theme_classic() # Use a classic plot theme
+)
 ```
 
 
 That doesn't look too good, ah? What about individual variability? In the plot below we indicate the score of each of the former students, against the different bots.
 
-```{r 01 plot individual performance in MP}
-d1 <- d %>% group_by(ID, BotStrategy) %>% 
-  dplyr::summarize(Score = sum(Payoff))
+```{r 02 plot individual performance in MP}
+# --- Plot 2: Individual Variability in Scores ---
+# Calculate the total score for each student (ID) against each bot strategy.
+d_summary <- d %>%
+  group_by(ID, BotStrategy, Role) %>% # Group by student, bot, and role
+  summarize(TotalScore = sum(Payoff), .groups = "drop") # Calculate total score
 
-ggplot(d1, aes(BotStrategy, Score, label = ID)) +
-  geom_point(aes(color = ID)) +
-  geom_boxplot(alpha = 0.3) +
-  theme_classic()
+# Visualize the distribution of total scores for each bot strategy.
+# geom_boxplot shows the distribution, geom_point shows individual student scores.
+print(
+  ggplot(d_summary, aes(x = BotStrategy, y = TotalScore)) +
+    geom_boxplot(aes(fill = Role), alpha = 0.3, outlier.shape = NA) + # Boxplot showing distribution
+    geom_jitter(aes(color = ID), width = 0.2, alpha = 0.7) + # Individual student points
+    facet_wrap(~Role) + # Separate plots for Matcher and Hider
+    labs(
+      title = "Distribution of Total Scores Against Different Bots",
+      subtitle = "Shows individual student variability",
+      x = "Bot Strategy",
+      y = "Total Score (Sum of Payoffs)",
+      fill = "Player Role"
+    ) +
+    theme_classic() +
+    theme(legend.position = "none") # Hide legend for individual IDs
+)
 
 ```
 
 
-Now, let's take a bit of group discussion. Get together in groups, and discuss which strategies and cognitive processes might underlie your and the agents' behaviors in the game. One thing to keep in mind is what a model is: a simplification that can help us make sense of the world. In other words,  any behavior is incredibly complex and involves many complex cognitive mechanisms. So start simple, and if you think it's too simple, progressively add simple components.
+### From Observation to Theory: Identifying Potential Mechanisms
+
+The plots above reveal patterns: average performance changes over time, varies by opponent, and differs across individuals. Gameplay observations and participant reflections (from class discussion or collected data) add qualitative insights – perhaps players mention trying to be unpredictable, guessing opponent biases, or repeating winning moves.
+
+The crucial next step is to distill these rich, complex observations into simplified, plausible **mechanisms** or **strategies**. This involves abstraction:
+* **Identifying Core Patterns:** What recurring behaviors seem most important? (e.g., reacting to wins/losses, tracking opponent frequencies).
+* **Simplifying:** Can we capture the essence of a strategy without modeling every detail of a player's thought process or interaction? (e.g., modeling WSLS instead of complex pattern detection).
+* **Drawing on Cognitive Principles:** How do known cognitive constraints (like limited memory or processing errors, discussed below) shape plausible strategies?
 
 
-Once your study group has discussed a few (during the PE), let's discuss them.
+For instance, observing that players often change their choice after a loss might lead us to propose a "Lose-Shift" component as part of a candidate model. Observing that performance differs against biased vs. adaptive bots suggests players might be trying to learn or adapt, leading to memory-based or learning models.
 
-## Notes from previous years
+This process generates *verbal models* – initial hypotheses about the strategies at play. Key modeling considerations guide this translation:
 
-### From Observation to Theory
-The transition from observing gameplay to building formal models requires careful consideration of multiple factors. We must identify which aspects of behavior to model explicitly while deciding which details can be abstracted away.
+* What information do players likely use? (Own past choices? Opponent's choices? Payoffs?)
+* How far back does memory plausibly extend? (Last trial? Last 5 trials? Exponential decay?)
+* What is the role of randomness? (True randomness? Exploration? Implementation errors?)
+* How might strategies adapt over time or differ between individuals?
 
-### Core Modeling Considerations
-When developing models of matching pennies behavior, we must address several key questions:
-
-* What information do players use to make decisions?
-
-* How do players integrate past experiences with current choices?
-
-* What role does randomness play in decision-making?
-
-* How do players adapt their strategies over time?
-
-* Are there notions and models from previous cognitive science courses that can help us understand the behavior?
-
-These questions guide our model development process, helping us move from verbal theories to mathematical formulations.
-
+Answering these helps refine our verbal models, paving the way for formalization. The goal isn't to capture everything, but to propose distinct, testable mechanisms.
 
 ### The distinction between participant and researcher perspectives
 
@@ -111,83 +152,108 @@ As participants we might not be aware of the strategy we use, or we might believ
 
 Another important component of the distinction is that participants leave in a rich world: they rely on facial expressions and bodily posture, the switch strategies, etc. On the other hand, the researcher is trying to identify one or few at most "simple" strategies. Rich bodily interactions and mixtures or sequences of multiple strategies are not a good place to start modeling. These aspects are a poor starting point for building your first model, and are often pretty difficult to fit to empirical data. Nevertheless, they are important intuitions that the researcher should (eventually?) accommodate.
 
+# Candidate Verbal Models
 
-## Building Formal Models
+Based on the behavioral patterns observed, participant discussions, and core cognitive principles, we can now propose several candidate *verbal models* for behavior in the matching pennies game. Each represents a different hypothesis about the underlying cognitive strategy. These are starting points, deliberately simplified:
 
-Based on observed behavior patterns and theoretical considerations, we can develop several candidate models of decision-making in the matching pennies game.
+* **Random Choice Model:** Reflects the idea that players might try to be unpredictable or simply lack a clear strategy.
+* **Win-Stay-Lose-Shift (WSLS):** Captures the common heuristic of repeating successful actions and changing unsuccessful ones.
+* **Bias Tracking (Memory Models):** Addresses the observation that players seem to react to opponent patterns, potentially by estimating choice frequencies. Variations account for memory limits.
+* **Reinforcement Learning:** A more formal learning model capturing trial-by-trial value updates based on prediction errors, potentially explaining adaptation.
+* **k-ToM (Theory of Mind):** Accounts for the strategic nature of the game, where players model their opponent's mind (or model the opponent modeling *their* mind).
 
-### Random Choice Model
+These verbal models, derived from our initial analysis, are the hypotheses we will formalize and test in subsequent chapters. Let's briefly describe the core idea of each:
 
-The simplest model assumes players make choices randomly, independent of history or context. Players might simply be randomly choosing "head" or "tail" independently on the opponent's choices and of how well they are doing. Choices could be fully at random (50% "head", 50% "tail") or biased (e.g. 60% "head", 40% tail). While this may seem overly simplistic, it provides an important baseline for comparison and introduces key concepts in model specification.
+* **Random Choice Model:**
+    * *Mechanism:* Choices are made randomly, potentially with a fixed bias (e.g., 60% right, 40% left), independent of game history or opponent actions.
+    * *Rationale:* Serves as the simplest baseline. It reflects the possibility that players might try to be deliberately unpredictable, haven't figured out a strategy, or that their behavior appears random from the observer's perspective. It introduces the basic concept of choice probability (the $\theta$ parameter we'll estimate later).
 
-### Immediate reaction (Win-Stay-Lose-Shift)
+* **Win-Stay-Lose-Shift (WSLS):**
+    * *Mechanism:* A simple heuristic: repeat the last choice if it led to a win, switch to the other choice if it led to a loss.
+    * *Rationale:* Captures the intuitive tendency to stick with success and abandon failure. This is a common heuristic observed in simple learning tasks.
+    * *Formalization Hint:* This can be formalized using probabilities of staying/shifting conditional on the previous outcome. A simple version might be deterministic (always stay/shift), while a probabilistic version allows for occasional deviations:
+        $$P(\text{stay} | \text{outcome}_{t-1}) = \begin{cases} p_{stay\_win} & \text{if win at } t-1 \\ p_{stay\_loss} & \text{if loss at } t-1 \end{cases}$$
+        (Note: $p_{shift} = 1 - p_{stay}$). The original formula used $p_w$ for staying after a win and $1-p_l$ for staying after a loss (meaning $p_l$ is the probability of *shifting* after a loss).
 
-Another simple strategy is simply to follow the previous choice: if it was successful keep it, if not change it. This strategy is also called Win-Stay-Lose-Shift (WSLS).
-
-The model can be formalized as:
-$$P(a_t = a_{t-1}) = \begin{cases}
-p_w & \text{if win at } t-1 \
-1 - p_l & \text{if loss at } t-1
-\end{cases}$$
-where $a_t$ represents the action at time $t$, and $p_w$ and $p_l$ are the probabilities of staying after wins and losses respectively.
-
-Alternatively, one could do the opposite: Win-Shift-Lose-Stay.
-
-### Keep track of the bias (perfect memory)
-
-A more sophisticated approach considers how players track and respond to their opponent's choice patterns. This model maintains a running estimate of the opponent's choice probabilities and updates these estimates based on observed choices.
-
-### Keep track of the bias (imperfect memory)
-
-A player could not be able to keep in mind all previous trials, or decide to forget old trials, in case the biase shifts over time. So we could use only the last n trials, or do a weighted mean with weigths proportional to temporal closeness (the more recent, the higher the weight).
-
-### Reinforcement learning
-
-Since there is a lot of leeway in how much memory we should keep of previous trials, we could also use a model that explicitly estimates how much players are learning on a trial by trial basis (high learning, low memory; low learning, high memory). This is the model of reinforcement learning, which we will deal with in future chapters. 
-Shortly described, reinforcement learning assumes that each choice has a possible reward (probability of winning) and at every trial given the feedback received updates the expected value of the choice taken. The update depends on the prediction error (difference between expected and actual reward) and the learning rate. 
+* **Memory-Based Bias Tracking:**
+    * *Mechanism:* Assumes players estimate the opponent's choice bias (e.g., probability of choosing 'right') based on past observations and use this estimate to guide their own choices (e.g., predict and counter).
+    * *Rationale:* Reflects the observation that players seem to react to opponent tendencies. Addresses the "what information do players use?" question.
+    * *Variations:*
+        * *Perfect Memory:* Uses all past trials equally to estimate the bias. (Less plausible cognitively).
+        * *Imperfect/Limited Memory:* Uses only recent trials (e.g., last *n* trials) or gives more weight to recent trials (exponential decay), reflecting cognitive constraints.
 
 
-### k-ToM
+* **Reinforcement Learning (RL):**
+    * *Mechanism:* Players learn the expected value of each choice ('left' vs. 'right') based on the rewards (wins/losses) received. Choices are made based on these learned values (e.g., choosing the option with the higher expected value more often). Learning occurs trial-by-trial based on prediction errors (difference between expected and actual reward) modulated by a *learning rate*.
+    * *Rationale:* Provides a formal framework for learning from feedback, naturally incorporating imperfect memory (controlled by the learning rate – high learning rate means relying more on recent trials). Connects to broader theories of learning in psychology and neuroscience. *(Preview: Formal RL models will be detailed in Chapter 12).*
 
-Reinforcement learning is a neat model, but can be problematic when playing against other agents: what the game is really about is not assessing the probability of the opponent choosing "head" generalizing from their past choices, but predicting what they will do. This requires making an explicit model of how the opponent chooses. k-ToM models will be dealt with in future chapters, but can be here anticipated as models assuming that the opponent follows a random bias (0-ToM), or models us as following a random bias (1-ToM), or models us modeling them as following a random bias (2-ToM), etc. 
+* **k-ToM (Theory of Mind):**
+    * *Mechanism:* Players explicitly model their opponent's strategy. Level 0 (0-ToM) assumes the opponent is random/biased. Level 1 (1-ToM) assumes the opponent is using a 0-ToM strategy and tries to best respond. Level 2 (2-ToM) assumes the opponent is using a 1-ToM strategy, and so on.
+    * *Rationale:* Directly addresses the strategic, interactive nature of the game, where predicting the opponent's *intentions* or *model* of you might be crucial, going beyond simple pattern detection. *(Preview: These models will be discussed in later chapters).*
 
-### Other possible strategies
-
-Many additional strategies can be generated by combining former strategies. Generating random output is hard, so if we want to confuse the opponent, we could act first choosing tail 8 times, and then switching to a WSLS strategy for 4 trials, and then choosing head 4 times. Or implementing any of the previous strategies and doing the opposite "to mess with the opponent".
-
-## Cognitive constraints
-
-As we discuss strategies, we can also identify several cognitive constraints that we know from former studies: in particular, memory, perseveration, and errors.
-
-### Memory
-
-Humans have limited memory and a tendency to forget that is roughly exponential. Models assuming perfect memory for longer stretches of trials are unrealistic. We could for instance use the exponential decay of memory to create weights following the same curve in the "keeping track of bias" models. Roughly, this is what reinforcement learning is doing via the learning rate parameter.
-
-### Perseveration
-
-Winning choice is not changed. People tend to have a tendency to perseverate with "good" choices independently of which other strategy they might be using.
-
-### Errors
-
-Humans make mistakes, get distracted, push the wrong button, forget to check whether they won or lost before. So a realistic model of what happens in these games should contain a certain chance of making a mistake. E.g. a 10% chance that any choice will be perfectly random instead of following the strategy.
-
-Such random deviations from the strategy might also be conceptualized as explorations: keeping the door open to the strategy not being optimal and therefore testing other choices. For instance, one could have an imperfect WSLS where the probability of staying if winning (or shifting if losing) is only 80% and not 100%. Further, these deviations could be asymmetric, with the probability of staying if winning is 80% and of shifting if losing is 100%; for instance if negative and positive feedback are perceived asymmetrically.
+* **Combined/Switching Strategies:**
+    * *Mechanism:* Real behavior might involve combining elements of the above (e.g., WSLS with a baseline bias) or switching between strategies (e.g., tracking bias for a while, then switching to random). Generating complex, non-stationary sequences might also be a strategy to appear unpredictable.
+    * *Rationale:* Generating random output is hard, so if we want to confuse the opponent, we could act first choosing tail 8 times, and then switching to a WSLS strategy for 4 trials, and then choosing head 4 times. Or implementing any of the previous strategies and doing the opposite "to mess with the opponent". The combined strategies model also acknowledges that single, simple models might be insufficient. Motivates concepts like *mixture models* (Chapter 8) where behavior is seen as a probabilistic blend of simpler strategies, or models where strategy parameters change over time. Yet these mixture models are hard to fit to data and can quickly spiral out of control (many possible combinations)
 
 
-## Continuity between models
+## Plausibility Check: Cognitive Constraints
 
-Many of these models are simply extreme cases of others. For instance, WSLS is a reinforcement learning model with an extreme learning rate (reward replaces the formerly expected value without any moderation), which is also a memory model with a memory of 1 previous trial. k-ToM builds on reinforcement learning: at level 1 assumes the other is a RL agent.
+When developing cognitive models, we should consider known limitations and tendencies of the human mind. These constraints help us evaluate the psychological plausibility of our candidate models and guide refinement.
 
-## Mixture of strategies
+### Memory Limitations
+* *Constraint:* Humans have limited working memory and exhibit forgetting, often approximated by exponential decay. Perfect recall of long trial sequences is unrealistic.
+* *Modeling Implication:* This favors models incorporating memory decay or finite history windows (like imperfect memory models or RL with a learning rate < 1) over perfect memory models. It suggests that even bias-tracking models should discount older information.
 
-We discussed that there are techniques to consider the data generated by a mixture of models: estimating the probability that they are generated by model 1 or 2 or n. This probability can then be conditioned, according to our research question, to group (are people w schizophrenia more likely to employ model 1) or ID (are different participants using different models), or condition, or... We discussed that we often need lots of data to disambiguate between models, so conditioning e.g. on trial would in practice almost (?) never work.
+### Perseveration Tendencies
+* *Constraint:* People sometimes exhibit perseveration – repeating a previous action, especially if it was recently successful or chosen, even if a different strategy might suggest otherwise. This can be distinct from rational "win-stay".
+* *Modeling Implication:* This might be incorporated as an additional bias parameter influencing the choice probability (e.g., a small added probability of repeating the last action $a_{t-1}$ regardless of outcome) or interact with feedback processing (e.g., strengthening the 'stay' tendency after wins).
 
-## Differences from more traditional (general linear model-based) approaches
+### Noise and Errors
+* *Constraint:* Human behavior is inherently noisy. People make mistakes, have attentional lapses, press the wrong button, or misunderstand feedback. Behavior rarely perfectly matches a deterministic strategy.
+* *Modeling Implication:* Models should almost always include a "noise" component. This can be implemented in several ways:
+    * **Lapse Rate:** A probability (e.g., $\epsilon$) that on any given trial, the agent makes a random choice instead of following their primary strategy (as used in the Mixture Model chapter).
+    * **Decision Noise (Softmax):** In models where choices are based on comparing values (like RL), a 'temperature' parameter can control the stochasticity. High temperature leads to more random choices, low temperature leads to more deterministic choices based on values.
+    * **Imperfect Heuristics:** Parameters within a strategy might reflect imperfect application (e.g., in WSLS, $p_{stay\_win} < 1$ or $p_{shift\_loss} < 1$). This can also capture asymmetric responses to feedback (e.g., being more likely to shift after a loss than stay after a win).
+    * **Exploration:** Random deviations can also be framed as adaptive exploration, allowing the agent to test actions that their current strategy deems suboptimal.
 
-In a more traditional approach we would carefully set up the experiment to discriminate between hypotheses. For instance, if the hypothesis is that humans deploy ToM only when playing against intentional agents, we can set agents with increasing levels of k-ToM against humans, set up two framings (this is a human playing hide and seek, this is a slot machine), and assess whether humans perform differently. E.g. whether they perform better when thinking it's a human. We analyze performance e.g. as binary outcome on a trial by trial base and condition its rate on framing and complexity. If framing makes a difference in the expected direction, we are good.
+## Relationships Between Models
 
-If we do this properly, thanks to the clever experimental designs we set up, we can discriminate between hypotheses. And that is good. However, cognitive modeling opens additional opportunities. 
-For instance, we can actually reconstruct which level of recursion the participants are enacting and if it changes over time. This might be very useful in the experimental setup, and crucial in more observational setups.
-Cognitive modeling also allows us to discriminate between different cognitive components more difficult to assess by looking at performance only. For instance, why are participants performing less optimally when facing a supposedly non-intentional agent? Is their learning rate different? Is their estimate of volatility different?
+It's useful to note that these candidate models aren't always entirely distinct. Often, simpler models emerge as special cases of more complex ones:
+* A Random Choice model is like a Memory-Based model where the influence of memory is zero.
+* WSLS can be seen as a specific type of RL model with a very high learning rate and sensitivity only to the immediately preceding trial's outcome.
+* A 0-ToM model might resemble a Bias Tracking model.
 
-In other setups, e.g. a gambling context, we might observe that some participants (e.g. parkinson's patients) are gambling away much. Is this due to changes in their risk-seeking propensities, loss aversion, or changes in the ability to actually learn the reward structure? Experimental setups help, but cognitive modeling can provide more nuanced and direct evidence.
+Recognizing these connections can guide a principled modeling approach, starting simple and adding complexity only as needed and justified by data or theory.
+
+## Handling Heterogeneity: Mixture Models
+
+What if different participants use different strategies, or a single participant switches strategies during the game? This is where *mixture models* become relevant (explored in detail in Chapter 8).
+* *Concept:* Instead of assuming *one* model generated all the data, a mixture model assumes the data is a probabilistic blend from *multiple* candidate models (e.g., 70% of choices from WSLS, 30% from Random Bias).
+* *Purpose:* Allows capturing heterogeneity within or across individuals without needing to know *a priori* which strategy was used on which trial or by which person. The model estimates the *probability* that each data point came from each component strategy.
+* *Challenge:* Mixture models often require substantial data to reliably distinguish between components and estimate their mixing proportions.
+
+## Cognitive Modeling vs. Traditional Statistical Approaches (e.g., GLM)
+
+How does this modeling approach differ from standard statistical analyses you might have learned, like ANOVAs or the General Linear Model - GLM?
+
+* **Focus:** GLM approaches typically focus on identifying *statistical effects*: Does factor X significantly influence outcome Y? (e.g., Does the opponent's strategy affect the player's win rate?). Cognitive modeling focuses on identifying the underlying *process or mechanism*: *How* does the opponent's strategy lead to changes in the player's choices via specific computations (like learning, memory updating, or strategic reasoning)?
+* **Theory:** Cognitive models are usually derived from theories about mental processes. GLMs are more general statistical tools, often used agnostically regarding the specific cognitive mechanism.
+* **Parameters:** Cognitive models estimate parameters that often have direct psychological interpretations (e.g., learning rate, memory decay, decision threshold, bias weight). GLM parameters represent statistical associations (e.g., regression coefficients).
+* **Data Level:** Cognitive models often predict behavior at the trial level (e.g., predicting the choice on trial *t* based on history up to *t-1*). GLM analyses often aggregate data (e.g., comparing average win rates across conditions).
+* **Prediction vs. Explanation:** While both aim to explain data, cognitive modeling often places a stronger emphasis on generating the observed behavior pattern from the hypothesized mechanism, allowing for simulation and prediction of fine-grained details.
+
+*Example Revisited:* In the Matching Pennies game:
+* A GLM approach might test if `Payoff ~ BotStrategy * Role + (1|ID)` shows a significant effect of `BotStrategy`.
+* A cognitive modeling approach would fit different strategy models (WSLS, RL, etc.) to the choice data and compare them (using methods from Ch 7) to see which *mechanism* best explains the choices made against different bots, potentially revealing *why* performance differs (e.g., due to changes in estimated learning rates or strategy weights).
+
+Both approaches are valuable, but cognitive modeling aims for a deeper, mechanistic level of explanation about the underlying cognitive processes.
+
+## Conclusion: From Observations to Verbal Theories
+
+This chapter took us from observing behavior in a specific task – the Matching Pennies game – to the crucial stage of formulating initial theories about the cognitive processes involved. We explored how analyzing gameplay data, considering participant reports, applying cognitive principles (like memory limits and error proneness), and contrasting different potential strategies (Random, WSLS, Memory-based, RL, k-ToM) helps us generate plausible *verbal models*.
+
+We saw that the path from raw behavior to a testable model involves significant abstraction and simplification. We also highlighted the importance of distinguishing between the participant's experience and the researcher's theoretical stance, and how cognitive modeling differs from traditional statistical approaches by focusing on underlying mechanisms.
+
+However, verbal models, while essential starting points, have limitations. Descriptions like "players track opponent patterns" or "repeat successful choices" remain ambiguous. How exactly is tracking done? How strong is the tendency to repeat? To rigorously test these ideas, compare their predictions, and understand their precise implications, we need to move beyond verbal descriptions.
+
+The next chapter, "From verbal descriptions to formal models," tackles exactly this challenge. We will take some of the candidate models discussed here (like Random Choice and WSLS) and translate them into precise mathematical algorithms and R functions. This formalization will force us to be explicit about our assumptions and enable us to simulate agent behavior, setting the stage for fitting these models to data and evaluating their performance in later chapters.
