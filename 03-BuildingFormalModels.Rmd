@@ -1,39 +1,46 @@
 
 # From verbal descriptions to formal models
 
-This chapter bridges the gap between verbal theories and computational implementations of cognitive models. Building on our observations of the matching pennies game, we now develop precise mathematical formulations that can generate testable predictions.
+In Chapter 1, we explored how the "physics" of a pizza stone—Newton's Law of Cooling—could generate temperature data. We called this a **generative model**. In Chapter 2, you observed your own behavior in the Matching Pennies game and proposed verbal theories like "Win-Stay-Lose-Shift" or "Random Choice."
+
+Now, we bridge the gap. In this chapter, we will build "models of the mind." We will translate the verbal strategies from Chapter 2 into precise algorithms—creating agents, or **Synthetic Subjects**.
+
+Just as we used a formula to simulate the pizza stone heating up, we will write code to simulate a cognitive agent playing a game. If our code can generate choice data that looks like human data, we have a candidate model for how the mind works. If it cannot, our theory is wrong.
 
 ## Learning Goals
 
 This chapter focuses on translating the verbal theories from Chapter 2 into concrete, testable computational models. After completing this chapter, you will be able to:
 
-* **Formalize Verbal Models:** Translate abstract strategy descriptions (like "Random Choice" or "Win-Stay-Lose-Shift") into precise algorithms and implement them as R functions.
-* **Implement Agent-Based Simulations:** Create simple software "agents" that execute these strategies within a simulated environment (the Matching Pennies game).
-* **Understand Simulation's Role:** Use simulation to explore the behavioral consequences of different model assumptions and parameters *before* fitting models to real data.
+* **Formalize Verbal Models:** Translate abstract strategy descriptions (like "Random Choice" or "Win-Stay-Lose-Shift") into precise algorithms.
+* **Implement Agent-Based Simulations:** Create simple software "agents" that execute these algorithms within a simulated environment (the Matching Pennies game).
+* **Run Virtual Experiments:** Use simulation to see how different strategies perform against different opponents *before* we ever touch real data.
 * **Analyze Simulated Behavior:** Generate and visualize simulation data to understand how different strategies perform and interact under controlled conditions.
 * **Prepare for Model Fitting:** Appreciate why simulating models is a crucial step prior to estimating parameters from empirical data (covered in Chapter 4).
 
 ## The Value of Formalization and Simulation
 
-Moving from the verbal models discussed in Chapter 2 to formal, computational models is a critical step in cognitive science. Verbal descriptions often hide ambiguity – what does "tend to repeat" or "track patterns" *precisely* mean? Formalization forces us to be explicit.
+Verbal models are comfortable but dangerous. In Chapter 2, we might have said: *"The agent stays after a win."*
 
-**1. Formalization forces clarity:**
-* Translating ideas into code or math requires specifying exact rules, parameters, and information processing steps. This often reveals hidden assumptions or underspecified aspects of the verbal theory.
+But formalization forces us to answer uncomfortable questions, for instance:
+* **The Persistence Question:** If they win 10 times, do they stay forever? Or is there a limit?
+* **The Error Question:** Do they *always* stay, or do they sometimes press the wrong button by mistake?
+* **The First Trial Question:** What do they do before they have any feedback?
 
-**2. Computational implementation enables simulation:**
-* Once formalized, we can create computational agents that *act out* the strategy.
-* Simulation allows us to:
-    * **Understand Emergent Behavior:** See the consequences of our model's rules over many trials or interactions. Does the strategy lead to expected patterns? Are there surprising outcomes?
-    * **Explore Parameter Space:** How does behavior change if we alter a model parameter (e.g., the bias in a random agent, or the stay probability in WSLS)?
-    * **Generate Testable Predictions:** What specific behavioral patterns (e.g., choice sequences, reaction times - though not modeled here) does the model predict under different conditions? These predictions can then be compared to real data.
-    * **Debug Model Logic:** Does the simulated behavior make sense? If not, it might indicate a flaw in our formalization of the verbal theory.
+Writing code forces us to strip away ambiguity. It reveals hidden assumptions and forces us to be explicit about the mechanisms driving behavior. However, the value of this process extends beyond just clarity. Once formalized, we can create computational agents that act out the strategy. Simulation allows us to:
 
-In this chapter, we will walk through this process:
+* **Understand Emergent Behavior**: See the consequences of our model's rules over many trials or interactions. Does the strategy lead to expected patterns? Are there surprising outcomes that weren't obvious from the verbal description?
 
-1.  **Formalize:** Define precise algorithms for two key strategies from Chapter 2 (Random Choice and WSLS).
+* **Explore Parameter Space**: How does behavior change if we alter a model parameter (e.g., the bias in a random agent, or the stay probability in WSLS)?
+
+* **Generate Testable Predictions**: What specific behavioral patterns (e.g., choice sequences) does the model predict under different conditions? These predictions can then be compared to real data.
+
+* **Debug Model Logic**: Does the simulated behavior make sense? If not, it might indicate a flaw in our formalization of the verbal theory.
+
+In this chapter, we will:
+1.  **Formalize:** Define precise algorithms for two key strategies (Random Choice and WSLS).
 2.  **Implement:** Code these algorithms as reusable R functions.
-3.  **Simulate:** Run these agents against different types of opponents (a biased random agent, another WSLS agent).
-4.  **Scale & Analyze:** Simulate many agents to understand average behavior and visualize the results to compare strategy effectiveness.
+3.  **Simulate:** Run these agents in a "Virtual Arena" against different opponents.
+4.  **Scale:** Simulate many agents to understand average behavior and visualize the results to compare strategy effectiveness.
 
 
 ## Defining general conditions
@@ -57,11 +64,13 @@ agents <- 100
 
 ## Implementing a Random Agent
 
-Our simplest model from Chapter 2 was the Random Choice agent. It assumes choices are independent of history and context, potentially with a fixed bias.
+Our simplest model from Chapter 2 was the Random Choice agent. In cognitive science, this serves as our **Null Hypothesis**.
 
-**Algorithm:** On each trial, choose option 1 ('right', coded as 1) with probability `rate`, otherwise choose option 0 ('left', coded as 0).
+A Random Agent is not just "acting crazily"; it represents a specific, strong theoretical claim: **The agent has no memory and no learning.** It does not care about the past (history) or the future (planning). It only has a bias.
 
-Let's implement this and visualize its behavior.
+**Algorithm:** On every trial $t$, independently of what happened at $t-1$, choose 'right' (1) with probability $\theta$ and 'left' (0) with probability $1-\theta$.
+
+Let's implement this synthetic subject.
 
 ```{r 03-implement-random-agent, fig.show='hold'}
 
@@ -178,18 +187,19 @@ print(paste("Example choices (rate=0.7, noise=0.1):", paste(example_choices, col
 
 ## Implementing a Win-Stay-Lose-Shift (WSLS) Agent
 
-The WSLS strategy (Chapter 2) reacts to the immediate past: repeat a winning choice, switch after a loss.
+The Random Agent was memoryless. The Win-Stay-Lose-Shift (WSLS) agent is our first step into **strategic behavior**: it reacts to the immediate past.
 
 **Algorithm:**
-1. Make an initial choice (e.g., randomly).
-2. On trial *t* > 1:
-   a. Determine feedback from trial *t-1* (win or loss).
-   b. If win: choose the same action as trial *t-1*.
-   c. If loss: choose the opposite action from trial *t-1*.
-3. Add optional noise: with probability `noise`, make a random 50/50 choice instead.
+1.  **Initialize:** Make a random guess on the first trial.
+2.  **Loop (Trial $t > 1$):**
+    * Check feedback from trial $t-1$.
+    * If **Win**: Repeat the previous choice.
+    * If **Loss**: Switch to the opposite choice.
+3.  **Noise (The "Trembling Hand"):** With a small probability `noise`, ignore the strategy and pick randomly. This accounts for attention lapses or motor errors (often called "trembling hand" in game theory).
 
-**Implementing the WSLS Function**
+### Implementing the WSLS Function
 
+*Note on Programming:* In R, we usually prefer vectorization (doing everything at once) over loops. However, cognitive models are inherently **sequential**: what I do now depends on what I just saw. Therefore, we use an explicit `if/else` logic here to mirror the cognitive process.
 
 ```{r 03 Implementing a Win-Stay-Lose-Shift agent}
 
@@ -346,127 +356,110 @@ print("This cumulative performance plot reveals the overall effectiveness of the
 When we pit the WSLS agent against another WSLS agent, the dynamics become more complex. Both agents are now trying to adapt to each other's adaptations, creating a more sophisticated strategic interaction. The resulting behavior often shows interesting patterns of mutual adaptation, where each agent's attempts to exploit the other's strategy leads to evolving patterns of play.")
 ```
 
-## Scaling Up: Simulating Multiple Agents
+## Scaling Up: The Virtual Experiment
+
+Now that we have our agents defined as functions, we can run a **Virtual Experiment**. We don't need to recruit participants; we can simulate thousands of trials in seconds.
+
+We will build a "Simulation Engine" function that:
+1.  Takes two agents (e.g., WSLS vs. Random).
+2.  Makes them play for `N` trials.
+3.  Records every move.
 
 To understand the average behavior and robustness of the WSLS strategy, we need to simulate many agents playing against opponents with varying biases.
-
-**Refactoring Simulation into a Function**
 
 First, let's create a function that runs one simulation (one WSLS agent vs. one opponent) and returns the results. This avoids repeating code.
 
 ```{r 03-simulation-function}
 #' Run Matching Pennies Simulation
 #'
-#' Simulates one agent playing Matching Pennies against an opponent
-#' for a specified number of trials.
+#' Simulates a full game between an Agent (Subject) and an Opponent.
 #'
 #' @param n_trials Integer, number of trials.
-#' @param wsls_params List, parameters for the WSLS agent (alpha, betaWin, betaLose, noise).
-#' @param opponent_type String, "Random" or "WSLS".
-#' @param opponent_params List, parameters for the opponent agent.
-#'                           For Random: list(rate, noise).
-#'                           For WSLS: list(alpha, betaWin, betaLose, noise).
+#' @param agent_strategy String, "WSLS" or "Random".
+#' @param agent_params List, parameters for the agent (e.g., list(noise=0.1)).
+#' @param opponent_strategy String, "WSLS" or "Random".
+#' @param opponent_params List, parameters for the opponent (e.g., list(rate=0.8)).
 #'
 #' @return A tibble with trial-by-trial choices and outcomes.
 #'
-run_simulation <- function(n_trials, wsls_params, opponent_type, opponent_params) {
+run_simulation <- function(n_trials, agent_strategy, agent_params, opponent_strategy, opponent_params) {
 
-  # Initialize choices and feedback
-  wsls_choices <- rep(NA, n_trials)
+  # Pre-allocate vectors for speed
+  agent_choices <- rep(NA, n_trials)
   opponent_choices <- rep(NA, n_trials)
-  wsls_feedback <- rep(NA, n_trials) # Feedback for WSLS agent (1=win)
-  wsls_win_signal <- rep(0, n_trials) # +1/-1 if won, 0 if lost
-  wsls_lose_signal <- rep(0, n_trials) # +1/-1 if lost, 0 if won
+  agent_feedback <- rep(NA, n_trials) 
 
-  # First trial choices
-  wsls_choices[1] <- sample(c(0, 1), 1)
-  if (opponent_type == "Random") {
-    opponent_choices[1] <- RandomAgent_f(1, opponent_params$rate, opponent_params$noise)
-  } else { # Opponent is WSLS
-    opponent_choices[1] <- sample(c(0, 1), 1)
-  }
+  # --- Trial 1 (Initialization) ---
+  # Agents behave randomly or use a specific start bias on trial 1
+  agent_choices[1] <- rbinom(1, 1, 0.5)
+  opponent_choices[1] <- rbinom(1, 1, 0.5)
+  
+  # Check winner (Assuming Agent is Matcher: Win if choices match)
+  agent_feedback[1] <- ifelse(agent_choices[1] == opponent_choices[1], 1, 0)
 
-  # Loop through remaining trials
+  # --- Loop through Game ---
   for (t in 2:n_trials) {
-    # Determine feedback from t-1 (WSLS agent is Matcher)
-    prev_wsls_feedback <- ifelse(wsls_choices[t-1] == opponent_choices[t-1], 1, 0)
-    wsls_feedback[t-1] <- prev_wsls_feedback
-
-    # Update WSLS win/lose signals based on t-1 outcome
-    wsls_win_signal[t-1] <- ifelse(prev_wsls_feedback == 1, ifelse(wsls_choices[t-1] == 1, 1, -1), 0)
-    wsls_lose_signal[t-1] <- ifelse(prev_wsls_feedback == 0, ifelse(wsls_choices[t-1] == 1, -1, 1), 0)
-
-    # WSLS agent chooses for trial t
-    wsls_choices[t] <- WSLSAgent_f(
-      prevChoice = wsls_choices[t-1],
-      feedback = prev_wsls_feedback,
-      noise = wsls_params$noise
-      # Note: Using deterministic WSLS here for simplicity, could use parameterized version
-      # WSLSAgentNoise_f(wsls_params$alpha, wsls_params$betaWin, wsls_params$betaLose,
-      #                  wsls_win_signal[t-1], wsls_lose_signal[t-1], wsls_params$noise)
-    )
-
-    # Opponent chooses for trial t
-    if (opponent_type == "Random") {
-      opponent_choices[t] <- RandomAgent_f(1, opponent_params$rate, opponent_params$noise)
-    } else { # Opponent is WSLS (Hider - gets opposite feedback)
-       opponent_feedback_prev <- 1 - prev_wsls_feedback # Hider wins on mismatch
-       opponent_choices[t] <- WSLSAgent_f(
-         prevChoice = opponent_choices[t-1],
-         feedback = opponent_feedback_prev,
-         noise = opponent_params$noise
-       )
+    
+    # 1. Agent makes a choice based on history (t-1)
+    if (agent_strategy == "WSLS") {
+      agent_choices[t] <- WSLSAgent_f(agent_choices[t-1], agent_feedback[t-1], agent_params$noise)
+    } else if (agent_strategy == "Random") {
+      agent_choices[t] <- RandomAgent_f(1, agent_params$rate, agent_params$noise)
     }
-  }
-  # Record feedback for the last trial
-  wsls_feedback[n_trials] <- ifelse(wsls_choices[n_trials] == opponent_choices[n_trials], 1, 0)
+    
+    # 2. Opponent makes a choice
+    if (opponent_strategy == "Random") {
+      opponent_choices[t] <- RandomAgent_f(1, opponent_params$rate, opponent_params$noise)
+    } else if (opponent_strategy == "WSLS") {
+      # Opponent is Hider: They win if choices MISMATCH. 
+      # So their feedback is the opposite of the Agent's feedback.
+      op_feedback <- 1 - agent_feedback[t-1]
+      opponent_choices[t] <- WSLSAgent_f(opponent_choices[t-1], op_feedback, opponent_params$noise)
+    }
 
-  # Return results
+    # 3. Determine Outcome
+    agent_feedback[t] <- ifelse(agent_choices[t] == opponent_choices[t], 1, 0)
+  }
+
+  # Return data
   return(tibble(
     trial = 1:n_trials,
-    Self_WSLS = wsls_choices,
-    Opponent = opponent_choices,
-    Feedback = wsls_feedback
+    choice = agent_choices,
+    opponent = opponent_choices,
+    win = agent_feedback
   ))
 }
 
 # --- Running Scaled Simulations ---
 cat("Running scaled simulations...\n")
-agents <- 100
-trials <- 120
-# Default WSLS parameters (deterministic)
-wsls_params_default <- list(alpha = 0, betaWin = Inf, betaLose = Inf, noise = 0)
+
+# Default WSLS parameters (Only 'noise' is used by our simple WSLS agent)
+wsls_params_default <- list(noise = 0)
 
 # Simulation 1: WSLS vs. Random agents with varying biases
 opponent_rates <- seq(from = 0.5, to = 1, by = 0.05)
-results_vs_random <- list() # Store results
+results_vs_random <- list() 
 
 for (rate in opponent_rates) {
-  rate_results <- list()
+  # Create a list to store runs for this specific rate
+  rate_runs <- list()
+  
   for (agent_i in 1:agents) {
      opponent_params_rand <- list(rate = rate, noise = 0)
-     sim_run <- run_simulation(trials, wsls_params_default, "Random", opponent_params_rand)
+     
+     # CORRECTED CALL: Added "WSLS" as the second argument
+     sim_run <- run_simulation(trials, "WSLS", wsls_params_default, "Random", opponent_params_rand)
+     
      sim_run$agent <- agent_i
      sim_run$opponent_rate <- rate
-     rate_results[[agent_i]] <- sim_run
+     rate_runs[[agent_i]] <- sim_run
   }
-  results_vs_random[[as.character(rate)]] <- bind_rows(rate_results)
+  # Combine all agents for this rate and store in main list
+  results_vs_random[[as.character(rate)]] <- bind_rows(rate_runs)
 }
+# Combine everything into one big dataframe
 df_scaled_vs_random <- bind_rows(results_vs_random)
 
-# Simulation 2: WSLS vs. WSLS (100 times)
-results_vs_wsls <- list()
-opponent_params_wsls <- wsls_params_default # Opponent uses same deterministic WSLS
-
-for (agent_i in 1:agents) {
-   sim_run <- run_simulation(trials, wsls_params_default, "WSLS", opponent_params_wsls)
-   sim_run$agent <- agent_i
-   sim_run$opponent_rate <- NA # Not applicable
-   results_vs_wsls[[agent_i]] <- sim_run
-}
-df_scaled_vs_wsls <- bind_rows(results_vs_wsls) # Contains results for WSLS vs WSLS
-
-cat("Scaled simulations complete.\n")
 ```
 
 ### Visualizing Results
@@ -478,22 +471,23 @@ Now let's visualize the average performance of the WSLS agent against random opp
 # Calculate cumulative performance for each simulation run
 df_scaled_vs_random <- df_scaled_vs_random %>%
   group_by(agent, opponent_rate) %>%
-  mutate(Cumulative_Performance = cumsum(Feedback) / row_number())
+  # CHANGED 'Feedback' to 'win' here:
+  mutate(Cumulative_Performance = cumsum(win) / row_number()) %>%
+  ungroup()
 
 # Plot average performance over time, grouped by opponent bias rate
 p_scaled_perf <- ggplot(df_scaled_vs_random,
        aes(x = trial, y = Cumulative_Performance,
-           group = opponent_rate, color = opponent_rate)) +
-  # Use stat_summary to plot the mean performance across agents for each rate
+           group = opponent_rate, color = as.factor(opponent_rate))) + # made color a factor for cleaner legend
   stat_summary(fun = mean, geom = "line", size = 1) +
-  geom_hline(yintercept = 0.5, linetype = "dashed") + # Chance performance
-  scale_color_viridis_c() + # Use perceptually uniform color scale
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  scale_color_viridis_d() + # Discrete scale since we made rate a factor
   labs(
     title = "Average WSLS Performance vs. Random Opponents",
-    subtitle = "Performance improves as opponent's bias increases (rate moves away from 0.5)",
+    subtitle = "Performance improves as opponent's bias increases",
     x = "Trial Number",
-    y = "Average Proportion Wins (across 100 agents)",
-    color = "Opponent's\nBias Rate"
+    y = "Average Proportion Wins",
+    color = "Opponent Bias"
   ) +
   ylim(0, 1) +
   theme_classic()
@@ -504,25 +498,25 @@ print(p_scaled_perf)
 
 This plot clearly shows that the WSLS strategy becomes more effective (higher average win rate) as the opponent becomes more predictable (i.e., their bias rate moves further away from 0.5 towards 1.0). Against a purely random opponent (rate=0.5), WSLS performs at chance level on average. This highlights WSLS's ability to exploit predictability.
 
-## Conclusion: Formalizing and Simulating Strategies
-
-This chapter demonstrated the crucial step of translating verbal models from Chapter 2 (Random Choice, WSLS) into precise, computational forms. We implemented these strategies as R functions and used simulation to explore their behavior, both individually and when interacting with different opponents.
-
-Key takeaways from this process include:
-* **Formalization Reduces Ambiguity:** Writing code forced us to define exactly how each strategy operates (e.g., how WSLS uses feedback). When we state that an agent "learns from experience" or "responds to patterns," we must specify exactly how these processes work. This precision not only clarifies our theoretical understanding but also enables rigorous empirical testing.
-* **Simulation Reveals Implications:** Running the agents showed the behavioral consequences of these rules. We saw how a random agent's bias affects its choice patterns and how WSLS performance depends heavily on the predictability of its opponent.
-* **Functions Enable Scalability:** Encapsulating strategies in functions allowed us to easily simulate many agents and explore different parameter settings (like opponent bias).
-
-We established a basic workflow: **Observe -> Formalize -> Implement -> Simulate -> Analyze**. Begin with careful observation, think carefully and develop precise mathematical formulations, implement these as computational models, and validate predictions against data. Don't be afraid to make mistakes, or rethink your strategy and iterate the modeling process.This process helps us understand our models deeply *before* we attempt to fit them to complex, noisy empirical data. Simulation is invaluable for debugging model logic and generating clear, testable predictions.
-
-However, simulation alone cannot tell us *which* model best describes actual human behavior, or *what parameter values* (like bias rates or WSLS sensitivities) best capture individual performance. For that, we need to confront our models with data. The next chapter, "From simulation to model fitting," will introduce methods for estimating model parameters from observed data using Bayesian inference with Stan.
-
-
-For more advanced examples of models that can underly behavior in the Matching Pennies game check:
-
- * Chapter XX on reinforcement learning.
  
- * the paper by Waade et al mentioned at the beginning of the chapter.
- 
- 
+ ## Conclusion: The Forward Model
+
+In this chapter, we successfully built a **Forward Model**.
+* We started with a verbal theory (WSLS).
+* We translated it into code (parameters + algorithm).
+* We ran the code to **generate** artificial data.
+
+This is the "models of the Mind" in action. We demonstrated that a simple mechanism (Win-Stay-Lose-Shift) can generate complex success rates depending on the environment (the opponent).
+
+### The Problem of Inference
+
+However, in real science, we don't start with the parameters. We start with the data (the choices participants made) and we want to find the parameters (did they use WSLS? How much noise?).
+
+We need to run our machine in reverse.
+
+* **Forward (Simulation)**: Parameters $\rightarrow$ Data
+
+* **Inverse (Fitting)**: Data $\rightarrow$ Parameters
+
+In the next chapter, "From Simulation to Model Fitting," we will learn how to take the simulated data we just created and use statistical methods (Maximum Likelihood and Bayesian Inference with Stan) to recover the original parameters.
 

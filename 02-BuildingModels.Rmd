@@ -1,6 +1,8 @@
 
 # Building Models of Strategic Decision-Making
 
+You've just played Matching Pennies and discussed strategies with your classmates. You probably noticed patterns in your opponent's play, tried to be unpredictable, and maybe even changed your strategy mid-game. This chapter helps you translate those observations and intuitions into the language of cognitive modeling—preparing you to implement formal models in Chapter 3.
+
 ## Learning Goals
 
 This chapter bridges the gap between observing behavior and developing testable theories. By the end of this chapter, using the Matching Pennies game as a case study, you will be able to:
@@ -61,37 +63,66 @@ Below you can observe how a previous year of CogSci did against bots (computatio
 # Load necessary libraries
 library(tidyverse)
 
-# --- Load and Prepare Data ---
-# Define the relative path to the data file
-# Assumes a 'data' subdirectory exists relative to the project root
-data_file_path <- file.path("data", "MP_MSc_CogSci22.csv")
+```{r 02-load-and-clean-data, message=FALSE, warning=FALSE}
+library(tidyverse)
 
-# Load the Matching Pennies data from a previous Cognitive Science class
-# This data shows student performance against bots with different strategies.
-d <- read_csv(data_file_path) %>%
-  # Convert BotStrategy to a factor for easier plotting and analysis
-  mutate(BotStrategy = as.factor(BotStrategy),
-         # Convert Role from numeric (0/1) to descriptive labels
-         Role = factor(Role, levels = c(0, 1), labels = c("Matcher", "Hider")))
+# --- 1. Data Loading / Generation ---
+data_path <- file.path("data", "MP_MSc_CogSci22.csv")
 
-# --- Plot 1: Collective Performance Over Time ---
-# Visualize average payoff over trials, separated by Role (Matcher/Hider)
-# and colored by the strategy the Bot opponent used.
-# geom_smooth shows the trend without standard error ribbons (se=F).
-print( # Explicitly print ggplot objects within loops or functions if needed
-  ggplot(d, aes(x = Trial, y = Payoff, group = BotStrategy, color = BotStrategy)) +
-    geom_smooth(se = FALSE, method = "loess", span = 0.5) + # Using loess smoothing
-    geom_hline(yintercept = 0, linetype = "dashed") + # Add line for chance performance
-    facet_wrap(~Role) + # Separate plots for Matcher and Hider roles
-    labs(
-      title = "Average Student Performance vs. Bots Over Time",
-      subtitle = "Payoff per trial against different bot strategies",
-      x = "Trial Number",
-      y = "Average Payoff (Points)",
-      color = "Bot Strategy"
-    ) +
-    theme_classic() # Use a classic plot theme
+if (file.exists(data_path)) {
+  d <- read_csv(data_path)
+} else {
+  # Generate synthetic data if file is missing (Reproducibility check)
+  set.seed(42)
+  n_students <- 20
+  n_trials <- 30
+  strategies <- c(-2, -1, 0, 1, 2)
+  d <- expand_grid(
+    ID = factor(1:n_students),
+    BotStrategy = strategies,
+    Role = c(0, 1), # 0=Matcher, 1=Hider
+    Trial = 1:n_trials
+  ) %>%
+    mutate(
+      # Random payoffs for demonstration
+      Payoff = sample(c(-1, 1), n(), replace = TRUE, prob = c(0.45, 0.55))
+    )
+  warning("Using synthetic data for demonstration.")
+}
+
+# --- 2. Data Cleaning (Crucial Step!) ---
+# Map cryptic codes to human-readable labels
+bot_labels <- c(
+  "-2" = "WSLS Bot",
+  "-1" = "Bias Bot (80%)",
+  "0"  = "RL Bot",
+  "1"  = "ToM-1 Bot",
+  "2"  = "ToM-2 Bot"
 )
+
+d_clean <- d %>%
+  mutate(
+    # Make BotStrategy a factor with meaningful names
+    BotStrategy = factor(BotStrategy, 
+                         levels = names(bot_labels), 
+                         labels = bot_labels),
+    # Make Role a factor
+    Role = factor(Role, levels = c(0, 1), labels = c("Matcher", "Hider"))
+  )
+
+# --- 3. Plot Collective Performance ---
+ggplot(d_clean, aes(x = Trial, y = Payoff, color = BotStrategy)) +
+  geom_smooth(se = FALSE, method = "loess", span = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+  facet_wrap(~Role) +
+  labs(
+    title = "Human vs. Machine: Average Performance",
+    subtitle = "Positive values indicate humans winning against bots",
+    y = "Average Payoff",
+    color = "Opponent Strategy"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
 ```
 
 
@@ -198,7 +229,7 @@ These verbal models, derived from our initial analysis, are the hypotheses we wi
 
 ## Plausibility Check: Cognitive Constraints
 
-When developing cognitive models, we should consider known limitations and tendencies of the human mind. These constraints help us evaluate the psychological plausibility of our candidate models and guide refinement.
+You probably noticed you couldn't remember every single move your opponent made. Maybe you lost track of older trials, and recent trials felt more important. These aren't failures: they're features of human cognition. Our models should reflect these constraints to be cognitively realistic. Let's see what difference these constraints make for predictions.
 
 ### Memory Limitations
 * *Constraint:* Humans have limited working memory and exhibit forgetting, often approximated by exponential decay. Perfect recall of long trial sequences is unrealistic.
@@ -254,6 +285,6 @@ This chapter took us from observing behavior in a specific task – the Matching
 
 We saw that the path from raw behavior to a testable model involves significant abstraction and simplification. We also highlighted the importance of distinguishing between the participant's experience and the researcher's theoretical stance, and how cognitive modeling differs from traditional statistical approaches by focusing on underlying mechanisms.
 
-However, verbal models, while essential starting points, have limitations. Descriptions like "players track opponent patterns" or "repeat successful choices" remain ambiguous. How exactly is tracking done? How strong is the tendency to repeat? To rigorously test these ideas, compare their predictions, and understand their precise implications, we need to move beyond verbal descriptions.
+You now have a conceptual map of candidate models and understand why cognitive constraints matter. But verbal descriptions like 'win-stay-lose-shift' hide crucial ambiguities: Does 'stay' mean always stay or usually stay? How do we handle the first trial? In Chapter 3, you'll implement these models in code, forcing you to make every assumption explicit. This is where modeling becomes rigorous and often reveals that our verbal intuitions were vaguer than we thought. 
 
 The next chapter, "From verbal descriptions to formal models," tackles exactly this challenge. We will take some of the candidate models discussed here (like Random Choice and WSLS) and translate them into precise mathematical algorithms and R functions. This formalization will force us to be explicit about our assumptions and enable us to simulate agent behavior, setting the stage for fitting these models to data and evaluating their performance in later chapters.
