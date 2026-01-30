@@ -161,8 +161,11 @@ print(
 The plots above reveal patterns: average performance changes over time, varies by opponent, and differs across individuals. Gameplay observations and participant reflections (from class discussion or collected data) add qualitative insights – perhaps players mention trying to be unpredictable, guessing opponent biases, or repeating winning moves.
 
 The crucial next step is to distill these rich, complex observations into simplified, plausible **mechanisms** or **strategies**. This involves abstraction:
+
 * **Identifying Core Patterns:** What recurring behaviors seem most important? (e.g., reacting to wins/losses, tracking opponent frequencies).
+
 * **Simplifying:** Can we capture the essence of a strategy without modeling every detail of a player's thought process or interaction? (e.g., modeling WSLS instead of complex pattern detection).
+
 * **Drawing on Cognitive Principles:** How do known cognitive constraints (like limited memory or processing errors, discussed below) shape plausible strategies?
 
 
@@ -171,8 +174,11 @@ For instance, observing that players often change their choice after a loss migh
 This process generates *verbal models* – initial hypotheses about the strategies at play. Key modeling considerations guide this translation:
 
 * What information do players likely use? (Own past choices? Opponent's choices? Payoffs?)
+
 * How far back does memory plausibly extend? (Last trial? Last 5 trials? Exponential decay?)
+
 * What is the role of randomness? (True randomness? Exploration? Implementation errors?)
+
 * How might strategies adapt over time or differ between individuals?
 
 Answering these helps refine our verbal models, paving the way for formalization. The goal isn't to capture everything, but to propose distinct, testable mechanisms.
@@ -183,7 +189,7 @@ As participants we might not be aware of the strategy we use, or we might believ
 
 Another important component of the distinction is that participants leave in a rich world: they rely on facial expressions and bodily posture, the switch strategies, etc. On the other hand, the researcher is trying to identify one or few at most "simple" strategies. Rich bodily interactions and mixtures or sequences of multiple strategies are not a good place to start modeling. These aspects are a poor starting point for building your first model, and are often pretty difficult to fit to empirical data. Nevertheless, they are important intuitions that the researcher should (eventually?) accommodate.
 
-# Candidate Verbal Models
+## Candidate Verbal Models
 
 Based on the behavioral patterns observed, participant discussions, and core cognitive principles, we can now propose several candidate *verbal models* for behavior in the matching pennies game. Each represents a different hypothesis about the underlying cognitive strategy. These are starting points, deliberately simplified:
 
@@ -227,19 +233,19 @@ These verbal models, derived from our initial analysis, are the hypotheses we wi
     * *Rationale:* Generating random output is hard, so if we want to confuse the opponent, we could act first choosing tail 8 times, and then switching to a WSLS strategy for 4 trials, and then choosing head 4 times. Or implementing any of the previous strategies and doing the opposite "to mess with the opponent". The combined strategies model also acknowledges that single, simple models might be insufficient. Motivates concepts like *mixture models* (Chapter 8) where behavior is seen as a probabilistic blend of simpler strategies, or models where strategy parameters change over time. Yet these mixture models are hard to fit to data and can quickly spiral out of control (many possible combinations)
 
 
-## Plausibility Check: Cognitive Constraints
+### Plausibility Check: Cognitive Constraints
 
 You probably noticed you couldn't remember every single move your opponent made. Maybe you lost track of older trials, and recent trials felt more important. These aren't failures: they're features of human cognition. Our models should reflect these constraints to be cognitively realistic. Let's see what difference these constraints make for predictions.
 
-### Memory Limitations
+#### Memory Limitations
 * *Constraint:* Humans have limited working memory and exhibit forgetting, often approximated by exponential decay. Perfect recall of long trial sequences is unrealistic.
 * *Modeling Implication:* This favors models incorporating memory decay or finite history windows (like imperfect memory models or RL with a learning rate < 1) over perfect memory models. It suggests that even bias-tracking models should discount older information.
 
-### Perseveration Tendencies
+#### Perseveration Tendencies
 * *Constraint:* People sometimes exhibit perseveration – repeating a previous action, especially if it was recently successful or chosen, even if a different strategy might suggest otherwise. This can be distinct from rational "win-stay".
 * *Modeling Implication:* This might be incorporated as an additional bias parameter influencing the choice probability (e.g., a small added probability of repeating the last action $a_{t-1}$ regardless of outcome) or interact with feedback processing (e.g., strengthening the 'stay' tendency after wins).
 
-### Noise and Errors
+#### Noise and Errors
 * *Constraint:* Human behavior is inherently noisy. People make mistakes, have attentional lapses, press the wrong button, or misunderstand feedback. Behavior rarely perfectly matches a deterministic strategy.
 * *Modeling Implication:* Models should almost always include a "noise" component. This can be implemented in several ways:
     * **Lapse Rate:** A probability (e.g., $\epsilon$) that on any given trial, the agent makes a random choice instead of following their primary strategy (as used in the Mixture Model chapter).
@@ -247,7 +253,7 @@ You probably noticed you couldn't remember every single move your opponent made.
     * **Imperfect Heuristics:** Parameters within a strategy might reflect imperfect application (e.g., in WSLS, $p_{stay\_win} < 1$ or $p_{shift\_loss} < 1$). This can also capture asymmetric responses to feedback (e.g., being more likely to shift after a loss than stay after a win).
     * **Exploration:** Random deviations can also be framed as adaptive exploration, allowing the agent to test actions that their current strategy deems suboptimal.
 
-## Relationships Between Models
+### Relationships Between Models
 
 It's useful to note that these candidate models aren't always entirely distinct. Often, simpler models emerge as special cases of more complex ones:
 * A Random Choice model is like a Memory-Based model where the influence of memory is zero.
@@ -256,14 +262,14 @@ It's useful to note that these candidate models aren't always entirely distinct.
 
 Recognizing these connections can guide a principled modeling approach, starting simple and adding complexity only as needed and justified by data or theory.
 
-## Handling Heterogeneity: Mixture Models
+### Handling Heterogeneity: Mixture Models
 
 What if different participants use different strategies, or a single participant switches strategies during the game? This is where *mixture models* become relevant (explored in detail in Chapter 8).
 * *Concept:* Instead of assuming *one* model generated all the data, a mixture model assumes the data is a probabilistic blend from *multiple* candidate models (e.g., 70% of choices from WSLS, 30% from Random Bias).
 * *Purpose:* Allows capturing heterogeneity within or across individuals without needing to know *a priori* which strategy was used on which trial or by which person. The model estimates the *probability* that each data point came from each component strategy.
 * *Challenge:* Mixture models often require substantial data to reliably distinguish between components and estimate their mixing proportions.
 
-## Cognitive Modeling vs. Traditional Statistical Approaches (e.g., GLM)
+### Cognitive Modeling vs. Traditional Statistical Approaches (e.g., GLM)
 
 How does this modeling approach differ from standard statistical analyses you might have learned, like ANOVAs or the General Linear Model - GLM?
 
