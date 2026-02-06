@@ -22,8 +22,11 @@ This chapter focuses on translating the verbal theories from Chapter 2 into conc
 Verbal models are comfortable but dangerous. In Chapter 2, we might have said: *"The agent stays after a win."*
 
 But formalization forces us to answer uncomfortable questions, for instance:
+
 * **The Persistence Question:** If they win 10 times, do they stay forever? Or is there a limit?
+
 * **The Error Question:** Do they *always* stay, or do they sometimes press the wrong button by mistake?
+
 * **The First Trial Question:** What do they do before they have any feedback?
 
 Writing code forces us to strip away ambiguity. It reveals hidden assumptions and forces us to be explicit about the mechanisms driving behavior. However, the value of this process extends beyond just clarity. Once formalized, we can create computational agents that act out the strategy. Simulation allows us to:
@@ -37,9 +40,13 @@ Writing code forces us to strip away ambiguity. It reveals hidden assumptions an
 * **Debug Model Logic**: Does the simulated behavior make sense? If not, it might indicate a flaw in our formalization of the verbal theory.
 
 In this chapter, we will:
+
 1.  **Formalize:** Define precise algorithms for two key strategies (Random Choice and WSLS).
+
 2.  **Implement:** Code these algorithms as reusable R functions.
+
 3.  **Simulate:** Run these agents in a "Virtual Arena" against different opponents.
+
 4.  **Scale:** Simulate many agents to understand average behavior and visualize the results to compare strategy effectiveness.
 
 
@@ -76,7 +83,6 @@ Let's implement this synthetic subject.
 
 # --- Simulation Parameters ---
 trials <- 120 # Number of trials for a single simulation run
-# set.seed(123) # Uncomment for reproducible random choices
 
 # --- Basic Implementation ---
 # Simulate an unbiased random agent (rate = 0.5)
@@ -107,9 +113,12 @@ p2 <- ggplot(d_biased, aes(x = trial, y = choice)) +
 # Show plots side-by-side
 print(p1 + p2 + plot_layout(guides = "collect"))
 
+```
 
-print("This first visualization shows the behavior of a purely random agent - one that chooses between options with equal probability (rate = 0.5). Looking at the jagged line jumping between 0 and 1, we can see that the agent's choices appear truly random, with no discernible pattern. This represents what we might expect from a player who is deliberately trying to be unpredictable in the matching pennies game.
-However, this raw choice plot can be hard to interpret. A more informative way to look at the agent's behavior is to examine how its average rate of choosing option 1 evolves over time:")
+This first visualization shows the behavior of a purely random agent - one that chooses between options with equal probability (rate = 0.5). Looking at the jagged line jumping between 0 and 1, we can see that the agent's choices appear truly random, with no discernible pattern. This represents what we might expect from a player who is deliberately trying to be unpredictable in the matching pennies game.
+However, this raw choice plot can be hard to interpret. A more informative way to look at the agent's behavior is to examine how its average rate of choosing option 1 evolves over time:
+
+```{r, 03 cumulative viz}
 
 # --- Visualization 2: Cumulative Rate ---
 # Calculate the cumulative proportion of 'right' choices (1s)
@@ -135,13 +144,23 @@ p3 <- ggplot(d_combined, aes(x = trial, y = cumulative_rate, color = Agent)) +
   theme_classic()
 
 print(p3)
-
-print("We can clearly see how bias affects choice behavior. The unbiased agent (rate = 0.5) stabilizes around choosing each option equally often, while the biased agent (rate = 0.8) shows a strong preference for option 1, choosing it approximately 80% of the time. This comparison helps us understand how we might detect biases in real players' behavior - consistent deviation from 50-50 choice proportions could indicate an underlying preference or strategy.")
 ```
+
+We can clearly see how bias affects choice behavior. The unbiased agent (rate = 0.5) stabilizes around choosing each option equally often, while the biased agent (rate = 0.8) shows a strong preference for option 1, choosing it approximately 80% of the time. This comparison helps us understand how we might detect biases in real players' behavior - consistent deviation from 50-50 choice proportions could indicate an underlying preference or strategy.
 
 ### Encapsulating the Agent in a Function
 
 To make our agent reusable, we'll wrap the logic in a function. This is good practice for building more complex simulations.
+
+Note that the function is preceded by a number of commented lines. They are called Roxygen comments, a special documentation format used in R packages. By using these comments, we keep the code and its manual in the same place (and if you build a package, the format allows for automatically generating the help pages).
+
+#### How to read it:
+
+* Description: The first lines describe what the function does.
+
+* @param: Describes the inputs (arguments) the function expects (e.g., n_trials, rate).
+
+* @return: Describes the output the function produces (e.g., a vector of 0s and 1s).
 
 ```{r}
 #' Random Agent Function
@@ -181,7 +200,8 @@ RandomAgent_f <- function(n_trials, rate = 0.5, noise = 0) {
 
 # Example usage:
 example_choices <- RandomAgent_f(n_trials = 10, rate = 0.7, noise = 0.1)
-print(paste("Example choices (rate=0.7, noise=0.1):", paste(example_choices, collapse=" ")))
+
+print(paste("Example choices (rate=0.7, noise=0.1):", paste(example_choices, collapse = " ")))
 ```
 
 
@@ -190,16 +210,22 @@ print(paste("Example choices (rate=0.7, noise=0.1):", paste(example_choices, col
 The Random Agent was memoryless. The Win-Stay-Lose-Shift (WSLS) agent is our first step into **strategic behavior**: it reacts to the immediate past.
 
 **Algorithm:**
+
 1.  **Initialize:** Make a random guess on the first trial.
+
 2.  **Loop (Trial $t > 1$):**
+
     * Check feedback from trial $t-1$.
+
     * If **Win**: Repeat the previous choice.
+
     * If **Loss**: Switch to the opposite choice.
+
 3.  **Noise (The "Trembling Hand"):** With a small probability `noise`, ignore the strategy and pick randomly. This accounts for attention lapses or motor errors (often called "trembling hand" in game theory).
 
 ### Implementing the WSLS Function
 
-*Note on Programming:* In R, we usually prefer vectorization (doing everything at once) over loops. However, cognitive models are inherently **sequential**: what I do now depends on what I just saw. Therefore, we use an explicit `if/else` logic here to mirror the cognitive process.
+*Note on Programming:* In R, we usually prefer vectorization (doing everything at once) over loops. However, many cognitive models are inherently **sequential**: what I do now depends on what I just saw. Therefore, we use an explicit `if/else` logic here to mirror the cognitive process.
 
 ```{r 03 Implementing a Win-Stay-Lose-Shift agent}
 
@@ -250,7 +276,6 @@ Now, let's simulate our WSLS agent playing against different opponents to see ho
 ```{r 03 Win-Stay-Lose-Shift vs biased agent}
 # --- Simulation Setup ---
 trials <- 120
-# set.seed(456) # Uncomment for reproducible simulation runs
 
 # --- Simulation 1: WSLS vs. Biased Random Agent ---
 cat("Simulating WSLS vs. Biased Random (Rate = 0.8)...\n")
@@ -269,12 +294,12 @@ for (t in 2:trials) {
   # Determine feedback from previous trial (WSLS wins if choices match opponent)
   # Note: In Matching Pennies, win condition depends on role (Matcher/Hider).
   # Here we assume the WSLS agent is the 'Matcher' for simplicity.
-  prev_feedback <- ifelse(wsls_choices_vs_biased[t-1] == opponent_choices_biased[t-1], 1, 0)
-  feedback_vs_biased[t-1] <- prev_feedback # Store feedback for analysis
+  prev_feedback <- ifelse(wsls_choices_vs_biased[t - 1] == opponent_choices_biased[t - 1], 1, 0)
+  feedback_vs_biased[t - 1] <- prev_feedback # Store feedback for analysis
 
   # WSLS agent makes choice based on previous feedback
   wsls_choices_vs_biased[t] <- WSLSAgent_f(
-    prevChoice = wsls_choices_vs_biased[t-1],
+    prevChoice = wsls_choices_vs_biased[t - 1],
     feedback = prev_feedback,
     noise = 0 # Assuming no noise for this simulation
   )
@@ -304,15 +329,15 @@ wsls2_choices[1] <- sample(c(0, 1), 1)
 
 for (t in 2:trials) {
   # Feedback for agent 1 from previous trial (wins if match)
-  prev_feedback1 <- ifelse(wsls1_choices[t-1] == wsls2_choices[t-1], 1, 0)
-  feedback_wsls1[t-1] <- prev_feedback1
+  prev_feedback1 <- ifelse(wsls1_choices[t - 1] == wsls2_choices[t - 1], 1, 0)
+  feedback_wsls1[t - 1] <- prev_feedback1
 
   # Feedback for agent 2 (opponent) is the opposite (wins if mismatch)
   prev_feedback2 <- 1 - prev_feedback1
 
   # Both agents choose based on their own previous feedback
-  wsls1_choices[t] <- WSLSAgent_f(wsls1_choices[t-1], prev_feedback1, noise = 0)
-  wsls2_choices[t] <- WSLSAgent_f(wsls2_choices[t-1], prev_feedback2, noise = 0)
+  wsls1_choices[t] <- WSLSAgent_f(wsls1_choices[t - 1], prev_feedback1, noise = 0)
+  wsls2_choices[t] <- WSLSAgent_f(wsls2_choices[t - 1], prev_feedback2, noise = 0)
 }
 feedback_wsls1[trials] <- ifelse(wsls1_choices[trials] == wsls2_choices[trials], 1, 0)
 
@@ -351,18 +376,21 @@ p_perf_wsls <- ggplot(df_vs_wsls, aes(x = trial, y = Cumulative_Performance)) +
 print((p_choices_biased | p_choices_wsls) / (p_perf_biased | p_perf_wsls) +
   plot_layout(guides = "collect") & theme(legend.position = "bottom"))
 
-
-print("This cumulative performance plot reveals the overall effectiveness of the WSLS strategy. By tracking the running average of successes, we can see whether the strategy leads to above-chance performance in the long run. When playing against a biased random opponent, the WSLS agent can potentially exploit the opponent's predictable tendencies, though success depends on how strong and consistent the opponent's bias is.
-When we pit the WSLS agent against another WSLS agent, the dynamics become more complex. Both agents are now trying to adapt to each other's adaptations, creating a more sophisticated strategic interaction. The resulting behavior often shows interesting patterns of mutual adaptation, where each agent's attempts to exploit the other's strategy leads to evolving patterns of play.")
 ```
+
+This cumulative performance plot reveals the overall effectiveness of the WSLS strategy. By tracking the running average of successes, we can see whether the strategy leads to above-chance performance in the long run. When playing against a biased random opponent, the WSLS agent can potentially exploit the opponent's predictable tendencies, though success depends on how strong and consistent the opponent's bias is.
+When we pit the WSLS agent against another WSLS agent, the dynamics become more complex. Both agents are now trying to adapt to each other's adaptations, creating a more sophisticated strategic interaction. The resulting behavior often shows interesting patterns of mutual adaptation, where each agent's attempts to exploit the other's strategy leads to evolving patterns of play.
 
 ## Scaling Up: The Virtual Experiment
 
-Now that we have our agents defined as functions, we can run a **Virtual Experiment**. We don't need to recruit participants; we can simulate thousands of trials in seconds.
+Now that we have our agents defined as functions, we can run **virtual Experiments**, to better understand our models.
 
 We will build a "Simulation Engine" function that:
+
 1.  Takes two agents (e.g., WSLS vs. Random).
+
 2.  Makes them play for `N` trials.
+
 3.  Records every move.
 
 To understand the average behavior and robustness of the WSLS strategy, we need to simulate many agents playing against opponents with varying biases.
