@@ -53,15 +53,18 @@ regenerate_simulations <- FALSE # Or TRUE
 # Load required packages using pacman::p_load
 # This function installs packages if missing, then loads them.
 pacman::p_load(
-  tidyverse,    # Data manipulation and plotting (ggplot2, dplyr)
-  here,         # Robust file path management (optional but recommended)
-  posterior,    # Working with posterior distributions
-  cmdstanr,     # Interface to Stan
-  brms,         # High-level interface for Bayesian models (used briefly)
-  tidybayes,    # Tidy manipulation of Bayesian model output
-  furrr,        # Parallel processing for parameter recovery
-  future        # Backend for furrr
+  tidyverse,    # Data manipulation and plotting
+  here,         # Robust file paths
+  cmdstanr,     # Stan interface
+  posterior,    # Posterior analysis
+  bayesplot,    # Plotting MCMC
+  furrr,        # Parallel processing
+  future        # Future backend
 )
+
+# Parallel Setup: Leave 2 cores free for system stability
+n_cores <- parallel::detectCores() - 2
+plan(multisession, workers = n_cores)
 
 # Optional: Set a default ggplot theme
 theme_set(theme_classic())
@@ -359,11 +362,16 @@ Now we build the same model, but using the log odds scale for the theta paramete
 
 **Alternative Parameterization: Log-Odds Scale**
 
-While estimating `theta` directly as a probability (0-1) is intuitive, it can sometimes be computationally advantageous or necessary for more complex models (like multilevel models in Chapter 6) to estimate parameters on an *unbounded* scale. The **logit** (log-odds) transformation converts a probability <span class="math-inline">p</span> (from 0 to 1) to log-odds (from <span class="math-inline">\-\\infty</span> to <span class="math-inline">\+\\infty</span>):
-<span class="math-block">\\text\{logit\}\(p\) \= \\log\\left\(\\frac\{p\}\{1\-p\}\\right\)</span>
-The inverse transformation (logistic function or `inv_logit`) converts log-odds back to probability:
-<span class="math-block">\\text\{inv\_logit\}\(x\) \= \\frac\{1\}\{1 \+ \\exp\(\-x\)\}</span>
-We can rewrite our Stan model to estimate `theta` on the log-odds scale. This often improves sampling efficiency and makes it easier to specify priors (e.g., using a Normal distribution on the unbounded log-odds scale).
+While estimating theta directly as a probability (0-1) is intuitive, it can sometimes be computationally advantageous or necessary for more complex models (like multilevel models in a later chapter) to estimate parameters on an unbounded scale. 
+The logit (log-odds) transformation converts a probability $p$ (from 0 to 1) to log-odds (from $-\infty$ to $+\infty$): $$\text{logit}(p) = \log\left(\frac{p}{1-p}\right)$$
+The inverse transformation (logistic function or inv_logit) converts log-odds back to probability: $$\text{inv\_logit}(x) = \frac{1}{1 + \exp(-x)}$$
+We can rewrite our Stan model to estimate theta on the log-odds scale. However, we must be careful with our priors, as the non-linear transformation distorts the probability mass.
+
+* Too Narrow: A standard normal prior $\lambda \sim \text{Normal}(0, 1)$ concentrates mass around $p=0.5$, biasing the model toward chance.
+
+* Too Wide: A wide prior (e.g., $\lambda \sim \text{Normal}(0, 5)$) pushes mass to the extremes (0 and 1), implying we expect deterministic behavior.
+
+* Just Right: To approximate a uniform distribution on the probability scale (like our Beta(1,1)), we typically use $\lambda \sim \text{Normal}(0, 1.5)$. This is the specific "sweet spot" that is essentially flat, avoiding both the center-bias of narrow priors and the extreme-bias of wide priors.
 
 ```{r 04-define-stan-model-logit, eval=FALSE}
 # Stan code using logit parameterization
@@ -381,9 +389,9 @@ parameters {
 }
 
 model {
-  // Prior on log-odds scale (e.g., Normal(0, 1))
-  // Normal(0, 1) on log-odds corresponds roughly to a diffuse prior on probability scale
-  target += normal_lpdf(theta_logit | 0, 1);
+  // Prior on log-odds scale (e.g., Normal(0, 1.5))
+  // Normal(0, 1.5) on log-odds corresponds roughly to a diffuse prior on probability scale
+  target += normal_lpdf(theta_logit | 0, 1.5);
 
   // Likelihood using the logit version of the Bernoulli PMF
   // This tells Stan that theta_logit is on the log-odds scale
@@ -553,14 +561,23 @@ sim_and_fit <- function(seed, n_trials, true_rate, true_noise, stan_model) {
     adapt_delta = 0.9   # Maintain reasonable adaptation
   )
 
-  # 4. Extract results (posterior mean of theta)
-  est_theta <- fit$summary("theta")$mean # Get posterior mean on probability scale
+  # 4. Extract results (Mean and 95% Credible Interval)
+  # We ask for the mean and the 2.5% and 97.5% quantiles
+  summ <- fit$summary("theta", "mean", ~quantile(.x, probs = c(0.025, 0.975)))
+  
+  est_mean <- summ$mean
+  est_lower <- summ$`2.5%`
+  est_upper <- summ$`97.5%`
 
-  # 5. Return tibble with true vs. estimated values
+  # 5. Return tibble with true vs. estimated values AND coverage check
   tibble(
     true_rate = true_rate,
     true_noise = true_noise,
-    estimated_rate = est_theta,
+    estimated_rate = est_mean,
+    lower_ci = est_lower,
+    upper_ci = est_upper,
+    # Check if the true value falls within the 95% CI
+    captured = (true_rate >= est_lower & true_rate <= est_upper),
     seed = seed,
     n_trials = n_trials
   )
@@ -577,8 +594,7 @@ recovery_grid <- expand_grid(
 
 # --- Run Recovery in Parallel ---
 # Set up parallel plan (use slightly fewer cores than available)
-# plan(multisession, workers = availableCores() - 1)
-plan(multisession, workers = 4) # Example: use 4 cores
+plan(multisession, workers = availableCores() - 2) 
 
 if (regenerate_simulations || !file.exists(recovery_file)) {
   cat("Running parameter recovery simulation...\n")
@@ -601,6 +617,14 @@ if (regenerate_simulations || !file.exists(recovery_file)) {
   recovery_results <- read_csv(recovery_file)
   cat("Loaded existing parameter recovery results from:", recovery_file, "\n")
 }
+
+# --- Check Coverage Probability ---
+coverage_summary <- recovery_results %>%
+  group_by(n_trials, true_noise) %>%
+  summarize(coverage = mean(captured))
+
+print("Parameter Recovery Coverage (Target = 0.95):")
+print(coverage_summary)
 
 # --- Visualize Recovery Results ---
 ggplot(recovery_results, aes(x = true_rate, y = estimated_rate)) +
@@ -813,7 +837,17 @@ We can see that the model has now estimated both the bias and the role of previo
 
 ### Memory Model 2: Internal State Variable
 
-Instead of feeding memory as external data, we can model it as an internal state that updates within the model using Stan's `transformed parameters` block. This approach is more flexible for implementing specific learning or forgetting rules. Here, we model memory as the running average of the opponent's choices.
+Instead of feeding memory as external data, we can model it as an internal state that updates within the model.
+
+For this specific model—where memory is defined simply as the running average of the opponent's choices—the update rule depends only on the observed data (other), and not on any parameters we are trying to estimate (like bias or beta). Therefore, we should calculate this in Stan's `transformed data` block.
+
+In my first version of these notes, I had rather used the `transformed parameters` to calculate memory. This led me to better understand how these blocks work:
+
+* code in transformed data runs only once before sampling begins. 
+
+* code in transformed parameters is calculated at every single step of the MCMC chain.
+
+In other words, if the variable we need to calculate is dependent on data only, calculating it in transformed data is more efficient. If it depends on parameters that are being estimated, then we need to calculate it in transformed parameters. 
 
 ```{r, 04 internal memory stan model}
 ## Create the data
@@ -832,24 +866,24 @@ data {
  array[n] int other;
 }
 
+transformed data {
+  // We calculated memory here because it depends ONLY on observed data ('other').
+  // In transformed data it's calculated once, in transformed parameters it'd be calculated at every iteration, which is unnecessary and computationally costly.
+  vector[n] memory;
+  
+  memory[1] = 0.5;
+  
+  for (trial in 1:(n-1)) {
+     memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
+     // Numerical stability clips
+     if (memory[trial + 1] < 0.01) { memory[trial + 1] = 0.01; }
+     if (memory[trial + 1] > 0.99) { memory[trial + 1] = 0.99; }
+  }
+}
+
 parameters {
   real bias;
   real beta;
-}
-
-transformed parameters {
-  vector[n] memory;
-  
-  for (trial in 1:n) {
-    if (trial == 1) {
-      memory[trial] = 0.5;
-    } 
-    if (trial < n) {
-      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
-      if (memory[trial + 1] == 0) { memory[trial + 1] = 0.01; }
-      if (memory[trial + 1] == 1) { memory[trial + 1] = 0.99; }
-    }
-  }
 }
 
 model {
@@ -858,9 +892,12 @@ model {
   target += normal_lpdf(beta | 0, .5);
   
   // Likelihood
-  for (trial in 1:n) {
-    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
-  }
+  // A trial by trial version would be
+  // for (trial in 1:n) {
+  //   target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
+  // }
+  // However, we vectorize the likelihood for speed.
+  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
 }
 
 generated quantities {
@@ -1488,29 +1525,27 @@ ggplot(draws_df) +
 
 ## Relationship to Rescorla-Wagner
 
-The Rescorla-Wagner model of learning follows the form:
+The Rescorla-Wagner model of learning—which drives the Reinforcement Learning agents we will build in  in a later chapter follows the form:
 
-V(t+1) = V(t) + α(λ - V(t))
+$$V_{t+1} = V_{t} + \alpha (R_{t} - V_{t})$$
 
 where:
 
-* V(t) is the current estimate
+* $V_{t}$ is the current Value estimate (in our code: memory[t]).
 
-* α is the learning rate
+* $\alpha$ is the Learning Rate (in our code: forgetting).
 
-* λ is the observed outcome
+* $R_{t}$ is the Reward or Outcome (in our code: other[t]).
 
-* (λ - V(t)) is the prediction error
+* $(R_{t} - V_{t})$ is the Prediction Error.
 
-Our memory model with forgetting parameter follows a very similar structure:
+Our memory model with a forgetting parameter follows a very similar structure:$$\text{memory}_{t+1} = (1 - \text{forgetting}) \times \text{memory}_{t} + \text{forgetting} \times \text{outcome}_{t}$$If we expand this, we can see it is mathematically identical to the Rescorla-Wagner update rule:$$\begin{aligned}
+\text{memory}_{t+1} &= \text{memory}_{t} - \text{forgetting} \times \text{memory}_{t} + \text{forgetting} \times \text{outcome}_{t} \\
+\text{memory}_{t+1} &= \text{memory}_{t} + \text{forgetting} \times (\text{outcome}_{t} - \text{memory}_{t})
+\end{aligned}$$
 
-memory(t+1) = (1-forgetting) * memory(t) + forgetting * outcome(t)
+This reveals that our "exponential forgetting" memory model is actually a standard Reinforcement Learning agent with a big fake moustache. The forgetting parameter dictates how quickly the agent updates their beliefs (value estimate) based on new prediction errors.
 
-This can be rewritten as:
-
-memory(t+1) = memory(t) + forgetting * (outcome(t) - memory(t))
-
-Making the parallel clear: our forgetting parameter acts exactly as the learning rate α in Rescorla-Wagner and the models are equivalent.
 
 ### Connection to Kalman Filters
 

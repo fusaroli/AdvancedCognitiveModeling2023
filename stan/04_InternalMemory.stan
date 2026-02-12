@@ -7,24 +7,24 @@ data {
  array[n] int other;
 }
 
+transformed data {
+  // We calculated memory here because it depends ONLY on observed data ('other').
+  // In transformed data it's calculated once, in transformed parameters it'd be calculated at every iteration, which is unnecessary and computationally costly.
+  vector[n] memory;
+  
+  memory[1] = 0.5;
+  
+  for (trial in 1:(n-1)) {
+     memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
+     // Numerical stability clips
+     if (memory[trial + 1] < 0.01) { memory[trial + 1] = 0.01; }
+     if (memory[trial + 1] > 0.99) { memory[trial + 1] = 0.99; }
+  }
+}
+
 parameters {
   real bias;
   real beta;
-}
-
-transformed parameters {
-  vector[n] memory;
-  
-  for (trial in 1:n) {
-    if (trial == 1) {
-      memory[trial] = 0.5;
-    } 
-    if (trial < n) {
-      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
-      if (memory[trial + 1] == 0) { memory[trial + 1] = 0.01; }
-      if (memory[trial + 1] == 1) { memory[trial + 1] = 0.99; }
-    }
-  }
 }
 
 model {
@@ -33,9 +33,12 @@ model {
   target += normal_lpdf(beta | 0, .5);
   
   // Likelihood
-  for (trial in 1:n) {
-    target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
-  }
+  // A trial by trial version would be
+  // for (trial in 1:n) {
+  //   target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
+  // }
+  // However, we vectorize the likelihood for speed.
+  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
 }
 
 generated quantities {
