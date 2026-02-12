@@ -452,12 +452,12 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 </ul>
 <p>These verbal models, derived from our initial analysis, are the hypotheses we will formalize and test in subsequent chapters. Let’s briefly describe the core idea of each:</p>
 <ul>
-<li><strong>Random Choice Model:</strong>
+<li><p><strong>Random Choice Model:</strong></p>
 <ul>
 <li><em>Mechanism:</em> Choices are made randomly, potentially with a fixed bias (e.g., 60% right, 40% left), independent of game history or opponent actions.</li>
 <li><em>Rationale:</em> Serves as the simplest baseline. It reflects the possibility that players might try to be deliberately unpredictable, haven’t figured out a strategy, or that their behavior appears random from the observer’s perspective. It introduces the basic concept of choice probability (the <span class="math inline">\(\theta\)</span> parameter we’ll estimate later).</li>
 </ul></li>
-<li><strong>Win-Stay-Lose-Shift (WSLS):</strong>
+<li><p><strong>Win-Stay-Lose-Shift (WSLS):</strong></p>
 <ul>
 <li><em>Mechanism:</em> A simple heuristic: repeat the last choice if it led to a win, switch to the other choice if it led to a loss.</li>
 <li><em>Rationale:</em> Captures the intuitive tendency to stick with success and abandon failure. This is a common heuristic observed in simple learning tasks.</li>
@@ -465,27 +465,62 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <span class="math display">\[P(\text{stay} | \text{outcome}_{t-1}) = \begin{cases} p_{stay\_win} &amp; \text{if win at } t-1 \\ p_{stay\_loss} &amp; \text{if loss at } t-1 \end{cases}\]</span>
 (Note: <span class="math inline">\(p_{shift} = 1 - p_{stay}\)</span>). The original formula used <span class="math inline">\(p_w\)</span> for staying after a win and <span class="math inline">\(1-p_l\)</span> for staying after a loss (meaning <span class="math inline">\(p_l\)</span> is the probability of <em>shifting</em> after a loss).</li>
 </ul></li>
-<li><strong>Memory-Based Bias Tracking:</strong>
+<li><p><strong>Win-Stay-Lose-Shift (WSLS) as Logistic Regression:</strong></p>
 <ul>
-<li><em>Mechanism:</em> Assumes players estimate the opponent’s choice bias (e.g., probability of choosing ‘right’) based on past observations and use this estimate to guide their own choices (e.g., predict and counter).</li>
-<li><em>Rationale:</em> Reflects the observation that players seem to react to opponent tendencies. Addresses the “what information do players use?” question.</li>
-<li><em>Variations:</em>
+<li><em>Mechanism:</em> While often described as a deterministic rule (“if win, stay”), in cognitive modeling we treat it as a probabilistic tendency. The probability of repeating a choice depends on the previous outcome’s success.</li>
+<li><em>Formalization:</em> We can define the probability of staying (<span class="math inline">\(P_{stay}\)</span>) using a <strong>logit link function</strong>, which maps a continuous “decision variable” onto a 0-1 probability scale:
+<span class="math display">\[P(choice_{t} = choice_{t-1} | outcome_{t-1}) = \text{logit}^{-1}(\beta_0 + \beta_1 \cdot outcome_{t-1})\]</span>
+Here, <span class="math inline">\(\beta_1\)</span> represents the <em>sensitivity</em> to the feedback. A high <span class="math inline">\(\beta_1\)</span> approximates the deterministic heuristic, while a lower <span class="math inline">\(\beta_1\)</span> captures “noisy” application of the rule.</li>
+<li><em>Rationale:</em> This transforms a rigid verbal rule into a continuous parameter space we can estimate from data.</li>
+</ul></li>
+<li><p><strong>Learning Mechanisms: A Hierarchy of Uncertainty:</strong>
+When we say an agent “learns,” we usually mean they are estimating some hidden value (like the probability of the opponent playing “Right”). But <em>how</em> do they update that estimate? We can organize candidate models by how sophisticated they are about <strong>history</strong> and <strong>uncertainty</strong>.</p>
 <ul>
-<li><em>Perfect Memory:</em> Uses all past trials equally to estimate the bias. (Less plausible cognitively).</li>
-<li><em>Imperfect/Limited Memory:</em> Uses only recent trials (e.g., last <em>n</em> trials) or gives more weight to recent trials (exponential decay), reflecting cognitive constraints.</li>
+<li><strong>1. The Moving Average (Windowed Memory):</strong> * <em>Concept:</em> “I think the next value will be exactly like the average of the last N values.”
+<ul>
+<li><em>The Math:</em> <span class="math inline">\(\mu_{t} = \frac{1}{N} \sum_{i=t-N+1}^{t} x_{i}\)</span></li>
+<li><em>Critique:</em> This approach gives equal weight to every trial in the window and zero weight to anything before it. It has no “confidence” metric—it’s just a raw average.</li>
+</ul></li>
+<li><strong>2. Reinforcement Learning (Rescorla-Wagner):</strong>
+<ul>
+<li><em>Concept:</em> “I keep a running estimate, and I nudge it slightly whenever I’m wrong.”</li>
+<li><em>The Math:</em> The classic update rule is <span class="math inline">\(V_{t} = V_{t-1} + \alpha \cdot (Reward_{t} - V_{t-1})\)</span>.</li>
+<li><em>Pedagogical Derivation:</em> Why is this “learning”? Notice that <span class="math inline">\((Reward_{t} - V_{t-1})\)</span> is the <strong>Prediction Error (PE)</strong>. If the reward was higher than expected, the PE is positive, and the value <span class="math inline">\(V\)</span> increases.</li>
+<li><em>Connection to Memory:</em> If we expand this equation recursively, we can see that the current value is actually a weighted sum of <em>all</em> past rewards, where the weight decays exponentially: <span class="math inline">\(Weight_{k} = \alpha(1-\alpha)^k\)</span>.</li>
+<li><em>Implication:</em> The learning rate <span class="math inline">\(\alpha\)</span> isn’t just a “speed” parameter; it defines the <strong>effective memory</strong>. A high <span class="math inline">\(\alpha\)</span> means the agent relies heavily on the most recent trial (fast forgetting).</li>
+</ul></li>
+<li><strong>3. The Bayesian Update (Static Uncertainty):</strong>
+<ul>
+<li><em>Concept:</em> “I don’t just have a number; I have a <em>belief distribution</em>. I only update if the data is trustworthy enough to move my solid prior.”</li>
+<li><em>The Math:</em> In a Bayesian framework, the update weight (often called the <strong>Kalman Gain</strong>, <span class="math inline">\(K\)</span>) emerges from the ratio of uncertainties:
+<span class="math display">\[K = \frac{\sigma^{2}_{prior}}{\sigma^{2}_{prior} + \sigma^{2}_{noise}}\]</span></li>
+<li><em>Key Insight:</em> If the world is truly static, your prior becomes more and more precise over time (<span class="math inline">\(\sigma^2_{prior} \to 0\)</span>). This means <span class="math inline">\(K \to 0\)</span>: eventually, you stop learning because you are “sure” you know the truth. This is great for fixed values but terrible for changing environments.</li>
+</ul></li>
+<li><strong>4. The Kalman Filter (Dynamic Uncertainty):</strong>
+<ul>
+<li><em>Concept:</em> “The world is not static; it drifts. Even if I was sure yesterday, my knowledge degrades today.”</li>
+<li><em>The Math:</em> The Kalman filter adds a <strong>Process Noise (<span class="math inline">\(Q\)</span>)</strong> to the uncertainty at every time step. This prevents the agent from ever becoming “too sure.” The gain becomes dynamic:
+<span class="math display">\[K_{t} = \frac{P_{t|t-1}}{P_{t|t-1} + R}\]</span>
+(Where <span class="math inline">\(P_{t|t-1}\)</span> is the predicted uncertainty, which includes the new process noise).</li>
+<li><em>Implication:</em> Unlike the static Bayesian update, the learning rate here does <em>not</em> go to zero. It settles at a balance point. The agent stays permanently alert to changes.</li>
+</ul></li>
+<li><strong>5. The Hierarchical Gaussian Filter (HGF - Meta-Learning):</strong>
+<ul>
+<li><em>Concept:</em> “The world changes, but sometimes it changes <em>fast</em> (volatile) and sometimes <em>slow</em> (stable). I need to learn the speed of change.”</li>
+<li><em>The Math:</em> The HGF extends the Kalman logic by assuming the <strong>volatility itself</strong> is a hidden state that must be learned.
+<ol style="list-style-type: decimal">
+<li><em>Level 1:</em> What is the current value?</li>
+<li><em>Level 2:</em> How volatile is the value? (i.e., “Is the opponent switching strategies right now?”)</li>
+</ol></li>
+<li><em>Implication:</em> This creates a <strong>dynamic learning rate</strong>. When the agent detects high volatility (Level 2), it “opens up” its learning rate at Level 1 to adapt explosively. When it detects stability, it tightens the learning rate to ignore noise.</li>
 </ul></li>
 </ul></li>
-<li><strong>Reinforcement Learning (RL):</strong>
-<ul>
-<li><em>Mechanism:</em> Players learn the expected value of each choice (‘left’ vs. ‘right’) based on the rewards (wins/losses) received. Choices are made based on these learned values (e.g., choosing the option with the higher expected value more often). Learning occurs trial-by-trial based on prediction errors (difference between expected and actual reward) modulated by a <em>learning rate</em>.</li>
-<li><em>Rationale:</em> Provides a formal framework for learning from feedback, naturally incorporating imperfect memory (controlled by the learning rate – high learning rate means relying more on recent trials). Connects to broader theories of learning in psychology and neuroscience. <em>(Preview: Formal RL models will be detailed in Chapter 12).</em></li>
-</ul></li>
-<li><strong>k-ToM (Theory of Mind):</strong>
+<li><p><strong>k-ToM (Theory of Mind):</strong></p>
 <ul>
 <li><em>Mechanism:</em> Players explicitly model their opponent’s strategy. Level 0 (0-ToM) assumes the opponent is random/biased. Level 1 (1-ToM) assumes the opponent is using a 0-ToM strategy and tries to best respond. Level 2 (2-ToM) assumes the opponent is using a 1-ToM strategy, and so on.</li>
 <li><em>Rationale:</em> Directly addresses the strategic, interactive nature of the game, where predicting the opponent’s <em>intentions</em> or <em>model</em> of you might be crucial, going beyond simple pattern detection. <em>(Preview: These models will be discussed in later chapters).</em></li>
 </ul></li>
-<li><strong>Combined/Switching Strategies:</strong>
+<li><p><strong>Combined/Switching Strategies:</strong></p>
 <ul>
 <li><em>Mechanism:</em> Real behavior might involve combining elements of the above (e.g., WSLS with a baseline bias) or switching between strategies (e.g., tracking bias for a while, then switching to random). Generating complex, non-stationary sequences might also be a strategy to appear unpredictable.</li>
 <li><em>Rationale:</em> Generating random output is hard, so if we want to confuse the opponent, we could act first choosing tail 8 times, and then switching to a WSLS strategy for 4 trials, and then choosing head 4 times. Or implementing any of the previous strategies and doing the opposite “to mess with the opponent”. The combined strategies model also acknowledges that single, simple models might be insufficient. Motivates concepts like <em>mixture models</em> (Chapter 8) where behavior is seen as a probabilistic blend of simpler strategies, or models where strategy parameters change over time. Yet these mixture models are hard to fit to data and can quickly spiral out of control (many possible combinations)</li>
@@ -516,10 +551,16 @@ code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warni
 <ul>
 <li><strong>Lapse Rate:</strong> A probability (e.g., <span class="math inline">\(\epsilon\)</span>) that on any given trial, the agent makes a random choice instead of following their primary strategy (as used in the Mixture Model chapter).</li>
 <li><strong>Decision Noise (Softmax):</strong> In models where choices are based on comparing values (like RL), a ‘temperature’ parameter can control the stochasticity. High temperature leads to more random choices, low temperature leads to more deterministic choices based on values.</li>
-<li><strong>Imperfect Heuristics:</strong> Parameters within a strategy might reflect imperfect application (e.g., in WSLS, <span class="math inline">\(p_{stay\_win} &lt; 1\)</span> or <span class="math inline">\(p_{shift\_loss} &lt; 1\)</span>). This can also capture asymmetric responses to feedback (e.g., being more likely to shift after a loss than stay after a win).</li>
-</ul></li>
+<li><strong>Imperfect Heuristics:</strong> Parameters within a strategy might reflect imperfect application (e.g., in WSLS, <span class="math inline">\(p_{stay\_win} &lt; 1\)</span> or <span class="math inline">\(p_{shift\_loss} &lt; 1\)</span>). This can also capture asymmetric responses to feedback (e.g., being more likely to shift after a loss than stay after a win).
+<ul>
 <li><em>Exploration:</em> Note that we talked about noise and errors, but random deviations can also be framed as adaptive exploration, allowing the agent to test actions that their current strategy deems suboptimal.</li>
+</ul></li>
+</ul></li>
 </ul>
+</div>
+<div id="a-note-on-ideal-observers" class="section level4 hasAnchor" number="3.7.1.4">
+<h4><span class="header-section-number">3.7.1.4</span> A Note on Ideal Observers<a href="building-models-of-strategic-decision-making.html#a-note-on-ideal-observers" class="anchor-section" aria-label="Anchor link to header"></a></h4>
+<p>It is important to distinguish between <strong>Heuristic Models</strong> (like WSLS) and <strong>Ideal Observer Models</strong> (like the Kalman Filter or HGF). Heuristics attempt to describe the <em>process</em> a human uses. Ideal observers describe the <em>optimal computation</em> given the uncertainty. When we fit models like the HGF to human data, we are effectively asking: “In what specific ways does the human deviate from optimality?” (e.g., do they overestimate how volatile the opponent is?).</p>
 </div>
 </div>
 <div id="relationships-between-models" class="section level3 hasAnchor" number="3.7.2">
