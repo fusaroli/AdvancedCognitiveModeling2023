@@ -9,16 +9,19 @@ This chapter bridges the gap between observing behavior and developing testable 
 
 * **Identify Key Modeling Steps:** Understand the process of moving from behavioral observations and participant reflections to formulating initial verbal theories of underlying cognitive strategies.
 * **Appreciate Theory Building Challenges:** Recognize common issues in theory development, such as the participant vs. researcher perspective, the need for simplification, and incorporating known cognitive constraints.
-* **Generate Candidate Models:** Propose several distinct verbal models (e.g., random choice, simple heuristics, memory-based strategies) that could plausibly explain behavior in a strategic decision-making task.
-* **Connect to Formalization:** Understand *why* translating these verbal models into precise, formal models (covered in the next chapter) is a necessary step for rigorous testing and simulation.
+* **Conceptualize Learning Mechanisms:** Propose distinct models (e.g., random choice, heuristics, RL) and organize them into a unified framework based on how they process prediction errors.
+* **Connect to Formalization:**  Understand the "Update Rule" ($\text{New} = \text{Old} + \text{Learning Rate} \times \text{Error}$) as a universal grammar of learning that connects simple heuristics to complex cognitive strategies.
 
 ## Introduction: Observing Behavior to Theorize Mechanisms
 
 Chapter 1 emphasized the importance of modeling underlying generative mechanisms. To do this for cognition, we first need a behavior to explain. This chapter uses the **Matching Pennies game** as our initial cognitive phenomenon. It's a simple strategic interaction, yet rich enough to illustrate the process of developing and refining cognitive models.
 
 Our goal here is not yet to build the final computational models, but to practice the crucial preceding steps:
+
 1.  Observing behavior in a specific task (through experiments and data exploration).
+
 2.  Reflecting on potential cognitive strategies and constraints (drawing on observations, participant reports, and cognitive science principles).
+
 3.  Formulating initial *verbal* theories or candidate models that describe the potential underlying mechanisms.
 
 This process lays the groundwork for Chapter 3, where we will translate these verbal ideas into precise, formal models ready for simulation and testing.
@@ -29,6 +32,8 @@ In the matching pennies game, two players engage in a series of choices. One pla
 
 For an introduction see the paper: Waade, Peter T., et al. "Introducing tomsup: Theory of mind simulations using Python." Behavior Research Methods 55.5 (2023): 2197-2231.
 
+For fun data involving different kinds of primates playing the game, see: Devaine, M., San-Galli, A., Trapanese, C., Bardino, G., Hano, C., Saint Jalme, M., ... & Daunizeau, J. (2017). Reading wild minds: a computational assay of theory of mind sophistication across seven primate species. PLoS computational biology, 13(11), e1005833. The data is available in Assignment 2 (for the students at AU/CogSci).
+
 ## Game Structure
 
 The game proceeds as follows:
@@ -37,7 +42,7 @@ The game proceeds as follows:
 2. Each round, both players choose either "left" or "right" to indicate where they believe a penny is hidden
 3. The matcher wins by choosing the same hand as their opponent
 4. The hider wins by choosing the opposite hand
-5. Points are awarded: +1 for winning, -1 for losing
+5. Points are awarded: +1 for winning, -1 (or 0, depending on the version) for losing
 6. Repeat
 
 This simple structure creates a rich environment for studying decision-making strategies, learning, and adaptation.
@@ -45,6 +50,8 @@ This simple structure creates a rich environment for studying decision-making st
 ## Empirical Investigation
 
 ### Data Collection Protocol
+
+[NOTES FOR FUTURE YEARS: MAYBE REPLACE WITH THE PRIMATE DATA?]
 
 If you are attending my class you have been (or will be) asked to participate in a matching pennies game. This game provides the foundation for our modeling efforts. By observing gameplay and collecting data, we can develop models that capture the cognitive processes underlying decision-making in strategic situations.
 
@@ -59,9 +66,7 @@ Through the careful observation and discussion of gameplay we do in class, sever
 
 Below you can observe how a previous year of CogSci did against bots (computational agents) playing according to different strategies. Look at the plots below, where the x axes indicate trial, the y axes how many points the CogSci'ers scored (0 being chance, negative means being completely owned by the bots, positive owning the bot) and the different colors indicate different strategies employed by the bots. Strategy "-2" was a Win-Stay-Lose-Shift bot: when it got a +1, it repeated its previous move (e.g. right if it had just played right), otherwise it would perform the opposite move (e.g. left if it had just played right). Strategy "-1" was a biased Nash both, playing "right" 80% of the time. Strategy "0" indicates a reinforcement learning bot; "1" a bot assuming you were playing according to a reinforcement learning strategy and trying to infer your learning and temperature parameters; "2" a bot assuming you were following strategy "1" and trying to accordingly infer your parameters.
 
-```{r 02 plot collective performance in MP}
-# Load necessary libraries
-library(tidyverse)
+
 
 ```{r 02-load-and-clean-data, message=FALSE, warning=FALSE}
 library(tidyverse)
@@ -164,12 +169,11 @@ The crucial next step is to distill these rich, complex observations into simpli
 
 * **Identifying Core Patterns:** What recurring behaviors seem most important? (e.g., reacting to wins/losses, tracking opponent frequencies).
 
-* **Simplifying:** Can we capture the essence of a strategy without modeling every detail of a player's thought process or interaction? (e.g., modeling WSLS instead of complex pattern detection).
+* **Simplifying:** Can we capture the essence of a strategy without modeling every detail of a player's thought process or interaction? (e.g., modeling just previous behaviors as possible inputs, instead of complex patterns in face expressions or movements that real humans likely use when trying to guess which hand has the penny).
 
-* **Drawing on Cognitive Principles:** How do known cognitive constraints (like limited memory or processing errors, discussed below) shape plausible strategies?
+* **Drawing on Cognitive Principles:** How do known cognitive constraints (like limited memory or processing errors) shape plausible strategies?
 
-
-For instance, observing that players often change their choice after a loss might lead us to propose a "Lose-Shift" component as part of a candidate model. Observing that performance differs against biased vs. adaptive bots suggests players might be trying to learn or adapt, leading to memory-based or learning models.
+For instance, observing that players often change their choice after a loss might lead us to propose a "If Lose Then Shift" component as part of a candidate model. Observing that performance differs against biased vs. adaptive bots suggests players might be trying to learn or adapt, leading to memory-based or learning models.
 
 This process generates *verbal models* – initial hypotheses about the strategies at play. Key modeling considerations guide this translation:
 
@@ -191,8 +195,10 @@ Another important component of the distinction is that participants leave in a r
 
 ## Candidate Models: A Hierarchy of Cognitive Complexity
 
-Based on our behavioral observations and cognitive principles (and the many discussions in class during the years), we can organize our candidate models into a hierarchy. Note that this is a chapter on verbal models, but I couldn't resist adding some discussion of the math behind the verbal intuitions...
-We start with simple agents that ignore history, move to learning agents that track uncertainty and volatility, and conclude with strategic agents that model the opponent's mind.
+Based on behavioral observations and cognitive principles, the many discussions in class during the years have advanced a variety of models, which I'm here organizing into a hierarchy based on their conception of learning. 
+We start with simple agents that ignore history, move to learning agents that track first average outcomes, then also uncertainty and volatility, and conclude with strategic agents that model the opponent's mind. To make their conceptual continuity more explicit, I couldn't resist adding some discussion of the math behind the verbal intuitions and pointing to how each model can be recast in terms of an update rule: $$\text{New Belief} = \text{Old Belief} + \text{Learning Rate} \cdot \text{Predictive Error}$$. This format unifies the different models under a common mathematical framework, making it easier to understand their relationships and differences.
+
+Also note that in the formula below, 'Belief' is a placeholder. If we are modeling a coin flipper, the belief is a probability ($\theta$). If we are modeling betting, it might be an expected reward value ($V$). If we are modeling playing strategies, it might be a prediction of the opponent's move. As it should be obvious, those are partially overlapping conceptualizations.
 
 ### Level 0: The Static Agent (No Learning)
 
@@ -205,41 +211,55 @@ They simply act according to a fixed internal preference.
 
 * *Traditional Formulation (Bernoulli Process)*: We model the choice $y_t$ at trial $t$ as a draw from a Bernoulli distribution with a fixed rate parameter $\theta$: $$y_t \sim \text{Bernoulli}(\theta)$$
 
-* *The "Update" Rule*: Because this agent is static, there is no update rule, in other words, a learning of 0. The parameter $\theta$ remains constant regardless of wins or losses. $$\theta_{t+1} = \theta_{t}$$
+* *The "Update" Rule*: Because this agent is static, there is no update rule, in other words, a learning of 0. The parameter $\theta$ remains constant regardless of wins or losses. $$\theta_{t+1} = \theta_{t} + \text{Learning Rate} \cdot \text{Predictive Error}$$ where $\text{Learning Rate} = 0$ and therefore the formula reduces to $$\theta_{t+1} = \theta_{t}$$.
 
 * *Variable Definitions*: 
   * $y_t \in \{0, 1\}$: The choice (e.g., Left/Right).
   * $\theta \in [0, 1]$: The fixed probability of choosing 1 (bias).
   
-* *Looking Ahead*: This model might seem too simple to be useful, but it is the foundation of Bayesian inference. In the next chapter, we will write a function to simulate this agent. In the following chapter, we will then learn how to take a sequence of choices and mathematically work backwards to find the most likely value of $\theta$.
+* *Looking Ahead*: This model might seem too simple to be useful, but never underestimate the power of null models! In a study using k-ToM models (see below), we realized that for k = 6 or above, the model behaved in a way that was practically indistinguishabe from a biased agent. Also, a simple model allows us to build skills in reasonable steps. In the next chapter, we will write code to simulate data according to these models and in the following chapter, we will then learn how to take a sequence of choices and mathematically work backwards to find the most likely value of the model parameters. In all these cases, being able to start with a simple model is crucial to build intuition and skills before moving to more complex models.
+
+[FIND REF OF PAPER USING THIS]
   
 ### Level 1: Heuristics & The Immediate Past
 
-The next step up is an agent that reacts to feedback but has a "memory" of only one trial. They live entirely in the moment.
+The next step up is an agent that learns minimally: it reacts to feedback but has a "memory" of only one trial. 
 
 #### Deterministic Win-Stay-Lose-Shift (WSLS):
 
-* *Concept*: A rigid heuristic: "If I won, I do the same thing. If I lost, I switch."
+* *Concept*: A rigid heuristic: "If I won, I do the same thing. If I lost, I switch." This can be viewed as an agent with zero memory who effectively "re-learns" the world from scratch after every single feedback.
 
 * *Traditional Formulation (Conditional Probability)*: $$P(y_t = y_{t-1} | outcome_{t-1}) = \begin{cases} 1 & \text{if } outcome_{t-1} = \text{win} \\ 0 & \text{if } outcome_{t-1} = \text{loss} \end{cases}$$
 
-* *Variable Definitions*:$outcome_{t-1}$: The feedback (Win/Loss) from the previous trial.
+* *The "Update" Rule*: We can treat the "Probability of Staying" ($P_{stay}$) as a value that is updated trial-by-trial.$$P_{stay, t+1} = P_{stay, t} + \text{Learning Rate} \cdot (Outcome_t - P_{stay, t})$$ Where $\text{Learning Rate} = 1$. Because the agent learns instantly from the immediate past, the formula reduces to: $$P_{stay, t+1} = P_{stay, t} + 1 \cdot (Outcome_t - P_{stay, t})$$$$P_{stay, t+1} = Outcome_t$$
+
+  * Implication: If the outcome was a Win ($1$), the probability of staying becomes $1$. If the outcome was a Loss ($0$), the probability of staying becomes $0$. This mathematically formalizes the idea of "instant forgetting."
+
+* *Variable Definitions*:$outcome_{t-1}$: $outcome_{t-1} \in \{0, 1\}$: The feedback from the previous trial, where 1 = Win and 0 = Loss
+
+* *Note: The Physics View (Ising Formulation)* [only for nerds]: While we typically code choices as 0/1 for logistic regression, physicists and network theorists often code binary states as "spins": -1 (Left) and +1 (Right). If we also code the outcome as -1 (Loss) and +1 (Win), the WSLS update rule becomes mathematically elegant: $$y_t = outcome_{t-1} \cdot y_{t-1}$$ Why does this work? If Win (+1): The equation becomes $y_t = 1 \cdot y_{t-1}$. The sign stays the same (Stay). If Loss (-1): The equation becomes $y_t = -1 \cdot y_{t-1}$. The sign flips (Shift). This formulation highlights that "shifting" is mathematically equivalent to sign inversion. This connects cognitive shifting to "spin glass" or ising models in physics (e.g., Stephens & Bialek, 2010), and is useful to know of it as it sometimes simplifies the mathematical equations of your models.
+
+[FIND REF OF PAPERS USING THIS MODES]
 
 #### Probabilistic Win-Stay-Lose-Shift (Logistic Regression):
 
-* *Concept*: We relax the strict rule. The agent is more likely to stay after a win, but real behavior is noisy.
+* *Concept*: We relax the strict rule. The agent is more likely to stay after a win and shift after a loss, but real behavior is noisy (stochastic, probabilistic).
 
-* *Traditional Formulation (GLM)*: We define the probability of "staying" ($P_{stay}$) as a function of the previous outcome using a logistic curve. $$P(stay_t) = \text{logit}^{-1}(\beta_0 + \beta_1 \cdot outcome_{t-1})$$
+* *Traditional Formulation (GLM)*: We define the probability of "staying" ($P_{stay}$) as a function of the previous outcome using a logistic curve. 
+$$P(stay_t) = \text{logit}^{-1}(\beta_0 + \beta_1 \cdot outcome_{t-1})$$. 
+Note that we can think of the reactions to feedback as symmetric (probability of staying when winning equal to the possibility of shifting when losing), or asymmetric (e.g. the agent might be more sensitive to losses than wins, or vice versa). In the latter case, we'd have an equation like: $$P(stay_t) = \text{logit}^{-1}(\beta_0 + \beta_1 \cdot win_{t-1} + \beta_2 \cdot loss_{t-1})$$
 
-* *The "Update" Rule (Markov Transition)*: While not "learning" a value, the agent updates their action probability based on the state of the previous trial. $$P(y_t = y_{t-1}) = \frac{1}{1 + e^{-(\beta_0 + \beta_1 \cdot outcome_{t-1})}}$$
+* *The "Update" Rule*: To fit our hierarchy, we treat the agent's internal Decision Value ($Q$) as the state being updated.$$Q_{t+1} = Q_{t} + \text{Learning Rate} \cdot (\text{Target}_t - Q_{t})$$Where $\text{Learning Rate} = 1$ (Instant Update) and the Target is the weighted outcome ($\beta_0 + \beta_1 \cdot outcome_t$).Reduction:$$Q_{t+1} = \beta_0 + \beta_1 \cdot outcome_t$$Implication: Just like the Deterministic agent, this agent "forgets" the distant past instantly. However, a "Win" does not guarantee a Stay ($P=1$); it simply pushes the decision value to a high—but not infinite—number.
 
-* *Variable Definitions*:
+* *Variable Definitions*: 
 
-  * $\text{logit}^{-1}(x) = \frac{1}{1+e^{-x}}$: The inverse logit (sigmoid) function.
+  * $Q$: The internal log-odds of staying.
 
-  *$\beta_0$: The baseline tendency to stay (perseveration).
+  * $\text{logit}^{-1}(x) = \frac{1}{1+e^{-x}}$: The sigmoid function mapping value to probability.
   
-  * $\beta_1$: The sensitivity to feedback. A high $\beta_1$ makes the agent look like the deterministic heuristic above; $\beta_1 \approx 0$ implies the agent ignores feedback.
+  * $\beta_1$: Sensitivity to feedback. High $\beta_1$ approximates the deterministic heuristic; $\beta_1 \approx 0$ implies the agent ignores feedback.
+  
+[FIND REF OF PAPER USING THIS e.g., Zhang & Lee, 2010; Worthy et al., 2013]
 
 ### Level 2: Integrating History (The Moving Average)
 
@@ -249,65 +269,88 @@ Real agents usually care about more than just the last trial. They integrate his
 
 * *Concept*: "I think the future will look like the average of the recent past."
 
-* *Traditional Formulation (Batch Average)*:$$\mu_{t} = \frac{1}{N} \sum_{i=1}^{N} x_{t-i}$$
+* *Traditional Formulation (Batch Average)*: $$V_{t} = \frac{1}{N} \sum_{i=0}^{N-1} Outcome_{t-i}$$
 
-* *Transformation to Update Rule*: To make this iterative, we can express the new average $\mu_t$ as the old average $\mu_{t-1}$ plus a correction. $$\mu_{t} = \mu_{t-1} + \frac{1}{N} (x_{t} - x_{t-N})$$
+* *Transformation to Update Rule*: To avoid recalculating the sum from scratch, we can update the average by adding the new outcome and removing the oldest outcome.$$V_{t} = V_{t-1} + \frac{1}{N} \cdot (Outcome_{t} - Outcome_{t-N})$$
 
-* *Critique*: This reveals a massive memory cost: to update the average, in this mathematical formulation, the agent needs to remember exactly what happened $N$ trials ago ($x_{t-N}$) to "remove" it.
+* *Critique (The Memory Problem)*: This formulation reveals a massive cognitive cost. To perform this update, the agent cannot just store the current average ($V_{t-1}$); they must remember exactly what happened $N$ trials ago ($Outcome_{t-N}$) to "remove" it from the sum. Further, a memory from 10 trials ago is recalled perfectly, but a memory from 11 trials ago vanishes instantly. This is biologically implausible.
+  * The Mismatch: This does not fit the standard "Prediction Error" update rule. It compares the new reality ($Outcome_t$) to the oldest reality ($Outcome_{t-N}$), rather than comparing reality to expectation.
 
 * *Variable Definitions*:
-  * $\mu_t$: The predicted value at trial $t$.
-  
+  * $V_t$: The estimated value (probability of winning/Right) at trial $t$.
   * $N$: The window size (e.g., 10 trials).
-
-  * $x_t$: The outcome at trial $t$.
+  * $Outcome_t \in \{0, 1\}$: The outcome at trial $t$.
   
-### Level 3: Reinforcement Learning (Elegant Decay)
+### Level 3: A more elegant memory decay mechanism
 
-Reinforcement Learning (RL) is mathematically the elegant solution to the Moving Average's memory problem. It replaces the "perfect memory of $N$ trials" with a "fading memory of everything.
+Reinforcement Learning (RL) is mathematically the elegant solution to the Moving Average's memory problem. It replaces the "perfect memory of $N$ trials" with a "fading memory of everything".
 
-* *"Traditional Formulation (Exponential Weighted Average)*:Instead of a sum over $N$, we define value as a weighted sum of all past history, where weights decay geometrically. $$V_{t} = (1-\alpha) \cdot V_{t-1} + \alpha \cdot Reward_{t}$$
+#### From Moving Average to RL
 
-* *Transformation to Update Rule (The Delta Rule)*: By rearranging terms, we get the famous error-correction format: $$V_{t} = V_{t-1} + \alpha \cdot (Reward_{t} - V_{t-1})$$
+How do we fix the memory problem in Level 2?
+The agent cannot remember the specific outcome $Outcome_{t-N}$. So, they make a guess: "The outcome $N$ trials ago was probably similar to my current average value."
+Mathematically, we substitute $Outcome_{t-N} \approx V_{t-1}$.
+$$V_{t} = V_{t-1} + \frac{1}{N} (Outcome_{t} - \mathbf{V_{t-1}})$$
+If we rename $\frac{1}{N}$ to $\alpha$ (alpha), we get the standard RL rule.
+
+#### Reinforcement Learning (Rescorla-Wagner):
+
+* *"Traditional Formulation (Exponential Weighted Average)*:  Instead of a sum over $N$, value is a weighted sum of all past history, where weights decay geometrically. $$V_{t} = (1-\alpha) \cdot V_{t-1} + \alpha \cdot Reward_{t}$$
+
+* *Transformation to Update Rule (The Delta Rule)*: By rearranging terms, we get the update format I used as template for all models: $$V_{t} = V_{t-1} + \alpha \cdot (Reward_{t} - V_{t-1})$$
 
 * *Why is this "Learning"?* The term $(Reward_{t} - V_{t-1})$ is the Prediction Error (PE). The agent compares reality ($Reward$) to their expectation ($V$) and nudges their belief by a step size $\alpha$.
 
 * *Variable Definitions*:
   * $V_t$: The estimated value (e.g., probability of win) at trial $t$.
-  * $\alpha \in [0, 1]$: The Learning Rate. High $\alpha$ = fast forgetting; Low $\alpha$ = long memory.$PE$: The difference between what happened and what was expected.
+  * $\alpha \in [0, 1]$: The Learning Rate. High $\alpha$ = fast forgetting; Low $\alpha$ = long memory.
+  * $PE$: The difference between what happened and what was expected.
   
 ### Level 4: The Bayesian Update (Static Uncertainty)
 
-In RL, the learning rate $\alpha$ is a fixed number. In Bayesian inference, the "learning rate" becomes adaptive based on certainty.
+In RL, the learning rate $\alpha$ is a fixed number. In Bayesian inference, the "learning rate" becomes adaptive based on uncertainty.
+
+* *Concept*: The agent tracks not just the value, but the uncertainty in estimating that value. They weigh new evidence against their prior belief based on how noisy the evidence is versus how solid their prior is.
   
-* *Traditional Formulation (Bayes Theorem for Gaussians)*: We combine a Prior distribution ($\mathcal{N}(\mu_{prior}, \sigma^2_{prior})$) with Likelihood ($\mathcal{N}(Data, \sigma^2_{noise})$) to get a Posterior.$$\text{Posterior Mean} = \frac{\sigma^2_{noise}\mu_{prior} + \sigma^2_{prior}Data}{\sigma^2_{noise} + \sigma^2_{prior}}$$
+* *Traditional Formulation*: We combine a Prior distribution ($\mathcal{N}(\mu_{prior}, \sigma^2_{prior})$) with Likelihood ($\mathcal{N}(Outcome, \sigma^2_{noise})$) to get a Posterior.$$\text{Posterior Mean} = \frac{\sigma^2_{noise}\mu_{t-1} + \sigma^2_{t-1}Outcome_t}{\sigma^2_{noise} + \sigma^2_{t-1}}$$
 
-* *Transformation to Update Rule (Kalman Gain)*: We can algebraically rearrange the posterior mean into an "Update + Error" format similar to RL:$$\mu_{new} = \mu_{prior} + K \cdot (Data - \mu_{prior})$$ Here, $K$ is the Kalman Gain:$$K = \frac{\sigma^{2}_{prior}}{\sigma^{2}_{prior} + \sigma^{2}_{noise}}$$
-
-* *Implication*: If the agent is very certain ($\sigma^2_{prior} \to 0$), then $K \to 0$. The agent stops learning because they are "sure" they know the truth.
+* *Transformation to Update Rule (Kalman Gain)*: With some algebra, we can rearrange the posterior mean into our standard "Update + Error" format.$$\mu_{t} = \mu_{t-1} + K_t \cdot (Outcome_t - \mu_{t-1})$$ Here,  $K$, what we called learning rate is often called $Kalman Gain$: $$K_t = \frac{\sigma^{2}_{t-1}}{\sigma^{2}_{t-1} + \sigma^{2}_{noise}}$$
 
 * *Variable Definitions*:
-  * $\sigma^2_{prior}$: Uncertainty of the agent's belief.
-  * $\sigma^2_{noise}$: Uncertainty/noise of the environment.
+  * $\mu_t$: The estimated value (mean belief) at trial $t$.
+  * $\sigma^2_{t-1}$: The uncertainty of the agent's belief before seeing the outcome (Prior Variance).
+  * $\sigma^2_{noise}$: The uncertainty/noise of the environment (Likelihood Variance).
+  * $Outcome_t$: The observation at trial $t$.
+  
+* *Critique (The Stopping Problem)*:
+  * The Match: This looks exactly like RL, where $K_t$ replaces $\alpha$.
+  * The Difference: In this model, the uncertainty $\sigma^2_{t-1}$ decreases after every observation (the agent gets more confident). As $\sigma^2_{t-1} \to 0$, the gain $K_t \to 0$.
+  * Implication: The agent eventually stops learning because they become "sure" they know the truth. This is optimal for static worlds, but disastrous if the opponent changes strategy.
 
 ### Level 5: The Kalman Filter (Dynamic Uncertainty)
 
 Real environments change (volatility). The Kalman Filter extends the Bayesian update by adding a Prediction Step that prevents the agent from becoming "too sure."
 
-* *Traditional Formulation (State Space Model)*: We assume the true value drifts over time with random noise $Q$.$$x_t = x_{t-1} + w_t, \quad w_t \sim \mathcal{N}(0, Q)$$
+* *Concept*: "The world is not static; it drifts. Even if I was sure yesterday, my knowledge has degraded by today."
 
-* *Transformation to Update Rule (Two-Step Process)*: 
-  * Predict (Inflate Uncertainty): Before seeing data, add Process Noise $Q$.$$\sigma^2_{prediction} = \sigma^2_{previous} + Q$$
-  * Update (Dynamic Gain): Calculate a new gain $K_t$ based on this inflated uncertainty.$$K_{t} = \frac{\sigma^2_{prediction}}{\sigma^2_{prediction} + R}$$
-  * Correct:$$\mu_{t} = \mu_{t-1} + K_t \cdot (Outcome_t - \mu_{t-1})$$
+* *Traditional Formulation (State Space Model)*: We assume the true hidden value ($x$) drifts over time, and that our observations ($y$) are noisy versions of that drifting value. $$x_t = x_{t-1} + w_t, \quad w_t \sim \mathcal{N}(0, Q)$$$$y_t = x_t + v_t, \quad v_t \sim \mathcal{N}(0, R)$$
 
-* *Key Insight*: Because we add $Q$ at every step, $\sigma^2$ never hits zero. The gain $K_t$ settles at a dynamic equilibrium.
+* *Transformation to Update Rule (Two-Step Process)*: Unlike the static Bayesian agent, the Kalman agent "inflates" their uncertainty before looking at the data.
+  * Predict (Inflate Uncertainty): Before seeing data, the agent assumes the world might have changed. They add Process Noise ($Q$) to their existing uncertainty. $$\sigma^2_{prediction} = \sigma^2_{previous} + Q$$
+  * Calculate Gain: The "Learning Rate" ($K_t$) is calculated using this inflated uncertainty.$$K_{t} = \frac{\sigma^2_{prediction}}{\sigma^2_{prediction} + R}$$
+  * Update (The Standard Rule): Finally, we apply the standard error-correction rule. $$\mu_{t} = \mu_{t-1} + K_t \cdot (Outcome_t - \mu_{t-1})$$
 
 * *Variable Definitions*:
 
-  * $Q$: Process Noise (Volatility). How much the world changes per trial.
+  * $Q$: Process Noise (Volatility). The variance of the drift $w_t$. High $Q$ means the world changes largely/frequently.
 
-  * $R$: Measurement Noise.
+  * $R$: Measurement Noise (Observation Uncertainty). Equivalent to $\sigma^2_{noise}$ in Level 4.
+
+  * $\mu_t$: The agent's estimate of the true state $x_t$.
+
+  * $\sigma^2_{prediction}$: The agent's uncertainty after accounting for volatility but before seeing the new outcome.
+  
+* *Why this fixes the "Stopping Problem"*: In Level 4, $\sigma^2$ shrank to zero, causing learning to stop. Here, because we add $Q$ at every step, $\sigma^2_{prediction}$ never hits zero. Consequently, the learning rate $K_t$ never hits zero. It settles at a dynamic equilibrium—a sweet spot where the agent stays permanently "alert" to changes without over-reacting to noise.
 
 ### Level 6: The Hierarchical Gaussian Filter (Meta-Learning) 
 
@@ -315,30 +358,67 @@ The Kalman Filter assumes the volatility ($Q$) is constant. But what if the oppo
 
 * *Concept*:
 
-  * Level 1 ($x_1$): The value (Probability of Right).
-
+  * Level 1 ($x_1$): The value of the stimulus (e.g., probability of "Right").
+  
   * Level 2 ($x_2$): The volatility of Level 1.
   
-* *Transformation to Update Rule (Volatile Learning Rates)*: In the HGF, the uncertainty of the lower level is driven by the value of the higher level. $$\sigma^2_{1} \propto \exp(x_2)$$ Substituting this into the Kalman Gain equation:$$K_1 \approx \frac{\exp(x_2)}{\exp(x_2) + R}$$
+  * N.B. we could build more levels (e.g. level 3 would be the meta-volatility, the model belief of how fast to update estimates of volatility)
+  
+* *Transformation to Update Rule (Volatile Learning Rates)*: The update rule for Level 1 looks standard, but the Learning Rate is now a function of Level 2.$$\mu_{1,t} = \mu_{1,t-1} + K_1 \cdot (Outcome_t - \mu_{1,t-1})$$
+Where the Gain $K_1$ depends on the volatility estimate from Level 2:$$K_1 \approx \frac{\exp(\mu_{2})}{\exp(\mu_{2}) + \sigma^2_{noise}}$$
 
-* Implication:If Level 2 detects high volatility ($x_2 \uparrow$), the learning rate $K_1$ spikes $\to 1$.If Level 2 detects stability ($x_2 \downarrow$), the learning rate $K_1$ drops $\to 0$.Result: An adaptive learning rate that reacts to environmental stability.
+* *Variable Definitions*:
+  * $\mu_{1}$: Estimated value (Probability).
+  * $\mu_{2}$: Estimated volatility (Log-volatility).
+  * $\exp(\mu_2)$: The "phasic volatility"—how much the agent expects the world to change right now.
+
+* *Implication*:
+
+  * If Level 2 detects high volatility ($x_2 \uparrow$), the learning rate $K_1$ spikes $\to 1$.
+  * If Level 2 detects stability ($x_2 \downarrow$), the learning rate $K_1$ drops $\to 0$. 
+  * Meta-Learning: The agent is not just learning the value; they are learning how fast to learn.
+
+* *Looking Ahead*: This model represents the current state-of-the-art in "Ideal Observer" models and has had many interesting applications in cognitive neurosciences (REFS). While the math for inverting this model (Variational Bayes) is complex, the intuition is simple: it is a dynamic learning rate manager. Future chapters (not yet written) might explore the model and its implications and limitations.
 
 ### Level 7: Recursive Strategies (Theory of Mind)
 
-Finally, we move from learning about the environment to learning about the agent. This is Theory of Mind (ToM), which can be formally reframed as Recursive Reinforcement Learning.
+Here is the revised and expanded text for the final sections. I have aligned Level 7 (ToM) with the "Update Rule" framework by clarifying that while the decision is recursive, the learning is a Bayesian update of the opponent's parameters. I also kept the Mixture Models section as a necessary pedagogical conclusion.
 
-* *Concept*: The agent ($k$-ToM) tracks the opponent's strategy by simulating them.
+Level 7: Recursive Strategies (Theory of Mind)
 
-* *Traditional Formulation (Recursive Simulation)*: A 1-ToM agent simulates a 0-ToM opponent (e.g., a simple bias learner).A 2-ToM agent simulates a 1-ToM opponent.
+Finally, we move from learning about the environment to learning about the agent. This is Theory of Mind (ToM). In our framework, this is formally framed as Recursive Bayesian Learning.
 
-* *Update Rule (Recursive Value)*: The value of an action $a$ is derived from the predicted probability of the opponent's counter-move $\hat{a}_{op}$:$$V_{k}(a) \propto P(\text{Op plays } \hat{a}_{op} | \text{Op is level } k-1)$$ The recursion "bottoms out" at a Level 0 model (usually RL or Bias).
+* *Concept*: The agent ($k$-ToM) does not simply track the pattern of outcomes; they attempt to track the opponent's hidden strategy.
 
+  * A 0-ToM agent is a simple learner (e.g., the Biased Agent or RL).
+  * A 1-ToM agent simulates a 0-ToM opponent. They ask: "If I were a simple learner observing this history, what would I play next?"
+  * A 2-ToM agent simulates a 1-ToM opponent. They ask: "What does the opponent think I will do?"
+
+* *Traditional Formulation (Recursive Simulation)*: The agent holds a "shadow model" of the opponent.
+If I am Level $k$, I assume my opponent is Level $k-1$. I feed the game history into my internal simulation of them to predict their next move probability ($\hat{p}_{op}$).
+
+* *Update Rule (Bayesian Meta-Learning)*: Unlike RL, where we update a simple value $V$, here we update the parameters of the simulated opponent. $$\text{OpponentModel}_{new} = \text{OpponentModel}_{old} + \text{Learning Rate} \cdot (\text{Prediction Error})$$
+
+  * Specifics: If I am 1-ToM modeling a 0-ToM opponent (Bias), I use a Bayesian update to refine my estimate of their bias $\theta$.
+  
+  * Decision Value: Once the opponent model is updated, the value of my action $a$ is derived from their predicted move: $$V_{k}(a) \propto P(\text{Opponent plays } \hat{a}_{op} | \text{Opponent is } k-1)$$
+
+* *Variable Definitions*:
+
+  * $k$: The sophistication level. $k=0$ is the baseline; $k=1$ is strategic; $k=2$ is meta-strategic.
+  * $\hat{a}_{op}$: The predicted action of the opponent.(Ref: Devaine, et al., 2014; Waade et al., 2023)
 
 ### Handling Heterogeneity: Mixture Models
 
-Real behavior is often a mix of these strategies. A player might act randomly for 5 trials, then switch to WSLS.Concept: We assume the data is generated by a probabilistic blend of $M$ different candidate models.Mathematical Formulation:The likelihood of the data $D$ is a weighted sum of the likelihoods from each model $m$:$$P(D | \Theta) = \sum_{m=1}^{M} w_m \cdot P(D | \text{Model}_m, \theta_m)$$Variable Definitions:$w_m$: The mixing weight (probability of using Model $m$), where $\sum w_m = 1$.$P(D|\text{Model}_m)$: How well the specific model (e.g., RL) explains the data. 
+Real behavior is rarely pure. A player might be "Random" when tired but "Strategic" when focused. Or they might switch strategies to confuse the opponent.
 
-Sometimes one can be lucky and integrate the "mixed" models into one equation (see an example here: https://betanalpha.github.io/assets/chapters_html/reading_times.html)
+* *Concept*: We assume the data is not generated by one single model, but by a probabilistic blend of several.
+
+* *Traditional Formulation (The Weighted Likelihood)*: The likelihood of the observed data $D$ is the weighted sum of the likelihoods from $M$ different candidate strategies. $$P(D | \Theta) = \sum_{m=1}^{M} w_m \cdot P(D | \text{Model}_m, \theta_m)$$
+
+* *Variable Definitions*:$w_m$: The mixing weight (e.g., 70% RL, 30% Random). Note that $\sum w_m = 1$.$P(D|\text{Model}_m)$: How well the specific strategy (e.g., RL) explains the data.
+
+* *Critique* (The Complexity Trap): While realistic, these models are hard to fit. If we allow an agent to switch between 5 different strategies at any moment, the possible combinations of parameter values explaining the same patterns of behavior could explode, making the model underdefined for the data. Sometimes one can be lucky and integrate the "mixed" models into one equation (see an example here: https://betanalpha.github.io/assets/chapters_html/reading_times.html)
 
 
 ### Plausibility Check: Cognitive Constraints
@@ -372,7 +452,7 @@ It's useful to note that these candidate models aren't always entirely distinct.
 
 * WSLS can be seen as a specific type of RL model with a very high learning rate and sensitivity only to the immediately preceding trial's outcome.
 
-* A 0-ToM model might resemble a Bias Tracking or RL model.
+* A 0-ToM model might resemble a Bias Tracking (moving average or RL model).
 
 Recognizing these connections can guide a principled modeling approach, starting simple and adding complexity only as needed and justified by data or theory.
 
@@ -380,7 +460,7 @@ This is what we called "model nesting" in a future chapter. It's very elegant in
 
 ### Handling Heterogeneity: Mixture Models
 
-Sometimes the models cannot be nested, or we might want to capture the possibility that different participants (or even the same participant at different times) use different strategies. For instance, some players might predominantly use WSLS, while others rely more on bias tracking. This is where *mixture models* become relevant (explored in detail in a future chapter).
+Sometimes the models cannot be nested, or we might want to capture the possibility that different participants (or even the same participant at different times) use different strategies. For instance, some players might predominantly use WSLS, while others rely more on bias tracking (moving average or RL). This is where *mixture models* become relevant (explored in detail in a future chapter).
 
 * *Concept:* Instead of assuming *one* model generated all the data, a mixture model assumes the data is a probabilistic blend from *multiple* candidate models (e.g., 70% of choices from WSLS, 30% from Random Bias).
 
