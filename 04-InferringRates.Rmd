@@ -212,56 +212,78 @@ Let's use Stan to estimate the underlying bias `rate` (which we'll call `theta` 
 \end{tikzpicture}
 ```
 
-```{tikz, echo=FALSE, fig.cap="Binomial Model with Formulas and distributions", fig.ext = 'png', cache=TRUE}
+```{tikz, echo=FALSE, fig.cap="Kruschke-Style Binomial Model", fig.ext = 'png', cache=TRUE}
 
-\usetikzlibrary{positioning, shapes.geometric, arrows.meta, calc}
+\usetikzlibrary{positioning, arrows.meta, calc, shapes.geometric}
 
 \begin{tikzpicture}[
     node distance=2.5cm,
-    % Define the "stamper" pictures for the distributions
+    % 1. DEFINE THE ICONS (PICS)
+    % Beta Distribution Icon (Smooth Curve)
     pics/beta_dist/.style={
         code={
             % Axis
-            \draw[->] (-0.6,0) -- (0.6,0);
-            \draw[->] (-0.6,0) -- (-0.6,0.8);
-            % The Curve (simplified hump)
-            \draw[thick, blue] plot[domain=-0.5:0.5, smooth] (\x, {0.7*exp(-10*\x*\x)});
+            \draw[thin] (-1,0) -- (1,0);
+            % Curve (Beta-like hump)
+            \draw[thick, blue] plot[domain=-1:1, samples=50] (\x, {0.8*exp(-4*\x*\x)});
+            % Label inside or near
+            \node[font=\footnotesize, below] at (0,0) {Beta};
         }
     },
-    pics/bar_dist/.style={
+    % Binomial Distribution Icon (Bar Chart)
+    pics/binom_dist/.style={
         code={
             % Axis
-            \draw[->] (-0.6,0) -- (0.6,0);
-            \draw[->] (-0.6,0) -- (-0.6,0.8);
-            % The Bars (simplified histogram)
-            \draw[thick, blue, ycomb] plot coordinates {(-0.3, 0.2) (0, 0.6) (0.3, 0.3)};
+            \draw[thin] (-1,0) -- (1,0);
+            % Bars
+            \draw[thick, blue, ycomb] plot coordinates {
+                (-0.6, 0.2) (-0.2, 0.5) (0.2, 0.7) (0.6, 0.3)
+            };
+            % Label
+            \node[font=\footnotesize, below] at (0,0) {Binomial};
         }
     },
-    % Standard Styles
-    latent/.style={circle, draw=black, thick, minimum size=2cm, fill=white},
-    observed/.style={rectangle, draw=black, thick, minimum size=2cm, fill=gray!10},
-    stochastic/.style={->, >={Latex[length=3mm]}, thick}
+    % Arrow Style with Tilde
+    stochastic/.style={->, >={Latex[length=3mm]}, thick, font=\large},
+    label_text/.style={align=center, font=\small}
 ]
 
-    % --- NODES ---
+    % --- TOP: PRIOR (RATE) ---
+    % We define a coordinate for the center of the Beta plot
+    \coordinate (prior_pos) at (0,0);
+    
+    % Draw the picture
+    \draw (prior_pos) pic (beta) {beta_dist};
+    
+    % Add Labels for Prior
+    \node[above=0.8cm of prior_pos, font=\bfseries] {Rate ($\theta$)};
+    \node[right=1.2cm of prior_pos, anchor=west, font=\small] {$\theta \sim \text{Beta}(1,1)$};
 
-    % 1. Rate (Theta) - Showing a Beta Distribution
-    \node[latent] (theta) {}; 
-    \draw (theta.center) pic {beta_dist}; % "Stamp" the plot inside
-    \node[above=0.1cm of theta] {$\theta \sim \text{Beta}(1,1)$};
 
-    % 2. Right (Outcomes) - Showing a Bar Chart
-    \node[observed, below=of theta] (k) {};
-    \draw (k.center) pic {bar_dist}; % "Stamp" the plot inside
-    \node[right=0.2cm of k] {$\text{Right} \sim \text{Binomial}(\theta, n)$};
+    % --- BOTTOM: LIKELIHOOD (CHOICE) ---
+    % Position it below
+    \coordinate[below=3cm of prior_pos] (like_pos);
+    
+    % Draw the picture
+    \draw (like_pos) pic (binom) {binom_dist};
+    
+    % Add Labels for Likelihood
+    \node[below=0.5cm of like_pos, font=\bfseries] {Choice (Right)};
+    \node[right=1.2cm of like_pos, anchor=west, font=\small] {$\text{Right} \sim \text{Binomial}(\theta, n)$};
 
-    % 3. Trials (n) - Just a number
-    \node[observed, minimum size=1cm, left=of k] (n) {$n$};
+
+    % --- SIDE: TRIALS (n) ---
+    % Just a text node feeding in
+    \node[left=1.5cm of like_pos, font=\bfseries] (n) {Trials ($n$)};
 
 
     % --- EDGES ---
-    \draw[stochastic] (theta) -- (k);
-    \draw[stochastic] (n) -- (k);
+    % 1. From Beta to Binomial (Stochastic)
+    % We start the arrow slightly below the top axis and end slightly above the bottom one
+    \draw[stochastic] (0, -0.2) -- (0, -2.2) node[midway, right] {$\sim$};
+    
+    % 2. From Trials to Binomial (Deterministic/Parameter)
+    \draw[stochastic] (n) -- (-1.1, -3); % Connects to the side of the plot area
 
 \end{tikzpicture}
 ```
