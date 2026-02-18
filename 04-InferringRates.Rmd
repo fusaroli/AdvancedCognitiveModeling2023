@@ -11,8 +11,7 @@ This chapter transitions from simulating predefined models (Chapter 4) to inferr
 * **Understand Parameter Estimation:** Grasp the core challenge of estimating unobservable model parameters (like cognitive biases or memory effects) from observable behavioral data (like choices).
 * **Implement Bayesian Models in Stan:** Write basic Stan programs to specify cognitive models, including defining data, parameters, priors, and the likelihood function .
 * **Fit Models with `cmdstanr`:** Use the `cmdstanr` interface to compile Stan models and sample from the posterior distribution of parameters.
-* **Interpret Model Output:** Understand and visualize basic MCMC diagnostics (trace plots) and parameter estimates (posterior distributions, prior-posterior updates).
-* **Perform Parameter Recovery:** Design and execute simulations to verify that your Stan model and fitting procedure can accurately recover known parameter values, a crucial step in model validation.
+* **Interpret Model Output:** Understand and visualize basic MCMC diagnostics and parameter estimates
 * **Model Cognitive Processes:** Apply these techniques to estimate parameters for simple cognitive strategies, including biased choice and different types of memory models (GLM-like, internal state, exponential forgetting, Bayesian updating).
 * **Baby steps in reparametrization:** A key tool for cognitive modelers is the ability to rethink the mathematical form of their models to better implement conceptual constraints, or avoid fitting issues. Here you will appreciate the utility of the log-odds transformation for modeling probability parameters.
 
@@ -24,7 +23,7 @@ Why is this a challenge?
 
 2.  **Behavior is Noisy:** Human behavior is variable. Our models need to account for this noise while extracting the underlying parameter signal.
 
-3.  **Model Plausibility:** We need to determine not just *if* a model fits, but *how well* it fits, and whether the estimated parameter values are theoretically meaningful.
+3.  **Model Plausibility:** We need to determine not just *if* a model fits, but *how well* it fits, what are its strengths and limitations, and whether the estimated parameter values are theoretically meaningful.
 
 Consider the biased agent from Chapter 4. We simulated agents with a known `rate`. Now, imagine you only have the sequence of choices (the `h` data) from an unknown agent. How can you estimate the underlying `rate` that most likely generated those choices?
 
@@ -33,7 +32,7 @@ Consider the biased agent from Chapter 4. We simulated agents with a known `rate
 This chapter introduces **Bayesian inference** as our primary tool for parameter estimation. The Bayesian approach allows us to combine prior knowledge about parameters with information from the observed data (likelihood) to arrive at an updated understanding (posterior distribution) of the parameters. We will use **Stan**, a powerful probabilistic programming language, implemented via the `cmdstanr` R package, to:
 
 1.  **Specify Models:** Define our cognitive models formally, including parameters and their prior distributions.
-2.  **Fit Models:** Use Stan's algorithms (primarily Markov Chain Monte Carlo - MCMC) to sample from the posterior distribution of parameters given the data.
+2.  **Fit Models:** Use Stan's algorithms (primarily Hamiltonian Monte Carlo - HMC, and a faster but more risky approximation method called pathfinder) to sample from the posterior distribution of parameters given the data.
 3.  **Evaluate Fits:** Examine the results to understand parameter estimates and their uncertainty.
 
 As a crucial validation step, we will first apply these methods to **simulated data**, where we know the true parameters. This allows us to check if our models and fitting procedures work correctly – a process called **parameter recovery**.
@@ -49,7 +48,7 @@ Here we build a new simulation of random agents with bias and noise. The code an
 
 ```{r, 04 simulating data}
 
-# Flag to control whether to regenerate simulation/fitting results
+# Flag to control whether to regenerate simulation/fitting results for the knitted files
 # Set to TRUE to rerun everything (takes time!), FALSE to load saved results.
 regenerate_simulations <- FALSE # Or TRUE
 
@@ -77,13 +76,13 @@ theme_set(theme_classic())
 
 trials <- 120 # Number of trials per simulated agent
 
-# Define the agent function (copied/adapted from Chapter 4 for self-containment)
+# Define the agent function (copied from previosu chapter)
 # This agent chooses '1' with probability 'rate', potentially adding noise.
 RandomAgentNoise_f <- function(rate, noise) {
   # Ensure rate is probability (in case log-odds are passed, though not here)
   rate_prob <- plogis(rate) # Assumes rate might be log-odds; use identity if rate is already probability
   choice <- rbinom(1, 1, rate_prob) # Base choice
-  if (noise > 0 && runif(1) < noise) { # Check if noise occurs
+  if (noise > 0 & rbinom(1, 1, noise) == 1) { # Check if noise occurs
     choice <- rbinom(1, 1, 0.5) # Override with random 50/50 choice
   }
   return(choice)
@@ -155,7 +154,119 @@ print(p1)
 
 N.B. Refer to the video and slides for the step by step build-up of the Stan code.
 
-Let's use Stan to estimate the underlying bias `rate` (which we'll call `theta` in the model) from just the sequence of choices (`h`) generated by one of our simulated agents. We'll start with a simple case: an agent with `rate = 0.8` and `noise = 0`.
+Let's use Stan to estimate the underlying bias `rate` (which we'll call `theta` in the model) from just the sequence of choices (`h`) generated by one of our simulated agents. This model is represented in the 
+
+```{tikz, echo=FALSE, fig.cap="Binomial Model with Formulas", fig.ext = 'png', cache=TRUE}
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta}
+
+\begin{tikzpicture}[
+    % GLOBAL STYLES
+    node distance=1.5cm,
+    continuous/.style={circle, draw=black, thick, minimum size=1.2cm},
+    discrete/.style={rectangle, draw=black, thick, minimum size=1.2cm},
+    observed/.style={fill=gray!30},
+    latent/.style={fill=white},
+    stochastic/.style={->, >={Latex[length=3mm]}, thick},
+    % New style for the formula text
+    formula/.style={right=1cm, align=left, font=\small} 
+]
+
+    % --- NODES ---
+    
+    % 1. Rate (Theta) - Top
+    \node[continuous, latent] (theta) {$\theta$};
+    
+    % 2. Right (k) - Middle
+    \node[discrete, observed, below=of theta] (k) {Right};
+    
+    % 3. Trials (n) - Bottom
+    \node[discrete, observed, below=of k] (n) {$n$};
+
+
+    % --- EDGES ---
+    \draw[stochastic] (theta) -- (k);
+    \draw[stochastic] (n) -- (k);
+
+
+    % --- FORMULAS (The new part) ---
+    
+    % Formula for Theta
+    % We use 'align=left' to allow multiple lines if you want to list options
+    \node[formula] at (theta.east) {
+        $\theta \sim \text{Beta}(1,1)$
+    };
+
+    % Formula for Right (Outcome)
+    % Note: If you have 'n' trials, the distribution is usually Binomial
+    \node[formula] at (k.east) {
+        $\text{Right} \sim \text{Binomial}(\theta, n)$
+    };
+    
+    % (Optional) Label for N if it's fixed
+    % \node[formula] at (n.east) { $n = 100$ };
+
+    % --- LABELS ---
+    \node[above=0.1cm of theta] {\textbf{Rate}};
+    \node[below=0.1cm of n] {\textbf{Trials}};
+
+\end{tikzpicture}
+```
+
+```{tikz, echo=FALSE, fig.cap="Binomial Model with Formulas and distributions", fig.ext = 'png', cache=TRUE}
+
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta, calc}
+
+\begin{tikzpicture}[
+    node distance=2.5cm,
+    % Define the "stamper" pictures for the distributions
+    pics/beta_dist/.style={
+        code={
+            % Axis
+            \draw[->] (-0.6,0) -- (0.6,0);
+            \draw[->] (-0.6,0) -- (-0.6,0.8);
+            % The Curve (simplified hump)
+            \draw[thick, blue] plot[domain=-0.5:0.5, smooth] (\x, {0.7*exp(-10*\x*\x)});
+        }
+    },
+    pics/bar_dist/.style={
+        code={
+            % Axis
+            \draw[->] (-0.6,0) -- (0.6,0);
+            \draw[->] (-0.6,0) -- (-0.6,0.8);
+            % The Bars (simplified histogram)
+            \draw[thick, blue, ycomb] plot coordinates {(-0.3, 0.2) (0, 0.6) (0.3, 0.3)};
+        }
+    },
+    % Standard Styles
+    latent/.style={circle, draw=black, thick, minimum size=2cm, fill=white},
+    observed/.style={rectangle, draw=black, thick, minimum size=2cm, fill=gray!10},
+    stochastic/.style={->, >={Latex[length=3mm]}, thick}
+]
+
+    % --- NODES ---
+
+    % 1. Rate (Theta) - Showing a Beta Distribution
+    \node[latent] (theta) {}; 
+    \draw (theta.center) pic {beta_dist}; % "Stamp" the plot inside
+    \node[above=0.1cm of theta] {$\theta \sim \text{Beta}(1,1)$};
+
+    % 2. Right (Outcomes) - Showing a Bar Chart
+    \node[observed, below=of theta] (k) {};
+    \draw (k.center) pic {bar_dist}; % "Stamp" the plot inside
+    \node[right=0.2cm of k] {$\text{Right} \sim \text{Binomial}(\theta, n)$};
+
+    % 3. Trials (n) - Just a number
+    \node[observed, minimum size=1cm, left=of k] (n) {$n$};
+
+
+    % --- EDGES ---
+    \draw[stochastic] (theta) -- (k);
+    \draw[stochastic] (n) -- (k);
+
+\end{tikzpicture}
+```
+
+We'll start with a simple case: an agent with `rate = 0.8` and `noise = 0`.
 
 **Preparing Data for Stan**
  Why a list? Well, dataframes (now tibbles) are amazing. But they have a big drawback: they require each variable to have the same length. Lists do not have that limitation, they are more flexible. So, lists. We'll have to learn how to live with them. 
@@ -220,8 +331,11 @@ model {
 // Code here is executed *after* sampling, using the estimated parameter values.
 // Useful for calculating derived quantities or predictions.
 generated quantities {
-  // Example: Simulate a new dataset based on the estimated theta
-  array[n] int h_pred = bernoulli_rng(rep_vector(theta, n)); // _rng = random number generation
+  // let's generate the posterior in 0-1 prob since humans don't understand log-odds
+  // first we define it
+  real<lower = 0, upper = 1> theta_p; 
+  // then we generate it
+  theta_p = inv_logit(theta)
 }
 "
 # Define relative path for Stan model file
@@ -264,7 +378,7 @@ if (regenerate_simulations || !file.exists(model_file_bernoulli)) {
     data = data_for_stan,          # The data list we prepared
     seed = 123,                    # For reproducible MCMC sampling
     chains = 4,                    # Number of parallel Markov chains (recommend 4)
-    parallel_chains = min(4, future::availableCores()), # Run chains in parallel
+    parallel_chains = 4, # Run chains in parallel
     #threads_per_chain = 1,         # For within-chain parallelization (usually 1 is fine)
     iter_warmup = 1000,            # Number of warmup iterations per chain (discarded)
     iter_sampling = 2000,          # Number of sampling iterations per chain (kept)

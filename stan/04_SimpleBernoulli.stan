@@ -32,7 +32,10 @@ model {
 // Code here is executed *after* sampling, using the estimated parameter values.
 // Useful for calculating derived quantities or predictions.
 generated quantities {
-  // Example: Simulate a new dataset based on the estimated theta
-  array[n] int h_pred = bernoulli_rng(rep_vector(theta, n)); // _rng = random number generation
+  // let's generate the posterior in 0-1 prob since humans don't understand log-odds
+  // first we define it
+  real<lower = 0, upper = 1> theta_p; 
+  // then we generate it
+  theta_p = inv_logit(theta)
 }
 
