@@ -8,12 +8,11 @@ In Chapter 4, we formalized verbal models into computational agents and explored
 
 This chapter transitions from simulating predefined models (Chapter 4) to inferring model parameters from data using Bayesian methods. By the end of this chapter, you will be able to:
 
-* **Understand Parameter Estimation:** Grasp the core challenge of estimating unobservable model parameters (like cognitive biases or memory effects) from observable behavioral data (like choices).
-* **Implement Bayesian Models in Stan:** Write basic Stan programs to specify cognitive models, including defining data, parameters, priors, and the likelihood function .
-* **Fit Models with `cmdstanr`:** Use the `cmdstanr` interface to compile Stan models and sample from the posterior distribution of parameters.
-* **Interpret Model Output:** Understand and visualize basic MCMC diagnostics and parameter estimates
-* **Model Cognitive Processes:** Apply these techniques to estimate parameters for simple cognitive strategies, including biased choice and different types of memory models (GLM-like, internal state, exponential forgetting, Bayesian updating).
-* **Baby steps in reparametrization:** A key tool for cognitive modelers is the ability to rethink the mathematical form of their models to better implement conceptual constraints, or avoid fitting issues. Here you will appreciate the utility of the log-odds transformation for modeling probability parameters.
+* **Model Cognitive Processes:** Apply these techniques to estimate parameters for simple cognitive strategies, including biased choice and different types of memory models.
+* **Master Reparameterization:** Learn to rethink the mathematical form of models. You will appreciate the utility of the log-odds transformation for mapping bounded probability parameters into unbounded spaces.
+* **Read MCMC Diagnostics:** Learn the mandatory diagnostic battery for Bayesian inference, specifically focusing on chain convergence ($\hat{R}$) and Effective Sample Size (ESS).
+
+In a rigorous Bayesian workflow, we *never* fit a model to empirical data without validating it first. Therefore, throughout this chapter, we will fit our models to a single **simulated dataset** where we know the ground truth. This allows us to learn the mechanics of Stan and verify our single-fit posterior. In the next chapter, we will scale this up into a full rigorous validation pipeline (Parameter Recovery and predictive checks).
 
 ## The Challenge: Inferring Latent Parameters
 
@@ -50,7 +49,7 @@ Here we build a new simulation of random agents with bias and noise. The code an
 
 # Flag to control whether to regenerate simulation/fitting results for the knitted files
 # Set to TRUE to rerun everything (takes time!), FALSE to load saved results.
-regenerate_simulations <- FALSE # Or TRUE
+regenerate_simulations <- TRUE # Or TRUE
 
 # Load required packages using pacman::p_load
 # This function installs packages if missing, then loads them.
@@ -353,11 +352,11 @@ model {
 // Code here is executed *after* sampling, using the estimated parameter values.
 // Useful for calculating derived quantities or predictions.
 generated quantities {
-  // let's generate the posterior in 0-1 prob since humans don't understand log-odds
+  // let's generate the prior for visualization
   // first we define it
-  real<lower = 0, upper = 1> theta_p; 
+  real<lower = 0, upper = 1> prior_theta; 
   // then we generate it
-  theta_p = inv_logit(theta)
+  prior_theta = beta_rng(1, 1); // Draw a random sample from the prior distribution for theta
 }
 "
 # Define relative path for Stan model file
@@ -404,7 +403,7 @@ if (regenerate_simulations || !file.exists(model_file_bernoulli)) {
     #threads_per_chain = 1,         # For within-chain parallelization (usually 1 is fine)
     iter_warmup = 1000,            # Number of warmup iterations per chain (discarded)
     iter_sampling = 2000,          # Number of sampling iterations per chain (kept)
-    refresh = 500,                 # How often to print progress updates
+    refresh = 0,                   # How often to print progress updates. 0 means never since the model is so fast
     max_treedepth = 10,            # Controls complexity of MCMC steps (adjust if needed)
     adapt_delta = 0.8              # Target acceptance rate (adjust if divergences occur)
   )
@@ -417,79 +416,55 @@ if (regenerate_simulations || !file.exists(model_file_bernoulli)) {
   fit_bernoulli <- readRDS(model_file_bernoulli)
   cat("Loaded existing model fit from:", model_file_bernoulli, "\n")
 }
+```
 
-# --- Examine Results ---
-# Print summary statistics (mean, median, SD, quantiles, diagnostics like Rhat, ESS)
-fit_bernoulli$summary()
+### Assessing MCMC Health (The Mandatory Diagnostics)
 
-# Check MCMC diagnostics visually
-mcmc_trace(fit_bernoulli$draws("theta")) # Trace plot for theta
+Before we look at the parameter estimates, we MUST check whether the model was able to sample the posterior space: the health of the MCMC chains. Fitting a model is like sending a robotic explorer (the sampler) to map a landscape (the posterior). If the robot's tracks are broken, the map is mathematically invalid. We must check:
 
-# Plot the posterior distribution vs. prior
-draws_df <- as_draws_df(fit_bernoulli$draws("theta")) %>%
-            mutate(theta_prior = rbeta(n(), 1, 1)) # Generate prior samples
+1.  **Divergences:** Did the simulation crash? (Zero tolerance).
+2.  **$\hat{R}$ (R-hat):** Did our 4 independent chains map the exact same space? (Must be strictly $< 1.01$).
+3.  **Effective Sample Size (ESS):** Do we have enough *truly independent* draws? (Bulk and Tail ESS should be $> 400$).
+4.  **Visual Diagnostics:** Trace plots (should look like a "hairy caterpillar") and Rank Histograms (should be uniform across chains).
 
+Let's run this mandatory diagnostic battery on our first fit:
+
+```{r 04 biased model quality}
+# 1. Check for Divergent Transitions
+diagnostics <- fit_bernoulli$diagnostic_summary()
+cat("Divergent transitions per chain:", paste(diagnostics$num_divergent, collapse = ", "), "\n")
+
+# 2. Check R-hat and ESS metrics
+fit_summary <- fit_bernoulli$summary(variables = "theta")
+print(fit_summary %>% select(variable, mean, rhat, ess_bulk, ess_tail))
+
+# 3. Visual Checks (Trace and Rank Plots)
+draws_df <- as_draws_df(fit_bernoulli$draws())
+
+# A healthy trace plot is well-mixed with no wandering
+p_trace <- mcmc_trace(draws_df, pars = "theta") + 
+  theme_classic() + 
+  ggtitle("Trace Plot: Well-mixed chains")
+
+# A healthy rank histogram has uniform bars across all chains
+p_rank <- mcmc_rank_hist(draws_df, pars = "theta") + 
+  theme_classic() + 
+  ggtitle("Rank Histogram: Chains explored the same space")
+
+p_trace / p_rank
+
+# 4. Look at the Posterior Estimate
 ggplot(draws_df) +
   geom_density(aes(theta, fill = "Posterior"), alpha = 0.6) +
-  geom_density(aes(theta_prior, fill = "Prior"), alpha = 0.6) +
-  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.2) + # True value
+  geom_density(aes(prior_theta, fill = "Prior"), alpha = 0.6) +
+  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", linewidth = 1.2) +
   scale_fill_manual(values = c("Posterior" = "blue", "Prior" = "red")) +
   labs(
-    title = "Prior-Posterior Update Check (Theta)",
-    subtitle = "Data shifts belief from uniform prior towards true value (0.8)",
-    x = "Theta (Probability of Choosing Right)",
+    title = "Parameter Recovery (Rate, Theta)",
+    x = "Rate/Theta (Probability of Choosing Right)",
     y = "Density",
     fill = "Distribution"
   ) +
-  theme_minimal()
-```
-
-### Assessing model quality
-
-Then we need to look more in the details at the quality of the estimation:
-* the markov chains
-* how the prior and the posterior estimates relate to each other (whether the prior is constraining the posterior estimate)
-
-```{r 04 biased model quality}
-
-# Check if samples_biased exists
-if (!exists("samples_biased")) {
-  model_file <- here("simmodels","04_SimpleBernoulli.rds")
-  if (file.exists(model_file)) {
-    cat("Loading biased model samples...\n")
-    samples_biased <- readRDS(model_file)
-    cat("Available parameters:", paste(colnames(as_draws_df(samples_biased$draws())), collapse = ", "), "\n")
-  } else {
-    cat("Model file not found. Set regenerate_simulations=TRUE to create it.\n")
-    # Provide dummy data or skip the remaining code
-    knitr::knit_exit()
-  }
-}
-
-# Extract posterior samples and include sampling of the prior:
-draws_df_biased <- as_draws_df(samples_biased$draws())
-
-# Explicitly extract parameters
-theta_param <- draws_df_biased$theta
-cat("Successfully extracted theta parameter with", length(theta_param), "values\n")
-
-# Checking the model's chains
-ggplot(draws_df_biased, aes(.iteration, theta, group = .chain, color = .chain)) +
-  geom_line() +
-  theme_classic()
-
-# add a prior for theta (ugly, but we'll do better soon)
-draws_df_biased <- draws_df_biased %>% mutate(
-  theta_prior = rbeta(nrow(draws_df_biased), 1, 1)
-)
-
-# Now let's plot the density for theta (prior and posterior)
-ggplot(draws_df_biased) +
-  geom_density(aes(theta), fill = "blue", alpha = 0.3) +
-  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
-  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", linewidth = 1.5) +
-  xlab("Rate") +
-  ylab("Posterior Density") +
   theme_classic()
 ```
 
@@ -538,14 +513,10 @@ model {
 }
 
 generated quantities {
+  // Generate the prior for viz purposes
+  real prior_theta = inv_logit(normal_rng(0, 1.5)); // Sample from the log-odds prior
   // Convert estimate back to probability scale for easier interpretation
   real<lower=0, upper=1> theta = inv_logit(theta_logit);
-
-  // Also generate prior sample on probability scale for comparison
-  real<lower=0, upper=1> theta_prior = inv_logit(normal_rng(0, 1));
-
-  // Predictions can still be generated using the probability scale theta
-  array[n] int h_pred = bernoulli_rng(rep_vector(theta, n));
 }
 "
 # Define file path
@@ -596,12 +567,8 @@ if (regenerate_simulations || !file.exists(model_file)) {
 
 ### Summarizing the results
 ```{r 04 biased model log-odds quality assessment}
-
-if (!exists("samples_biased_logodds")) {
-  cat("Loading biased model (log-odds) samples...\n")
-  samples_biased_logodds <- readRDS(here("simmodels","04_SimpleBernoulli_logodds.rds"))
-  cat("Available parameters:", paste(colnames(as_draws_df(samples_biased_logodds$draws())), collapse = ", "), "\n")
-}
+# Summary
+samples_biased_logodds$summary()
 
 # Extract posterior samples and include sampling of the prior:
 draws_df_biased_logodds <- as_draws_df(samples_biased_logodds$draws()) 
@@ -614,185 +581,136 @@ ggplot(draws_df_biased_logodds, aes(.iteration, theta, group = .chain, color = .
   geom_line() +
   theme_classic()
 
-# add a prior for theta (ugly, but we'll do better soon)
-draws_df_biased_logodds <- draws_df_biased_logodds %>% mutate(
-  theta_prior = rnorm(nrow(draws_df_biased_logodds), 0, 1)
-)
 
 # Now let's plot the density for theta (prior and posterior)
 ggplot(draws_df_biased_logodds) +
-  geom_density(aes(theta), fill = "blue", alpha = 0.3) +
-  geom_density(aes(theta_prior), fill = "red", alpha = 0.3) +
-  geom_vline(xintercept = 1.38, linetype = "dashed", color = "black", size = 1.5) +
+  geom_density(aes(theta), fill = "blue", alpha = 0.8) +
+  geom_density(aes(prior_theta), fill = "red", alpha = 0.8) +
+  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", size = 1.5) +
   xlab("Rate") +
   ylab("Posterior Density") +
   theme_classic()
 
-# Summary
-samples_biased_logodds$summary()
+
 ```
 
 We can see that the results are very similar.
 
-## Validating the Model: Parameter Recovery
+## Bonus content: fitting the model with pathfinder vs mcmc
 
-Before using a model on real data, it's crucial to verify that it can accurately recover known parameters from simulated data. This process, called **parameter recovery**, involves:
-1. Simulating datasets with known ground truth parameter values (as we did earlier).
-2. Fitting the model to these simulated datasets.
-3. Comparing the model's estimated parameters to the true values used in simulation.
-If the model consistently recovers the true parameters across different simulation conditions (e.g., different true rates, different noise levels), we gain confidence in its validity.
+```{r, 04 intro to pathfinded}
+## Bonus content: Benchmarking NUTS, Pathfinder, and Pathfinder-initialized NUTS
 
-**Setting up Parallel Recovery**
+# We will compare three methods:
+# 1. Standard NUTS (MCMC)
+# 2. Pathfinder (Variational Inference)
+# 3. NUTS initialized with Pathfinder
 
-Parameter recovery involves fitting the model many times. To speed this up, we use parallel processing with the `future` and `furrr` packages.
+# Define file paths for all three models
+file_nuts_std  <- here("simmodels", "04_benchmark_nuts_std.rds")
+file_pathfinder <- here("simmodels", "04_benchmark_pathfinder.rds")
+file_nuts_init  <- here("simmodels", "04_benchmark_nuts_init.rds")
 
-First we need to define the function that will define the operations to be run on each core separately, here we simulate the data according to a seed, a n of trials, a rate and a noise, and then we fit the model to them.
-Second, we need to create a tibble of the seeds, n of trials, rate and noise values that should be simulated.
-Third, we use future_pmap_dfr to run the function on each row of the tibble above separately on a different core. Note that I set the system to split across 4 parallel cores (to work on my computer without clogging it). Do change it according to the system you are using. Note that if you have 40 "jobs" (rows of the tibble, sets of parameter values to run), using e.g. 32 cores will not substantially speed things more than using 20.
-
-
-
-
-```{r 04-parameter-recovery-setup}
-# --- Parameter Recovery Setup ---
-
-# Define paths using here()
-stan_file_logit <- here("stan", "04_SimpleBernoulli_logodds.stan") 
-exe_dir_logit   <- here("simmodels") # Persistent folder for the executable
-
-# Ensure directories exist
-if (!dir.exists(here("stan"))) dir.create(here("stan"))
-if (!dir.exists(exe_dir_logit)) dir.create(exe_dir_logit)
-
-# compile to persisting directory all parallel workers can acces
-mod_logit <- cmdstan_model(
-  stan_file_logit,
-  dir = exe_dir_logit,  
+stan_file_logit <- here::here("stan", "04_SimpleBernoulli_logodds.stan")
+mod <- cmdstan_model(
+  stan_file_logit, 
   cpp_options = list(stan_threads = FALSE),
   stanc_options = list("O1")
 )
 
-# Define relative path for recovery results
-recovery_file <- here(sim_data_dir, "04_recovery_logit.csv")
-
-# Function to simulate data AND fit the model for one condition
-# This function will be run in parallel for different parameter combinations.
-sim_and_fit <- function(seed, n_trials, true_rate, true_noise, stan_model) {
-  # 1. Simulate data for this specific condition
-  set.seed(seed) # Ensure reproducibility for this specific run
-  # We need to generate choices based on rate (probability) and noise
-  rate_logit = qlogis(true_rate) # Convert true rate to logit for the agent function if needed
-  sim_choices <- map_int(1:n_trials, ~RandomAgentNoise_f(rate_logit, true_noise))
-
-  # 2. Prepare data for Stan
-  stan_data <- list(n = n_trials, h = sim_choices)
-
-  # 3. Fit the Stan model
-  # Use the pre-compiled model object passed as an argument
-  fit <- stan_model$sample(
-    data = stan_data,
-    seed = seed + 1000, # Separate seed for fitting
-    chains = 1,         # Use 1 chain for speed in recovery study (can use more)
-    threads_per_chain = 1,
-    iter_warmup = 500,  # Fewer iterations for speed
-    iter_sampling = 1000,
-    refresh = 0,        # Suppress verbose output
-    adapt_delta = 0.9   # Maintain reasonable adaptation
+# --- 1. Run Standard NUTS (Baseline) ---
+if (regenerate_simulations || !file.exists(file_nuts_std)) {
+  cat("Running Standard NUTS...\n")
+  fit_nuts_std <- mod$sample(
+    data = data_for_stan,
+    seed = 123,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 1000, # Standard warmup
+    iter_sampling = 2000,
+    refresh = 0
   )
-
-  # 4. Extract results (Mean and 95% Credible Interval)
-  # We ask for the mean and the 2.5% and 97.5% quantiles
-  summ <- fit$summary("theta", "mean", ~quantile(.x, probs = c(0.025, 0.975)))
-  
-  est_mean <- summ$mean
-  est_lower <- summ$`2.5%`
-  est_upper <- summ$`97.5%`
-
-  # 5. Return tibble with true vs. estimated values AND coverage check
-  tibble(
-    true_rate = true_rate,
-    true_noise = true_noise,
-    estimated_rate = est_mean,
-    lower_ci = est_lower,
-    upper_ci = est_upper,
-    # Check if the true value falls within the 95% CI
-    captured = (true_rate >= est_lower & true_rate <= est_upper),
-    seed = seed,
-    n_trials = n_trials
-  )
+  fit_nuts_std$save_object(file_nuts_std)
+} else {
+  fit_nuts_std <- readRDS(file_nuts_std)
 }
 
-# --- Define Recovery Grid ---
-# Set up combinations of parameters to test
-recovery_grid <- expand_grid(
-  true_rate = seq(0.1, 0.9, 0.2), # Test various true bias rates
-  true_noise = seq(0, 0.4, 0.2),  # Test various noise levels
-  n_trials = c(30, 120),          # Test effect of sample size
-  seed = 1:10                     # Run multiple simulations per condition
+# --- 2. Run Pathfinder ---
+if (regenerate_simulations || !file.exists(file_pathfinder)) {
+  cat("Running Pathfinder...\n")
+  fit_pathfinder <- mod$pathfinder(
+    data = data_for_stan,
+    seed = 123,
+    draws = 4000, 
+    num_paths = 4,
+    single_path_draws = 1000,
+    history_size = 50
+  )
+  fit_pathfinder$save_object(file_pathfinder)
+} else {
+  fit_pathfinder <- readRDS(file_pathfinder)
+}
+
+# --- 3. Run NUTS initialized with Pathfinder ---
+if (regenerate_simulations || !file.exists(file_nuts_init)) {
+  cat("Running NUTS initialized with Pathfinder...\n")
+  fit_nuts_init <- mod$sample(
+    data = data_for_stan,
+    seed = 123,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 500,    # Reduced warmup allowed by better init!
+    iter_sampling = 2000,
+    init = fit_pathfinder, # <--- The Magic Line
+    refresh = 0
+  )
+  fit_nuts_init$save_object(file_nuts_init)
+} else {
+  fit_nuts_init <- readRDS(file_nuts_init)
+}
+
+
+# --- COMPARISON: TIMING ---
+
+# Extract execution times (in seconds)
+# Note: $time()$total gives the wall clock time for the computation
+time_nuts_std  <- fit_nuts_std$time()$total
+time_pathfinder <- fit_pathfinder$time()$total
+# For the initialized model, the total workflow time is Pathfinder + NUTS
+time_nuts_init <- time_pathfinder + fit_nuts_init$time()$total 
+
+# Create a summary table
+benchmarks <- tibble(
+  Method = c("Standard NUTS", "Pathfinder", "Pathfinder + NUTS"),
+  Time_Sec = c(time_nuts_std, time_pathfinder, time_nuts_init),
+  Speedup_vs_Std = time_nuts_std / Time_Sec
 )
 
-# --- Run Recovery in Parallel ---
-# Set up parallel plan (use slightly fewer cores than available)
-plan(multisession, workers = availableCores() - 2) 
+print(benchmarks)
 
-if (regenerate_simulations || !file.exists(recovery_file)) {
-  cat("Running parameter recovery simulation...\n")
-  # Use future_pmap_dfr to run sim_and_fit for each row in recovery_grid
-  recovery_results <- future_pmap_dfr(
-    list(seed = recovery_grid$seed,
-         n_trials = recovery_grid$n_trials,
-         true_rate = recovery_grid$true_rate,
-         true_noise = recovery_grid$true_noise),
-    sim_and_fit, # The function to run
-    stan_model = mod_logit, # Pass the compiled model object
-    .options = furrr_options(seed = TRUE), # Ensure reproducibility across cores
-    .progress = TRUE # Show progress bar
-  )
-  # Save results
-  write_csv(recovery_results, recovery_file)
-  cat("Parameter recovery finished and results saved to:", recovery_file, "\n")
-} else {
-  # Load existing results
-  recovery_results <- read_csv(recovery_file)
-  cat("Loaded existing parameter recovery results from:", recovery_file, "\n")
-}
+# --- COMPARISON: POSTERIORS ---
 
-# --- Check Coverage Probability ---
-coverage_summary <- recovery_results %>%
-  group_by(n_trials, true_noise) %>%
-  summarize(coverage = mean(captured))
+# Extract draws
+draws_std  <- as_draws_df(fit_nuts_std$draws("theta")) %>% mutate(Method = "Standard NUTS")
+draws_path <- as_draws_df(fit_pathfinder$draws("theta")) %>% mutate(Method = "Pathfinder")
+draws_init <- as_draws_df(fit_nuts_init$draws("theta")) %>% mutate(Method = "Pathfinder + NUTS")
 
-print("Parameter Recovery Coverage (Target = 0.95):")
-print(coverage_summary)
+# Combine
+all_draws <- bind_rows(draws_std, draws_path, draws_init)
 
-# --- Visualize Recovery Results ---
-ggplot(recovery_results, aes(x = true_rate, y = estimated_rate)) +
-  # geom_jitter shows individual simulation results, alpha for density
-  geom_jitter(aes(color = factor(n_trials)), alpha = 0.3, width = 0.02) +
-  # geom_smooth shows the average trend
-  geom_smooth(method = "loess", aes(linetype = factor(n_trials)), color = "black", se = FALSE) +
-  # Add y=x line for perfect recovery reference
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
-  # Facet by noise level and number of trials
-  facet_grid(paste("Noise =", true_noise) ~ paste("N Trials =", n_trials)) +
-  scale_color_viridis_d(end = 0.8) +
+# Plot
+ggplot(all_draws, aes(x = theta, fill = Method)) +
+  geom_density(alpha = 0.4) +
+  geom_vline(xintercept = 0.8, linetype = "dashed") +
+  scale_fill_viridis_d() +
   labs(
-    title = "Parameter Recovery: Estimated vs. True Bias Rate",
-    subtitle = "Red dashed line = perfect recovery. Points = individual simulations.",
-    x = "True Bias Rate (theta)",
-    y = "Estimated Bias Rate (Posterior Mean)",
-    color = "N Trials",
-    linetype = "N Trials"
+    title = "Posterior Comparison",
+    subtitle = "Pathfinder approximates well; Initialized NUTS refines it faster than Standard NUTS",
+    x = "Theta (Rate)",
+    y = "Density"
   ) +
-  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) + # Ensure axes are comparable
-  theme_bw() +
-  theme(legend.position = "bottom")
-
+  theme_classic()
 ```
-
-
-There's much to be said about the final plot, but for now let's just say that it looks good. We can reconstruct in a nice ordered way true rate values. However, our ability to do so decreases with the increase in noise. So far no surprises. Wait, you say, shouldn't we actually model the generative process, that is, include noise in the Stan model? Gold star, there! But let's wait a bit before we get there, we'll need mixture models. 
-
 
 ## Moving Beyond Simple Bias: Memory Models
 
@@ -822,7 +740,7 @@ MemoryAgent_f <- function(bias, beta, cumulativerate){
   return(choice)
 }
 
-d1$Self[1] <- RandomAgentNoise_f(0.5, 0)
+d1$Self[1] <- RandomAgentNoise_f(0, 0) # 0.5 in the transformed space
 
 for (i in 2:trials) {
   d1$Self[i] <- MemoryAgent_f(bias = 0, beta = 1, d1$cumulativerate[i])
@@ -862,6 +780,12 @@ model {
   
   // model
   target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
+}
+
+generated quantities {
+  // Generate prior samples for Prior-Posterior Update checks
+  real bias_prior = normal_rng(0, 0.3);
+  real beta_prior = normal_rng(0, 0.5);
 }
 "
 write_stan_file(
@@ -939,11 +863,6 @@ ggplot(draws_df_memory, aes(.iteration, beta, group = .chain, color = .chain)) +
   labs(title = "Trace plot for beta parameter") +
   theme_classic()
 
-# add prior distributions
-draws_df_memory <- draws_df_memory %>% mutate(
-  bias_prior = rnorm(nrow(draws_df_memory), 0, .3),
-  beta_prior = rnorm(nrow(draws_df_memory), 0, .5)
-)
 
 # Now let's plot the density for bias (prior and posterior)
 ggplot(draws_df_memory) +
@@ -1006,8 +925,10 @@ data {
 }
 
 transformed data {
-  // We calculated memory here because it depends ONLY on observed data ('other').
-  // In transformed data it's calculated once, in transformed parameters it'd be calculated at every iteration, which is unnecessary and computationally costly.
+  // WORKFLOW RULE: If a variable depends ONLY on observed data (like 'other'), 
+  // calculate it in 'transformed data'. It evaluates exactly ONCE.
+  // If you put this in 'transformed parameters', Stan would needlessly recalculate 
+  // the exact same vector at every single MCMC leapfrog step, drastically slowing down your model.
   vector[n] memory;
   
   memory[1] = 0.5;
@@ -1040,46 +961,15 @@ model {
 }
 
 generated quantities {
-  // Generate prior samples
-  real bias_prior = normal_rng(0, .3);
-  real beta_prior = normal_rng(0, .5);
-  
-  // Variables for predictions
-  array[n] int prior_preds;
-  array[n] int posterior_preds;
-  vector[n] memory_prior;
+  // We save the pointwise log-likelihood for later model comparisons
   vector[n] log_lik;
-  
-  // Generate predictions at different memory levels
-  array[3] real memory_levels = {0.2, 0.5, 0.8}; // Low, neutral, and high memory
-  array[3] int prior_preds_memory;
-  array[3] int posterior_preds_memory;
-  
-  // Generate predictions from prior for each memory level
-  for (i in 1:3) {
-    real logit_memory = logit(memory_levels[i]);
-    prior_preds_memory[i] = bernoulli_logit_rng(bias_prior + beta_prior * logit_memory);
-    posterior_preds_memory[i] = bernoulli_logit_rng(bias + beta * logit_memory);
-  }
-  
-  // Generate predictions from prior
-  memory_prior[1] = 0.5;
   for (trial in 1:n) {
-    if (trial == 1) {
-      prior_preds[trial] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory_prior[trial]));
-    } else {
-      memory_prior[trial] = memory_prior[trial-1] + ((other[trial-1] - memory_prior[trial-1]) / trial);
-      if (memory_prior[trial] == 0) { memory_prior[trial] = 0.01; }
-      if (memory_prior[trial] == 1) { memory_prior[trial] = 0.99; }
-      prior_preds[trial] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory_prior[trial]));
-    }
-  }
-  
-  // Generate predictions from posterior
-  for (trial in 1:n) {
-    posterior_preds[trial] = bernoulli_logit_rng(bias + beta * logit(memory[trial]));
     log_lik[trial] = bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
   }
+  
+  // Generate prior samples for Prior-Posterior Update checks
+  real bias_prior = normal_rng(0, 0.3);
+  real beta_prior = normal_rng(0, 0.5);
 }
 "
 
@@ -1159,252 +1049,11 @@ p3 <- ggplot() +
   ggtitle("Correlation")
 
 p1 + p2 + p3
-
-# First let's properly extract and organize our posterior predictions
-posterior_predictions <- draws_df %>%
-  dplyr::select(starts_with("posterior_preds[")) %>% # Select all posterior prediction columns
-  pivot_longer(everything(), 
-              names_to = "trial",
-              values_to = "prediction") %>%
-  # Clean up the trial number from the Stan array notation
-  mutate(trial = as.numeric(str_extract(trial, "\\d+")))
-
-# Calculate summary statistics for posterior predictions
-posterior_summary <- posterior_predictions %>%
-  group_by(trial) %>%
-  summarise(
-    mean = mean(prediction),
-    lower = quantile(prediction, 0.025),
-    upper = quantile(prediction, 0.975)
-  )
-
-# Do the same for prior predictions
-prior_predictions <- draws_df %>%
-  dplyr::select(starts_with("prior_preds[")) %>%
-  pivot_longer(everything(), 
-              names_to = "trial",
-              values_to = "prediction") %>%
-  mutate(trial = as.numeric(str_extract(trial, "\\d+")))
-
-prior_summary <- prior_predictions %>%
-  group_by(trial) %>%
-  summarise(
-    mean = mean(prediction),
-    lower = quantile(prediction, 0.025),
-    upper = quantile(prediction, 0.975)
-  )
-
-# Now let's create our visualization
-# First the prior predictive check
-p4 <- ggplot() +
-  # Add prior prediction interval
-  geom_ribbon(data = prior_summary,
-              aes(x = trial, ymin = lower, ymax = upper),
-              alpha = 0.2, fill = "red") +
-  # Add mean prior prediction
-  geom_line(data = prior_summary,
-            aes(x = trial, y = mean),
-            color = "red") +
-  # Add actual data points
-  geom_point(data = tibble(trial = 1:length(data$h), 
-                          choice = data$h),
-             aes(x = trial, y = choice),
-             alpha = 0.5) +
-  labs(title = "Prior Predictive Check",
-       x = "Trial",
-       y = "Choice (0/1)") +
-  theme_minimal()
-
-# Then the posterior predictive check
-p5 <- ggplot() +
-  # Add posterior prediction interval
-  geom_ribbon(data = posterior_summary,
-              aes(x = trial, ymin = lower, ymax = upper),
-              alpha = 0.2, fill = "blue") +
-  # Add mean posterior prediction
-  geom_line(data = posterior_summary,
-            aes(x = trial, y = mean),
-            color = "blue") +
-  # Add actual data points
-  geom_point(data = tibble(trial = 1:length(data$h), 
-                          choice = data$h),
-             aes(x = trial, y = choice),
-             alpha = 0.5) +
-  labs(title = "Posterior Predictive Check",
-       x = "Trial",
-       y = "Choice (0/1)") +
-  theme_minimal()
-
-# Display plots side by side
-p4 + p5
-
-
-# First, let's calculate the total number of 1s predicted in each posterior sample
-posterior_totals <- draws_df %>%
-  dplyr::select(starts_with("posterior_preds[")) %>%
-  # Sum across rows to get total 1s per sample
-  mutate(total_ones = rowSums(.)) 
-
-# Do the same for prior predictions
-prior_totals <- draws_df %>%
-  dplyr::select(starts_with("prior_preds[")) %>%
-  mutate(total_ones = rowSums(.))
-
-# Calculate actual number of 1s in the data
-actual_ones <- sum(data$h)
-
-# Create visualization comparing distributions
-ggplot() +
-  # Prior predictive distribution
-  geom_histogram(data = prior_totals, 
-              aes(x = total_ones, fill = "Prior"), 
-              alpha = 0.3) +
-  # Posterior predictive distribution
-  geom_histogram(data = posterior_totals, 
-              aes(x = total_ones, fill = "Posterior"), 
-              alpha = 0.3) +
-  # Vertical line for actual data
-  geom_vline(xintercept = actual_ones, 
-             linetype = "dashed", 
-             color = "black",
-             size = 1) +
-  # Aesthetics
-  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
-                   name = "Distribution") +
-  labs(title = "Distribution of Predicted Successes (1s) out of 120 Trials",
-       subtitle = "Comparing Prior, Posterior and Actual Data",
-       x = "Number of 1s",
-       y = "Density") +
-  theme_minimal() +
-  # Add annotation for actual value
-  annotate("text", 
-           x = actual_ones, 
-           y = 0, 
-           label = paste("Actual:", actual_ones),
-           vjust = -0.5)
-
-# Let's also print summary statistics
-prior_summary <- prior_totals %>%
-  summarise(
-    mean = mean(total_ones),
-    sd = sd(total_ones),
-    q025 = quantile(total_ones, 0.025),
-    q975 = quantile(total_ones, 0.975)
-  )
-
-posterior_summary <- posterior_totals %>%
-  summarise(
-    mean = mean(total_ones),
-    sd = sd(total_ones),
-    q025 = quantile(total_ones, 0.025),
-    q975 = quantile(total_ones, 0.975)
-  )
-
-print("Prior predictive summary:")
-print(prior_summary)
-print("Posterior predictive summary:")
-print(posterior_summary)
-
-
-# First let's calculate predicted probabilities for each draw and memory level
-predicted_probs <- draws_df %>%
-  mutate(
-    # Calculate probability of choosing right for each memory level
-    # using the logistic function on our parameter estimates
-    prob_low = inv_logit_scaled(bias + beta * logit_scaled(0.2)),
-    prob_mid = inv_logit_scaled(bias + beta * logit_scaled(0.5)),
-    prob_high = inv_logit_scaled(bias + beta * logit_scaled(0.8))
-  ) %>%
-  # Reshape to long format for easier plotting
-  pivot_longer(
-    cols = starts_with("prob_"),
-    names_to = "memory_level",
-    values_to = "probability"
-  ) %>%
-  mutate(
-    memory_value = case_when(
-      memory_level == "prob_low" ~ 0.2,
-      memory_level == "prob_mid" ~ 0.5,
-      memory_level == "prob_high" ~ 0.8
-    )
-  )
-
-# Do the same for prior predictions
-prior_probs <- draws_df %>%
-  mutate(
-    prob_low = inv_logit_scaled(bias_prior + beta_prior * logit_scaled(0.2)),
-    prob_mid = inv_logit_scaled(bias_prior + beta_prior * logit_scaled(0.5)),
-    prob_high = inv_logit_scaled(bias_prior + beta_prior * logit_scaled(0.8))
-  ) %>%
-  pivot_longer(
-    cols = starts_with("prob_"),
-    names_to = "memory_level",
-    values_to = "probability"
-  ) %>%
-  mutate(
-    memory_value = case_when(
-      memory_level == "prob_low" ~ 0.2,
-      memory_level == "prob_mid" ~ 0.5,
-      memory_level == "prob_high" ~ 0.8
-    )
-  )
-
-# Create visualization with density plots
-p1 <- ggplot() +
-  # Add prior distributions
-  geom_density(data = prior_probs,
-               aes(x = probability, fill = "Prior"),
-               alpha = 0.3) +
-  # Add posterior distributions
-  geom_density(data = predicted_probs,
-               aes(x = probability, fill = "Posterior"),
-               alpha = 0.3) +
-  # Separate by memory level
-  facet_wrap(~memory_value, 
-             labeller = labeller(memory_value = c(
-               "0.2" = "Low Memory (20% Right)",
-               "0.5" = "Neutral Memory (50% Right)",
-               "0.8" = "High Memory (80% Right)"
-             ))) +
-  # Aesthetics
-  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
-                   name = "Distribution") +
-  labs(title = "Distribution of Predicted Probabilities at Different Memory Levels",
-       x = "Probability of Choosing Right",
-       y = "Density") +
-  theme_minimal()
-
-# Alternative visualization using violin plots
-p2 <- ggplot() +
-  # Add prior distributions
-  geom_violin(data = prior_probs,
-              aes(x = factor(memory_value), y = probability, fill = "Prior"),
-              alpha = 0.3, position = position_dodge(width = 0.5)) +
-  # Add posterior distributions
-  geom_violin(data = predicted_probs,
-              aes(x = factor(memory_value), y = probability, fill = "Posterior"),
-              alpha = 0.3, position = position_dodge(width = 0.5)) +
-  # Aesthetics
-  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
-                   name = "Distribution") +
-  scale_x_discrete(labels = c("Low\n(20% Right)", "Neutral\n(50% Right)", "High\n(80% Right)")) +
-  labs(title = "Distribution of Predicted Probabilities by Memory Level",
-       x = "Memory Level",
-       y = "Probability of Choosing Right") +
-  theme_minimal()
-
-# Display both visualizations
-p1 / p2
-
-# 4. Check for divergences
-# Extract divergent transitions
-n_div <- sum(draws_df$.divergent)
-print(paste("Number of divergent transitions:", n_div))
 ```
 
 Now that we know how to model memory as an internal state, we can play with making the update discount the past, setting a parameter that indicates after how many trials memory is lost, etc. 
 
-### Memory Model 3: Exponential Forgetting (Relation to RL)
+### Memory Model 3: Exponential Forgetting (similar to RL)
 
 A more cognitively plausible memory model incorporates forgetting, where recent events have more influence than distant ones. This can be implemented by adding a `forgetting` parameter (often called a learning rate, α, in RL) that controls the weight of the most recent outcome versus the previous memory state.
 
@@ -1546,19 +1195,9 @@ model {
 }
 
 generated quantities {
-  array[n] int prior_preds;
-  array[n] int posterior_preds;
+  // We strictly reserve posterior predictive checks for Chapter 5.
+  // Here, we just calculate the initial expected rate for reference.
   real initial_rate = alpha_prior / (alpha_prior + beta_prior);
-  
-  // Prior predictions use initial rate
-  for(t in 1:n) {
-    prior_preds[t] = bernoulli_rng(initial_rate);
-  }
-  
-  // Posterior predictions use sequentially updated rates
-  for(t in 1:n) {
-    posterior_preds[t] = bernoulli_rng(rate[t]);
-  }
 }
 "
 write_stan_file(
@@ -1743,4 +1382,13 @@ We learned how to:
 
 By fitting these models, we moved beyond simply describing behavior (like the cumulative rates in Chapter 4) to quantifying underlying latent parameters (like `bias`, `beta`, `forgetting`).
 
-However, fitting a model and recovering parameters is only part of the story. How do we know if the model is actually *good*? How well does it capture the patterns in the data beyond just the average parameter values? How sensitive are our conclusions to the specific priors we chose? These questions lead directly to the topic of **model quality assessment**, which we will tackle in the next chapter using techniques like prior/posterior predictive checks and sensitivity analyses.
+However, successfully recovering the parameters of *one* simulated agent is merely a preliminary sanity check. In a rigorous Bayesian workflow, a single fit is never enough. 
+
+* Does the model successfully recover parameters across a wide range of noise levels and true values? 
+* Is our computational engine unbiased, or does it systematically under- or over-estimate uncertainty? 
+* Can the fitted model actually generate data that looks like the data we observed? 
+* Are our inferences overly sensitive to our choice of prior distributions?
+
+To answer these questions, we must subject our models to a strict diagnostic battery. In Chapter 5, we will take the models developed here and run full **Parameter Recovery** studies, **Simulation-Based Calibration (SBC)**, **Predictive Checks**, and **Prior Sensitivity Analysis**. Only after passing those tests will a model earn the right to touch real empirical data.
+
+

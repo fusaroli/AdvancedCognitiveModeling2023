@@ -32,10 +32,10 @@ model {
 // Code here is executed *after* sampling, using the estimated parameter values.
 // Useful for calculating derived quantities or predictions.
 generated quantities {
-  // let's generate the posterior in 0-1 prob since humans don't understand log-odds
+  // let's generate the prior for visualization
   // first we define it
-  real<lower = 0, upper = 1> theta_p; 
+  real<lower = 0, upper = 1> prior_theta; 
   // then we generate it
-  theta_p = inv_logit(theta)
+  prior_theta = beta_rng(1, 1); // Draw a random sample from the prior distribution for theta
 }
 

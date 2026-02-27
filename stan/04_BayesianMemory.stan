@@ -43,18 +43,8 @@ model {
 }
 
 generated quantities {
-  array[n] int prior_preds;
-  array[n] int posterior_preds;
+  // We strictly reserve posterior predictive checks for Chapter 5.
+  // Here, we just calculate the initial expected rate for reference.
   real initial_rate = alpha_prior / (alpha_prior + beta_prior);
-  
-  // Prior predictions use initial rate
-  for(t in 1:n) {
-    prior_preds[t] = bernoulli_rng(initial_rate);
-  }
-  
-  // Posterior predictions use sequentially updated rates
-  for(t in 1:n) {
-    posterior_preds[t] = bernoulli_rng(rate[t]);
-  }
 }
 

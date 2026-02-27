@@ -8,8 +8,10 @@ data {
 }
 
 transformed data {
-  // We calculated memory here because it depends ONLY on observed data ('other').
-  // In transformed data it's calculated once, in transformed parameters it'd be calculated at every iteration, which is unnecessary and computationally costly.
+  // WORKFLOW RULE: If a variable depends ONLY on observed data (like 'other'), 
+  // calculate it in 'transformed data'. It evaluates exactly ONCE.
+  // If you put this in 'transformed parameters', Stan would needlessly recalculate 
+  // the exact same vector at every single MCMC leapfrog step, drastically slowing down your model.
   vector[n] memory;
   
   memory[1] = 0.5;
@@ -42,45 +44,14 @@ model {
 }
 
 generated quantities {
-  // Generate prior samples
-  real bias_prior = normal_rng(0, .3);
-  real beta_prior = normal_rng(0, .5);
-  
-  // Variables for predictions
-  array[n] int prior_preds;
-  array[n] int posterior_preds;
-  vector[n] memory_prior;
+  // We save the pointwise log-likelihood for later model comparisons
   vector[n] log_lik;
-  
-  // Generate predictions at different memory levels
-  array[3] real memory_levels = {0.2, 0.5, 0.8}; // Low, neutral, and high memory
-  array[3] int prior_preds_memory;
-  array[3] int posterior_preds_memory;
-  
-  // Generate predictions from prior for each memory level
-  for (i in 1:3) {
-    real logit_memory = logit(memory_levels[i]);
-    prior_preds_memory[i] = bernoulli_logit_rng(bias_prior + beta_prior * logit_memory);
-    posterior_preds_memory[i] = bernoulli_logit_rng(bias + beta * logit_memory);
-  }
-  
-  // Generate predictions from prior
-  memory_prior[1] = 0.5;
   for (trial in 1:n) {
-    if (trial == 1) {
-      prior_preds[trial] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory_prior[trial]));
-    } else {
-      memory_prior[trial] = memory_prior[trial-1] + ((other[trial-1] - memory_prior[trial-1]) / trial);
-      if (memory_prior[trial] == 0) { memory_prior[trial] = 0.01; }
-      if (memory_prior[trial] == 1) { memory_prior[trial] = 0.99; }
-      prior_preds[trial] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory_prior[trial]));
-    }
-  }
-  
-  // Generate predictions from posterior
-  for (trial in 1:n) {
-    posterior_preds[trial] = bernoulli_logit_rng(bias + beta * logit(memory[trial]));
     log_lik[trial] = bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
   }
+  
+  // Generate prior samples for Prior-Posterior Update checks
+  real bias_prior = normal_rng(0, 0.3);
+  real beta_prior = normal_rng(0, 0.5);
 }
 

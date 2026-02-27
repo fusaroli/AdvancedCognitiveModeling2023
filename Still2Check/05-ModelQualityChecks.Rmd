@@ -26,24 +26,46 @@ regenerate_fitting <- FALSE # Or TRUE
 
 ## Learning Goals
 
-In Chapter 4, we learned how to fit models to data and estimate parameters using Stan. We even performed parameter recovery to check if our fitting procedure could retrieve known values. However, obtaining parameter estimates and seeing that they can be recovered under ideal conditions doesn't tell the whole story. Is the model itself a good representation of the data? Could it generate data that looks like what we actually observed? Are our conclusions robust, or overly dependent on the specific priors we chose?
+In Chapter 4, we learned how to write Stan code and infer parameters for a single simulated dataset. However, obtaining a posterior distribution does not mean the model is correct or the inference is reliable. Is the model itself a good representation of the data? Could it generate data that looks like what we actually observed? Are our conclusions robust, or overly dependent on the specific priors we chose?
 
-This chapter introduces essential techniques for evaluating the quality and appropriateness of your Bayesian cognitive models, moving beyond just parameter estimation. After completing this chapter, you will be able to:
-
+This chapter introduces the strict diagnostic battery required to validate any cognitive model. After completing this chapter, you will be able to:
 
 * **Understand Model Checking:** Appreciate why parameter estimation alone is insufficient and why rigorous model checking is crucial.
-* **Perform Prior Predictive Checks:** Simulate data from your model's priors *before* fitting to understand the assumptions baked into your model specification.
-* **Implement Checks in Stan:** Use Stan's `generated quantities` block to simulate data based on prior or posterior parameter distributions.
+
+* **Assess Generative Plausibility (Prior Predictive Checks):** Simulate data from your model's priors *before* fitting to understand the assumptions baked into your model specification, e.g., whether the mathematical bounds and prior assumptions are physically and cognitively possible, and generate plausible behaviors.
+
+* **Validate Identifiability (Parameter Recovery):** Show that your model can accurately recover known ground-truth parameters across different noise levels.
+
+* **Calibrate Uncertainty (Simulation-Based Calibration):** Use SBC to guarantee your computational engine is unbiased and your posterior uncertainties are mathematically sound.
+
 * **Perform Posterior Predictive Checks:** Simulate data from your *fitted* model to assess whether it can reproduce key patterns observed in the actual data.
+
 * **Visualize Prior-Posterior Updates:** Compare prior and posterior distributions to understand how the data informed parameter estimates.
-* **Conduct Prior Sensitivity Analysis:** Evaluate how sensitive your model's conclusions (parameter estimates and predictions) are to the specific choice of prior distributions, using both manual methods and tools like the priorsense package.
-* **Interpret Check Results:** Critically evaluate the output of these checks to identify potential model misspecifications or areas for improvement.
+
+* **Test Robustness (Sensitivity Analysis):** Evaluate how sensitive your model's conclusions (parameter estimates and predictions) are to the specific choice of prior distributions, using both manual methods and tools like the priorsense package.
 
 ## Introduction: Why Parameter Estimates Aren't Enough
 
-In the previous chapters, we journeyed from observing behavior (Chapter 2), formalizing strategies (Chapter 3), to fitting models and estimating parameters (Chapter 4). We saw in Chapter 4 that parameter recovery helps validate our fitting procedure – if we simulate data from known parameters, can our Stan model get those parameters back?
 
-But what if the model itself, the structure we assumed, is fundamentally mismatched to the data? For example, in Chapter 1, the simple linear model for pizza heating gave us parameter estimates, but the visualizations clearly showed it failed to capture the non-linear heating curve. Parameter recovery wouldn't necessarily have revealed this structural mismatch. Similarly, in Chapter 4, while we focused on recovering the theta parameter for a biased agent, we didn't rigorously check if the fitted Bernoulli model could actually replicate the patterns in the choice sequence beyond just the overall average.
+In the previous chapters, we journeyed from observing behavior (Chapter 2), formalizing strategies (Chapter 3), to fitting models and estimating parameters (Chapter 4).
+
+But how confident are we about the model, its assumptions, the way we coded it? The model itself, the structure we assumed could be mathematically misspecified (not do what we think it does), unidentifiable (produce similar behaviors with an infinite set of combinations of parameter values), and/or simply unable to capture the data (sometimes even the data that we simulated from it!).
+
+While rigorous Bayesian workflows can take many forms, here we will structure our validations in three distinct phases:
+
+* **Phase 1: Generative Plausibility (The Sanity Check)**. Before we test the computational engine, we must ensure our model + priors generate plausible behaviors. 
+
+
+
+If a prior allows a participant to make 10,000 choices in a 120-trial task, the prior is broken. We use Prior Predictive Checks for this.
+
+Phase 2: Computational Validation (The Engine Check). Once the generative space is plausible, we must prove the math works. If we generate data from this plausible space, can the Stan sampler recover the true parameters? We use Parameter Recovery and SBC here.
+
+Phase 3: Model Criticism & Robustness (The Fit Check). Only after the engine is validated do we look at specific datasets (even simulated ones). Does the fitted model capture the nuances of the data, and are our inferences overly sensitive to the prior width?
+
+This chapter executes these three phases sequentially, using our simple biased agent model as a running example.
+
+mismatched to the data? For example, in Chapter 1, the simple linear model for pizza heating gave us parameter estimates, but the visualizations clearly showed it failed to capture the non-linear heating curve. Parameter recovery wouldn't necessarily have revealed this structural mismatch. Similarly, in Chapter 4, while we focused on recovering the theta parameter for a biased agent, we didn't rigorously check if the fitted Bernoulli model could actually replicate the patterns in the choice sequence beyond just the overall average.
 
 This is where model checking comes in. It's a crucial part of the Bayesian workflow that involves critically evaluating how well our model aligns with the data and the assumptions embedded within it. We need tools to ask:
 

@@ -22,3 +22,9 @@ model {
   target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
 }
 
+generated quantities {
+  // Generate prior samples for Prior-Posterior Update checks
+  real bias_prior = normal_rng(0, 0.3);
+  real beta_prior = normal_rng(0, 0.5);
+}
+
