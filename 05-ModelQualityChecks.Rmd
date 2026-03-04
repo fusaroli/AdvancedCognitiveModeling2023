@@ -574,7 +574,7 @@ prior_grid <- tidyr::expand_grid(
   prior_sd = seq(0.5, 3.0, length.out = 10)
 )
 
-sensitivity_draws_file <- file.path(stan_results_dir, "W5_sensitivity_draws.rds")
+sensitivity_draws_file <- file.path(here(stan_results_dir), "W5_sensitivity_draws.rds")
 
 # Check if we need to re-run the sensitivity analysis
 if (regenerate_simulations || !file.exists(sensitivity_results_file)) {
@@ -1317,10 +1317,175 @@ priorsense::powerscale_plot_dens(fit_mem_gq, variables = c("bias", "beta")) +
   theme_classic()
 ```
 
+While the marginal updates show that we recovered the parameters, we must also inspect the joint posterior distribution. If Bias and Beta are highly correlated, our experimental design may not be strong enough to pull these two cognitive strategies apart.
+```{r, 05 memory correlation}
+# --- Phase 10b: Parameter Correlation & Joint Posterior ---
+
+# 1. Extract the posterior draws (excluding prior simulations)
+post_draws_mem <- draws_mem %>%
+  select(bias, beta)
+
+# 2. Calculate the Pearson correlation coefficient
+post_cor <- cor(post_draws_mem$bias, post_draws_mem$beta)
+
+# 3. Visualize the Joint Posterior Surface
+p_joint_posterior <- ggplot(post_draws_mem, aes(x = bias, y = beta)) +
+  # Add a 2D density surface to see the "shape" of the uncertainty
+  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", alpha = 0.3) +
+  # Add the individual MCMC points (thinned for clarity)
+  geom_point(alpha = 0.1, color = "skyblue", size = 0.5) +
+  # Add the ground truth marker (Bias=0, Beta=0.9)
+  geom_point(aes(x = 0, y = 0.9), color = "black", shape = 3, size = 5, stroke = 1.5) +
+  
+  scale_fill_viridis_c(option = "mako", guide = "none") +
+  
+  labs(
+    title = "Joint Posterior: Bias vs. Memory Strength",
+    subtitle = paste0("Posterior Correlation (r) = ", round(post_cor, 3)),
+    x = expression("Baseline Bias (" * bias * ")"),
+    y = expression("Memory Strength (" * beta * ")")
+  ) +
+  annotate("text", x = 0.05, y = 0.95, label = "Ground Truth", fontface = "bold") +
+  theme_classic()
+
+print(p_joint_posterior)
+```
+
+This is a problem. How can we make this correlation disappear? We have at least two options:
+1. Play with the priors, make them stricter
+2. Increase the amount of data
+
+As we kinda like the priors, we will now explicitly manipulate the experimental design ($N \in \{30, 60, 120, 240, 480\}$). We want to observe the "cigar" shaped posterior mathematically decouple into a tight, independent sphere.
+
+```{r 05-memory-covariance-collapse, warning = FALSE, message = FALSE}
+# --- Phase 12b: Asymptotic Identifiability & Covariance Collapse ---
+
+cat("Initiating Asymptotic Identifiability Grid...\n")
+
+# 1. Define the experimental bounds
+trial_grid <- c(30, 60, 120, 240, 480)
+true_bias_mem <- 0.0
+true_beta_mem <- 0.9
+
+cov_collapse_file <- file.path(stan_results_dir, "W5_cov_collapse_draws.rds")
+
+if (regenerate_simulations || !file.exists(cov_collapse_file)) {
+  
+  # 2. Define the isolated recovery pipeline
+  run_cov_recovery <- function(n_trials) {
+    # Simulate the opponent (80% Right preference)
+    opp_choices <- rbinom(n_trials, 1, 0.8)
+    
+    # Simulate our agent using the invariant generator
+    sim_data <- simulate_memory(
+      bias = true_bias_mem, 
+      beta = true_beta_mem, 
+      opponent_choices = opp_choices
+    )
+    
+    # Structure the data block for Stan
+    rec_data_list <- list(
+      n = n_trials,
+      h = sim_data$choice,
+      other = sim_data$other_choice,
+      prior_bias_m = 0, prior_bias_s = 0.5,
+      prior_beta_m = 0, prior_beta_s = 1.0
+    )
+    
+    # Fit the generative model
+    fit <- mod_mem_gq$sample(
+      data = rec_data_list,
+      chains = 1,
+      parallel_chains = 1, # Prevent core oversubscription
+      iter_warmup = 1000,
+      iter_sampling = 2000,
+      adapt_delta = 0.95,
+      refresh = 0,
+      show_messages = FALSE
+    )
+    
+    # Extract strictly the parameters of interest
+    draws_df <- fit$draws(c("bias", "beta"), format = "df")
+    
+    tibble::tibble(
+      trials = n_trials,
+      bias = draws_df$bias,
+      beta = draws_df$beta
+    )
+  }
+
+  # 3. Execute mapping using parallelization
+  future::plan(future::multisession, workers = parallel::detectCores() - 2)
+  
+  cov_draws <- furrr::future_map_dfr(
+    trial_grid, 
+    run_cov_recovery, 
+    .options = furrr::furrr_options(seed = TRUE)
+  )
+  
+  future::plan(future::sequential)
+  
+  saveRDS(cov_draws, cov_collapse_file)
+  cat("Covariance collapse grid completed. Draws saved to:", cov_collapse_file, "\n")
+  
+} else {
+  cov_draws <- readRDS(cov_collapse_file)
+  cat("Loaded existing covariance draws from:", cov_collapse_file, "\n")
+}
+
+# 4. Compute the correlation coefficient (r) for each trial count
+cor_summary <- cov_draws |> 
+  dplyr::group_by(trials) |> 
+  dplyr::summarize(
+    r_val = cor(bias, beta),
+    label = paste0("r = ", round(r_val, 2)),
+    .groups = "drop"
+  ) |> 
+  # Create a highly structured facet label
+  dplyr::mutate(facet_label = factor(trials, levels = trial_grid, labels = paste0("N = ", trial_grid)))
+
+# Merge facet labels back into the main draws for ggplot
+cov_draws <- cov_draws |> 
+  dplyr::left_join(cor_summary |> dplyr::select(trials, facet_label), by = "trials")
+
+# 5. Visualize the geometric collapse of the covariance
+
+p_cov_collapse <- ggplot(cov_draws, aes(x = bias, y = beta)) +
+  # Draw the density topology
+  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", alpha = 0.6) +
+  
+  # The invariant generative ground truth
+  geom_point(x = true_bias_mem, y = true_beta_mem, 
+             color = "black", shape = 3, size = 3, stroke = 1) +
+  
+  # Add the correlation text dynamically to each facet
+  geom_text(data = cor_summary, aes(x = -0.8, y = 2.5, label = label), 
+            fontface = "bold", color = "darkred", inherit.aes = FALSE) +
+  
+  facet_wrap(~ facet_label, nrow = 1) +
+  scale_fill_viridis_c(option = "mako", guide = "none") +
+  
+  coord_cartesian(xlim = c(-1.0, 1.0), ylim = c(-1.0, 3.0)) +
+  
+  xlab(expression("Baseline Bias (" * bias * ")")) +
+  ylab(expression("Memory Strength (" * beta * ")")) +
+  
+  theme_classic() +
+  theme(
+    strip.background = element_rect(fill = "gray95", color = "NA"),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.grid.major = element_line(color = "gray90", linetype = "dotted")
+  )
+
+print(p_cov_collapse)
+```
+
+The issue, it turns out, is inherent in the design: the biased agent is biased, so both memory and bias can describe a model adjusting to it! If we wanted to discriminate these parameters we need a different experimental design with a shifting bias (e.g reversal learning). But this is good enough for now. Let's proceed.
+
 Finally, we run Simulation-Based Calibration. We use the SBC package to guarantee that our logit(memory) parameterization doesn't introduce hidden biases in the sampler's rank statistics.
 
-```{r}
-# 1. Define the Generator using our simulate_social_memory function
+```{r, 05 memory sbc}
+# 1. Define the Generator using our simulate_function
 sbc_memory_generator_fn <- function() {
   # Draw true params from priors
   t_bias <- rnorm(1, 0, 0.5)

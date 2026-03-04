@@ -5,93 +5,76 @@ date: "2025-03-01" # Updated date
 ---
 
 ```{r ch6_setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width=10, fig.height=6)
+regenerate_simulations <- TRUE 
 
-# Set this to TRUE when you want to regenerate all simulation results
-# Otherwise, existing results will be loaded
-# Ensure this matches the global setting if needed
-regenerate_simulations <- FALSE # Or TRUE
-
-# Create directories if they don't exist
+# Construct the required directory infrastructure
 if (!dir.exists("stan")) dir.create("stan")
 if (!dir.exists("simdata")) dir.create("simdata")
 if (!dir.exists("simmodels")) dir.create("simmodels")
-if (!dir.exists("figures")) dir.create("figures") # For saving plots if needed
+if (!dir.exists("figures")) dir.create("figures") 
 
-```{r ch6_load_packages, message=FALSE, warning=FALSE}
-# Load necessary packages using pacman for efficient management
+# Load the strict computational stack using pacman
 pacman::p_load(
-  tidyverse,    # Core suite for data manipulation (dplyr) and plotting (ggplot2)
-  here,         # For robust file paths (optional, assumes project structure)
-  posterior,    # Tools for working with posterior distributions
-  cmdstanr,     # R interface to Stan
-  brms,         # High-level interface for Bayesian models (used conceptually)
-  tidybayes,    # Tidy manipulation of Bayesian model output
-  patchwork,    # Combining ggplot plots
-  bayesplot,    # Specialized plotting functions for Bayesian models
-  furrr,        # Parallel processing with purrr
-  future,       # Backend for parallel processing
-  loo,          # PSIS-LOO cross-validation
-  priorsense,   # Prior sensitivity analysis
-  DiagrammeR,   # For creating DAGs (if available/desired)
-  sbc           # Simulation-Based Calibration
+  tidyverse,       # Core suite for data manipulation and visualization
+  here,            # Robust path routing relative to project root
+  posterior,       # Analytical tools for posterior array manipulations
+  cmdstanr,        # Direct R interface to the CmdStan C++ compiler
+  tidybayes,       # Tidy extraction of draws and predictive distributions
+  patchwork,       # Composition of diagnostic ggplot matrices
+  bayesplot,       # Specialized geometric diagnostic plots (traces, pairs)
+  furrr,           # Parallel mapping for Recovery and SBC arrays
+  future,          # Asynchronous backend for parallelization
+  loo,             # PSIS-LOO out-of-sample predictive cross-validation
+  priorsense,      # Analytical prior sensitivity via power-scaling
+  DiagrammeR,      # Generative structural visualizations (DAGs)
+  SBC,             # Simulation-Based Calibration
+  marginaleffects, # Conditional predictive interpretations on the outcome scale
+  pathfinder       # Multi-path variational inference for NUTS initialization
 )
 
-# Set a default ggplot theme for consistency
+# Enforce a clean, data-to-ink maximized visual theme
 theme_set(theme_classic())
 
-# Set Stan backend if not already configured
-# options(cmdstanr_backend = "cmdstan") # Or "rstan" if preferred
-
-# Set up parallel processing plan (adjust workers as needed)
-# Using fewer cores than available to leave resources for other tasks
+# Establish the parallel processing topology
+# We reserve 2 cores to prevent the operating system from hanging during intensive MCMC/SBC
 cores_to_use <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = cores_to_use)
 ```
 
-# Individual Differences in Cognitive Strategies (Multilevel Modeling)
+# Individual Differences in Cognitive Strategies: The Hierarchical Architecture
 
 ## Introduction
 
-Our exploration of decision-making models (Chapters 2-4) has so far focused on single agents or averaged behavior. However, cognitive science consistently reveals that individuals differ systematically in how they approach tasks and process information. Some people may be more risk-averse, have better memory, learn faster, or employ entirely different strategies than others. Ignoring these individual differences can lead to misleading conclusions about cognitive processes.
+Our exploration of decision-making models (Chapters 2-4) has so far focused on single agents or averaged behavior. However, individuals differ systematically in how they approach tasks and process information. Some people may be more risk-averse, have better memory, learn faster, or employ entirely different strategies than others. Ignoring these individual differences can lead to misleading conclusions about cognitive processes. From a statistical perspective, if we assume a single set of parameters generates all data, our model is mathematically misspecified, which leads to pathological posterior geometries and misleading inferential results.
 
-This chapter introduces multilevel modeling (also called hierarchical modeling) as a powerful framework for capturing these individual differences while still identifying population-level patterns.
+This chapter introduces hierarchical modeling (also called multilevel or mixed effects modeling) as a powerful framework for capturing these individual differences while still identifying population-level patterns.
 
-### The Challenge: Pooling Information
+### The Epistemic Challenge: Pooling Information
 
-Traditional approaches to handling data from multiple individuals often force a choice between two extremes:
+Traditional statistical approaches to handling data from multiple individuals often force a false dichotomy between two extremes, both of which impose rigid, unjustified structural assumptions on the data:
 
-1. **Complete Pooling**: Treats all participants as identical by averaging or combining their data. This estimates a single set of parameters for the entire group, completely ignoring individual differences. Advantage: Stable estimates. Disadvantage: Fails to capture potentially meaningful variation.
-Example: Fitting one model to all participants' data concatenated together.
+1. **Complete Pooling (Underfitting)**: Treats all participants as identical by averaging or combining their data. This assumes the population variance (the average error in predicting an individual from the population) is strictly zero ($\sigma \to 0$). Complete pooling estimates a single set of parameters for the entire group, completely ignoring potentially meaningful individual variation. Advantage: Highly stable estimates due to maximum data density. Disadvantage: Systematically fails to capture actual cognitive heterogeneity, often describing an "average" participant that does not exist. Example: Full pooling corresponds to fitting one generative model to a concatenated vector of all participants' choices.
 
-2. **No Pooling**: Analyzes each participant completely separately, estimating independent parameters for each individual. This fails to leverage information shared across participants and can lead to noisy or unstable estimates, especially for individuals with limited data. Advantage: Captures all individual variation. Disadvantage: Inefficient, ignores group trends, poor estimates with sparse data.
-Example: Fitting separate models to each participant's data individually.
+2. **No Pooling (Overfitting)**: Analyzes each participant in complete isolation from the others, estimating independent parameters ($\theta_j$) for each individual $j$. This de fact assumes the population variance is infinite ($\sigma \to \infty$), failing to leverage any shared structural information across the cohort and can lead to noisy or unstable estimates, especially for individuals with limited data. Advantage: Unconstrained capacity to capture individual variation (which can be a problem given the noisy nature of the data). Disadvantage: Severely inefficient and highly vulnerable to noise. For individuals with sparse or noisy trial data, the posterior estimates will be excessively wide or completely dominated by the likelihood's random fluctuations. 
+No pooling corresponds to fitting $J$ separate models to $J$ individual participants.
 
 ### The Solution: Partial Pooling (Multilevel Modeling)
 
-Multilevel modeling offers a principled middle ground through partial pooling. It structures the model hierarchically:
+Multilevel modeling offers a principled, data-driven middle ground through partial pooling. Instead of forcing $\sigma$ to be $0$ or $\infty$, we treat the population variance as a free parameter to be estimated from the data. We structure the model hierarchically:
 
-* **Individual Level**: Each individual has their own set of parameters (e.g., their specific bias, memory strength, or learning rate).
+* **Individual Level**: Each individual agent $j$ has a specific parameter vector (e.g., their intrinsic bias $\theta_j$ or memory decay $\beta_j$).
 
-* **Population Level**: These individual parameters are assumed to be drawn from an overarching population distribution (e.g., a normal distribution characterized by a population mean and standard deviation).
+* **Population Level**: These individual parameters are explicitly modeled as draws from an overarching continuous population distribution (e.g., a Gaussian characterized by a population mean $\mu$ and standard deviation $\sigma$).
 
-This structure allows information to flow between levels:
+This hierarchical structure permits a flow of information between levels:
 
-* Individual estimates are informed by both the individual's own data and the population distribution.
+* The estimation of an individual's parameter ($\theta_j$) is simultaneously constrained by their own empirical data (the likelihood) and the population distribution (the hierarchical prior).
 
-* Estimates for individuals with sparse or noisy data are "shrunk" towards the population mean, leading to more stable and realistic estimates.
+* *Shrinkage*: Estimates for individuals with sparse or noisy data are precision-weighted; they are "shrunk" towards the population mean $\mu$. This is not an artifact; it is a mathematical guarantee that regularizes inference, preventing overfitting and yielding more robust, out-of-sample optimal estimates.
 
-* The model simultaneously estimates individual differences and overall population tendencies.
+* The model simultaneously estimates (jointly marginalizes) individual differences and overall population tendencies. 
 
-This partial pooling approach is particularly valuable when:
-
-* Data per individual is limited (common in cognitive experiments).
-
-* We believe individual differences are meaningful but individuals are still related (drawn from the same population).
-
-* We want to make predictions about new individuals from the same population.
-
-Consider our Matching Pennies game: players might vary in their bias (theta), memory capacity (beta), or strategic sophistication (k-ToM level). Multilevel modeling allows us to quantify these variations (e.g., estimate the standard deviation of theta across the population) while also estimating the average tendency (e.g., the average theta).
+We must always ask deep structural questions here: Are we expecting heavy tails in our population? If some agents employ fundamentally different heuristic strategies, a Normal population prior might over-shrink extreme but genuine parameter values.Consider our Matching Pennies cognitive task: players will invariably differ in their baseline bias ($\theta$), memory sensitivity ($\beta$), or strategic sophistication. Multilevel modeling quantifies this population variance ($\sigma$) while anchoring the cohort's central tendency ($\mu$).
 
 ## Learning Objectives
 
@@ -99,61 +82,127 @@ After completing this chapter, you will be able to:
 
 * **Explain Partial Pooling**: Understand how multilevel modeling balances individual and group-level information through shrinkage.
 
-* **Distinguish Pooling Approaches**: Articulate the differences and trade-offs between complete pooling, no pooling, and partial pooling.
+* **Distinguish Pooling Approaches**: Articulate the differences and trade-offs between complete pooling ($\sigma=0$), no pooling ($\sigma=\infty$), and partial pooling.
 
-* **Implement Multilevel Models**: Write Stan code for hierarchical models with varying intercepts and/or slopes.
+* **Implement Hierarchical Models**: Write Stan code for hierarchical models with varying intercepts and/or slopes.
 
 * **Reparameterize a model**: Understand why and how to reparameterize a model and in particular how to use non-centered parameterization to improve sampling efficiency in hierarchical models.
 
-* **Model Parameter Correlations**: Implement and interpret models that estimate correlations between individual-level parameters.
+* **Model Parameter Correlations**: Implement and interpret models that estimate correlations between individual-level parameters (via  Cholesky-factorized correlation matrices $\mathbf{L}_\Omega$).
 
-* **Perform Comprehensive Model Checks**: Apply a full suite of quality checks (parameter recovery, prior/posterior predictive checks, sensitivity analysis, SBC) to multilevel models.
+* **Perform Comprehensive Model Checks**: Apply a rigorous Bayesian workflow to hierarchical models (Predictive Checks, Prior-Posterior Update Checks, Sensitivity Analysis, Parameter Recovery, Simulation-Based Calibration, etc).
 
 * **Apply to Cognitive Questions**: Use multilevel modeling to investigate individual differences in cognitive strategies (e.g., bias, memory, WSLS).
 
-## Graphical Model Visualization (DAGs)
-Directed Acyclic Graphs (DAGs) help visualize the structure of hierarchical models, showing dependencies between parameters and data.
+
 
 ### Biased Agent Model (Multilevel)
 
-In this model, each agent j has an individual bias parameter theta[j], drawn from a population distribution defined by mean mu_theta and standard deviation sigma_theta. The observed choices h depend on the individual theta.
+In this architecture, each agent $j \in \{1, \dots, J\}$ possesses an unobserved, individual-level bias parameter $\theta_j$. This individual parameter is generated by a latent population distribution, parameterized by a global mean $\mu_\theta$ and global standard deviation $\sigma_\theta$. Finally, the empirical choices $h_{ij}$ for trial $i$ are generated conditionally on the individual parameter $\theta_j$.
 
-Population Mean (mu_theta) ----> Individual Bias (theta[j]) <---- Population SD (sigma_theta)
-                                       |
-                                       v
-                                Observed Choice (h[i,j])
+Mathematically, this translates to the following generative structure on the unconstrained (logit) space:$$h_{ij} \sim \text{Bernoulli}(\text{logit}^{-1}(\theta_{\text{logit}, j}))$$$$\theta_{\text{logit}, j} \sim \text{Normal}(\mu_{\theta}, \sigma_{\theta})$$$$\mu_{\theta} \sim \text{Normal}(0, 1.5)$$$$\sigma_{\theta} \sim \text{Exponential}(1)$$
+
+By mapping this DAG, we have strictly defined our generative assumptions. We are now ready to translate this architecture into Stan code and subject it to Prior Predictive Checks.
 
 
-```{r ch6_dag_biased, echo=FALSE, eval=FALSE}
-# Placeholder for DiagrammeR code if desired
-library(DiagrammeR)
-grViz("
-digraph multilevel_biased {
-  rankdir=TB;
-  node [shape=ellipse];
-  edge [arrowhead=vee];
+```{tikz hierarchical_biased_dags, echo=FALSE, fig.cap="Standard Plate Notation (Left) and Kruschke-Style Generative Notation (Right) for the Hierarchical Biased Agent.", fig.ext='png', fig.width=12, cache=TRUE}
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta, fit, backgrounds, calc}
 
-  subgraph cluster_population {
-    label = 'Population Level';
-    mu_theta [label='μ_θ'];
-    sigma_theta [label='σ_θ'];
-  }
+\begin{tikzpicture}[
+    % GLOBAL STYLES
+    stochastic/.style={->, >={Latex[length=3mm]}, thick},
+    formula/.style={align=left, font=\small},
+    plate/.style={draw=black, thick, rounded corners, inner sep=10pt},
+    
+    % STANDARD DAG STYLES
+    continuous/.style={circle, draw=black, thick, minimum size=1.2cm, inner sep=0pt},
+    discrete/.style={rectangle, draw=black, thick, minimum size=1.2cm},
+    observed/.style={fill=gray!30},
+    latent/.style={fill=white},
 
-  subgraph cluster_individual {
-    label = 'Individual Level (Agent j)';
-    theta_j [label='θⱼ'];
-  }
+    % KRUSCHKE ICON DEFINITIONS
+    pics/norm_dist/.style={
+        code={
+            \draw[thin, gray] (-1.2,0) -- (1.2,0);
+            \draw[thick, blue] plot[domain=-1.2:1.2, samples=50] (\x, {0.8*exp(-3*\x*\x)});
+            \node[font=\footnotesize, below] at (0,0) {Normal};
+        }
+    },
+    pics/exp_dist/.style={
+        code={
+            \draw[thin, gray] (-0.2,0) -- (1.5,0);
+            \draw[thick, blue] plot[domain=0:1.4, samples=50] (\x, {0.8*exp(-2.5*\x)});
+            \node[font=\footnotesize, below] at (0.6,0) {Exponential};
+        }
+    },
+    pics/bern_dist/.style={
+        code={
+            \draw[thin, gray] (-1,0) -- (1,0);
+            \draw[thick, blue, ycomb, line width=4pt] plot coordinates { (-0.4, 0.3) (0.4, 0.8) };
+            \node[font=\footnotesize, below] at (0,0) {Bernoulli};
+        }
+    }
+]
 
-  subgraph cluster_data {
-    label = 'Data Level (Trial t, Agent j)';
-    h_tj [label='htⱼ', shape=rectangle];
-  }
+    % =========================================================
+    % LEFT SIDE: STANDARD PLATE NOTATION
+    % =========================================================
+    \node[font=\large\bfseries] at (0, 2) {Standard Plate Notation};
 
-  mu_theta -> theta_j;
-  sigma_theta -> theta_j;
-  theta_j -> h_tj;
-}
-")
+    % 1. Population Level
+    \node[continuous, latent] (mu) at (-1.5, 0) {$\mu_\theta$};
+    \node[continuous, latent] (sigma) at (1.5, 0) {$\sigma_\theta$};
+    
+    % 2. Individual Level
+    \node[continuous, latent] (theta) at (0, -3) {$\theta_{\text{logit}, j}$};
+    
+    % 3. Data Level
+    \node[discrete, observed] (h) at (0, -6) {$h_{ij}$};
+
+    % Plates
+    \node[plate, fit=(h), label={[anchor=south east, font=\small\bfseries]below right:$i=1 \dots N$}] (plate_N) {};
+    \node[plate, inner sep=15pt, fit=(theta) (plate_N), label={[anchor=south east, font=\small\bfseries]below right:$j=1 \dots J$}] (plate_J) {};
+
+    % Edges
+    \draw[stochastic] (mu) -- (theta);
+    \draw[stochastic] (sigma) -- (theta);
+    \draw[stochastic] (theta) -- (h);
+
+
+    % =========================================================
+    % RIGHT SIDE: KRUSCHKE-STYLE DISTRIBUTIONAL NOTATION
+    % =========================================================
+    \node[font=\large\bfseries] at (8, 2) {Kruschke-Style Notation};
+
+    % 1. Population Level (Hyperparameters)
+    \coordinate (k_mu) at (6, 0);
+    \draw (k_mu) pic {norm_dist};
+    \node[above=0.8cm of k_mu, font=\bfseries] {Pop. Mean ($\mu_\theta$)};
+
+    \coordinate (k_sigma) at (10, 0);
+    \draw (k_sigma) pic {exp_dist};
+    \node[above=0.8cm of k_sigma, font=\bfseries] {Pop. SD ($\sigma_\theta$)};
+
+    % 2. Individual Level (Latent Parameters)
+    \coordinate (k_theta) at (8, -3);
+    \draw (k_theta) pic {norm_dist};
+    \node[above=0.8cm of k_theta, font=\bfseries] {Agent Bias ($\theta_{\text{logit}, j}$)};
+
+    % 3. Data Level (Observed)
+    \coordinate (k_h) at (8, -6);
+    \draw (k_h) pic {bern_dist};
+    \node[above=0.8cm of k_h, font=\bfseries] {Choice ($h_{ij}$)};
+
+    % Kruschke Plates (Rounded rectangles drawn explicitly around the icons)
+    \draw[plate, dashed] (6.5, -4.5) rectangle (9.5, -2) node[below left, font=\small\bfseries] {$j=1 \dots J$};
+    \draw[plate, dotted] (6.5, -7.5) rectangle (9.5, -5) node[below left, font=\small\bfseries] {$i=1 \dots N$};
+
+    % Edges with tildes
+    \draw[stochastic] (k_mu) -- (k_theta) node[midway, left, font=\large] {$\sim$};
+    \draw[stochastic] (k_sigma) -- (k_theta) node[midway, right, font=\large] {$\sim$};
+    \draw[stochastic] (k_theta) -- (k_h) node[midway, right, font=\large] {$\sim$};
+
+\end{tikzpicture}
 ```
 
 ### Memory Agent Model (Multilevel)
