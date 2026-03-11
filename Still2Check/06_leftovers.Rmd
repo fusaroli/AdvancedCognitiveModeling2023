@@ -1,263 +1,19 @@
 ---
-title: "Chapter 6 (Revised): Individual Differences in Cognitive Strategies (Multilevel Modeling)"
+title: "leftovers from 06"
+author: "RF"
+date: "2026-03-09"
 output: html_document
-date: "2025-03-01" # Updated date
 ---
 
-```{r ch6_setup, include=FALSE}
-regenerate_simulations <- TRUE 
-
-# Construct the required directory infrastructure
-if (!dir.exists("stan")) dir.create("stan")
-if (!dir.exists("simdata")) dir.create("simdata")
-if (!dir.exists("simmodels")) dir.create("simmodels")
-if (!dir.exists("figures")) dir.create("figures") 
-
-# Load the strict computational stack using pacman
-pacman::p_load(
-  tidyverse,       # Core suite for data manipulation and visualization
-  here,            # Robust path routing relative to project root
-  posterior,       # Analytical tools for posterior array manipulations
-  cmdstanr,        # Direct R interface to the CmdStan C++ compiler
-  tidybayes,       # Tidy extraction of draws and predictive distributions
-  patchwork,       # Composition of diagnostic ggplot matrices
-  bayesplot,       # Specialized geometric diagnostic plots (traces, pairs)
-  furrr,           # Parallel mapping for Recovery and SBC arrays
-  future,          # Asynchronous backend for parallelization
-  loo,             # PSIS-LOO out-of-sample predictive cross-validation
-  priorsense,      # Analytical prior sensitivity via power-scaling
-  DiagrammeR,      # Generative structural visualizations (DAGs)
-  SBC,             # Simulation-Based Calibration
-  marginaleffects, # Conditional predictive interpretations on the outcome scale
-  pathfinder       # Multi-path variational inference for NUTS initialization
-)
-
-# Enforce a clean, data-to-ink maximized visual theme
-theme_set(theme_classic())
-
-# Establish the parallel processing topology
-# We reserve 2 cores to prevent the operating system from hanging during intensive MCMC/SBC
-cores_to_use <- max(1, parallel::detectCores() - 2)
-plan(multisession, workers = cores_to_use)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Individual Differences in Cognitive Strategies: The Hierarchical Architecture
+  
 
-## Introduction
-
-Our exploration of decision-making models (Chapters 2-4) has so far focused on single agents or averaged behavior. However, individuals differ systematically in how they approach tasks and process information. Some people may be more risk-averse, have better memory, learn faster, or employ entirely different strategies than others. Ignoring these individual differences can lead to misleading conclusions about cognitive processes. From a statistical perspective, if we assume a single set of parameters generates all data, our model is mathematically misspecified, which leads to pathological posterior geometries and misleading inferential results.
-
-This chapter introduces hierarchical modeling (also called multilevel or mixed effects modeling) as a powerful framework for capturing these individual differences while still identifying population-level patterns.
-
-### The Epistemic Challenge: Pooling Information
-
-Traditional statistical approaches to handling data from multiple individuals often force a false dichotomy between two extremes, both of which impose rigid, unjustified structural assumptions on the data:
-
-1. **Complete Pooling (Underfitting)**: Treats all participants as identical by averaging or combining their data. This assumes the population variance (the average error in predicting an individual from the population) is strictly zero ($\sigma \to 0$). Complete pooling estimates a single set of parameters for the entire group, completely ignoring potentially meaningful individual variation. Advantage: Highly stable estimates due to maximum data density. Disadvantage: Systematically fails to capture actual cognitive heterogeneity, often describing an "average" participant that does not exist. Example: Full pooling corresponds to fitting one generative model to a concatenated vector of all participants' choices.
-
-2. **No Pooling (Overfitting)**: Analyzes each participant in complete isolation from the others, estimating independent parameters ($\theta_j$) for each individual $j$. This de fact assumes the population variance is infinite ($\sigma \to \infty$), failing to leverage any shared structural information across the cohort and can lead to noisy or unstable estimates, especially for individuals with limited data. Advantage: Unconstrained capacity to capture individual variation (which can be a problem given the noisy nature of the data). Disadvantage: Severely inefficient and highly vulnerable to noise. For individuals with sparse or noisy trial data, the posterior estimates will be excessively wide or completely dominated by the likelihood's random fluctuations. 
-No pooling corresponds to fitting $J$ separate models to $J$ individual participants.
-
-### The Solution: Partial Pooling (Multilevel Modeling)
-
-Multilevel modeling offers a principled, data-driven middle ground through partial pooling. Instead of forcing $\sigma$ to be $0$ or $\infty$, we treat the population variance as a free parameter to be estimated from the data. We structure the model hierarchically:
-
-* **Individual Level**: Each individual agent $j$ has a specific parameter vector (e.g., their intrinsic bias $\theta_j$ or memory decay $\beta_j$).
-
-* **Population Level**: These individual parameters are explicitly modeled as draws from an overarching continuous population distribution (e.g., a Gaussian characterized by a population mean $\mu$ and standard deviation $\sigma$).
-
-This hierarchical structure permits a flow of information between levels:
-
-* The estimation of an individual's parameter ($\theta_j$) is simultaneously constrained by their own empirical data (the likelihood) and the population distribution (the hierarchical prior).
-
-* *Shrinkage*: Estimates for individuals with sparse or noisy data are precision-weighted; they are "shrunk" towards the population mean $\mu$. This is not an artifact; it is a mathematical guarantee that regularizes inference, preventing overfitting and yielding more robust, out-of-sample optimal estimates.
-
-* The model simultaneously estimates (jointly marginalizes) individual differences and overall population tendencies. 
-
-We must always ask deep structural questions here: Are we expecting heavy tails in our population? If some agents employ fundamentally different heuristic strategies, a Normal population prior might over-shrink extreme but genuine parameter values.Consider our Matching Pennies cognitive task: players will invariably differ in their baseline bias ($\theta$), memory sensitivity ($\beta$), or strategic sophistication. Multilevel modeling quantifies this population variance ($\sigma$) while anchoring the cohort's central tendency ($\mu$).
-
-## Learning Objectives
-
-After completing this chapter, you will be able to:
-
-* **Explain Partial Pooling**: Understand how multilevel modeling balances individual and group-level information through shrinkage.
-
-* **Distinguish Pooling Approaches**: Articulate the differences and trade-offs between complete pooling ($\sigma=0$), no pooling ($\sigma=\infty$), and partial pooling.
-
-* **Implement Hierarchical Models**: Write Stan code for hierarchical models with varying intercepts and/or slopes.
-
-* **Reparameterize a model**: Understand why and how to reparameterize a model and in particular how to use non-centered parameterization to improve sampling efficiency in hierarchical models.
-
-* **Model Parameter Correlations**: Implement and interpret models that estimate correlations between individual-level parameters (via  Cholesky-factorized correlation matrices $\mathbf{L}_\Omega$).
-
-* **Perform Comprehensive Model Checks**: Apply a rigorous Bayesian workflow to hierarchical models (Predictive Checks, Prior-Posterior Update Checks, Sensitivity Analysis, Parameter Recovery, Simulation-Based Calibration, etc).
-
-* **Apply to Cognitive Questions**: Use multilevel modeling to investigate individual differences in cognitive strategies (e.g., bias, memory, WSLS).
-
-
-
-### Biased Agent Model (Multilevel)
-
-In this architecture, each agent $j \in \{1, \dots, J\}$ possesses an unobserved, individual-level bias parameter $\theta_j$. This individual parameter is generated by a latent population distribution, parameterized by a global mean $\mu_\theta$ and global standard deviation $\sigma_\theta$. Finally, the empirical choices $h_{ij}$ for trial $i$ are generated conditionally on the individual parameter $\theta_j$.
-
-Mathematically, this translates to the following generative structure on the unconstrained (logit) space:$$h_{ij} \sim \text{Bernoulli}(\text{logit}^{-1}(\theta_{\text{logit}, j}))$$$$\theta_{\text{logit}, j} \sim \text{Normal}(\mu_{\theta}, \sigma_{\theta})$$$$\mu_{\theta} \sim \text{Normal}(0, 1.5)$$$$\sigma_{\theta} \sim \text{Exponential}(1)$$
-
-By mapping this DAG, we have strictly defined our generative assumptions. We are now ready to translate this architecture into Stan code and subject it to Prior Predictive Checks.
-
-
-```{tikz hierarchical_biased_dags, echo=FALSE, fig.cap="Standard Plate Notation (Left) and Kruschke-Style Generative Notation (Right) for the Hierarchical Biased Agent.", fig.ext='png', fig.width=12, cache=TRUE}
-\usetikzlibrary{positioning, shapes.geometric, arrows.meta, fit, backgrounds, calc}
-
-\begin{tikzpicture}[
-    % GLOBAL STYLES
-    stochastic/.style={->, >={Latex[length=3mm]}, thick},
-    formula/.style={align=left, font=\small},
-    plate/.style={draw=black, thick, rounded corners, inner sep=10pt},
-    
-    % STANDARD DAG STYLES
-    continuous/.style={circle, draw=black, thick, minimum size=1.2cm, inner sep=0pt},
-    discrete/.style={rectangle, draw=black, thick, minimum size=1.2cm},
-    observed/.style={fill=gray!30},
-    latent/.style={fill=white},
-
-    % KRUSCHKE ICON DEFINITIONS
-    pics/norm_dist/.style={
-        code={
-            \draw[thin, gray] (-1.2,0) -- (1.2,0);
-            \draw[thick, blue] plot[domain=-1.2:1.2, samples=50] (\x, {0.8*exp(-3*\x*\x)});
-            \node[font=\footnotesize, below] at (0,0) {Normal};
-        }
-    },
-    pics/exp_dist/.style={
-        code={
-            \draw[thin, gray] (-0.2,0) -- (1.5,0);
-            \draw[thick, blue] plot[domain=0:1.4, samples=50] (\x, {0.8*exp(-2.5*\x)});
-            \node[font=\footnotesize, below] at (0.6,0) {Exponential};
-        }
-    },
-    pics/bern_dist/.style={
-        code={
-            \draw[thin, gray] (-1,0) -- (1,0);
-            \draw[thick, blue, ycomb, line width=4pt] plot coordinates { (-0.4, 0.3) (0.4, 0.8) };
-            \node[font=\footnotesize, below] at (0,0) {Bernoulli};
-        }
-    }
-]
-
-    % =========================================================
-    % LEFT SIDE: STANDARD PLATE NOTATION
-    % =========================================================
-    \node[font=\large\bfseries] at (0, 2) {Standard Plate Notation};
-
-    % 1. Population Level
-    \node[continuous, latent] (mu) at (-1.5, 0) {$\mu_\theta$};
-    \node[continuous, latent] (sigma) at (1.5, 0) {$\sigma_\theta$};
-    
-    % 2. Individual Level
-    \node[continuous, latent] (theta) at (0, -3) {$\theta_{\text{logit}, j}$};
-    
-    % 3. Data Level
-    \node[discrete, observed] (h) at (0, -6) {$h_{ij}$};
-
-    % Plates
-    \node[plate, fit=(h), label={[anchor=south east, font=\small\bfseries]below right:$i=1 \dots N$}] (plate_N) {};
-    \node[plate, inner sep=15pt, fit=(theta) (plate_N), label={[anchor=south east, font=\small\bfseries]below right:$j=1 \dots J$}] (plate_J) {};
-
-    % Edges
-    \draw[stochastic] (mu) -- (theta);
-    \draw[stochastic] (sigma) -- (theta);
-    \draw[stochastic] (theta) -- (h);
-
-
-    % =========================================================
-    % RIGHT SIDE: KRUSCHKE-STYLE DISTRIBUTIONAL NOTATION
-    % =========================================================
-    \node[font=\large\bfseries] at (8, 2) {Kruschke-Style Notation};
-
-    % 1. Population Level (Hyperparameters)
-    \coordinate (k_mu) at (6, 0);
-    \draw (k_mu) pic {norm_dist};
-    \node[above=0.8cm of k_mu, font=\bfseries] {Pop. Mean ($\mu_\theta$)};
-
-    \coordinate (k_sigma) at (10, 0);
-    \draw (k_sigma) pic {exp_dist};
-    \node[above=0.8cm of k_sigma, font=\bfseries] {Pop. SD ($\sigma_\theta$)};
-
-    % 2. Individual Level (Latent Parameters)
-    \coordinate (k_theta) at (8, -3);
-    \draw (k_theta) pic {norm_dist};
-    \node[above=0.8cm of k_theta, font=\bfseries] {Agent Bias ($\theta_{\text{logit}, j}$)};
-
-    % 3. Data Level (Observed)
-    \coordinate (k_h) at (8, -6);
-    \draw (k_h) pic {bern_dist};
-    \node[above=0.8cm of k_h, font=\bfseries] {Choice ($h_{ij}$)};
-
-    % Kruschke Plates (Rounded rectangles drawn explicitly around the icons)
-    \draw[plate, dashed] (6.5, -4.5) rectangle (9.5, -2) node[below left, font=\small\bfseries] {$j=1 \dots J$};
-    \draw[plate, dotted] (6.5, -7.5) rectangle (9.5, -5) node[below left, font=\small\bfseries] {$i=1 \dots N$};
-
-    % Edges with tildes
-    \draw[stochastic] (k_mu) -- (k_theta) node[midway, left, font=\large] {$\sim$};
-    \draw[stochastic] (k_sigma) -- (k_theta) node[midway, right, font=\large] {$\sim$};
-    \draw[stochastic] (k_theta) -- (k_h) node[midway, right, font=\large] {$\sim$};
-
-\end{tikzpicture}
-```
-
-### Memory Agent Model (Multilevel)
-
-This model is more complex, with individual parameters for baseline bias (bias[j]) and memory sensitivity (beta[j]), potentially correlated.
-
-```{r ch6_dag_memory, echo=FALSE, eval=FALSE}
-# Placeholder for DiagrammeR code
-grViz("
-digraph multilevel_memory {
-  rankdir=TB;
-  node [shape=ellipse];
-  edge [arrowhead=vee];
-
-  subgraph cluster_population {
-    label = 'Population Level';
-    mu_bias [label='μ_α']; sigma_bias [label='σ_α'];
-    mu_beta [label='μ_β']; sigma_beta [label='σ_β'];
-    Omega [label='Ω (Correlation)'];
-  }
-
-  subgraph cluster_individual {
-    label = 'Individual Level (Agent j)';
-    bias_j [label='αⱼ']; beta_j [label='βⱼ'];
-  }
-
-  subgraph cluster_data {
-    label = 'Data Level (Trial t, Agent j)';
-    h_tj [label='htj>', shape=rectangle];
-    other_hist [label='Opponent History', shape=plaintext];
-  }
-
-  mu_bias -> bias_j; sigma_bias -> bias_j;
-  mu_beta -> beta_j; sigma_beta -> beta_j;
-  Omega -> bias_j; Omega -> beta_j; # Simplified representation of correlation
-
-  bias_j -> h_tj;
-  beta_j -> h_tj;
-  other_hist -> h_tj; # Memory depends on history
-}
-")
-
-```
-
-### WSLS Agent Model (Multilevel)
-
-Similarly, a multilevel WSLS model would have population distributions for the win-stay (betaWin) and lose-shift (betaLose) parameters, potentially including a baseline bias (alpha) and correlation.
-
-These diagrams clarify how parameters at different levels relate, guiding our Stan model implementation.
 
 ## Simulation Setup
 
-We will simulate agents playing the Matching Pennies game. To make the models identifiable and improve sampling, we will primarily work with parameters on the logit (log-odds) scale for probabilities (like biases) and potentially the log scale for parameters constrained to be positive (like standard deviations, although we often model SDs directly with half-normal or exponential priors).
-
-**Why Log-Odds?** As discussed in Chapter 4, probabilities are bounded between 0 and 1. Standard statistical models (like linear regression) assume parameters can range infinitely. Applying transformations like $logit = (log(p/1−p))$ maps the bounded probability p to an unbounded scale, making it easier and more stable to model, especially within a hierarchical structure where individual parameters might otherwise be pushed beyond the 0-1 bounds. We can always convert back using the inverse logit (logistic function, plogis in R).
 
 
 ```{r 06 Simulation Setup}
@@ -598,364 +354,325 @@ print( (p1 | p3) / p2 + plot_layout(heights = c(2, 1)) )
 
 These plots show that different strategies lead to distinct behavioral patterns, even against the same opponent. The WSLS and Memory agents adapt their choice rates, while the Biased agent maintains a rate closer to its internal bias (though influenced by noise). Performance also varies, suggesting some strategies are better suited to exploit the opponent's bias.
 
-## Multilevel Model Implementation: Biased Agent
 
-We'll start by implementing the multilevel model for the simplest strategy: the biased random agent. This allows us to introduce the core concepts of hierarchical modeling and quality checks in a more manageable context.
+###
+
+### Memory Agent Model (Multilevel)
+
+This model is more complex, with individual parameters for baseline bias (bias[j]) and memory sensitivity (beta[j]), potentially correlated.
+
+```{tikz hierarchical_memory_dags, echo=FALSE, fig.cap="Standard Plate Notation (Left) and Kruschke-Style Generative Notation (Right) for the Hierarchical Memory Agent.", fig.ext='png', fig.width=12, cache=TRUE}
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta, fit, backgrounds, calc}
+
+\begin{tikzpicture}[
+    % GLOBAL STYLES
+    stochastic/.style={->, >={Latex[length=3mm]}, thick},
+    deterministic/.style={->, >={Latex[length=3mm]}, thick, dashed, draw=gray!80},
+    formula/.style={align=left, font=\small},
+    plate/.style={draw=black, thick, rounded corners, inner sep=12pt},
+    
+    % STANDARD DAG STYLES
+    continuous/.style={circle, draw=black, thick, minimum size=1.1cm, inner sep=0pt},
+    discrete/.style={rectangle, draw=black, thick, minimum size=1.1cm},
+    observed/.style={fill=gray!30},
+    latent/.style={fill=white},
+
+    % KRUSCHKE ICON DEFINITIONS
+    pics/norm_dist/.style={
+        code={
+            \draw[thin, gray] (-1,0) -- (1,0);
+            \draw[thick, blue] plot[domain=-1:1, samples=50] (\x, {0.6*exp(-3*\x*\x)});
+            \node[font=\scriptsize, below] at (0,0) {Normal};
+        }
+    },
+    pics/exp_dist/.style={
+        code={
+            \draw[thin, gray] (-0.2,0) -- (1.2,0);
+            \draw[thick, blue] plot[domain=0:1.1, samples=50] (\x, {0.6*exp(-2.5*\x)});
+            \node[font=\scriptsize, below] at (0.5,0) {Exp};
+        }
+    },
+    pics/lkj_dist/.style={
+        code={
+            \draw[thin, gray] (-1,0) -- (1,0);
+            \draw[thick, blue] plot[domain=-0.9:0.9, samples=50] (\x, {0.6*(1-\x*\x)});
+            \node[font=\scriptsize, below] at (0,0) {LKJ};
+        }
+    },
+    pics/mvn_dist/.style={
+        code={
+            \draw[thin, gray, ->] (-0.8,0) -- (0.8,0);
+            \draw[thin, gray, ->] (0,-0.8) -- (0,0.8);
+            \draw[thick, blue, rotate=45] (0,0) ellipse (0.6 and 0.25);
+            \draw[thick, blue, rotate=45] (0,0) ellipse (0.3 and 0.1);
+            \node[font=\scriptsize, below right] at (0.2,-0.2) {MVN};
+        }
+    },
+    pics/bern_dist/.style={
+        code={
+            \draw[thin, gray] (-0.8,0) -- (0.8,0);
+            \draw[thick, blue, ycomb, line width=3pt] plot coordinates { (-0.3, 0.3) (0.3, 0.7) };
+            \node[font=\scriptsize, below] at (0,0) {Bern};
+        }
+    }
+]
+
+    % =========================================================
+    % LEFT SIDE: STANDARD PLATE NOTATION
+    % =========================================================
+    \node[font=\large\bfseries] at (0, 2) {Standard Plate Notation};
+
+    % 1. Population Level (Hyperparameters)
+    \node[continuous, latent] (mu_a) at (-3, 0) {$\mu_\alpha$};
+    \node[continuous, latent] (sigma_a) at (-1.5, 0) {$\sigma_\alpha$};
+    \node[continuous, latent, fill=gray!10] (omega) at (0, 0) {$\Omega$};
+    \node[continuous, latent] (sigma_b) at (1.5, 0) {$\sigma_\beta$};
+    \node[continuous, latent] (mu_b) at (3, 0) {$\mu_\beta$};
+    
+    % 2. Individual Level
+    \node[continuous, latent] (alpha) at (-1.5, -3.5) {$\alpha_j$};
+    \node[continuous, latent] (beta) at (1.5, -3.5) {$\beta_j$};
+    
+    % 3. Data Level (Observed covariate and outcome)
+    \node[discrete, observed] (m) at (-1.5, -7) {$m_{ij}$};
+    \node[discrete, observed] (h) at (1.5, -7) {$h_{ij}$};
+
+    % Plates
+    \node[plate, fit=(m) (h), label={[anchor=south east, font=\small\bfseries]below right:$i=1 \dots N$}] (plate_N) {};
+    \node[plate, inner sep=18pt, fit=(alpha) (beta) (plate_N), label={[anchor=south east, font=\small\bfseries]below right:$j=1 \dots J$}] (plate_J) {};
+
+    % Edges (Stochastic)
+    \draw[stochastic] (mu_a) -- (alpha);
+    \draw[stochastic] (sigma_a) -- (alpha);
+    \draw[stochastic] (omega) -- (alpha);
+    \draw[stochastic] (omega) -- (beta);
+    \draw[stochastic] (sigma_b) -- (beta);
+    \draw[stochastic] (mu_b) -- (beta);
+    
+    \draw[stochastic] (alpha) -- (h);
+    \draw[stochastic] (beta) -- (h);
+    
+    % Edges (Deterministic Covariate)
+    \draw[deterministic] (m) -- (h);
 
 
-### Preparing Data
+    % =========================================================
+    % RIGHT SIDE: KRUSCHKE-STYLE DISTRIBUTIONAL NOTATION
+    % =========================================================
+    \node[font=\large\bfseries] at (11, 2) {Kruschke-Style Notation};
 
-We need to format the data specifically for the Stan model, associating each choice with the correct agent.
+    % 1. Population Level
+    \coordinate (k_mu_a) at (7, 0); \draw (k_mu_a) pic {norm_dist}; \node[above=0.6cm of k_mu_a, font=\bfseries] {$\mu_\alpha$};
+    \coordinate (k_sig_a) at (9, 0); \draw (k_sig_a) pic {exp_dist}; \node[above=0.6cm of k_sig_a, font=\bfseries] {$\sigma_\alpha$};
+    
+    \coordinate (k_omega) at (11, 0); \draw (k_omega) pic {lkj_dist}; \node[above=0.6cm of k_omega, font=\bfseries] {$\Omega$ (Corr)};
+    
+    \coordinate (k_sig_b) at (13, 0); \draw (k_sig_b) pic {exp_dist}; \node[above=0.6cm of k_sig_b, font=\bfseries] {$\sigma_\beta$};
+    \coordinate (k_mu_b) at (15, 0); \draw (k_mu_b) pic {norm_dist}; \node[above=0.6cm of k_mu_b, font=\bfseries] {$\mu_\beta$};
 
-```{r 06 Prepare Data for Stan}
-# Filter data for only the 'Biased' agents
-biased_agent_data_cp <- simulation_data %>%
-  filter(agent_type == "Biased") %>%
-  # Create consecutive agent IDs from 1 to J for Stan
-  mutate(agent_id_stan = as.numeric(factor(agent)))
+    % 2. Individual Level (Joint MVN)
+    \coordinate (k_mvn) at (11, -3.5);
+    \draw (k_mvn) pic {mvn_dist};
+    \node[above=0.8cm of k_mvn, font=\bfseries] {Joint Agent Params $\begin{pmatrix} \alpha_j \\ \beta_j \end{pmatrix}$};
 
-# Prepare data list for Stan
-stan_data_biased_ml_cp <- list(
-  N = nrow(biased_agent_data_cp),
-  J = length(unique(biased_agent_data_cp$agent_id_stan)),
-  agent_id = biased_agent_data_cp$agent_id_stan,
-  h = biased_agent_data_cp$agent_choice
-)
+    % 3. Data Level
+    \coordinate (k_m) at (9, -7);
+    \node[discrete, observed, minimum size=0.8cm] (k_m_node) at (k_m) {$m_{ij}$};
+    \node[above=0.5cm of k_m, font=\bfseries] {Opp. History};
 
-# Verify dimensions
-cat("CP Biased Model - Total observations (N):", stan_data_biased_ml_cp$N, "\n")
-cat("CP Biased Model - Number of agents (J):", stan_data_biased_ml_cp$J, "\n")
+    \coordinate (k_h) at (13, -7);
+    \draw (k_h) pic {bern_dist};
+    \node[above=0.8cm of k_h, font=\bfseries] {Choice ($h_{ij}$)};
+
+    % Kruschke Plates
+    \draw[plate, dashed] (8, -5) rectangle (14, -2) node[below left, font=\small\bfseries] {$j=1 \dots J$};
+    \draw[plate, dotted] (8, -8) rectangle (14, -5.5) node[below left, font=\small\bfseries] {$i=1 \dots N$};
+
+    % Edges
+    \draw[stochastic] (k_mu_a) -- (k_mvn);
+    \draw[stochastic] (k_sig_a) -- (k_mvn);
+    \draw[stochastic] (k_omega) -- (k_mvn) node[midway, right, font=\large] {$\sim$};
+    \draw[stochastic] (k_sig_b) -- (k_mvn);
+    \draw[stochastic] (k_mu_b) -- (k_mvn);
+    
+    \draw[stochastic] (k_mvn) -- (k_h) node[midway, right, font=\large] {$\sim$};
+    \draw[deterministic] (k_m_node) -- (12.5, -7);
+
+\end{tikzpicture}
 ```
 
-### Stan Model: Centered Parameterization (CP)
+### WSLS Agent Model (Multilevel)
 
-In CP, we directly model individual parameters (theta_logit) that determines their probability of choosing "right" versus "left". These individual parameters will be modeled as coming from a population distribution with mean `thetaM` and standard deviation `thetaSD`.
+Similarly, a multilevel WSLS model would have population distributions for the win-stay (betaWin) and lose-shift (betaLose) parameters, potentially including a baseline bias (alpha) and correlation.
 
-This approach balances two sources of information:
-1. The agent's individual choice patterns
-2. The overall population distribution of bias parameters
+These diagrams clarify how parameters at different levels relate, guiding our Stan model implementation.
 
-The model implements the following hierarchical structure:
+```{tikz hierarchical_wsls_dags, echo=FALSE, fig.cap="Standard Plate Notation (Left) and Kruschke-Style Generative Notation (Right) for the Hierarchical WSLS Agent.", fig.ext='png', fig.width=12, cache=TRUE}
 
-- **Population level**: θᵐ ~ Normal(0, 1), θˢᵈ ~ Normal⁺(0, 0.3)
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta, fit, backgrounds, calc}
 
-- **Individual level**: θᵢ ~ Normal(θᵐ, θˢᵈ)
+\begin{tikzpicture}[
+    % GLOBAL STYLES
+    stochastic/.style={->, >={Latex[length=3mm]}, thick},
+    deterministic/.style={->, >={Latex[length=3mm]}, thick, dashed, draw=gray!80},
+    formula/.style={align=left, font=\small},
+    plate/.style={draw=black, thick, rounded corners, inner sep=12pt},
+    
+    % STANDARD DAG STYLES
+    continuous/.style={circle, draw=black, thick, minimum size=1.1cm, inner sep=0pt},
+    discrete/.style={rectangle, draw=black, thick, minimum size=1.1cm},
+    observed/.style={fill=gray!30},
+    latent/.style={fill=white},
 
-- **Data level**: yᵢₜ ~ Bernoulli(logit⁻¹(θᵢ))
+    % KRUSCHKE ICON DEFINITIONS
+    pics/norm_dist/.style={
+        code={
+            \draw[thin, gray] (-1,0) -- (1,0);
+            \draw[thick, blue] plot[domain=-1:1, samples=50] (\x, {0.6*exp(-3*\x*\x)});
+            \node[font=\scriptsize, below] at (0,0) {Normal};
+        }
+    },
+    pics/exp_dist/.style={
+        code={
+            \draw[thin, gray] (-0.2,0) -- (1.2,0);
+            \draw[thick, blue] plot[domain=0:1.1, samples=50] (\x, {0.6*exp(-2.5*\x)});
+            \node[font=\scriptsize, below] at (0.5,0) {Exp};
+        }
+    },
+    pics/lkj_dist/.style={
+        code={
+            \draw[thin, gray] (-1,0) -- (1,0);
+            \draw[thick, blue] plot[domain=-0.9:0.9, samples=50] (\x, {0.6*(1-\x*\x)});
+            \node[font=\scriptsize, below] at (0,0) {LKJ};
+        }
+    },
+    pics/mvn_dist/.style={
+        code={
+            \draw[thin, gray, ->] (-0.8,0) -- (0.8,0);
+            \draw[thin, gray, ->] (0,-0.8) -- (0,0.8);
+            \draw[thick, blue, rotate=45] (0,0) ellipse (0.6 and 0.25);
+            \draw[thick, blue, rotate=45] (0,0) ellipse (0.3 and 0.1);
+            \node[font=\scriptsize, below right] at (0.2,-0.2) {MVN};
+        }
+    },
+    pics/bern_dist/.style={
+        code={
+            \draw[thin, gray] (-0.8,0) -- (0.8,0);
+            \draw[thick, blue, ycomb, line width=3pt] plot coordinates { (-0.3, 0.3) (0.3, 0.7) };
+            \node[font=\scriptsize, below] at (0,0) {Bern};
+        }
+    }
+]
+
+    % =========================================================
+    % LEFT SIDE: STANDARD PLATE NOTATION
+    % =========================================================
+    \node[font=\large\bfseries] at (0, 3) {Standard Plate Notation};
+
+    % 1. Population Level (Hyperparameters)
+    \node[continuous, latent] (mu_a) at (-4.5, 0) {$\mu_\alpha$};
+    \node[continuous, latent] (sigma_a) at (-2.5, 0) {$\sigma_\alpha$};
+    
+    \node[continuous, latent, fill=gray!10] (omega) at (0, 2) {$\Omega$};
+    
+    \node[continuous, latent] (mu_bw) at (-1, 0) {$\mu_{\beta_W}$};
+    \node[continuous, latent] (sigma_bw) at (1, 0) {$\sigma_{\beta_W}$};
+    
+    \node[continuous, latent] (mu_bl) at (2.5, 0) {$\mu_{\beta_L}$};
+    \node[continuous, latent] (sigma_bl) at (4.5, 0) {$\sigma_{\beta_L}$};
+    
+    % 2. Individual Level
+    \node[continuous, latent] (alpha) at (-3.5, -4) {$\alpha_j$};
+    \node[continuous, latent] (beta_w) at (0, -4) {$\beta_{W,j}$};
+    \node[continuous, latent] (beta_l) at (3.5, -4) {$\beta_{L,j}$};
+    
+    % 3. Data Level (Observed covariates and outcome)
+    \node[discrete, observed] (win) at (-3, -8) {$W_{ij}$};
+    \node[discrete, observed] (h) at (0, -8) {$h_{ij}$};
+    \node[discrete, observed] (lose) at (3, -8) {$L_{ij}$};
+
+    % Plates
+    \node[plate, fit=(win) (h) (lose), label={[anchor=south east, font=\small\bfseries]below right:$i=1 \dots N$}] (plate_N) {};
+    \node[plate, inner sep=18pt, fit=(alpha) (beta_w) (beta_l) (plate_N), label={[anchor=south east, font=\small\bfseries]below right:$j=1 \dots J$}] (plate_J) {};
+
+    % Edges (Stochastic)
+    \draw[stochastic] (mu_a) -- (alpha);
+    \draw[stochastic] (sigma_a) -- (alpha);
+    
+    \draw[stochastic] (mu_bw) -- (beta_w);
+    \draw[stochastic] (sigma_bw) -- (beta_w);
+    
+    \draw[stochastic] (mu_bl) -- (beta_l);
+    \draw[stochastic] (sigma_bl) -- (beta_l);
+    
+    \draw[stochastic] (omega) -- (alpha);
+    \draw[stochastic] (omega) -- (beta_w);
+    \draw[stochastic] (omega) -- (beta_l);
+    
+    \draw[stochastic] (alpha) -- (h);
+    \draw[stochastic] (beta_w) -- (h);
+    \draw[stochastic] (beta_l) -- (h);
+    
+    % Edges (Deterministic Covariates)
+    \draw[deterministic] (win) -- (h);
+    \draw[deterministic] (lose) -- (h);
 
 
-```{r 06 Stan Model Biased Agent}
-stan_biased_ml_cp_code <- "
-// Multilevel Biased Agent Model (CENTERED Parameterization)
-// Directly models individual biases drawn from population distribution.
+    % =========================================================
+    % RIGHT SIDE: KRUSCHKE-STYLE DISTRIBUTIONAL NOTATION
+    % =========================================================
+    \node[font=\large\bfseries] at (12, 3) {Kruschke-Style Notation};
 
-data {
-  int<lower=1> N;                    // Total number of observations
-  int<lower=1> J;                    // Number of agents
-  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation (must be 1...J)
-  array[N] int<lower=0, upper=1> h;    // Observed choices (0 or 1)
-}
+    % 1. Population Level
+    \coordinate (k_mu_a) at (7, 0); \draw (k_mu_a) pic {norm_dist}; \node[above=0.6cm of k_mu_a, font=\bfseries] {$\mu_\alpha$};
+    \coordinate (k_sig_a) at (9, 0); \draw (k_sig_a) pic {exp_dist}; \node[above=0.6cm of k_sig_a, font=\bfseries] {$\sigma_\alpha$};
+    
+    \coordinate (k_omega) at (12, 2); \draw (k_omega) pic {lkj_dist}; \node[above=0.6cm of k_omega, font=\bfseries] {$\Omega$ ($3 \times 3$ Corr)};
+    
+    \coordinate (k_mu_bw) at (11, 0); \draw (k_mu_bw) pic {norm_dist}; \node[above=0.6cm of k_mu_bw, font=\bfseries] {$\mu_{\beta_W}$};
+    \coordinate (k_sig_bw) at (13, 0); \draw (k_sig_bw) pic {exp_dist}; \node[above=0.6cm of k_sig_bw, font=\bfseries] {$\sigma_{\beta_W}$};
+    
+    \coordinate (k_mu_bl) at (15, 0); \draw (k_mu_bl) pic {norm_dist}; \node[above=0.6cm of k_mu_bl, font=\bfseries] {$\mu_{\beta_L}$};
+    \coordinate (k_sig_bl) at (17, 0); \draw (k_sig_bl) pic {exp_dist}; \node[above=0.6cm of k_sig_bl, font=\bfseries] {$\sigma_{\beta_L}$};
 
-parameters {
-  // Population-level parameters
-  real mu_theta;                     // Population mean bias (logit scale)
-  real<lower=0> sigma_theta;         // Population SD of bias (logit scale)
+    % 2. Individual Level (Joint MVN)
+    \coordinate (k_mvn) at (12, -4);
+    \draw (k_mvn) pic {mvn_dist};
+    \node[above=0.8cm of k_mvn, font=\bfseries, align=center] {Joint Agent Params \\ $\begin{pmatrix} \alpha_j \\ \beta_{W,j} \\ \beta_{L,j} \end{pmatrix}$};
 
-  // Individual-level parameters (CENTERED)
-  vector[J] theta_logit;             // Directly estimate individual biases
-}
+    % 3. Data Level
+    \coordinate (k_win) at (9, -8);
+    \node[discrete, observed, minimum size=0.8cm] (k_win_node) at (k_win) {$W_{ij}$};
+    \node[above=0.5cm of k_win, font=\bfseries] {Win Signal};
 
-model {
-  // Priors for population-level parameters
-  mu_theta ~ normal(0, 1);
-  sigma_theta ~ exponential(1);      // Prior slightly favors smaller SDs
+    \coordinate (k_h) at (12, -8);
+    \draw (k_h) pic {bern_dist};
+    \node[above=0.8cm of k_h, font=\bfseries] {Choice ($h_{ij}$)};
+    
+    \coordinate (k_lose) at (15, -8);
+    \node[discrete, observed, minimum size=0.8cm] (k_lose_node) at (k_lose) {$L_{ij}$};
+    \node[above=0.5cm of k_lose, font=\bfseries] {Lose Signal};
 
-  // Hierarchical structure (CENTERED)
-  // Individual thetas are explicitly drawn from the population distribution
-  theta_logit ~ normal(mu_theta, sigma_theta); // This defines the CP
+    % Kruschke Plates
+    \draw[plate, dashed] (6, -6) rectangle (18, -2.5) node[below left, font=\small\bfseries] {$j=1 \dots J$};
+    \draw[plate, dotted] (6, -9.5) rectangle (18, -6.5) node[below left, font=\small\bfseries] {$i=1 \dots N$};
 
-  // Likelihood
-  h ~ bernoulli_logit(theta_logit[agent_id]); // Vectorized likelihood
-}
+    % Edges
+    \draw[stochastic] (k_mu_a) -- (k_mvn);
+    \draw[stochastic] (k_sig_a) -- (k_mvn);
+    \draw[stochastic] (k_mu_bw) -- (k_mvn);
+    \draw[stochastic] (k_sig_bw) -- (k_mvn);
+    \draw[stochastic] (k_mu_bl) -- (k_mvn);
+    \draw[stochastic] (k_sig_bl) -- (k_mvn);
+    \draw[stochastic] (k_omega) -- (k_mvn) node[midway, right, font=\large] {$\sim$};
+    
+    \draw[stochastic] (k_mvn) -- (k_h) node[midway, right, font=\large] {$\sim$};
+    \draw[deterministic] (k_win_node) -- (11.2, -8);
+    \draw[deterministic] (k_lose_node) -- (12.8, -8);
 
-generated quantities {
-  // Population parameters on probability scale
-  real<lower=0, upper=1> mu_theta_prob = inv_logit(mu_theta);
-
-  // Individual agent biases on probability scale
-  vector<lower=0, upper=1>[J] theta_prob = inv_logit(theta_logit);
-
-  // Log-likelihood for each observation
-  vector[N] log_lik;
-  for (i in 1:N) {
-    log_lik[i] = bernoulli_logit_lpmf(h[i] | theta_logit[agent_id[i]]);
-  }
-
-  // Prior predictive checks
-  real mu_theta_prior = normal_rng(0, 1);
-  real<lower=0> sigma_theta_prior = exponential_rng(1);
-  vector[J] theta_logit_prior = normal_rng(mu_theta_prior, sigma_theta_prior); // Sample individuals from prior pop dist
-  array[N] int h_prior_rep;
-  for (i in 1:N) {
-    h_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[agent_id[i]]);
-  }
-
-  // Posterior predictive checks
-  array[N] int h_post_rep;
-  for (i in 1:N) {
-    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent_id[i]]);
-  }
-}
-"
-# Write Stan code to file
-stan_file_biased_ml_cp <- file.path("stan", "ch6_multilevel_biased_cp.stan")
-write_stan_file(stan_biased_ml_cp_code, stan_file_biased_ml_cp)
-
-# Compile the CP model
-if (!exists("mod_biased_ml_cp") || !cmdstanr::is_cmdstan_model(mod_biased_ml_cp)) {
-  mod_biased_ml_cp <- cmdstan_model(stan_file_biased_ml_cp, cpp_options = list(stan_threads = TRUE))
-} else {
-  message("Using already compiled biased CP multilevel model.")
-}
-
+\end{tikzpicture}
 ```
 
-### Fitting the Model
-
-```{r 06 fitting the mode}
-# Define file path for saved CP model fit
-fit_file_biased_ml_cp <- file.path("simmodels", "ch6_fit_biased_ml_cp.rds")
-
-# Check if we need to re-run the fitting
-if (regenerate_simulations || !file.exists(fit_file_biased_ml_cp)) {
-  cat("Fitting CENTERED multilevel biased agent model...\n")
-  # Fit the model - NOTE: This might produce warnings/errors!
-  fit_biased_ml_cp <- mod_biased_ml_cp$sample(
-    data = stan_data_biased_ml_cp,
-    seed = 123,
-    chains = 4,
-    parallel_chains = min(4, cores_to_use),
-    iter_warmup = 1000,
-    iter_sampling = 1500,
-    refresh = 500,
-    adapt_delta = 0.85, # Start with slightly lower adapt_delta for CP
-    max_treedepth = 10
-  )
-  # Save the fitted model object
-  fit_biased_ml_cp$save_object(file = fit_file_biased_ml_cp)
-  cat("CP Model fit saved to:", fit_file_biased_ml_cp, "\n")
-} else {
-  # Load existing fit object
-  fit_biased_ml_cp <- readRDS(fit_file_biased_ml_cp)
-  cat("Loaded existing CP model fit from:", fit_file_biased_ml_cp, "\n")
-}
-
-# --- Check Diagnostics for CP Model ---
-cat("\nDiagnostics for CP Biased Model:\n")
-fit_biased_ml_cp$cmdstan_diagnose()
-
-# Examine summary statistics, looking for low ESS or high Rhat
-summary_biased_ml_cp <- fit_biased_ml_cp$summary(
-  variables = c("mu_theta", "sigma_theta", "theta_logit[1]", "theta_logit[2]"), # Check a few thetas
-  "mean", "median", "sd", "rhat", "ess_bulk", "ess_tail"
-)
-print(summary_biased_ml_cp)
-
-# Explicitly check for divergences
-num_divergences_cp <- sum(fit_biased_ml_cp$sampler_diagnostics()[, "divergent__"])
-cat("\nNumber of divergent transitions (CP Model):", num_divergences_cp, "\n")
-
-
-```
-
-### Interpreting CP Diagnostics:
-
-When fitting this centered parameterization, especially if the true sigma_theta (population variability) is small or the data per agent (trials) is limited, Stan's sampler often encounters difficulties. You might observe:
-
-* **Divergent Transitions**: Warnings like XX divergent transitions after warmup indicate the sampler couldn't explore the posterior properly. This suggests the results might be biased or unreliable. Even if the number is low, their presence is a concern.
-
-* **Low Effective Sample Sizes (ESS)**: Values below a few hundred for ess_bulk or ess_tail, particularly for sigma_theta and individual theta_logit parameters, indicate inefficient sampling and less trustworthy estimates for those parameters.
-
-* **High R-hat values**: Values significantly above 1.01 indicate poor mixing between chains, meaning the chains haven't converged to the same distribution.
-
-* (Conceptual) **The 'Funnel of Hell'**: These issues often stem from a geometric challenge. When sigma_theta is small, the individual theta_logit parameters are tightly clustered around mu_theta. This creates a 'funnel' shape in the joint posterior distribution of (sigma_theta, theta_logit) that is very difficult for standard HMC algorithms to explore efficiently without divergences.
-
-**Self-Correction**: In this run with pop_bias_sd = 0.65 and 120 trials, the CP model actually converged reasonably well, contrary to what happened with previous versions of Stan (darn you darned good Stan developers!). Divergences are more common when sigma_theta is smaller or trials are fewer. However, we will proceed to introduce NCP as it is generally more robust, especially for more complex models.
-
-These potential issues signal that while the centered parameterization is intuitive, it can be computationally problematic. To address this, we use a common and highly recommended technique called non-centered parameterization (NCP).
-
-### Non-Centered Parameterization (NCP) as the Solution
-
-NCP tackles the sampling difficulties of CP by changing how we define the individual parameters in the Stan model, in a way that is not dissimilar from rescaling your predictors - a common procedure my students learn in their statistical course to help model convergence and interpretation. Instead of directly sampling theta_logit[j] from normal(mu_theta, sigma_theta), we sample standardized deviations (z_theta[j]) from a standard normal distribution (normal(0, 1)) and then construct the individual theta_logit[j] values using the population parameters within the transformed parameters block.
-
-Mathematically: Instead of: theta_logit[j] ~ normal(mu_theta, sigma_theta) (CP)
-We use:
-
-* z_theta[j] ~ normal(0, 1) (in model block)
-
-* theta_logit[j] = mu_theta + z_theta[j] * sigma_theta (in transformed parameters block)
-
-This reparameterization doesn't change the underlying mathematical model (the implied prior on theta_logit is still normal(mu_theta, sigma_theta)), but it creates a posterior geometry that is much easier for Stan's sampler to explore, often resolving the 'funnel' problem and eliminating divergences. The reparametrization has subtracted the mean and divided by the standard deviation, just like when we rescale predictors, so that to have the actual values we need to add back the mean (+ mu_theta) and multiply by the standard deviation (*sigma_theta).
-
-### Stan Model: Multilevel Biased Agent (NCP)
-
-Here is the NCP version of the model. Note the changes in the parameters, transformed parameters, and model blocks compared to the CP version.
-
-```{r}
-# Stan model code is identical to ch6_stan_biased_ml block in previous response
-stan_biased_ml_ncp_code <- '
-// Multilevel Biased Agent Model (Non-Centered Parameterization)
-// Estimates individual biases drawn from a population distribution.
-
-data {
-  int<lower=1> N;                    // Total number of observations
-  int<lower=1> J;                    // Number of agents
-  array[N] int<lower=1, upper=J> agent_id; // Agent ID for each observation (must be 1...J)
-  array[N] int<lower=0, upper=1> h;    // Observed choices (0 or 1)
-}
-
-parameters {
-  // Population-level parameters
-  real mu_theta;                     // Population mean bias (logit scale)
-  real<lower=0> sigma_theta;         // Population SD of bias (logit scale)
-
-  // Individual-level parameters (standardized deviations)
-  vector[J] z_theta;                 // Non-centered individual effects (standard normal scale)
-}
-
-transformed parameters {
-  // Individual agent biases (logit scale)
-  // Calculated from population parameters and standardized deviations
-  // theta_logit_j = mu_theta + z_theta_j * sigma_theta
-  vector[J] theta_logit = mu_theta + z_theta * sigma_theta;
-}
-
-model {
-  // Priors for population-level parameters
-  // Rationale: Weakly informative prior for population mean bias (logit scale), centered at 0 (0.5 prob).
-  mu_theta ~ normal(0, 1);
-  // Rationale: Prior for population standard deviation. Exponential(1) slightly favors smaller SDs
-  // (less individual variation) but allows larger ones. SD is on logit scale.
-  sigma_theta ~ exponential(1);
-
-  // Prior for standardized individual deviations
-  // Rationale: This is key for non-centered parameterization. Assumes individual deviations
-  // from the mean (after scaling by sigma_theta) follow a standard normal distribution.
-  z_theta ~ std_normal(); // Equivalent to theta_logit ~ normal(mu_theta, sigma_theta)
-
-  // Likelihood
-  // Rationale: Each choice h[i] for agent agent_id[i] is a Bernoulli trial with
-  // probability determined by that agent\'s specific bias theta_logit[agent_id[i]].
-  // Using bernoulli_logit_lpmf is numerically stable and efficient.
-  h ~ bernoulli_logit(theta_logit[agent_id]); // Vectorized likelihood
-}
-
-generated quantities {
-  // Population parameters on probability scale for easier interpretation
-  real<lower=0, upper=1> mu_theta_prob = inv_logit(mu_theta);
-
-  // Individual agent biases on probability scale
-  vector<lower=0, upper=1>[J] theta_prob = inv_logit(theta_logit);
-
-  // Log-likelihood for each observation (for LOO/WAIC)
-  // Needed for model comparison (Chapter 7)
-  vector[N] log_lik;
-  for (i in 1:N) {
-    log_lik[i] = bernoulli_logit_lpmf(h[i] | theta_logit[agent_id[i]]);
-  }
-
-  // --- Prior Predictive Checks ---
-  // Simulate data based ONLY on draws from the priors
-  real mu_theta_prior = normal_rng(0, 1);
-  real<lower=0> sigma_theta_prior = exponential_rng(1);
-  // Simulate individual biases from the prior population distribution
-  vector[J] z_theta_prior = normal_rng(0, 1); // Sample z-scores from prior
-  vector[J] theta_logit_prior = mu_theta_prior + z_theta_prior * sigma_theta_prior;
-  // Simulate choices for each observation based on the prior-simulated agent biases
-  array[N] int h_prior_rep;
-  for (i in 1:N) {
-    h_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[agent_id[i]]);
-  }
-
-  // --- Posterior Predictive Checks ---
-  // Simulate data based on parameters drawn from the POSTERIOR distribution
-  array[N] int h_post_rep;
-  for (i in 1:N) {
-    // Use the posterior sample of theta_logit for the corresponding agent
-    // theta_logit vector contains posterior draws calculated in transformed parameters
-    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent_id[i]]);
-  }
-}'
-
-# Write Stan code to file (if not already done)
-stan_file_biased_ml_ncp <- file.path("stan", "ch6_multilevel_biased_ncp.stan")
-write_stan_file(stan_biased_ml_ncp_code, stan_file_biased_ml_ncp)
-
-# Compile the NCP model (if not already done)
-if (!exists("mod_biased_ml_ncp") || !cmdstanr::is_cmdstan_model(mod_biased_ml_ncp)) {
-  mod_biased_ml_ncp <- cmdstan_model(stan_file_biased_ml_ncp, cpp_options = list(stan_threads = TRUE))
-} else {
-  message("Using already compiled biased NCP multilevel model.")
-}
-
-```
-
-### Fitting the NCP Model
-```{r}
-# Define file path for saved NCP model fit
-fit_file_biased_ml_ncp <- file.path("simmodels", "ch6_fit_biased_ml_ncp.rds") # Use distinct name
-
-# Check if we need to re-run the fitting
-if (regenerate_simulations || !file.exists(fit_file_biased_ml_ncp)) {
-  cat("Fitting NON-CENTERED multilevel biased agent model...\n")
-  fit_biased_ml_ncp <- mod_biased_ml_ncp$sample(
-    data = stan_data_biased_ml_cp, # Use the same data as CP model
-    seed = 123,
-    chains = 4,
-    parallel_chains = min(4, cores_to_use),
-    iter_warmup = 1000,
-    iter_sampling = 1500,
-    refresh = 500,
-    adapt_delta = 0.9, # Can often use standard adapt_delta with NCP
-    max_treedepth = 10
-  )
-  # Save the fitted model object
-  fit_biased_ml_ncp$save_object(file = fit_file_biased_ml_ncp)
-  cat("NCP Model fit saved to:", fit_file_biased_ml_ncp, "\n")
-} else {
-  # Load existing fit object
-  fit_biased_ml_ncp <- readRDS(fit_file_biased_ml_ncp)
-  cat("Loaded existing NCP model fit from:", fit_file_biased_ml_ncp, "\n")
-}
-
-# --- Compare Diagnostics: CP vs NCP ---
-cat("\nDiagnostics Comparison (Biased Model):\n")
-cat("--- CENTERED Parameterization ---\n")
-fit_biased_ml_cp$cmdstan_diagnose() # Re-run diagnostics for CP fit
-cat("\n--- NON-CENTERED Parameterization ---\n")
-fit_biased_ml_ncp$cmdstan_diagnose() # Diagnostics for NCP fit
-
-# Compare summaries (focus on ESS, Rhat)
-summary_cp <- fit_biased_ml_cp$summary(variables = c("mu_theta", "sigma_theta"), "mean", "rhat", "ess_bulk", "ess_tail")
-summary_ncp <- fit_biased_ml_ncp$summary(variables = c("mu_theta", "sigma_theta"), "mean", "rhat", "ess_bulk", "ess_tail")
-
-cat("\nSummary Comparison (Population Params):\n")
-print(summary_cp %>% mutate(Parametrization = "Centered"))
-print(summary_ncp %>% mutate(Parametrization = "Non-Centered"))
-
-```
-
-### Comparing CP and NCP:
-
-Comparing the diagnostics from the CP and NCP fits typically reveals the benefits of NCP, especially in more challenging scenarios (e.g., smaller sigma_theta, fewer trials):
-
-* **Divergences**: NCP usually results in fewer or zero divergent transitions.
-
-* **Effective Sample Sizes (ESS)**: NCP often yields significantly higher ESS values, particularly for sigma_theta and the individual parameters (z_theta or derived theta_logit), indicating more efficient sampling.
-
-* **R-hat**: Both should ideally have R-hat values near 1.0, but NCP might achieve this more reliably.
-
-Therefore, while CP is conceptually simpler, NCP is often the recommended approach for implementing multilevel models in Stan due to its (often) superior sampling performance and robustness. We will use NCP for the more complex memory model next. But remember that there is no free lunch in modeling and sometimes the centered parameterization might actually be the better choice. There is no replacement to tinkering (fitting the model, assessing quality, adjusting and repeating til the quality is acceptable).
 
 ### Model Quality Checks (NCP Biased Model)
 

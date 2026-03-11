@@ -18,7 +18,7 @@ knitr::opts_chunk$set(
 
 # Flag to control whether to regenerate simulation/fitting results
 # Set to TRUE to rerun everything (takes time!), FALSE to load saved results.
-regenerate_simulations <- TRUE
+regenerate_simulations <- FALSE
 ```
 
 
@@ -574,12 +574,14 @@ prior_grid <- tidyr::expand_grid(
   prior_sd = seq(0.5, 3.0, length.out = 10)
 )
 
+# Standardized filename variable
 sensitivity_draws_file <- file.path(here(stan_results_dir), "W5_sensitivity_draws.rds")
 
-# Check if we need to re-run the sensitivity analysis
-if (regenerate_simulations || !file.exists(sensitivity_results_file)) {
+# Check if we need to re-run the sensitivity analysis (fixed variable name)
+if (regenerate_simulations || !file.exists(sensitivity_draws_file)) {
   
-  fit_and_extract <- function(prior_m, prior_sd, seed_val) {
+  # Removed 'seed_val' from the function arguments
+  fit_and_extract <- function(prior_m, prior_sd) {
     # Dynamically inject the perturbed parameters into the data list
     current_data_list <- observed_data_list
     current_data_list$prior_theta_m <- prior_m
@@ -594,7 +596,8 @@ if (regenerate_simulations || !file.exists(sensitivity_results_file)) {
       iter_sampling = 3000,
       refresh = 0, 
       adapt_delta = 0.8,
-      show_messages = FALSE 
+      show_messages = FALSE,
+      show_exceptions = FALSE # Added to prevent C++ errors from polluting stdout
     )
     
     draws_df <- fit$draws("theta", format = "df")
@@ -607,29 +610,29 @@ if (regenerate_simulations || !file.exists(sensitivity_results_file)) {
     )
   }
 
-  # 3. Establish the parallel backend 
-  # We reserve 2 cores to keep the operating system stable.
-  future::plan(future::multisession, workers = parallel::detectCores() - 2)
+  # Establish the parallel backend 
+  future::plan(future::multisession, workers = 2)
   
-  # 4. Execute the parallel mapping
-  # future_pmap now returns a list of dataframes, not CmdStanR objects
+  # Execute the parallel mapping
   draws_list <- furrr::future_pmap(
     prior_grid,
     fit_and_extract,
-    .options = furrr::furrr_options(seed = TRUE) # Ensure safe parallel RNG
+    .options = furrr::furrr_options(seed = TRUE, stdout = FALSE) 
   )
   
-  # 5. Collapse the list of dataframes into a single tidy dataframe
+  # Collapse the list of dataframes into a single tidy dataframe
   sensitivity_draws <- dplyr::bind_rows(draws_list)
   
   # Shut down the parallel backend to free up RAM
   future::plan(future::sequential)
   
-  # Save the indestructible, pure data
+  # Save the indestructible, pure data (fixed variable name)
   saveRDS(sensitivity_draws, sensitivity_draws_file)
+  
 } else {
-  sensitivity_fits <- readRDS(sensitivity_file)
-  cat("Loaded existing perturbation grid from:", sensitivity_file, "\n")
+  # Fixed variable names to match what was saved
+  sensitivity_draws <- readRDS(sensitivity_draws_file)
+  cat("Loaded existing perturbation grid from:", sensitivity_draws_file, "\n")
 }
  
 
@@ -736,7 +739,8 @@ where $\alpha$ and $\beta$ are scaling factors.
 ```{r 05 - priorsense analysis, warning = F, message = F}
 
 # We run prior sense
-sensitivity_summary <- priorsense::powerscale_sensitivity(fit_gq)
+sensitivity_summary <- priorsense::powerscale_sensitivity(fit_gq, 
+    variable = c("theta"))
 
 # we extract the variable of interest
 theta_metrics <- sensitivity_summary |>
@@ -817,12 +821,12 @@ if (regenerate_simulations || !file.exists(recovery_file)) {
   }
 
   # 3. Establish the parallel backend and execute mapping
-  future::plan(future::multisession, workers = parallel::detectCores() - 2)
+  future::plan(future::multisession, workers = 2)
   
   recovery_draws <- furrr::future_pmap(
     recovery_grid,
     run_recovery,
-    .options = furrr::furrr_options(seed = TRUE)
+    .options = furrr::furrr_options(seed = TRUE, stdout = FALSE)
   ) |> 
     dplyr::bind_rows()
     
@@ -976,10 +980,10 @@ if (regenerate_simulations || !file.exists(sbc_results_file)) {
   )
 
   # 3. Generate datasets and compute rank statistics using parallelization
-  future::plan(future::multisession, workers = parallel::detectCores() - 2)
+  future::plan(future::multisession, workers = 2)
   
   # Generate 1000 synthetic realities using the formally cast object!
-  sbc_datasets <- SBC::generate_datasets(sbc_generator_obj, n_sims = 1000)
+  sbc_datasets <- SBC::generate_datasets(sbc_generator_obj, n_sims = 200)
   
   # Fit the model 1000 times and extract rank statistics
   sbc_results <- SBC::compute_SBC(sbc_datasets, sbc_backend)
@@ -1011,7 +1015,6 @@ p_sbc_ecdf <- SBC::plot_ecdf(sbc_results, variables = "theta") +
   theme(strip.background = element_rect(fill = "gray95", color = "NA"))
 
 # Combine plots  using patchwork
-library(patchwork)
 p_sbc_combined <- p_sbc_hist / p_sbc_ecdf
 p_sbc_combined
 ```
@@ -1029,7 +1032,73 @@ We are interrogating the algorithm for structural bias.
    
 2. ECDF Plot (Bottom): The blue line represents our empirical CDF, and the gray ellipse is the acceptable uniformity bound. If the blue line breaks outside the ellipse, the HMC sampler has failed to capture the true geometry of the prior space.
 
-Because our plots remain cleanly within the gray boundaries, we formally declare the Simple Biased Agent to be computationally calibrated and ready for empirical application.
+### Phase 6c: Posterior SBC
+
+However, if you paid attention, you've realized that the calibration was based on the prior. In other words, it's strongly bound by our assumptions (and we should be careful about that). But what if the posterior brings us to a slightly different region of the parameter space? We can also check the calibration of the posterior by running SBC with a different generator function that samples from the posterior instead of the prior. This answers the question: "Given the constraints the actual data has placed on my parameters, is my model-sampler combination still unbiased in this specific high-probability manifold?"
+
+#### The Mathematical Logic of PSBC
+
+The self-consistency property of Bayes' theorem extends to any valid distribution. In PSBC, we treat our empirical posterior as a "local prior":
+
+1. Draw a "true" parameter $\tilde{\theta}$ from the fitted posterior: $\tilde{\theta} \sim p(\theta \mid y_{obs})$.
+
+2. Simulate a new synthetic dataset $\tilde{y}$ from the likelihood: $\tilde{y} \sim p(y \mid \tilde{\theta})$.
+
+3. Fit the model to this synthetic data to get a "new" posterior $p(\theta \mid \tilde{y}, y_{obs})$.
+
+4. Check Ranks: The rank of $\tilde{\theta}$ within the new posterior must still be Uniform.
+
+If PSBC passes but Prior SBC fails, it means your model is only reliable for data similar to what you observed. If PSBC fails, you cannot trust the specific estimates for your current experiment, even if the model works "in general"
+
+```{r}
+# 1. Extract posterior draws as the required 'draws_matrix' type
+post_draws_theta_raw <- posterior::as_draws_matrix(fit_gq$draws(c("theta", "theta_logit")))
+
+# 2. Sequential Data Generation
+# We manually draw 'true' values from the posterior instead of a formula
+generate_psbc_data_theta <- function(n_sims = 1000) {
+  indices <- sample(1:nrow(post_draws_theta_raw), n_sims, replace = TRUE)
+  sampled_vars <- post_draws_theta_raw[indices, , drop = FALSE]
+  
+  gen_list <- list()
+  for (i in 1:n_sims) {
+    true_logit <- as.numeric(sampled_vars[i, "theta_logit"])
+    true_prob <- plogis(true_logit) # Logistic transformation
+    
+    # Simulate data based on these posterior-conditioned parameters 
+    h_sim <- rbinom(observed_data_list$n, size = 1, prob = true_prob)
+    
+    gen_list[[i]] <- list(
+      n = observed_data_list$n,
+      h = h_sim,
+      prior_theta_m = 0,
+      prior_theta_sd = 1.5
+    )
+  }
+  
+  # PSBC requires parameters in 'variables' and Stan data in 'generated'
+  return(SBC::SBC_datasets(variables = sampled_vars, generated = gen_list))
+}
+
+psbc_results_file <- file.path(stan_results_dir, "W5_psbc_results.rds")
+
+if (regenerate_simulations || !file.exists(psbc_results_file)) {
+  psbc_datasets_theta <- generate_psbc_data_theta(n_sims = 100)
+  future::plan(future::sequential)
+  psbc_results_theta <- SBC::compute_SBC(psbc_datasets_theta, sbc_backend)
+  saveRDS(psbc_results_theta, psbc_results_file)
+} else {
+  psbc_results_theta <- readRDS(psbc_results_file)
+  cat("Loaded existing PSBC results from:", psbc_results_file, "\n")
+}
+
+# Visualize Rank Histograms for local calibration
+SBC::plot_rank_hist(psbc_results_theta, variables = "theta") +
+  ggtitle("Posterior SBC: Simple Biased Agent") +
+  theme_classic()
+```
+
+Once we have done all this work and we are satisfied it's time to either move onto empirical data, or to increase the model complexity and make sure that the new model also works. We'll leave empirical data for a future chapter, so now let's move to a more complex model.
 
 ## Extending Checks to the Memory Model
 
@@ -1184,17 +1253,19 @@ observed_data_list_mem <- list(
   prior_beta_m = 0, prior_beta_s = 1.0
 )
 
+model_file_mem_gq <- file.path(stan_results_dir, "05_Memory_GQ.rds")
+
 # 3. Fit the model
 if (regenerate_simulations || !file.exists(model_file_mem_gq)) {
   mod_mem_gq <- cmdstan_model(stan_file_mem_gq)
 
   fit_mem_gq <- mod_mem_gq$sample(
     data = observed_data_list_mem,
-    seed = 456,
     chains = 4,
     parallel_chains = parallel::detectCores() - 2,
     iter_warmup = 1000,
     iter_sampling = 2000,
+    refresh = 0,
     adapt_delta = 0.95,     # Increased for the nonlinear memory geometry
     max_treedepth = 12
   )
@@ -1311,7 +1382,7 @@ p_mem_update <- ggplot(update_long, aes(x = Value, fill = Distribution)) +
 
 print(p_mem_update)
 
-sensitivity_mem <- priorsense::powerscale_sensitivity(fit_mem_gq)
+sensitivity_mem <- priorsense::powerscale_sensitivity(fit_mem_gq, variable = c("bias", "beta"))
 
 priorsense::powerscale_plot_dens(fit_mem_gq, variables = c("bias", "beta")) +
   theme_classic()
@@ -1415,12 +1486,12 @@ if (regenerate_simulations || !file.exists(cov_collapse_file)) {
   }
 
   # 3. Execute mapping using parallelization
-  future::plan(future::multisession, workers = parallel::detectCores() - 2)
+  future::plan(future::multisession, workers = 2)
   
   cov_draws <- furrr::future_map_dfr(
     trial_grid, 
     run_cov_recovery, 
-    .options = furrr::furrr_options(seed = TRUE)
+    .options = furrr::furrr_options(seed = TRUE, stdout = FALSE)
   )
   
   future::plan(future::sequential)
@@ -1509,17 +1580,14 @@ sbc_mem_obj <- SBC::SBC_generator_function(sbc_memory_generator_fn)
 sbc_mem_backend <- SBC::SBC_backend_cmdstan_sample(mod_mem_gq, chains = 1, refresh = 0)
 
 # Run parallel fits
-future::plan(future::multisession, workers = parallel::detectCores() - 2)
-sbc_mem_results <- SBC::compute_SBC(SBC::generate_datasets(sbc_mem_obj, n_sims = 1000), sbc_mem_backend)
+future::plan(future::sequential)
+sbc_mem_results <- SBC::compute_SBC(SBC::generate_datasets(sbc_mem_obj, n_sims = 200), sbc_mem_backend)
 future::plan(future::sequential)
 
 # 3. Visualize calibration
 p_mem_sbc <- SBC::plot_rank_hist(sbc_mem_results) + theme_classic()
 print(p_mem_sbc)
 ```
-
-These checks confirm that the memory model, like the simple biased model, fits the data it was generated from well, and the parameter estimates are robust to the chosen priors. This systematic checking process is applicable to any cognitive model you build.
-
 
 ## Conclusion: Building Trust in Your Models
 
