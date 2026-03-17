@@ -1,0 +1,962 @@
+---
+
+# The WSLS Agent: Three Correlated Individual Differences
+
+## Introduction
+
+The Memory Agent introduced the bivariate NCP: two jointly distributed individual parameters, a $2 \times 2$ correlation matrix, and a single new inferential target $\rho$. The Win-Stay-Lose-Shift Agent extends this architecture to three parameters, giving a $3 \times 3$ correlation matrix with three pairwise correlations. Everything we know from the biased agent and the memory agent applies here; the added complexity is dimensional rather than conceptual.
+
+Recall from Chapter 3 the WSLS decision rule. At each trial $i$, the agent observes whether their previous choice was successful (feedback $f_{i-1,j} \in \{0,1\}$) and uses it together with their previous choice $h_{i-1,j}$ to compute two signed signals:
+
+$$W_{ij} = f_{i-1,j}\cdot(2h_{i-1,j}-1), \qquad L_{ij} = (1-f_{i-1,j})\cdot(1-2h_{i-1,j})$$
+
+$W_{ij}$ is nonzero only after a win: it equals $+1$ if the agent won by choosing right, $-1$ if by choosing left. $L_{ij}$ is nonzero only after a loss: it equals $-1$ if the agent lost on a right choice, $+1$ on a left. The two signals are complementary — they are never simultaneously nonzero. The agent's choice probability on trial $i$ is then:
+
+$$h_{ij} \sim \text{Bernoulli}(\text{logit}^{-1}(\alpha_j + \beta_{W,j} W_{ij} + \beta_{L,j} L_{ij}))$$
+
+Three individual parameters govern behavior: $\alpha_j$ (baseline directional bias), $\beta_{W,j}$ (win-stay sensitivity), and $\beta_{L,j}$ (lose-shift sensitivity). A canonical WSLS agent has $\alpha_j \approx 0$, $\beta_{W,j} > 0$, $\beta_{L,j} > 0$. The parameters need not vary independently across the population. An agent who responds strongly to wins might also respond strongly to losses — or the two might compensate each other. We model all three jointly.
+
+On trial 1, no previous choice or feedback exists. We set $W_{1j} = L_{1j} = 0$, so the trial 1 prediction reduces to $\text{logit}^{-1}(\alpha_j)$ — governed solely by the baseline bias.
+
+### The Trivariate Population Distribution
+
+$$\begin{pmatrix} \alpha_j \\ \beta_{W,j} \\ \beta_{L,j} \end{pmatrix} \sim \mathcal{N}_3\!\left(\boldsymbol{\mu},\, \boldsymbol{\Sigma}\right), \qquad \boldsymbol{\Sigma} = \operatorname{diag}(\boldsymbol{\sigma})\,\Omega\,\operatorname{diag}(\boldsymbol{\sigma})$$
+
+The $3 \times 3$ correlation matrix $\Omega$ now contains three free pairwise correlations: $\rho_{\alpha W}$ (baseline-winstay), $\rho_{\alpha L}$ (baseline-loseshift), and $\rho_{WL}$ (winstay-loseshift). Each is a distinct scientific question about the cognitive architecture of the population.
+
+### The LKJ Prior on a $3 \times 3$ Matrix
+
+The LKJ($\eta$) distribution generalizes directly to any dimension. For the $3 \times 3$ case with $\eta = 2$, the marginal prior on each pairwise correlation becomes:
+
+$$\rho \sim 2 \cdot \text{Beta}\!\left(\eta + \tfrac{K-2}{2},\; \eta + \tfrac{K-2}{2}\right) - 1 = 2 \cdot \text{Beta}(2.5,\, 2.5) - 1$$
+
+The effective concentration toward zero is slightly stronger than in the bivariate case ($2 \cdot \text{Beta}(2, 2) - 1$). This is mathematically appropriate: as the correlation matrix grows, the space of positive-definite matrices shrinks relative to the space of all symmetric matrices, so the prior naturally imposes more regularization to keep the matrix well-conditioned.
+
+In Stan, we declare `cholesky_factor_corr[3] L_Omega` under `lkj_corr_cholesky(2)`. We recover $\Omega$ and extract all three $\rho$ values in `generated quantities`.
+
+### Non-Centered Parameterization
+
+The scalar NCP and the bivariate NCP both generalize identically to three dimensions. We introduce a $3 \times J$ matrix $\mathbf{Z}$ of independent standard normals:
+
+$$z_{kj} \sim \mathcal{N}(0,1) \text{ i.i.d.}, \quad k = 1,2,3, \quad j = 1,\dots,J$$
+
+Individual parameters are reconstructed deterministically:
+
+$$\begin{pmatrix}\alpha_j \\ \beta_{W,j} \\ \beta_{L,j}\end{pmatrix} = \begin{pmatrix}\mu_\alpha \\ \mu_{\beta_W} \\ \mu_{\beta_L}\end{pmatrix} + \operatorname{diag}(\boldsymbol{\sigma})\,\mathbf{L}_\Omega\,\mathbf{z}_j$$
+
+In Stan: `diag_pre_multiply(sigma, L_Omega) * z` where `sigma` is `vector<lower=0>[3]` and `z` is `matrix[3, J]`. Everything else proceeds identically to the memory model, one dimension larger.
+
+```{tikz hierarchical_wsls_dag, echo=FALSE, fig.cap="Standard Plate Notation (left) and Kruschke-Style Notation (right) for the Hierarchical WSLS Agent. The 3x3 correlation matrix Omega is the structural signature distinguishing this model from the memory agent.", fig.ext='png', fig.width=12, cache=TRUE}
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta, fit, backgrounds, calc}
+\begin{tikzpicture}[
+    stochastic/.style={->, >={Latex[length=3mm]}, thick},
+    deterministic/.style={->, >={Latex[length=3mm]}, thick, dashed, draw=gray!70},
+    plate/.style={draw=black, thick, rounded corners, inner sep=10pt},
+    continuous/.style={circle, draw=black, thick, minimum size=1.1cm, inner sep=0pt},
+    discrete/.style={rectangle, draw=black, thick, minimum size=1.1cm},
+    observed/.style={fill=gray!30},
+    latent/.style={fill=white},
+    pics/norm_dist/.style={code={
+        \draw[thin, gray] (-1.1,0) -- (1.1,0);
+        \draw[thick, blue] plot[domain=-1.1:1.1, samples=50] (\x, {0.7*exp(-3*\x*\x)});
+        \node[font=\scriptsize, below] at (0,0) {Normal};
+    }},
+    pics/exp_dist/.style={code={
+        \draw[thin, gray] (-0.2,0) -- (1.3,0);
+        \draw[thick, blue] plot[domain=0:1.2, samples=50] (\x, {0.7*exp(-2.5*\x)});
+        \node[font=\scriptsize, below] at (0.5,0) {Exp};
+    }},
+    pics/lkj_dist/.style={code={
+        \draw[thin, gray] (-1.1,0) -- (1.1,0);
+        \draw[thick, blue] plot[domain=-0.95:0.95, samples=50] (\x, {0.7*(1-\x*\x)});
+        \node[font=\scriptsize, below] at (0,0) {LKJ};
+    }},
+    pics/mvn_dist/.style={code={
+        \draw[thin, gray, ->] (-0.75,0) -- (0.75,0);
+        \draw[thin, gray, ->] (0,-0.75) -- (0,0.75);
+        \draw[thick, blue, rotate=25] (0,0) ellipse (0.6 and 0.2);
+        \draw[thick, blue, rotate=25] (0,0) ellipse (0.3 and 0.1);
+        \node[font=\scriptsize, below right] at (0.1,-0.12) {MVN};
+    }},
+    pics/bern_dist/.style={code={
+        \draw[thin, gray] (-0.9,0) -- (0.9,0);
+        \draw[thick, blue, ycomb, line width=3.5pt] plot coordinates { (-0.35, 0.28) (0.35, 0.72) };
+        \node[font=\scriptsize, below] at (0,0) {Bern};
+    }}
+]
+
+%% LEFT: STANDARD PLATE NOTATION
+\node[font=\large\bfseries] at (0, 2.5) {Standard Plate Notation};
+
+\node[continuous, latent] (mu_a)   at (-4.5, 0) {$\mu_\alpha$};
+\node[continuous, latent] (sig_a)  at (-3,   0) {$\sigma_\alpha$};
+\node[continuous, latent, fill=gray!15] (omega) at (0, 1.5) {$\Omega$};
+\node[continuous, latent] (mu_bw)  at (-1,   0) {$\mu_{\beta_W}$};
+\node[continuous, latent] (sig_bw) at (0.8,  0) {$\sigma_{\beta_W}$};
+\node[continuous, latent] (mu_bl)  at (2.5,  0) {$\mu_{\beta_L}$};
+\node[continuous, latent] (sig_bl) at (4,    0) {$\sigma_{\beta_L}$};
+
+\node[continuous, latent] (alpha)  at (-3.5, -4) {$\alpha_j$};
+\node[continuous, latent] (betaW)  at (0,    -4) {$\beta_{W,j}$};
+\node[continuous, latent] (betaL)  at (3.5,  -4) {$\beta_{L,j}$};
+
+\node[discrete, observed] (W)  at (-3, -8) {$W_{ij}$};
+\node[discrete, observed] (h)  at (0,  -8) {$h_{ij}$};
+\node[discrete, observed] (L)  at (3,  -8) {$L_{ij}$};
+
+\node[plate, fit=(W)(h)(L), label={[anchor=south east, font=\small\bfseries]below right:$i=1\dots N$}] (pN) {};
+\node[plate, inner sep=14pt, fit=(alpha)(betaW)(betaL)(pN), label={[anchor=south east, font=\small\bfseries]below right:$j=1\dots J$}] {};
+
+\draw[stochastic] (mu_a)  -- (alpha); \draw[stochastic] (sig_a)  -- (alpha);
+\draw[stochastic] (mu_bw) -- (betaW); \draw[stochastic] (sig_bw) -- (betaW);
+\draw[stochastic] (mu_bl) -- (betaL); \draw[stochastic] (sig_bl) -- (betaL);
+\draw[stochastic] (omega) -- (alpha); \draw[stochastic] (omega) -- (betaW); \draw[stochastic] (omega) -- (betaL);
+\draw[stochastic] (alpha) -- (h); \draw[stochastic] (betaW) -- (h); \draw[stochastic] (betaL) -- (h);
+\draw[deterministic] (W) -- (h); \draw[deterministic] (L) -- (h);
+
+%% RIGHT: KRUSCHKE-STYLE NOTATION
+\node[font=\large\bfseries] at (12.5, 2.5) {Kruschke-Style Notation};
+
+\coordinate (k_mu_a)   at (7,  0); \draw (k_mu_a)   pic {norm_dist}; \node[above=0.6cm of k_mu_a,   font=\bfseries] {$\mu_\alpha$};
+\coordinate (k_sig_a)  at (9,  0); \draw (k_sig_a)  pic {exp_dist};  \node[above=0.6cm of k_sig_a,  font=\bfseries] {$\sigma_\alpha$};
+\coordinate (k_omega)  at (12, 1.8); \draw (k_omega) pic {lkj_dist}; \node[above=0.6cm of k_omega,  font=\bfseries] {$\Omega\;(3{\times}3)$};
+\coordinate (k_mu_bw)  at (11, 0); \draw (k_mu_bw)  pic {norm_dist}; \node[above=0.6cm of k_mu_bw,  font=\bfseries] {$\mu_{\beta_W}$};
+\coordinate (k_sig_bw) at (13, 0); \draw (k_sig_bw) pic {exp_dist};  \node[above=0.6cm of k_sig_bw, font=\bfseries] {$\sigma_{\beta_W}$};
+\coordinate (k_mu_bl)  at (15, 0); \draw (k_mu_bl)  pic {norm_dist}; \node[above=0.6cm of k_mu_bl,  font=\bfseries] {$\mu_{\beta_L}$};
+\coordinate (k_sig_bl) at (17, 0); \draw (k_sig_bl) pic {exp_dist};  \node[above=0.6cm of k_sig_bl, font=\bfseries] {$\sigma_{\beta_L}$};
+
+\coordinate (k_mvn) at (12, -4); \draw (k_mvn) pic {mvn_dist};
+\node[above=0.9cm of k_mvn, font=\bfseries, align=center] {Agent Params \\ $(\alpha_j,\,\beta_{W,j},\,\beta_{L,j})$};
+
+\node[discrete, observed, minimum size=0.8cm] (k_W) at (9,  -8) {$W_{ij}$};
+\node[above=0.45cm of k_W, font=\bfseries] {Win signal};
+\coordinate (k_h) at (12, -8); \draw (k_h) pic {bern_dist};
+\node[above=0.8cm of k_h, font=\bfseries] {Choice ($h_{ij}$)};
+\node[discrete, observed, minimum size=0.8cm] (k_L) at (15, -8) {$L_{ij}$};
+\node[above=0.45cm of k_L, font=\bfseries] {Lose signal};
+
+\draw[plate, dashed] (6.5, -5.5) rectangle (17.5, -2.2) node[below left, font=\small\bfseries] {$j=1\dots J$};
+\draw[plate, dotted] (6.5, -9.2) rectangle (17.5, -6.2) node[below left, font=\small\bfseries] {$i=1\dots N$};
+
+\draw[stochastic] (k_mu_a) -- (k_mvn); \draw[stochastic] (k_sig_a)  -- (k_mvn);
+\draw[stochastic] (k_mu_bw) -- (k_mvn); \draw[stochastic] (k_sig_bw) -- (k_mvn);
+\draw[stochastic] (k_mu_bl) -- (k_mvn); \draw[stochastic] (k_sig_bl) -- (k_mvn);
+\draw[stochastic] (k_omega) -- (k_mvn) node[midway, right, font=\large] {$\sim$};
+\draw[stochastic] (k_mvn) -- (k_h) node[midway, right, font=\large] {$\sim$};
+\draw[deterministic] (k_W) -- (11.3, -8);
+\draw[deterministic] (k_L) -- (12.7, -8);
+\end{tikzpicture}
+```
+
+## Phase 1: Generative Plausibility of the WSLS Agent
+
+Before writing any Stan code, we construct the forward generative model in R, mirroring the mathematical hierarchy above.
+
+Two pre-computation decisions mirror the memory agent. First, we compute the win/lose signals $W_{ij}$ and $L_{ij}$ in R before passing them to Stan. Computing them inside Stan's `transformed data` block would re-execute a loop on every leapfrog step; passing them as data vectors reduces this to a single pass before fitting. Second, the simulation function mirrors the NCP Stan model exactly: we draw $\mathbf{z}_j \sim \mathcal{N}(\mathbf{0}, \mathbf{I}_3)$ and apply the Cholesky transform, the same operation Stan will perform.
+
+In accordance with the rigorous Bayesian workflow, the simulation function is designed to either:
+
+* Draw all hyperparameters directly from the stated priors (for Prior Predictive Checks).
+
+* Accept fixed ground-truth hyperparameters (for Parameter Recovery).
+
+```{r}
+#' Simulate Hierarchical WSLS Agents
+#'
+#' @param n_agents Integer, number of agents (J).
+#' @param n_trials_min Integer, minimum trials per agent.
+#' @param n_trials_max Integer, maximum trials per agent.
+#' @param mu_alpha Numeric, population mean baseline bias (logit). NULL draws from prior.
+#' @param mu_beta_win Numeric, population mean win-stay sensitivity. NULL draws from prior.
+#' @param mu_beta_lose Numeric, population mean lose-shift sensitivity. NULL draws from prior.
+#' @param sigma_alpha Numeric, population SD of alpha. NULL draws from prior.
+#' @param sigma_beta_win Numeric, population SD of beta_win. NULL draws from prior.
+#' @param sigma_beta_lose Numeric, population SD of beta_lose. NULL draws from prior.
+#' @param rho_aw Numeric, correlation alpha-beta_win. NULL draws from LKJ(2).
+#' @param rho_al Numeric, correlation alpha-beta_lose. NULL draws from LKJ(2).
+#' @param rho_wl Numeric, correlation beta_win-beta_lose. NULL draws from LKJ(2).
+#' @param opponent_rate Numeric, probability of opponent choosing "right".
+#' @param seed Integer, for reproducibility.
+#'
+#' @return A tidy tibble with trial-level data and true parameters.
+#'   Hyperparameters stored as attribute "hyperparameters".
+simulate_hierarchical_wsls <- function(
+  n_agents       = 50,
+  n_trials_min   = 20,
+  n_trials_max   = 120,
+  mu_alpha       = NULL,
+  mu_beta_win    = NULL,
+  mu_beta_lose   = NULL,
+  sigma_alpha    = NULL,
+  sigma_beta_win = NULL,
+  sigma_beta_lose = NULL,
+  rho_aw         = NULL,
+  rho_al         = NULL,
+  rho_wl         = NULL,
+  opponent_rate  = 0.7,
+  seed           = NULL
+) {
+  if (!is.null(seed)) set.seed(seed)
+
+  # 1. Sample hyperparameters from priors if not provided
+  if (is.null(mu_alpha))       mu_alpha       <- rnorm(1, 0, 1)
+  if (is.null(mu_beta_win))    mu_beta_win    <- rnorm(1, 0, 1)
+  if (is.null(mu_beta_lose))   mu_beta_lose   <- rnorm(1, 0, 1)
+  if (is.null(sigma_alpha))    sigma_alpha    <- rexp(1, 1)
+  if (is.null(sigma_beta_win)) sigma_beta_win <- rexp(1, 1)
+  if (is.null(sigma_beta_lose)) sigma_beta_lose <- rexp(1, 1)
+
+  # LKJ(2) marginal for 3x3 matrix: rho ~ 2*Beta(2.5, 2.5) - 1
+  # This is slightly more concentrated toward zero than the 2x2 case.
+  sample_lkj3_rho <- function() 2 * rbeta(1, 2.5, 2.5) - 1
+  if (is.null(rho_aw)) rho_aw <- sample_lkj3_rho()
+  if (is.null(rho_al)) rho_al <- sample_lkj3_rho()
+  if (is.null(rho_wl)) rho_wl <- sample_lkj3_rho()
+
+  # 2. Construct a valid 3x3 correlation matrix and its Cholesky factor.
+  # We build Omega directly, then correct for positive definiteness via nearPD if needed.
+  Omega <- matrix(c(
+    1,      rho_aw, rho_al,
+    rho_aw, 1,      rho_wl,
+    rho_al, rho_wl, 1
+  ), nrow = 3, byrow = TRUE)
+
+  # If independently sampled rhos create a non-PD matrix, project to nearest PD.
+  # This is a modeling artefact; in Stan L_Omega is sampled from the joint LKJ
+  # distribution which always produces valid matrices.
+  eigs <- eigen(Omega, symmetric = TRUE, only.values = TRUE)$values
+  if (any(eigs < 1e-8)) {
+    Omega <- as.matrix(Matrix::nearPD(Omega, corr = TRUE, keepDiag = TRUE)$mat)
+  }
+
+  L_Omega <- t(chol(Omega))  # Lower-triangular Cholesky factor
+
+  # 3. Sample individual parameters via the NCP transform (mirrors Stan exactly)
+  # Z is 3 x J; Scale = diag(sigma) %*% L_Omega
+  sigma_vec  <- c(sigma_alpha, sigma_beta_win, sigma_beta_lose)
+  mu_vec     <- c(mu_alpha, mu_beta_win, mu_beta_lose)
+  Z          <- matrix(rnorm(3 * n_agents), nrow = 3)
+  Scale      <- diag(sigma_vec) %*% L_Omega
+  # indiv_params is J x 3: col 1 = alpha_j, col 2 = beta_win_j, col 3 = beta_lose_j
+  indiv_params <- t(mu_vec + Scale %*% Z)
+
+  # 4. Simulate trial-level data
+  n_trials_vec <- sample(n_trials_min:n_trials_max, n_agents, replace = TRUE)
+
+  sim_data <- map_dfr(seq_len(n_agents), function(j) {
+    n_t        <- n_trials_vec[j]
+    alpha_j    <- indiv_params[j, 1]
+    beta_win_j <- indiv_params[j, 2]
+    beta_lose_j <- indiv_params[j, 3]
+
+    opp_choices   <- rbinom(n_t, 1, opponent_rate)
+    agent_choices <- integer(n_t)
+    win_signal    <- numeric(n_t)
+    lose_signal   <- numeric(n_t)
+
+    # Trial 1: no prior information, W=L=0, choice governed by alpha alone
+    agent_choices[1] <- rbinom(1, 1, plogis(alpha_j))
+
+    for (t in 2:n_t) {
+      prev_choice   <- agent_choices[t - 1]
+      prev_feedback <- as.integer(agent_choices[t - 1] == opp_choices[t - 1])
+
+      # Win signal: nonzero only after win
+      W_t <- prev_feedback * (2 * prev_choice - 1)
+      # Lose signal: nonzero only after loss
+      L_t <- (1 - prev_feedback) * (1 - 2 * prev_choice)
+
+      win_signal[t]  <- W_t
+      lose_signal[t] <- L_t
+
+      logit_p         <- alpha_j + beta_win_j * W_t + beta_lose_j * L_t
+      agent_choices[t] <- rbinom(1, 1, plogis(logit_p))
+    }
+
+    tibble(
+      agent_id    = j,
+      trial       = seq_len(n_t),
+      n_trials    = n_t,
+      choice      = agent_choices,
+      opp_choice  = opp_choices,
+      win_signal  = win_signal,
+      lose_signal = lose_signal,
+      true_alpha    = alpha_j,
+      true_beta_win = beta_win_j,
+      true_beta_lose = beta_lose_j
+    )
+  })
+
+  attr(sim_data, "hyperparameters") <- list(
+    mu_alpha       = mu_alpha,
+    mu_beta_win    = mu_beta_win,
+    mu_beta_lose   = mu_beta_lose,
+    sigma_alpha    = sigma_alpha,
+    sigma_beta_win = sigma_beta_win,
+    sigma_beta_lose = sigma_beta_lose,
+    rho_aw = rho_aw, rho_al = rho_al, rho_wl = rho_wl
+  )
+
+  sim_data
+}
+```
+
+### Executing the Prior Predictive Check: The Trivariate Population Cloud
+
+For three parameters, the most informative prior predictive display is a matrix of pairwise scatter plots across multiple prior universes. We are looking for whether the prior generates plausible populations: $\beta_{W,j}$ and $\beta_{L,j}$ should cover both positive and negative values (a prior that concentrated only on positive $\beta$ would be asserting WSLS behavior before seeing any data), and no single prior universe should produce all agents at implausible extremes.
+
+```{r}
+# Generate 9 prior universes
+prior_sims_wsls <- map_dfr(1:9, function(sim_id) {
+  sim <- simulate_hierarchical_wsls(
+    n_agents = 80, n_trials_min = 1, n_trials_max = 1,
+    seed = sim_id * 17
+  )
+  sim |>
+    distinct(agent_id, true_alpha, true_beta_win, true_beta_lose) |>
+    mutate(simulation_id = paste("Universe", sim_id))
+})
+
+# Panel 1: alpha vs beta_win
+p1 <- ggplot(prior_sims_wsls, aes(x = true_alpha, y = true_beta_win)) +
+  geom_point(alpha = 0.4, size = 0.8, color = "steelblue") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray60", linewidth = 0.35) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray60", linewidth = 0.35) +
+  facet_wrap(~simulation_id, ncol = 3) +
+  labs(
+    title = "Prior Predictive Checks: Joint Population Distributions",
+    subtitle = expression(alpha[j] * " vs " * beta[W * j]),
+    x = expression(alpha[j] * " (logit scale)"),
+    y = expression(beta[W * j] * " (win-stay)")
+  )
+
+# Panel 2: beta_win vs beta_lose
+p2 <- ggplot(prior_sims_wsls, aes(x = true_beta_win, y = true_beta_lose)) +
+  geom_point(alpha = 0.4, size = 0.8, color = "steelblue") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray60", linewidth = 0.35) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray60", linewidth = 0.35) +
+  facet_wrap(~simulation_id, ncol = 3) +
+  labs(
+    subtitle = expression(beta[W * j] * " vs " * beta[L * j]),
+    x = expression(beta[W * j] * " (win-stay)"),
+    y = expression(beta[L * j] * " (lose-shift)")
+  )
+
+p1 / p2
+```
+
+The $\beta_{W,j}$ vs $\beta_{L,j}$ panel is the most diagnostically important. A prior that always placed both betas in the same quadrant would encode a strong assumption about the direction of WSLS behavior before the data. The LKJ(2) prior permits the full range of correlation shapes, which is appropriate given that both positive and negative win-stay effects are scientifically plausible.
+
+## Phase 2: Data Preparation and the NCP Stan Model
+
+```{r}
+#' Prepare WSLS Agent Data for Stan
+#'
+#' @param sim_data Tibble from simulate_hierarchical_wsls().
+#' @return A named list formatted for CmdStanR.
+prep_stan_data_wsls <- function(sim_data) {
+  list(
+    N          = nrow(sim_data),
+    J          = length(unique(sim_data$agent_id)),
+    agent      = sim_data$agent_id,
+    h          = sim_data$choice,
+    win_signal = sim_data$win_signal,
+    lose_signal = sim_data$lose_signal
+  )
+}
+
+# Execute the preparation on a specifically generated universe for recovery
+sim_data_wsls <- simulate_hierarchical_wsls(
+  n_agents        = 50,
+  n_trials_min    = 20,
+  n_trials_max    = 120,
+  mu_alpha        =  0.0,  # No systematic directional baseline
+  mu_beta_win     =  2.0,  # Moderate win-stay tendency
+  mu_beta_lose    =  2.0,  # Moderate lose-shift tendency
+  sigma_alpha     =  0.3,
+  sigma_beta_win  =  0.7,
+  sigma_beta_lose =  0.7,
+  rho_aw          =  0.0,  # No correlation baseline-winstay
+  rho_al          =  0.0,  # No correlation baseline-loseshift
+  rho_wl          =  0.4,  # Mild positive correlation winstay-loseshift
+  opponent_rate   =  0.7,
+  seed            = 1981
+)
+
+stan_data_wsls <- prep_stan_data_wsls(sim_data_wsls)
+
+cat("Total observations:", stan_data_wsls$N, "\n")
+cat("Number of agents:  ", stan_data_wsls$J, "\n")
+```
+
+### Stan Model: Hierarchical WSLS Agent (NCP)
+
+The Stan model is the natural extension of the memory agent model from a $2 \times J$ to a $3 \times J$ z-matrix and a `cholesky_factor_corr[3]`. Every structural decision — local blocks in `transformed parameters`, `to_vector(z)` for the NCP prior, `lkj_corr_cholesky_rng(3, 2.0)` in `generated quantities` — is identical in logic.
+
+```{r}
+stan_wsls_ncp_code <- "
+// Hierarchical WSLS Agent Model (Non-Centered Parameterization)
+// ----------------------------------------------------------------
+// alpha_j (baseline), beta_win_j (win-stay), beta_lose_j (lose-shift)
+// are jointly drawn from a trivariate Normal. The 3x3 correlation matrix
+// Omega (LKJ prior) allows all three pairwise correlations to be estimated.
+// NCP decouples individual and population geometry, preventing Neal's Funnel.
+
+data {
+  int<lower=1> N;                         // Total observations across all agents
+  int<lower=1> J;                         // Number of agents
+  array[N] int<lower=1, upper=J> agent;   // Agent index per trial
+  array[N] int<lower=0, upper=1> h;       // Observed binary choices
+  // Win signal: nonzero after wins only.  W = feedback * (2*prev_choice - 1)
+  // Lose signal: nonzero after losses only. L = (1-feedback) * (1 - 2*prev_choice)
+  // Both are 0 on trial 1 (no prior information).
+  vector[N] win_signal;                   // W_ij in {-1, 0, +1}
+  vector[N] lose_signal;                  // L_ij in {-1, 0, +1}
+}
+
+parameters {
+  // Population-level parameters
+  real mu_alpha;             // Population mean baseline bias (logit scale)
+  real mu_beta_win;          // Population mean win-stay sensitivity
+  real mu_beta_lose;         // Population mean lose-shift sensitivity
+
+  // Marginal SDs: sigma[1]=alpha, sigma[2]=beta_win, sigma[3]=beta_lose
+  vector<lower=0>[3] sigma;
+
+  // Cholesky factor of 3x3 correlation matrix. Prior: Omega ~ LKJ(2).
+  cholesky_factor_corr[3] L_Omega;
+
+  // Individual-level parameters (NCP): 3 x J matrix of standard normals.
+  // Row 1 = alpha offsets, row 2 = beta_win offsets, row 3 = beta_lose offsets.
+  matrix[3, J] z;
+}
+
+transformed parameters {
+  // Reconstruct individual parameters via the Cholesky transform.
+  // diag_pre_multiply(sigma, L_Omega) = diag(sigma) * L_Omega  (3x3)
+  // Multiplying by z (3xJ) and transposing gives J x 3.
+  matrix[J, 3] indiv_params;
+  {
+    matrix[3, J] deviations = diag_pre_multiply(sigma, L_Omega) * z;
+    for (j in 1:J) {
+      indiv_params[j, 1] = mu_alpha     + deviations[1, j];
+      indiv_params[j, 2] = mu_beta_win  + deviations[2, j];
+      indiv_params[j, 3] = mu_beta_lose + deviations[3, j];
+    }
+  }
+}
+
+model {
+  // Hyperpriors
+  // Normal(0, 1) for means: agnostic about direction of bias or reinforcement sign.
+  target += normal_lpdf(mu_alpha     | 0, 1);
+  target += normal_lpdf(mu_beta_win  | 0, 1);
+  target += normal_lpdf(mu_beta_lose | 0, 1);
+
+  // Exponential(1) for SDs: most mass below 2 logit units.
+  target += exponential_lpdf(sigma | 1);
+
+  // LKJ(2): regularizes all three pairwise correlations toward independence.
+  target += lkj_corr_cholesky_lpdf(L_Omega | 2);
+
+  // Individual-level prior (NCP): fully decoupled from population parameters.
+  target += std_normal_lpdf(to_vector(z));
+
+  // Likelihood
+  vector[N] logit_p;
+  for (i in 1:N) {
+    logit_p[i] = indiv_params[agent[i], 1]
+               + indiv_params[agent[i], 2] * win_signal[i]
+               + indiv_params[agent[i], 3] * lose_signal[i];
+  }
+  target += bernoulli_logit_lpmf(h | logit_p);
+}
+
+generated quantities {
+  // Recover the full 3x3 correlation matrix and all three pairwise rhos
+  matrix[3, 3] Omega = multiply_lower_tri_self_transpose(L_Omega);
+  real rho_aw = Omega[1, 2];   // correlation alpha - beta_win
+  real rho_al = Omega[1, 3];   // correlation alpha - beta_lose
+  real rho_wl = Omega[2, 3];   // correlation beta_win - beta_lose
+
+  // Individual parameters on natural scales
+  vector[J] alpha     = indiv_params[, 1];
+  vector[J] beta_win  = indiv_params[, 2];
+  vector[J] beta_lose = indiv_params[, 3];
+
+  // Prior log-density (required by priorsense)
+  real lprior = normal_lpdf(mu_alpha     | 0, 1)
+              + normal_lpdf(mu_beta_win  | 0, 1)
+              + normal_lpdf(mu_beta_lose | 0, 1)
+              + exponential_lpdf(sigma | 1)
+              + lkj_corr_cholesky_lpdf(L_Omega | 2)
+              + std_normal_lpdf(to_vector(z));
+
+  // Prior draws for prior-posterior update plots
+  real mu_alpha_prior      = normal_rng(0, 1);
+  real mu_beta_win_prior   = normal_rng(0, 1);
+  real mu_beta_lose_prior  = normal_rng(0, 1);
+  real sigma_alpha_prior   = exponential_rng(1);
+  real sigma_bwin_prior    = exponential_rng(1);
+  real sigma_blose_prior   = exponential_rng(1);
+  // LKJ(2) marginal for 3x3: 2*Beta(2.5,2.5) - 1
+  real rho_aw_prior = 2.0 * beta_rng(2.5, 2.5) - 1.0;
+  real rho_al_prior = 2.0 * beta_rng(2.5, 2.5) - 1.0;
+  real rho_wl_prior = 2.0 * beta_rng(2.5, 2.5) - 1.0;
+
+  // Predictive checks and pointwise log-likelihood
+  vector[N] log_lik;
+  array[N] int h_post_rep;
+  array[N] int h_prior_rep;
+
+  // Build a prior-drawn population for h_prior_rep
+  cholesky_factor_corr[3] L_Omega_prior = lkj_corr_cholesky_rng(3, 2.0);
+  vector[3] sigma_prior = [sigma_alpha_prior, sigma_bwin_prior, sigma_blose_prior]';
+  matrix[3, J] z_prior;
+  for (j in 1:J) {
+    z_prior[1,j] = normal_rng(0,1);
+    z_prior[2,j] = normal_rng(0,1);
+    z_prior[3,j] = normal_rng(0,1);
+  }
+  matrix[J, 3] indiv_prior;
+  {
+    matrix[3, J] dev_prior = diag_pre_multiply(sigma_prior, L_Omega_prior) * z_prior;
+    for (j in 1:J) {
+      indiv_prior[j, 1] = mu_alpha_prior    + dev_prior[1, j];
+      indiv_prior[j, 2] = mu_beta_win_prior + dev_prior[2, j];
+      indiv_prior[j, 3] = mu_beta_lose_prior + dev_prior[3, j];
+    }
+  }
+
+  for (i in 1:N) {
+    int j = agent[i];
+    real lp_post  = indiv_params[j,1] + indiv_params[j,2]*win_signal[i] + indiv_params[j,3]*lose_signal[i];
+    real lp_prior = indiv_prior[j,1]  + indiv_prior[j,2]*win_signal[i]  + indiv_prior[j,3]*lose_signal[i];
+
+    log_lik[i]     = bernoulli_logit_lpmf(h[i] | lp_post);
+    h_post_rep[i]  = bernoulli_logit_rng(lp_post);
+    h_prior_rep[i] = bernoulli_logit_rng(lp_prior);
+  }
+}
+"
+
+stan_file_wsls_ncp <- here::here("stan", "ch6_multilevel_wsls_ncp.stan")
+writeLines(stan_wsls_ncp_code, stan_file_wsls_ncp)
+mod_wsls_ncp <- cmdstan_model(stan_file_wsls_ncp)
+```
+
+Two things to note relative to the memory model. First, `lkj_corr_cholesky_rng(3, 2.0)` in `generated quantities` now draws a $3 \times 3$ Cholesky factor — this is exactly why we used the general `lkj_corr_cholesky_rng` function in the memory model rather than the analytically equivalent Beta marginal trick, which does not generalize beyond $2 \times 2$. Second, the three scalar rho extractions (`Omega[1,2]`, `Omega[1,3]`, `Omega[2,3]`) give us three distinct named parameters in the output, which the diagnostic and recovery machinery can index directly.
+
+### Fitting the model
+
+```{r 06_Fit_WSLS_NCP}
+fit_wsls_path <- here::here("simmodels", "ch6_fit_wsls_ncp.rds")
+
+# Initialize at prior means. L_Omega at the identity Cholesky (all rhos = 0 start).
+init_wsls_fn <- function() {
+  list(
+    mu_alpha     = rnorm(1, 0, 0.3),
+    mu_beta_win  = rnorm(1, 0, 0.3),
+    mu_beta_lose = rnorm(1, 0, 0.3),
+    sigma        = abs(rnorm(3, 0, 0.3)) + 0.1,
+    L_Omega      = diag(3),   # Identity Cholesky: all rhos = 0
+    z            = matrix(0, nrow = 3, ncol = stan_data_wsls$J)
+  )
+}
+
+if (regenerate_simulations || !file.exists(fit_wsls_path)) {
+  fit_wsls <- mod_wsls_ncp$sample(
+    data            = stan_data_wsls,
+    seed            = 123,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 1000,
+    init            = init_wsls_fn,
+    adapt_delta     = 0.90,   # Raised: trivariate geometry has more curved directions
+    max_treedepth   = 12,
+    refresh         = 0
+  )
+  fit_wsls$save_object(fit_wsls_path)
+} else {
+  fit_wsls <- readRDS(fit_wsls_path)
+}
+```
+
+The three-dimensional correlation manifold has more curved directions than the bivariate case, so `adapt_delta = 0.90` is our starting point. If `max_treedepth` warnings appear (chains hitting the doubling limit without divergences), raise `max_treedepth` to 14. If divergences appear despite `adapt_delta = 0.90`, raise it to 0.95 and inspect the pairs plots for any remaining funnel geometry.
+
+### Assessing the fitting process
+
+```{r}
+fit_wsls$cmdstan_diagnose()
+fit_wsls$diagnostic_summary()
+```
+
+Zero divergences is our strict requirement. Unlike the biased agent's CP model, where divergences were a predictable consequence of Neal's Funnel, any divergences in the NCP WSLS model are unexpected and require investigation.
+
+#### Chain Mixing and Stationarity ($\hat{R}$)
+
+```{r}
+draws_wsls <- fit_wsls$draws()
+
+mcmc_trace(
+  draws_wsls,
+  pars = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+           "sigma[1]", "sigma[2]", "sigma[3]",
+           "rho_aw", "rho_al", "rho_wl"),
+  np   = nuts_params(fit_wsls)
+) +
+  labs(
+    title    = "Trace Plots: Population Parameters (WSLS Agent NCP)",
+    subtitle = "Nine population-level parameters, including all three pairwise correlations."
+  )
+
+draws_wsls |>
+  subset_draws(variable = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+                            "sigma[1]", "sigma[2]", "sigma[3]",
+                            "rho_aw", "rho_al", "rho_wl")) |>
+  summarise_draws(default_convergence_measures()) |>
+  knitr::kable(digits = 3)
+```
+
+All three correlation parameters — `rho_aw`, `rho_al`, `rho_wl` — are identified only from cross-agent covariation, so their ESS will be lower than the marginal parameters. ESS > 400 remains our threshold. The two signal-related correlations (`rho_wl`) will typically be easier to identify than those involving `alpha`, because $\beta_{W,j}$ and $\beta_{L,j}$ are both engaged on every trial (one is active after a win, the other after a loss), while `alpha` operates in the background on every trial without a specific trial-type signature.
+
+#### Effective Sample Size (ESS)
+
+Monitor `ess_tail` for all three `sigma` parameters. In the trivariate model, the population SDs interact through $\Omega$, so a problematic `sigma[2]` (for $\beta_{W,j}$) can reflect difficulty in the joint correlation manifold, not just the marginal geometry.
+
+#### Energy and E-BFMI
+
+```{r}
+mcmc_nuts_energy(nuts_params(fit_wsls)) +
+  labs(
+    title    = "Energy Transitions: WSLS Agent NCP",
+    subtitle = "Marginal and transition energy distributions must align. E-BFMI > 0.2 required."
+  )
+```
+
+#### Posterior Parameter Correlations
+
+```{r}
+mcmc_pairs(
+  draws_wsls,
+  pars         = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+                   "sigma[1]", "sigma[2]", "sigma[3]"),
+  np           = nuts_params(fit_wsls),
+  diag_fun     = "dens",
+  off_diag_fun = "hex"
+)
+```
+
+```{r}
+# Separate pairs plot for the correlation parameters
+mcmc_pairs(
+  draws_wsls,
+  pars         = c("rho_aw", "rho_al", "rho_wl",
+                   "sigma[2]", "sigma[3]"),
+  np           = nuts_params(fit_wsls),
+  diag_fun     = "dens",
+  off_diag_fun = "hex"
+)
+```
+
+We split the pairs plots because nine parameters produce a $9 \times 9$ grid that is difficult to read. The first plot inspects the mean-SD geometry for each of the three parameters; none of the six $(\sigma_k, \mu_k)$ panels should show triangular wedges. The second plot inspects the three pairwise correlation parameters jointly, checking for any pathological collinearity in how the model identifies the three $\rho$ values simultaneously.
+
+### Prior-Posterior Update Checks: Quantifying Learning
+
+```{r}
+draws_df_wsls <- as_draws_df(draws_wsls)
+
+true_hp_wsls <- attr(sim_data_wsls, "hyperparameters")
+
+true_pop_wsls <- tibble(
+  parameter  = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+                 "sigma_alpha", "sigma_bwin", "sigma_blose",
+                 "rho_aw", "rho_al", "rho_wl"),
+  true_value = c(true_hp_wsls$mu_alpha, true_hp_wsls$mu_beta_win, true_hp_wsls$mu_beta_lose,
+                 true_hp_wsls$sigma_alpha, true_hp_wsls$sigma_beta_win, true_hp_wsls$sigma_beta_lose,
+                 true_hp_wsls$rho_aw, true_hp_wsls$rho_al, true_hp_wsls$rho_wl)
+)
+
+pp_update_wsls <- draws_df_wsls |>
+  select(
+    mu_alpha_posterior      = mu_alpha,        mu_alpha_prior,
+    mu_beta_win_posterior   = mu_beta_win,      mu_beta_win_prior,
+    mu_beta_lose_posterior  = mu_beta_lose,     mu_beta_lose_prior,
+    sigma_alpha_posterior   = `sigma[1]`,       sigma_alpha_prior,
+    sigma_bwin_posterior    = `sigma[2]`,       sigma_bwin_prior,
+    sigma_blose_posterior   = `sigma[3]`,       sigma_blose_prior,
+    rho_aw_posterior        = rho_aw,           rho_aw_prior,
+    rho_al_posterior        = rho_al,           rho_al_prior,
+    rho_wl_posterior        = rho_wl,           rho_wl_prior
+  ) |>
+  pivot_longer(
+    everything(),
+    names_to  = c("parameter", "distribution"),
+    names_sep = "_(?=posterior|prior)"
+  )
+
+ggplot(pp_update_wsls, aes(x = value)) +
+  geom_histogram(aes(fill = distribution), alpha = 0.6, color = NA, bins = 60) +
+  geom_vline(
+    data = true_pop_wsls,
+    aes(xintercept = true_value, linetype = "True Value"),
+    color = "darkred", linewidth = 0.9
+  ) +
+  facet_wrap(~parameter, scales = "free", ncol = 3) +
+  scale_fill_manual(
+    name   = "Distribution",
+    values = c("prior" = "gray70", "posterior" = "steelblue")
+  ) +
+  scale_linetype_manual(
+    name   = "Ground Truth",
+    values = c("True Value" = "dashed")
+  ) +
+  labs(
+    title = "Prior-Posterior Update Checks: WSLS Agent",
+    x     = "Parameter Value",
+    y     = "Count"
+  )
+```
+
+With three correlation parameters, the prior-posterior update plot becomes a $3 \times 3$ grid of scientific results. The `rho_wl` panel ($\beta_{W,j}$-$\beta_{L,j}$ correlation) is typically the best-identified of the three: both parameters are active on every trial, so the covariance between them accumulates information quickly. The `rho_aw` and `rho_al` panels (baseline-signal correlations) are harder to identify, because $\alpha_j$ operates as a background intercept that the signal $\beta$ parameters must be disentangled from.
+
+### Posterior Predictive Checks (PPC): Generative Adequacy
+
+```{r}
+y_obs_wsls     <- as.numeric(stan_data_wsls$h)
+agent_idx_wsls <- as.numeric(stan_data_wsls$agent)
+y_rep_wsls     <- fit_wsls$draws("h_post_rep", format = "matrix")
+
+n_sample_wsls       <- 12
+sampled_agents_wsls <- sample(unique(agent_idx_wsls), n_sample_wsls)
+keep_mask_wsls      <- agent_idx_wsls %in% sampled_agents_wsls
+
+prop_right <- function(x) mean(x)
+
+ppc_stat_grouped(
+  y     = y_obs_wsls[keep_mask_wsls],
+  yrep  = y_rep_wsls[, keep_mask_wsls],
+  group = agent_idx_wsls[keep_mask_wsls],
+  stat  = "prop_right"
+) +
+  labs(
+    title    = "Posterior Predictive Checks: Agent-Level Choice Rates (Subset)",
+    subtitle = paste("Showing", n_sample_wsls, "randomly sampled agents. Dark line: Observed. Histogram: Predicted."),
+    x        = "Proportion of 'Right' Choices"
+  )
+```
+
+### Calibration and Recovery
+
+#### Individual-Level Recovery
+
+For the WSLS model, individual recovery is trivariate. We examine three panels jointly. The key diagnostic comparison to the memory agent is $\beta_{W,j}$ vs $\beta_{L,j}$: are they recovered with similar precision, or does one dominate? In typical Matching Pennies experiments, wins and losses are approximately equally frequent, so both signals accumulate information at comparable rates — unlike the memory model where the memory signal starts near zero and grows over trials.
+
+```{r}
+recovery_alpha_w <- draws_wsls |>
+  subset_draws(variable = "alpha") |>
+  summarise_draws() |>
+  mutate(agent_id = as.integer(str_extract(variable, "(?<=\\[)\\d+(?=\\])")))
+
+recovery_bwin <- draws_wsls |>
+  subset_draws(variable = "beta_win") |>
+  summarise_draws() |>
+  mutate(agent_id = as.integer(str_extract(variable, "(?<=\\[)\\d+(?=\\])")))
+
+recovery_blose <- draws_wsls |>
+  subset_draws(variable = "beta_lose") |>
+  summarise_draws() |>
+  mutate(agent_id = as.integer(str_extract(variable, "(?<=\\[)\\d+(?=\\])")))
+
+true_agent_wsls <- sim_data_wsls |>
+  distinct(agent_id, n_trials, true_alpha, true_beta_win, true_beta_lose)
+
+recovery_wsls_df <- true_agent_wsls |>
+  left_join(recovery_alpha_w |> select(agent_id, alpha_est = median, alpha_q5 = q5, alpha_q95 = q95),   by = "agent_id") |>
+  left_join(recovery_bwin    |> select(agent_id, bwin_est  = median, bwin_q5  = q5, bwin_q95  = q95),   by = "agent_id") |>
+  left_join(recovery_blose   |> select(agent_id, blose_est = median, blose_q5 = q5, blose_q95 = q95),   by = "agent_id")
+
+p_rec_a <- ggplot(recovery_wsls_df, aes(x = true_alpha, y = alpha_est)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+  geom_errorbar(aes(ymin = alpha_q5, ymax = alpha_q95), width = 0, alpha = 0.5, color = "steelblue") +
+  geom_point(aes(size = n_trials), color = "midnightblue", alpha = 0.8) +
+  labs(title = expression("Recovery: Baseline  " * alpha[j]),
+       x = "True alpha", y = "Posterior Median", size = "N trials")
+
+p_rec_bw <- ggplot(recovery_wsls_df, aes(x = true_beta_win, y = bwin_est)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+  geom_errorbar(aes(ymin = bwin_q5, ymax = bwin_q95), width = 0, alpha = 0.5, color = "steelblue") +
+  geom_point(aes(size = n_trials), color = "midnightblue", alpha = 0.8) +
+  labs(title = expression("Recovery: Win-Stay  " * beta[W * j]),
+       x = expression("True " * beta[W]), y = "Posterior Median", size = "N trials")
+
+p_rec_bl <- ggplot(recovery_wsls_df, aes(x = true_beta_lose, y = blose_est)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+  geom_errorbar(aes(ymin = blose_q5, ymax = blose_q95), width = 0, alpha = 0.5, color = "steelblue") +
+  geom_point(aes(size = n_trials), color = "midnightblue", alpha = 0.8) +
+  labs(title = expression("Recovery: Lose-Shift  " * beta[L * j]),
+       x = expression("True " * beta[L]), y = "Posterior Median", size = "N trials")
+
+(p_rec_a | p_rec_bw | p_rec_bl) + plot_layout(guides = "collect")
+```
+
+Shrinkage in the $\beta_{W,j}$ and $\beta_{L,j}$ panels should pull sparse-data agents toward $(\mu_{\beta_W}, \mu_{\beta_L})$ jointly — not independently — because the joint hierarchical prior acts in the full three-dimensional space. If `rho_wl` is positive, the shrinkage direction is tilted along the positive-correlation axis of the $\beta_W$-$\beta_L$ plane: agents with a large $\beta_W$ estimate are expected to also have a large $\beta_L$ estimate, so the model shrinks their joint vector toward the high-correlation diagonal rather than toward the marginal means independently.
+
+### Prior sensitivity
+
+```{r}
+sens_results_wsls <- powerscale_sensitivity(
+  fit_wsls,
+  variable = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+               "sigma[1]", "sigma[2]", "sigma[3]",
+               "rho_aw", "rho_al", "rho_wl")
+)
+cat("=== PRIOR SENSITIVITY DIAGNOSTICS: WSLS AGENT ===\n")
+print(sens_results_wsls)
+
+ps_seq_wsls <- powerscale_sequence(
+  fit_wsls,
+  variable = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+               "sigma[1]", "sigma[2]", "sigma[3]",
+               "rho_aw", "rho_al", "rho_wl")
+)
+
+powerscale_plot_dens(ps_seq_wsls) +
+  labs(
+    title    = "Prior Sensitivity: Density Perturbation (WSLS Agent)",
+    subtitle = "Does scaling the prior or likelihood drastically alter our beliefs about the population?"
+  )
+
+powerscale_plot_quantities(ps_seq_wsls) +
+  labs(
+    title    = "Prior Sensitivity: Parameter Estimates (WSLS Agent)",
+    subtitle = "Horizontal lines: baseline posterior bounds. Deviations indicate sensitivity."
+  )
+```
+
+### Simulation-Based Calibration (SBC)
+
+```{r}
+sbc_wsls_path <- here::here("simmodels", "ch6_sbc_wsls.rds")
+
+generate_sbc_dataset_wsls <- function(n_agents = 50, n_trials_min = 20, n_trials_max = 120) {
+  sim <- simulate_hierarchical_wsls(
+    n_agents = n_agents, n_trials_min = n_trials_min, n_trials_max = n_trials_max
+  )
+  hp <- attr(sim, "hyperparameters")
+
+  list(
+    variables = list(
+      mu_alpha       = hp$mu_alpha,
+      mu_beta_win    = hp$mu_beta_win,
+      mu_beta_lose   = hp$mu_beta_lose,
+      `sigma[1]`     = hp$sigma_alpha,
+      `sigma[2]`     = hp$sigma_beta_win,
+      `sigma[3]`     = hp$sigma_beta_lose,
+      rho_aw         = hp$rho_aw,
+      rho_al         = hp$rho_al,
+      rho_wl         = hp$rho_wl,
+      alpha     = sim |> distinct(agent_id, true_alpha)     |> arrange(agent_id) |> pull(true_alpha),
+      beta_win  = sim |> distinct(agent_id, true_beta_win)  |> arrange(agent_id) |> pull(true_beta_win),
+      beta_lose = sim |> distinct(agent_id, true_beta_lose) |> arrange(agent_id) |> pull(true_beta_lose)
+    ),
+    generated = prep_stan_data_wsls(sim)
+  )
+}
+
+generator_wsls <- SBC_generator_function(
+  generate_sbc_dataset_wsls,
+  n_agents = 50, n_trials_min = 20, n_trials_max = 120
+)
+
+backend_wsls <- SBC_backend_cmdstan_sample(
+  mod_wsls_ncp,
+  iter_warmup = 1000, iter_sampling = 1000, chains = 1, refresh = 0
+)
+
+if (regenerate_simulations || !file.exists(sbc_wsls_path)) {
+  sbc_datasets_wsls <- generate_datasets(generator_wsls, 200)
+  sbc_results_wsls  <- compute_SBC(datasets = sbc_datasets_wsls, backend = backend_wsls)
+  saveRDS(
+    list(datasets = sbc_datasets_wsls, results = sbc_results_wsls),
+    sbc_wsls_path
+  )
+} else {
+  sbc_wsls_obj      <- readRDS(sbc_wsls_path)
+  sbc_datasets_wsls <- sbc_wsls_obj$datasets
+  sbc_results_wsls  <- sbc_wsls_obj$results
+}
+
+# Population means and SDs
+plot_rank_hist(
+  sbc_results_wsls,
+  variables = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+                "sigma[1]", "sigma[2]", "sigma[3]")
+) +
+  labs(title = "SBC Rank Histograms: WSLS Agent NCP — Population Means and SDs")
+
+# Correlation parameters
+plot_rank_hist(
+  sbc_results_wsls,
+  variables = c("rho_aw", "rho_al", "rho_wl")
+) +
+  labs(
+    title    = "SBC Rank Histograms: WSLS Agent NCP — Correlation Parameters",
+    subtitle = "Three pairwise correlations. rho_wl typically has the highest ESS; rho_aw and rho_al are harder to identify."
+  )
+
+plot_ecdf_diff(
+  sbc_results_wsls,
+  variables = c("mu_alpha", "mu_beta_win", "mu_beta_lose",
+                "sigma[1]", "sigma[2]", "sigma[3]",
+                "rho_aw", "rho_al", "rho_wl")
+) +
+  labs(title = "SBC ECDF Difference: WSLS Agent NCP")
+```
+
+```{r}
+diags_wsls  <- sbc_results_wsls$backend_diagnostics
+wsls_fail_rate <- mean(diags_wsls$n_divergent > 0) * 100
+
+diags_wsls |>
+  ggplot(aes(x = n_divergent)) +
+  geom_histogram(binwidth = 1, fill = "darkred", alpha = 0.8) +
+  labs(
+    title    = "WSLS NCP Divergence Counts Across 200 SBC Universes",
+    subtitle = sprintf("%.0f%% of universes produced at least one divergence.", wsls_fail_rate),
+    x        = "Number of Divergent Transitions",
+    y        = "Number of SBC Universes"
+  )
+```
+
+With three correlation parameters, the SBC rank histograms for `rho_aw` and `rho_al` will have wider confidence bands than `rho_wl` at $N = 200$ simulations. This is expected: the win-stay/lose-shift correlation is informed by data from every non-first trial, whereas the baseline-signal correlations require the model to simultaneously identify how agents differ on $\alpha$ and on $\beta_W$ or $\beta_L$ — a harder inference problem. Mild irregularity within the confidence bands is noise. Systematic U-shape or asymmetry would indicate a genuine calibration failure.
+
+### Cognitive Interpretation of $\hat{\rho}_{WL}$, $\hat{\rho}_{\alpha W}$, $\hat{\rho}_{\alpha L}$
+
+The three posterior correlations answer distinct scientific questions about how cognitive dimensions covary across the population.
+
+**$\hat{\rho}_{WL}$: Win-Stay and Lose-Shift Correlation.** This is typically the most informative estimate.
+
+* $\rho_{WL} > 0$: Agents who respond strongly to wins also respond strongly to losses. This is consistent with a single latent *reinforcement sensitivity* dimension: agents are either generally responsive to feedback or generally unresponsive.
+
+* $\rho_{WL} < 0$: Agents trade off the two signals — strong lose-shift comes at the cost of weak win-stay, and vice versa. This would suggest two genuinely independent cognitive mechanisms that compete for expression.
+
+* $\rho_{WL} \approx 0$: The two feedback responses are orthogonal individual differences. Whether an agent stays after winning tells us nothing about how they respond to losses.
+
+**$\hat{\rho}_{\alpha W}$ and $\hat{\rho}_{\alpha L}$: Baseline-Signal Correlations.**
+
+* $\rho_{\alpha W} > 0$: Agents with a stronger directional preference also have a stronger win-stay response. This could reflect a general *exploitation* tendency that expresses itself both as prior bias and as reinforcement of successful choices.
+
+* $\rho_{\alpha L} < 0$: Agents with a strong directional bias tend to shift less after losses. This would be consistent with a committed prior dominating feedback: the agent "knows" what they want and is harder to dislodge by negative feedback.
+
+None of these interpretations follow from the model alone. The model provides calibrated posteriors over three correlations. Cognitive theory provides the framework for deciding what those values mean for the experimental paradigm and the population under study.
+
+### LOO for Model Comparison
+
+We retain the LOO-CV score here for the final model comparison section, where we assess whether the added parameters of the WSLS model earn their inferential cost through improved out-of-sample predictive accuracy relative to the biased and memory agents.
+
+```{r}
+loo_wsls <- loo(fit_wsls$draws("log_lik", format = "matrix"))
+print(loo_wsls)
+```

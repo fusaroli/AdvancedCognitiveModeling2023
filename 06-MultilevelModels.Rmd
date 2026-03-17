@@ -817,6 +817,50 @@ plot_ecdf_diff(sbc_results_cp, variables = c("mu_theta", "sigma_theta")) +
     title = "SBC ECDF Difference: Centered Parameterization",
     subtitle = "Deviation from the diagonal indicates miscalibration. The rank histograms\nare underpowered at N=200 for subtle distortions; divergence rates below are more sensitive."
   )
+
+# 1. Extract the lightweight stats dataframe from the SBC object
+sbc_stats_df <- sbc_results_cp$stats
+
+# 2. Filter for the population-level parameters you care about
+# (e.g., mu_alpha, mu_beta, rho, or even sigma[1])
+recovery_df <- sbc_stats_df |>
+  filter(variable %in% c("mu_theta"))
+
+# 3. Create the Parameter Recovery Identity Plot
+p_sbc_recovery <- ggplot(recovery_df, aes(x = simulated_value, y = median)) +
+  # The Identity Line (Perfect Recovery)
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50", linewidth = 1) +
+  
+  # The Posterior Estimates with 90% Credible Intervals
+  geom_errorbar(aes(ymin = q5, ymax = q95), width = 0, alpha = 0.3, color = "steelblue") +
+  geom_point(color = "midnightblue", alpha = 0.7, size = 2) +
+  
+  # Facet by parameter
+  facet_wrap(~variable, scales = "free") +
+  
+  labs(
+    title = "Parameter Recovery (Extracted Directly from SBC)",
+    subtitle = "Points represent the posterior median. Bars are 90% Credible Intervals.",
+    x = "True Generative Value (Drawn from Prior)",
+    y = "Posterior Median Estimate"
+  ) +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "gray95", color = NA))
+
+print(p_sbc_recovery)
+
+# 4. Quantify the Recovery (Correlation and RMSE)
+recovery_metrics <- recovery_df |>
+  group_by(variable) |>
+  summarize(
+    Pearson_r = cor(simulated_value, median),
+    Spearman_rho = cor(simulated_value, median, method = "spearman"),
+    RMSE = sqrt(mean((simulated_value - median)^2)),
+    .groups = "drop"
+  )
+
+cat("=== PARAMETER RECOVERY QUANTIFICATION ===\n")
+print(knitr::kable(recovery_metrics, digits = 3))
 ```
 
 Let's explore the warnings we got.
@@ -1124,6 +1168,49 @@ if (regenerate_simulations || !file.exists(sbc_ncp_path)) {
 plot_rank_hist(sbc_results_ncp, variables = c("mu_theta", "sigma_theta")) +
   labs(title = "SBC Rank Histograms: Non-Centered Parameterization")
 
+sbc_stats_df <- sbc_results_cp$stats
+
+# 2. Filter for the population-level parameters you care about
+# (e.g., mu_alpha, mu_beta, rho, or even sigma[1])
+recovery_df <- sbc_stats_df |>
+  filter(variable %in% c("mu_theta", "sigma_theta"))
+
+# 3. Create the Parameter Recovery Identity Plot
+p_sbc_recovery <- ggplot(recovery_df, aes(x = simulated_value, y = median)) +
+  # The Identity Line (Perfect Recovery)
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50", linewidth = 1) +
+  
+  # The Posterior Estimates with 90% Credible Intervals
+  geom_errorbar(aes(ymin = q5, ymax = q95), width = 0, alpha = 0.3, color = "steelblue") +
+  geom_point(color = "midnightblue", alpha = 0.7, size = 2) +
+  
+  # Facet by parameter
+  facet_wrap(~variable, scales = "free") +
+  
+  labs(
+    title = "Parameter Recovery (Extracted Directly from SBC)",
+    subtitle = "Points represent the posterior median. Bars are 90% Credible Intervals.",
+    x = "True Generative Value (Drawn from Prior)",
+    y = "Posterior Median Estimate"
+  ) +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "gray95", color = NA))
+
+print(p_sbc_recovery)
+
+# 4. Quantify the Recovery (Correlation and RMSE)
+recovery_metrics <- recovery_df |>
+  group_by(variable) |>
+  summarize(
+    Pearson_r = cor(simulated_value, median),
+    Spearman_rho = cor(simulated_value, median, method = "spearman"),
+    RMSE = sqrt(mean((simulated_value - median)^2)),
+    .groups = "drop"
+  )
+
+cat("=== PARAMETER RECOVERY QUANTIFICATION ===\n")
+print(knitr::kable(recovery_metrics, digits = 3))
+
 # Extract diagnostics now so they are available for the targeted refit below
 diags_ncp <- sbc_results_ncp$backend_diagnostics
 ncp_fail_rate <- mean(diags_ncp$n_divergent > 0) * 100
@@ -1255,6 +1342,50 @@ plot_rank_hist(psbc_res_cp,  variables = c("mu_theta", "sigma_theta")) +
 
 plot_rank_hist(psbc_res_ncp, variables = c("mu_theta", "sigma_theta")) +
   labs(title = "PSBC Rank Histograms: Non-Centered Parameterization")
+
+
+# 1. Extract the lightweight stats dataframe from the SBC object
+sbc_stats_df <- psbc_res_ncp$stats
+
+# 2. Filter for the population-level parameters you care about
+# (e.g., mu_alpha, mu_beta, rho, or even sigma[1])
+recovery_df <- sbc_stats_df |>
+  filter(variable %in% c("mu_theta", "sigma_theta"))
+
+# 3. Create the Parameter Recovery Identity Plot
+p_sbc_recovery <- ggplot(recovery_df, aes(x = simulated_value, y = median)) +
+  # The Identity Line (Perfect Recovery)
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50", linewidth = 1) +
+  
+  # The Posterior Estimates with 90% Credible Intervals
+  geom_errorbar(aes(ymin = q5, ymax = q95), width = 0, alpha = 0.3, color = "steelblue") +
+  geom_point(color = "midnightblue", alpha = 0.7, size = 2) +
+  
+  # Facet by parameter
+  facet_wrap(~variable, scales = "free") +
+  
+  labs(
+    title = "Parameter Recovery (Extracted Directly from SBC)",
+    subtitle = "Points represent the posterior median. Bars are 90% Credible Intervals.",
+    x = "True Generative Value (Drawn from Prior)",
+    y = "Posterior Median Estimate"
+  ) +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "gray95", color = NA))
+
+print(p_sbc_recovery)
+
+# 4. Quantify the Recovery (Correlation and RMSE)
+recovery_metrics <- recovery_df |>
+  group_by(variable) |>
+  summarize(
+    Pearson_r = cor(simulated_value, median),
+    RMSE = sqrt(mean((simulated_value - median)^2)),
+    .groups = "drop"
+  )
+
+cat("=== PARAMETER RECOVERY QUANTIFICATION ===\n")
+print(knitr::kable(recovery_metrics, digits = 3))
 
 diags_psbc_cp  <- psbc_res_cp$backend_diagnostics
 diags_psbc_ncp <- psbc_res_ncp$backend_diagnostics
@@ -2254,6 +2385,49 @@ plot_ecdf_diff(sbc_results_memory, variables = c("mu_alpha", "mu_beta", "sigma[1
     title    = "SBC ECDF Difference: Memory Agent NCP",
     subtitle = "Deviation from the diagonal indicates miscalibration."
   )
+
+# 1. Extract the lightweight stats dataframe from the SBC object
+sbc_stats_df <- sbc_results_memory$stats
+
+# 2. Filter for the population-level parameters you care about
+# (e.g., mu_alpha, mu_beta, rho, or even sigma[1])
+recovery_df <- sbc_stats_df |>
+  filter(variable %in% c("mu_alpha", "mu_beta", "sigma[1]", "sigma[2]", "rho"))
+
+# 3. Create the Parameter Recovery Identity Plot
+p_sbc_recovery <- ggplot(recovery_df, aes(x = simulated_value, y = median)) +
+  # The Identity Line (Perfect Recovery)
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50", linewidth = 1) +
+  
+  # The Posterior Estimates with 90% Credible Intervals
+  geom_errorbar(aes(ymin = q5, ymax = q95), width = 0, alpha = 0.3, color = "steelblue") +
+  geom_point(color = "midnightblue", alpha = 0.7, size = 2) +
+  
+  # Facet by parameter
+  facet_wrap(~variable, scales = "free") +
+  
+  labs(
+    title = "Parameter Recovery (Extracted Directly from SBC)",
+    subtitle = "Points represent the posterior median. Bars are 90% Credible Intervals.",
+    x = "True Generative Value (Drawn from Prior)",
+    y = "Posterior Median Estimate"
+  ) +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "gray95", color = NA))
+
+print(p_sbc_recovery)
+
+# 4. Quantify the Recovery (Correlation and RMSE)
+recovery_metrics <- recovery_df |>
+  group_by(variable) |>
+  summarize(
+    Pearson_r = cor(simulated_value, median),
+    RMSE = sqrt(mean((simulated_value - median)^2)),
+    .groups = "drop"
+  )
+
+cat("=== PARAMETER RECOVERY QUANTIFICATION ===\n")
+print(knitr::kable(recovery_metrics, digits = 3))
 ```
 
 ```{r 06-memory-sbc-diagnostics}

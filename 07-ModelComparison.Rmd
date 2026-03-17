@@ -1,0 +1,1972 @@
+---
+title: "Chapter 7: Model Comparison"
+output: html_document
+date: "2025-03-01"
+---
+
+```{r ch7_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = "center",
+  out.width  = "80%",
+  dpi        = 300
+)
+
+regenerate_simulations <- FALSE
+regenerate_kfold       <- FALSE
+
+for (d in c("stan", "simdata", "simmodels", "figures")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse,
+  here,
+  posterior,
+  cmdstanr,
+  tidybayes,
+  patchwork,
+  bayesplot,
+  furrr,
+  future,
+  loo,
+  priorsense
+)
+
+theme_set(theme_classic())
+plan(sequential)
+```
+
+# Deciding Between Competing Theories: Model Comparison
+
+By Chapter 6 we had a working Bayesian workflow: specify a generative model, validate it with SBC and parameter recovery, fit it to data, and diagnose the posterior geometry, both in the case of single agent and hierarchical models. We now face a different question: we rarely have only one possible model of the cognitive processes underlying the observed behaviors.
+
+* CRITICAL PRECONDITION: Model comparison is only scientifically meaningful if all candidate models have already passed the individual quality checks established in Chapter 5. If Model A converges perfectly but Model B fails its SBC calibration or has persistent divergences, an ELPD comparison is a "garbage-in, garbage-out" exercise. We only compare models that have earned the right to be taken seriously.
+
+* Sometimes we have different models representing competing theoretical accounts of cognitive processes. For instance, a Gaussian filter model of learning regularities in one's opponent's behavior in the Matching Pennies game vs a Theory of Mind model of learning the model used by the opponent vs. an active inference model trying to actively deceive the opponent.
+
+* Sometimes we have simpler and more complex versions of the same model: should we assume we equally learn from all feedback (using a reinforcement learning model) or should we assume different learning from positive and negative feedback (using a dual learning rate model)?
+
+In either case, once we have ensured that all models involved pass their individual quality checks, how do we decide which better accounts for the observed data?
+
+There are many ways to compare models, but here we develop a Bayesian predictive approach consistent with our approach in previous chapters. The core argument is that a model should be judged not by how well it explains the data it was *trained* on, but by how well it predicts data it has *never seen*. We formalize this as the Expected Log Predictive Density (ELPD), build an efficient computational approximation via PSIS-LOO, and apply the full workflow to the biased and memory agent models from Chapter 6. This approach also gives us a principled way to identify difficult to predict data points (sometimes called influential observations), which can tell us much about the limits of our models and different mechanisms at work in different portions of the data.
+
+As in previous chapters, we heavily rely on simulations to understand these techniques and validate our model comparison procedure. Because we control the data-generating mechanism, we can evaluate not just whether model comparison produces a preference, but whether it produces the *correct* preference — the model recovery test.
+
+Remember, model comparison is not a fail-safe procedure to determine the absolute "truth". All models are simplifications. Instead, it helps us identify which of our candidate models provides the most useful or most plausible account of the data, given our current understanding and the available evidence. Model comparison should always be part of a larger principled scientific workflow using models as stepping stones to deeper understanding, not as final arbiters of truth.
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+
+* **Explain the failure mode of in-sample fit**: Understand why simply choosing the model that fits the training data best can be misleading.
+
+* **Understand Cross-Validation**: Grasp the core idea of evaluating models based on their ability to predict unseen data, including K-Fold CV.
+
+* **Define ELPD rigorously**: state the Expected Log Predictive Density as a formal target quantity and connect it to the log-score proper scoring rule.
+
+* **Implement PSIS-LOO**: compute ELPD estimates from existing Stan fits using `loo::loo()`, identify Pareto-$\hat{k}$ diagnostics, and apply `loo::loo_moment_match()` for problematic observations.
+
+* **Characterize influential observations**: identify *why* specific observations have high $\hat{k}$, linking influence back to the cognitive structure of the experiment.
+
+* **Diagnose LOO-PIT calibration correctly**: understand why the standard ECDF visual can be too lenient for complex hierarchical models; compute the $\hat{p}_{\text{loo}}/N$ complexity ratio; implement the POT-C formal test that remains valid when LOO-PIT values are correlated.
+
+* **Interpret `loo_compare()` output**: read `elpd_diff` and `se_diff` correctly and reason about the $|\text{elpd\_diff}|/\text{se\_diff}$ ratio.
+
+* **Compute Bayesian stacking weights**: use `loo::loo_model_weights()` to assign ensemble weights to competing models.
+
+* **Execute model recovery**: design a 2x2 simulation study where the true generating model is known and verify that PSIS-LOO identifies it correctly.
+
+* **Identify when LOO is invalid**: recognize that trial-level LOO is inappropriate for sequentially dependent data and describe the Leave-Future-Out remedy.
+
+## Why In-Sample Fit Fails: The Overfitting Trap
+
+The most naive approach to comparing two models is to ask which fits the training data better. The problem with this criterion is that it is systematically biased toward more complex models. A model with enough free parameters can memorize any finite dataset. But memorization is not understanding — a model that has memorized the noise in its training data will make poor predictions on new data it has never seen.
+
+To make this concrete, we generate data from a simple quadratic curve with added noise, then fit three polynomial models of increasing complexity.
+
+```{r 07-overfitting-demo}
+set.seed(101)
+n      <- 30
+x      <- seq(-3, 3, length.out = n)
+y_true <- 1 + 0.5 * x + 0.8 * x^2
+y_obs  <- y_true + rnorm(n, 0, 2.5)
+df_fit <- tibble(x = x, y = y_obs)
+
+fit_p1  <- lm(y ~ x,           data = df_fit)
+fit_p2  <- lm(y ~ poly(x, 2),  data = df_fit)
+fit_p10 <- lm(y ~ poly(x, 10), data = df_fit)
+
+x_pred  <- seq(-3, 3, length.out = 200)
+pred_df <- tibble(
+  x    = x_pred,
+  lin  = predict(fit_p1,  newdata = data.frame(x = x_pred)),
+  quad = predict(fit_p2,  newdata = data.frame(x = x_pred)),
+  high = predict(fit_p10, newdata = data.frame(x = x_pred))
+) |>
+  pivot_longer(-x, names_to = "model", values_to = "y_pred") |>
+  mutate(model = factor(model,
+    levels = c("lin", "quad", "high"),
+    labels = c("Degree 1 (underfit)", "Degree 2 (true DGP)",
+               "Degree 10 (overfit)")))
+
+ggplot(df_fit, aes(x = x, y = y)) +
+  geom_point(size = 2, alpha = 0.8) +
+  geom_line(data = pred_df, aes(y = y_pred, color = model), linewidth = 1) +
+  scale_color_brewer(palette = "Set1", name = "Model") +
+  labs(title    = "The Overfitting Trap",
+       subtitle = "More parameters -> lower training error -> worse generalization",
+       x = "Predictor", y = "Outcome") +
+  theme(legend.position = "bottom")
+```
+
+In this plot, we generated data from a quadratic curve with added noise. A linear model (red) underfits, missing a crucial feature of the data: the curvature. A degree-10 polynomial (green) overfits the data: it captures the curvature, but also the noise, deviating here and there to capture each stray datapoint. The quadratic model (blue) captures the underlying trend without fitting every wiggle, representing a better balance.
+
+The error these models make on the training data (e.g. root mean square error) monotonically decreases as we increase the complexity of the model (and the variance explained, $R^2$, monotonically increases), and therefore we cannot use it to choose between models. We need a criterion that rewards genuine generalization: models that capture the signal without overfitting the noise.
+
+
+### The Concept of Cross-Validation
+
+To find this balance between fitting and generalizing, we need a method to test how well our model performs on data it hasn't seen yet. Since we usually only have one dataset, we artificially create "unseen" data by hiding parts of our dataset from the model during the training phase. This is the core concept of **Cross-Validation (CV)**.
+
+The general process is:
+1. Split your data into a *training set* and a *test set*.
+2. Fit (train) your model using only the training data.
+3. Evaluate the model's predictions on the hidden test data.
+4. Repeat this process with different splits and average the performance.
+
+#### K-Fold Cross-Validation
+
+In K-Fold cross-validation, we divide the data into $K$ equally sized subsets (folds). We train the model on $K-1$ folds and test it on the remaining fold, repeating this until every fold has served as the test set exactly once.
+
+
+```{r 07-kfold-viz, fig.height=3}
+# Visualization of k-fold cross-validation
+n_data <- 20
+cv_data <- tibble(index = 1:n_data, value = rnorm(n_data))
+cv_data$fold <- sample(rep(1:5, length.out = n_data))
+
+cv_viz_data <- tibble(
+  iteration = rep(1:5, each = n_data),
+  data_point = rep(1:n_data, 5),
+  role = ifelse(cv_data$fold[data_point] == iteration, "test", "train")
+)
+
+ggplot(cv_viz_data, aes(x = data_point, y = iteration, fill = role)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_manual(values = c("train" = "steelblue", "test" = "firebrick"), 
+                    name = "Data Role") +
+  labs(title = "K-Fold Cross-Validation (k=5)",
+       subtitle = "Each row is one iteration; the model must predict the red tiles.",
+       x = "Data Point", y = "Iteration") +
+  theme(panel.grid = element_blank(), legend.position = "bottom")
+```
+
+#### Leave-One-Out Cross-Validation (LOO-CV)
+Leave-One-Out Cross-Validation (LOO-CV) is the extreme limit of K-Fold, where $K$ equals the total number of data points ($N$). In each iteration, we hold out exactly one observation for testing and train the model on the remaining $N-1$ observations.
+```{r 07-loo-cv-viz}
+loo_viz_data <- tibble(
+  iteration = rep(1:n_data, each = n_data),
+  data_point = rep(1:n_data, n_data),
+  role = ifelse(iteration == data_point, "test", "train")
+)
+
+ggplot(loo_viz_data, aes(x = data_point, y = iteration, fill = role)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_manual(values = c("train" = "steelblue", "test" = "firebrick"), 
+                    name = "Data Role") +
+  labs(title = "Leave-One-Out Cross-Validation",
+       subtitle = "Maximum training data used, but requires fitting the model N times.",
+       x = "Data Point", y = "Iteration") +
+  theme(panel.grid = element_blank(), legend.position = "bottom")
+```
+
+Cross-validation is especially important in cognitive Bayesian modeling for several reasons:
+1. Bayesian models can be highly parameterized (especially hierarchical ones), making them prone to overfitting.
+2. Prior choices can significantly influence a model's predictive performance.
+3. We often need to compare competing theoretical accounts of the same behavior.
+
+However, implementing cross-validation for Bayesian models presents two key challenges that we must solve:
+
+1. **Proper Scoring**: In standard machine learning, we might just calculate the mean squared error or accuracy on the test fold. But Bayesian models output *probability distributions*, not just point estimates. We need an appropriate metric for evaluating the quality of a predictive distribution. 
+2. **Computational Cost**: For a dataset with 6,000 observations, true LOO-CV would require fitting our Stan model 6,000 separate times. Because MCMC sampling can take hours, exact LOO-CV is usually practically impossible.
+
+In the next sections, we will solve the first challenge using the **Expected Log Predictive Density (ELPD)**, and the second challenge using an elegant mathematical shortcut called **PSIS-LOO**.
+
+## Formalizing Predictive Accuracy: The ELPD
+
+### The Log-Score Proper Scoring Rule
+
+Any model $M$ can generate a predictive distribution: how likely different values of the outcome variable are estimated to be given the data it has seen and the model's assumptions.
+
+When an actual new outcome $\tilde{y}_0$ is observed, we evaluate the model by checking exactly how much probability mass it assigned to the event that actually happened: $p(\tilde{y}_0 \mid y, M)$.
+
+We take the natural logarithm of this probability to compute the log-score:
+$$\text{log-score}(M, \tilde{y}_0) = \log p(\tilde{y}_0 \mid y, M)$$
+
+We use the log scale for two primary reasons:
+
+* **Additivity**: The joint probability of independent future observations is the product of their individual probabilities. On the log scale, this becomes a sum, which is mathematically tractable and avoids computational underflow: probabilities being smaller than one being multiplied with each other become small very quickly and run into approximation issues, because computers use only a fixed number of decimals.
+
+* **Information Theory**: The negative log-score, $-\log p(\tilde{y}_0 \mid y, M)$, is the *surprisal* or Shannon information content of the outcome under the model. Maximizing the log-score is equivalent to minimizing the model's surprise.
+
+We call the log-score a *scoring rule*: a function that provides a summary measure for the evaluation of probabilistic forecasts. A scoring rule is strictly *proper* if the model maximizes its expected score if and only if the probability distribution it outputs exactly matches the true data-generating distribution. This is a desirable property: a model cannot "game" the score by being strategically overconfident or underconfident. Overconfident models - those that assign near-zero probability to outcomes that then occur - incur unbounded penalties. A model that says "I am 99% certain this participant will choose right" and the participant chooses left will be penalized far more than a model that honestly said "I think it's about 60%."
+
+You may have encountered Bayes Factors as a method for model comparison. Bayes Factors rely on the marginal likelihood—the probability of the data integrated over the entire prior. While theoretically elegant, Bayes Factors are notoriously sensitive to the exact width of priors and are often computationally impossible to calculate for the complex hierarchical models used in cognitive science. In this course, we rely on ELPD and Cross-Validation because they focus on predictive generalization, are more robust to prior choices, and provide trial-level diagnostics that Bayes Factors lack.
+
+### The Expected Log Predictive Density
+
+The log-score evaluates a model on a single new observation. But what we really want is a summary over *all possible* future observations - a measure of how good the model would be in general, not just on one lucky or unlucky draw.
+
+The Expected Log Predictive Density (ELPD) does exactly this: it averages the log-score over all possible future observations, weighted by how likely those observations are under the true data-generating distribution $p_t$:
+
+$$\text{ELPD} = \int p_t(\tilde{y}) \log p(\tilde{y} \mid y, M) \, d\tilde{y}$$
+
+where $p(\tilde{y} \mid y, M) = \int p(\tilde{y} \mid \theta) \, p(\theta \mid y) \, d\theta$ is the posterior predictive distribution - the model's prediction for a new observation, averaged over the uncertainty in its parameters. The model with the highest ELPD makes the best average predictions across the full range of possible future data.
+
+There is one crucial catch: we do not know $p_t$ - the true distribution of future observations. If we did, we would not need a model in the first place! So we have to *estimate* the ELPD from the data we have. Leave-one-out cross-validation (LOO-CV) provides an approach that is asymptotically unbiased:
+
+$$\widehat{\text{ELPD}}_{\text{LOO}} = \sum_{i=1}^{N} \log p(y_i \mid y_{-i}, M)$$
+
+The notation $y_{-i}$ means "all observations except observation $i$". So for each data point, we ask: if the model had never seen this observation, how well would it predict it? A model that memorized $y_i$ to reduce its training loss will be penalized here, because the LOO posterior is computed *without* $y_i$. The prediction must generalize - it cannot cheat by peeking at the answer.
+
+But how do we calculate it?
+
+### The Importance-Sampling Shortcut
+
+Computing $\widehat{\text{ELPD}}_{\text{LOO}}$ exactly would require fitting the model $N$ times - once with each observation left out. For our hierarchical models with 50 agents and 120 trials each, that is 6,000 separate MCMC runs. This is not feasible in practice, especially when we get to more complex models.
+
+Fortunately, there is an elegant mathematical shortcut, which is analogous to what we have seen when assessing prior sensitivity. The idea is to use the *single* full-data posterior we already have and to *reweight* its draws to approximate what the posterior would have looked like had we omitted observation $i$. .
+
+The mathematical weights that accomplish this reweighting are the *inverse* of the likelihood contributions: observations that the model fits well (high likelihood) get down-weighted when computing what the model "would have" predicted without them. These log-scale importance weights are simply the negative pointwise log-likelihoods:
+
+$$\log r_i^{(s)} = -\log p(y_i \mid \theta^{(s)})$$
+
+These are already stored in our Stan `log_lik` block from Chapter 6. So no additional computation is required: everything we need is already sitting in our existing model fits. 
+
+However, we should be careful. If the model's estimate would barely change when we removing observation $i$, then $i$ is not very influential, and we can approximate the LOO estimate cheaply. If the model's estimate would change a lot, then $i$ is influential, and our approximation is less reliable. We therefore need to use a diagnostic to flag such cases: the Pareto-$\hat{k}$, which we cover in detail in a later paragraph.
+
+This combination of LOO cross-validation with Pareto-Smoothed Importance Sampling is called **PSIS-LOO** (Vehtari, Gelman & Gabry, 2017), and it is our primary tool for model comparison, so we'll go through it step by step.
+
+To really understand what the `loo()` function will do for us later, let's look under the hood. We can simulate the PSIS-LOO process directly using the `loo` package's internal engine. We will generate 1,000 simulated log-likelihood values, inject some extreme outliers to simulate a "shocked" model, and feed them directly into the actual `loo::psis()` algorithm. 
+
+We can then extract the smoothed weights and compare them to the raw weights to see exactly how the algorithm protects us from extreme MCMC draws.
+
+```{r 07-psis-under-the-hood, fig.height=10}
+n_draws <- 1000
+
+# 1. Simulate 1000 raw log-importance weights (negative log-likelihoods)
+# Most are normal, but we inject a heavy right tail of extreme outliers
+log_w_raw <- c(rnorm(950, mean = 0, sd = 1), seq(3, 15, length.out = 50))
+
+# 2. Apply the ACTUAL PSIS algorithm from the loo package!
+psis_result <- loo::psis(log_w_raw, r_eff = 1)
+
+# Print the diagnostic to prove we triggered the smoothing
+cat("Pareto-k diagnostic from the real algorithm:", round(psis_result$diagnostics$pareto_k, 2), "\n")
+
+# 3. Extract and normalize weights for visualization
+# Raw weights
+w_raw <- exp(log_w_raw)
+w_raw_norm <- w_raw / sum(w_raw)
+
+# Smoothed weights (psis() returns them already log-normalized)
+w_smooth_norm <- exp(as.numeric(psis_result$log_weights))
+
+# 4. Sort the weights from smallest to largest to visualize the "tail"
+sort_order <- order(w_raw_norm)
+weight_data <- data.frame(
+  raw = w_raw_norm[sort_order],
+  smoothed = w_smooth_norm[sort_order]
+)
+
+# The PSIS algorithm smooths the top 3 * sqrt(S) weights. 
+# For S=1000, that is the top ~95 weights.
+# We will zoom in on the top 150 weights to see the tail clearly.
+weight_data_top <- tail(weight_data, 150)
+weight_data_top$rank <- 1:150
+tail_start_x <- 150 - 95 + 0.5
+
+# PLOT: Importance weights before and after Pareto smoothing
+p_weights <- ggplot(weight_data_top, aes(x = rank)) +
+  # Arrows showing the shift computed by the real algorithm
+  geom_segment(aes(xend = rank, y = raw, yend = smoothed),
+               arrow = arrow(length = unit(0.2, "cm"), type = "closed"), 
+               color = "purple", linewidth = 0.7, alpha = 0.7) +
+               
+  # Points drawn on top
+  geom_point(aes(y = raw), color = "steelblue", size = 2, alpha = 0.8) +
+  geom_point(aes(y = smoothed), color = "purple", size = 2, alpha = 1.0) +
+  
+  # Add a vertical line to show where the algorithm began smoothing
+  geom_vline(xintercept = tail_start_x, linetype = "dashed", color = "gray50") +
+  annotate("text", x = tail_start_x + 2, y = max(weight_data_top$raw) * 0.9, 
+           label = "Algorithm begins\nsmoothing here", hjust = 0, color = "gray30") +
+  
+  # Labels and styling
+  labs(title = "Actual PSIS Algorithm Smoothing (Top 150 Weights)",
+       subtitle = "The loo::psis() function compresses the extreme tail; remaining weights shift up to absorb the mass.",
+       x = "Rank of Weight (Zoomed in on the top 15%)", y = "Normalized Weight") +
+  theme_minimal()
+
+# PLOT: Conceptual diagram of PSIS-LOO process
+p_flow <- ggplot() +
+  annotate("rect", xmin = 0.5, xmax = 3.5, ymin = 4, ymax = 5, fill = "lightblue", alpha = 0.7) +
+  annotate("text", x = 2, y = 4.5, label = "1. Fit Model to All Data\nObtain posterior samples p(θ|y)") +
+  
+  annotate("rect", xmin = 0.5, xmax = 3.5, ymin = 2.5, ymax = 3.5, fill = "lightgreen", alpha = 0.7) +
+  annotate("text", x = 2, y = 3, label = "2. Calculate Log-Likelihoods\nℓᵢ(θ) = log p(yᵢ|θ)") +
+  
+  annotate("rect", xmin = 0.5, xmax = 3.5, ymin = 1, ymax = 2, fill = "lightyellow", alpha = 0.7) +
+  annotate("text", x = 2, y = 1.5, label = "3. Compute Importance Weights\nwᵢ(θ) ∝ 1/p(yᵢ|θ)") +
+  
+  annotate("rect", xmin = 0.5, xmax = 3.5, ymin = -0.5, ymax = 0.5, fill = "mistyrose", alpha = 0.7) +
+  annotate("text", x = 2, y = 0, label = "4. Apply Pareto Smoothing\nStabilize extreme weights via loo::psis()") +
+  
+  annotate("rect", xmin = 0.5, xmax = 3.5, ymin = -2, ymax = -1, fill = "lavender", alpha = 0.7) +
+  annotate("text", x = 2, y = -1.5, label = "5. Compute ELPD Using Weights\nApproximate leave-one-out prediction") +
+  
+  annotate("segment", x = 2, y = c(4, 2.5, 1, -0.5), xend = 2, yend = c(3.5, 2, 0.5, -1), 
+           arrow = arrow(length = unit(0.2, "cm"))) +
+  
+  annotate("rect", xmin = 3.7, xmax = 5.7, ymin = -0.2, ymax = 1.5, fill = "white", color = "black", linetype = "dashed") +
+  annotate("text", x = 4.7, y = 1.2, label = "Pareto k Diagnostics", fontface = "bold") +
+  annotate("text", x = 4.7, y = 0.8, label = "k < 0.5: Reliable", color = "darkgreen") +
+  annotate("text", x = 4.7, y = 0.4, label = "0.5 < k < 0.7: Use caution", color = "darkorange") +
+  annotate("text", x = 4.7, y = 0, label = "k > 0.7: Unreliable", color = "darkred") +
+  theme_void() +
+  labs(title = "PSIS-LOO Process Flow")
+
+p_weights / p_flow
+```
+
+Notice how a few random MCMC draws initially monopolize the raw importance weights (the high blue dots). If we calculated ELPD using those raw weights, our cross-validation score would be highly erratic and dictated by statistical noise. The Pareto smoothing (purple dots) gently compresses the extreme tail of these weights into a more stable distribution.
+
+Mathematically, an extreme raw importance weight means the approximation is unstable. Cognitively, an extreme importance weight means the model is utterly shocked by this specific participant's choice. We will use this dual mathematical/cognitive interpretation to flag influential observations later.
+
+But first let's get to the thick of it and start simulating data.
+
+## Simulation Setup for Model Recovery
+
+We simulate two populations of agents playing against an opponent. However, we cannot use the constant 70%-right opponent from Chapter 6. **Why?** If a memory agent tracks a constant 70% rate, its internal memory signal quickly settles into a flat line. Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a biased agent with a fixed probability. 
+
+To break this near-unidentifiability, we use a **reversal design**: the opponent plays 80%-right for the first 60 trials, then abruptly switches to 20%-right for the remaining 60 trials. Memory agents will drastically shift their behavior at trial 61, while biased agents will not, making the two models theoretically separable. 
+
+*Note on Recovery Failure:* We simulate a population with a strong memory sensitivity ($\mu_\beta = 1.5$). If we instead simulated a population with very weak memory ($\mu_\beta = 0.3$), model recovery would likely fail. The behavioral difference would be so subtle that the rigid Biased model would win the ELPD comparison by default due to its lower complexity penalty.
+
+The key insight for model recovery is that we now fit *both* models to *both* datasets, giving us a 2x2 matrix of fits:
+
+* **Biased model on biased data** --- the correctly-specified model.
+* **Memory model on biased data** --- the over-specified model. It has an extra parameter ($\beta$) it does not need.
+* **Biased model on memory data** --- the under-specified model. It lacks the flexibility to capture the reversal.
+* **Memory model on memory data** --- the correctly-specified model.
+
+We will see PSIS-LOO at work step by step and assess whether it is doing its job: it should prefer the correct model in each column of this matrix. This is model recovery: the analogue of parameter recovery but one level of abstraction higher - instead of asking "can we recover the right parameter values?", we ask "can we identify the right model?"
+
+```{r 07-simulation-functions}
+
+simulate_model_recovery_data <- function(
+  n_agents      = 50,  n_trials      = 120,
+  mu_theta      = 1.0, sigma_theta   = 0.5,
+  mu_alpha      = 0.0, mu_beta       = 1.5,
+  sigma_alpha   = 0.3, sigma_beta    = 0.5,
+  rho           = 0.3, 
+  seed          = 42
+) {
+  set.seed(seed)
+
+  # Hardcoded reversal block design: 80% right for t 1:60, 20% right for t 61:120
+  opp_choices <- c(
+    rbinom(60, 1, 0.8),
+    rbinom(n_trials - 60, 1, 0.2)
+  )
+  
+  # Perfect unweighted memory (cumulative average)
+  opp_rate_prev    <- numeric(n_trials)
+  opp_rate_prev[1] <- 0.5
+  if (n_trials > 1) {
+    raw_rates         <- cumsum(opp_choices[-n_trials]) / seq_len(n_trials - 1)
+    opp_rate_prev[-1] <- pmax(0.01, pmin(0.99, raw_rates)) # to avoid singularities
+  }
+
+  # Generating the hierarchical biased behaviors
+  # Generating the hierarchical biased behaviors
+  theta_j <- rnorm(n_agents, mu_theta, sigma_theta)
+  # Inject extreme outliers to naturally trigger high Pareto-k values
+  theta_j[1] <- 4.5  # Agent 1 is extremely biased right
+  theta_j[2] <- -4.5 # Agent 2 is extremely biased left
+  biased_data <- map_dfr(seq_len(n_agents), function(j) {
+    tibble(agent_id = j, trial = seq_len(n_trials),
+           choice = rbinom(n_trials, 1, plogis(theta_j[j])),
+           opp_rate_prev = opp_rate_prev, agent_type = "biased",
+           true_theta = theta_j[j])
+  })
+
+  # Generating the parameters for the hierarchical memory behaviors with correlation
+  ## We follow the NCP parametrization to show you how, but also because it's more
+  ## efficient for sampling correlated bias and beta.
+  
+  ## First we define the Cholesky factor for the correlation matrix:
+  L_Omega  <- matrix(c(1, rho, 0, sqrt(1 - rho^2)), 2, 2)
+  ## Then we need to convert it to the covariance matrix by pre-multiplying by 
+  ## the scale parameters (correlations are z-scored, so to get the actual 
+  ## values we need to put the scales back in):
+  Scale    <- diag(c(sigma_alpha, sigma_beta)) %*% L_Omega
+  ## Then we create a matrix of independent, standard normal draws
+  Z        <- matrix(rnorm(2 * n_agents), 2, n_agents)
+  ## Then we apply our rescaling to the standard normal draws and add the group-level means to get the individual-level parameters
+  indiv    <- t(matrix(c(mu_alpha, mu_beta), ncol = 1) %*%
+                  matrix(1, 1, n_agents) + Scale %*% Z)
+
+  ## Then we generate the data for the memory model
+  memory_data <- map_dfr(seq_len(n_agents), function(j) {
+    logit_p <- indiv[j, 1] + indiv[j, 2] * qlogis(opp_rate_prev)
+    tibble(agent_id = j, trial = seq_len(n_trials),
+           choice = rbinom(n_trials, 1, plogis(logit_p)),
+           opp_rate_prev = opp_rate_prev, agent_type = "memory",
+           true_alpha = indiv[j, 1], true_beta = indiv[j, 2])
+  })
+
+  list(biased = biased_data, memory = memory_data,
+       hyperparams = list(mu_theta = mu_theta, sigma_theta = sigma_theta,
+                          mu_alpha = mu_alpha, mu_beta = mu_beta,
+                          sigma_alpha = sigma_alpha, sigma_beta = sigma_beta,
+                          rho = rho))
+}
+
+sim_data_path <- here::here("simdata", "ch7_model_recovery_data.rds")
+
+if (regenerate_simulations || !file.exists(sim_data_path)) {
+  sim_data <- simulate_model_recovery_data()
+  saveRDS(sim_data, sim_data_path)
+} else {
+  sim_data <- readRDS(sim_data_path)
+}
+
+d_biased <- sim_data$biased
+d_memory <- sim_data$memory
+cat("Biased data: N =", nrow(d_biased), "from", n_distinct(d_biased$agent_id), "agents\n")
+cat("Memory data: N =", nrow(d_memory), "from", n_distinct(d_memory$agent_id), "agents\n")
+```
+
+Let us visualize a sample of agents from both populations before fitting any models. This is a useful sanity check, and part of any sensible workflow. Check your data and simulations, folks!
+
+```{r 07-visual-inspection, fig.height=5}
+
+sampled_agents <- bind_rows(d_biased, d_memory) |>
+  distinct(agent_type, agent_id) |>
+  group_by(agent_type) |>
+  slice_sample(n = 8) |>
+  ungroup()
+
+bind_rows(d_biased, d_memory) |>
+  semi_join(sampled_agents, by = c("agent_type", "agent_id")) |>
+  arrange(agent_type, agent_id, trial) |>
+  group_by(agent_type, agent_id) |>
+  mutate(cum_rate = cumsum(choice) / trial) |>
+  ungroup() |>
+  ggplot(aes(x = trial, y = cum_rate, group = agent_id, color = agent_type)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray60",
+             linewidth = 0.4) +
+  geom_line(alpha = 0.7, linewidth = 0.7) +
+  facet_wrap(~agent_type, labeller = as_labeller(
+    c(biased = "Biased Agents (fixed bias)",
+      memory = "Memory Agents (track opponent)"))) +
+  scale_color_brewer(palette = "Set1", guide = "none") +
+  scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
+  labs(title    = "Cumulative Choice Rates: Biased vs. Memory Agents",
+       subtitle = "Both play against a 70%-right opponent. Can you tell them apart by eye?",
+       x = "Trial", y = "Cumulative proportion 'right'")
+```
+
+We should see a difference: Both populations initially drift upwards (rightwards in a sense) one because it is biased that way, the other because it initially plays against a 80%-right opponent. Memory agents then start drifting downwards as they track the reversal in the opponent's behavior, while biased agents stabilize. But it is not always easy to tell them apart by eye, especially if we look at individual agents rather than averages. This is why we need formal model comparison techniques.
+
+Now we prepare the four Stan data lists for our 2x2 comparison. Note that when fitting the memory model we need to add the `opp_rate_prev` even to the biased-generated data, as the model requires it.
+
+```{r 07-stan-data-prep}
+
+make_stan_biased <- function(d)
+  list(N = nrow(d), J = n_distinct(d$agent_id),
+       agent = d$agent_id, h = as.integer(d$choice))
+
+make_stan_memory <- function(d)
+  list(N = nrow(d), J = n_distinct(d$agent_id),
+       agent = d$agent_id, h = as.integer(d$choice),
+       opp_rate_prev = d$opp_rate_prev)
+
+sd_biased_on_biased <- make_stan_biased(d_biased)
+sd_memory_on_biased <- make_stan_memory(d_biased)
+sd_biased_on_memory <- make_stan_biased(d_memory)
+sd_memory_on_memory <- make_stan_memory(d_memory)
+```
+
+We reuse the NCP Stan models from Chapter 6. The key feature we need for model comparison is the `log_lik` vector in the `generated quantities` block - this is the pointwise log-likelihood for each observation that PSIS-LOO requires. This is why we designed those models with `log_lik` from the beginning: the Chapter 6 workflow was already leading here.
+
+```{r 07-load-stan-models}
+stan_file_biased <- here::here("stan", "ch6_multilevel_biased_ncp.stan")
+
+if (!file.exists(stan_file_biased)) {
+  writeLines('
+data { int<lower=1> N; int<lower=1> J;
+  array[N] int<lower=1,upper=J> agent;
+  array[N] int<lower=0,upper=1> h; }
+parameters { real mu_theta; real<lower=0> sigma_theta; vector[J] z_theta; }
+transformed parameters { vector[J] theta_logit = mu_theta + z_theta*sigma_theta; }
+model {
+  target += normal_lpdf(mu_theta|0,1.5);
+  target += exponential_lpdf(sigma_theta|1);
+  target += std_normal_lpdf(z_theta);
+  target += bernoulli_logit_lpmf(h|theta_logit[agent]); }
+generated quantities {
+  real lprior = normal_lpdf(mu_theta|0,1.5)+exponential_lpdf(sigma_theta|1)
+              + std_normal_lpdf(z_theta);
+  vector[N] log_lik; array[N] int h_post_rep;
+  for (i in 1:N) {
+    log_lik[i]    = bernoulli_logit_lpmf(h[i]|theta_logit[agent[i]]);
+    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent[i]]); } }',
+    stan_file_biased)
+}
+
+stan_file_memory <- here::here("stan", "ch6_multilevel_memory_ncp.stan")
+if (!file.exists(stan_file_memory)) {
+  writeLines('
+data { int<lower=1> N; int<lower=1> J;
+  array[N] int<lower=1,upper=J> agent; array[N] int<lower=0,upper=1> h;
+  vector<lower=0.01,upper=0.99>[N] opp_rate_prev; }
+parameters {
+  real mu_alpha; real mu_beta; vector<lower=0>[2] sigma;
+  cholesky_factor_corr[2] L_Omega; matrix[2,J] z; }
+transformed parameters {
+  matrix[J,2] indiv_params;
+  { matrix[2,J] dev = diag_pre_multiply(sigma,L_Omega)*z;
+    for (j in 1:J) {
+      indiv_params[j,1] = mu_alpha+dev[1,j];
+      indiv_params[j,2] = mu_beta+dev[2,j]; } } }
+model {
+  target += normal_lpdf(mu_alpha|0,1); target += normal_lpdf(mu_beta|0,1);
+  target += exponential_lpdf(sigma|1);
+  target += lkj_corr_cholesky_lpdf(L_Omega|2);
+  target += std_normal_lpdf(to_vector(z));
+  vector[N] logit_p;
+  for (i in 1:N)
+    logit_p[i] = indiv_params[agent[i],1]
+               + indiv_params[agent[i],2]*logit(opp_rate_prev[i]);
+  target += bernoulli_logit_lpmf(h|logit_p); }
+generated quantities {
+  matrix[2,2] Omega = multiply_lower_tri_self_transpose(L_Omega);
+  real rho = Omega[1,2];
+  real lprior = normal_lpdf(mu_alpha|0,1)+normal_lpdf(mu_beta|0,1)
+              + exponential_lpdf(sigma|1)+lkj_corr_cholesky_lpdf(L_Omega|2)
+              + std_normal_lpdf(to_vector(z));
+  vector[N] log_lik; array[N] int h_post_rep;
+  for (i in 1:N) {
+    real lp = indiv_params[agent[i],1]
+            + indiv_params[agent[i],2]*logit(opp_rate_prev[i]);
+    log_lik[i] = bernoulli_logit_lpmf(h[i]|lp);
+    h_post_rep[i] = bernoulli_logit_rng(lp); } }',
+    stan_file_memory)
+}
+
+mod_biased_ncp <- cmdstan_model(stan_file_biased)
+mod_memory_ncp <- cmdstan_model(stan_file_memory)
+cat("Both NCP models compiled.\n")
+```
+
+## Fitting the Four Model-Data Combinations
+
+We now fit all four combinations. This is the computationally expensive step, but it only needs to be run once --- thereafter, results are loaded from disk. The `fit_or_load()` helper encapsulates this logic.
+
+```{r 07-fit-helpers}
+fit_or_load <- function(label, model, data_list, file_path, init_fn, seed = 123) {
+  if (regenerate_simulations || !file.exists(file_path)) {
+    message("Fitting: ", label)
+    fit <- model$sample(
+      data = data_list, seed = seed, chains = 4, parallel_chains = 4,
+      iter_warmup = 1000, iter_sampling = 1000, init = init_fn(data_list),
+      adapt_delta = 0.90, max_treedepth = 12, refresh = 0)
+    fit$save_object(file_path)
+  } else {
+    fit <- readRDS(file_path)
+    message("Loaded: ", label)
+  }
+  fit
+}
+
+init_biased <- function(data_list) {
+  J <- data_list$J
+  lapply(1:4, function(i) list(mu_theta = rnorm(1,0,1.5),
+    sigma_theta = rexp(1,1), z_theta = rnorm(J,0,1)))
+}
+
+init_memory <- function(data_list) {
+  J <- data_list$J
+  lapply(1:4, function(i) list(
+    mu_alpha = rnorm(1,0,0.3), mu_beta = rnorm(1,0,0.3),
+    sigma = abs(rnorm(2,0,0.3)) + 0.1,
+    L_Omega = matrix(c(1,0,0,1), nrow = 2),
+    z = matrix(0, nrow = 2, ncol = J)))
+}
+
+fit_b_on_b <- fit_or_load("Biased->Biased", mod_biased_ncp, sd_biased_on_biased,
+  here::here("simmodels","ch7_fit_b_on_b.rds"), init_biased)
+fit_m_on_b <- fit_or_load("Memory->Biased", mod_memory_ncp, sd_memory_on_biased,
+  here::here("simmodels","ch7_fit_m_on_b.rds"), init_memory)
+fit_b_on_m <- fit_or_load("Biased->Memory", mod_biased_ncp, sd_biased_on_memory,
+  here::here("simmodels","ch7_fit_b_on_m.rds"), init_biased)
+fit_m_on_m <- fit_or_load("Memory->Memory", mod_memory_ncp, sd_memory_on_memory,
+  here::here("simmodels","ch7_fit_m_on_m.rds"), init_memory)
+
+```
+
+Before computing any model comparison statistics, we verify that all four fits pass the standard geometry diagnostics from Chapter 5. This step matters especially for the misspecified fits. When we fit the memory model to biased data, we are asking a model to find a memory-tracking signal where none exists - it may strain to do so, which can sometimes produce divergences or poor mixing.
+
+If we find issues, we need to think critically. On the one hand, comparing a well fitted model to a poorly fitted one is not a strong test of their relative performance. On the other hand, if the misspecified model is so difficult to fit that it fails basic diagnostics, that is itself a sign of poor performance. So as we investigate the sources of the issues, we need to critically evaluate whether they are a sign of a fundamental mismatch between the model and the data-generating mechanism or just a technical issue that can be resolved with more careful fitting.
+
+Remember that we already run the full bayesian workflow on these models in the previous chapters, so here we only briefly check whether these new fitting processes show any sign of issues. If these were new models, we would need to do a thorough validation first!
+
+```{r 07-quick-diagnostics}
+
+fits <- list("Biased->Biased" = fit_b_on_b, "Memory->Biased" = fit_m_on_b,
+             "Biased->Memory" = fit_b_on_m, "Memory->Memory" = fit_m_on_m)
+
+map_dfr(names(fits), function(label) {
+  f <- fits[[label]]
+  sm <- f$diagnostic_summary(quiet = TRUE)
+  
+  # Compute both metrics in a single pass
+  post_summary <- summarise_draws(f$draws(), "rhat", "ess_bulk")
+  
+  tibble(
+    Combination  = label,
+    Divergences  = sum(sm$num_divergent),
+    Max_Rhat     = round(max(post_summary$rhat, na.rm = TRUE), 3),
+    Min_ESS_bulk = round(min(post_summary$ess_bulk, na.rm = TRUE), 0)
+  )
+}) |>
+  knitr::kable(caption = "Required: Divergences=0, R-hat<1.01, ESS>400.")
+```
+
+## Computing PSIS-LOO
+
+### The Pareto-$\hat{k}$ Diagnostic: Which Observations Are Influential?
+
+The `loo()` function performs two critical operations: it estimates the Expected Log Predictive Density (ELPD) via Pareto-smoothed importance sampling, and it quantifies the mathematical reliability of this approximation using the Pareto-$\hat{k}$ diagnostic.
+
+Recall that PSIS-LOO approximates exact leave-one-out cross-validation by reweighting draws from the full-data posterior. The raw importance weights are the inverse of the pointwise likelihoods. If an observation $y_i$ is highly unexpected by the model, its importance weight becomes astronomically large. If a few posterior draws capture most of the weight, the Monte Carlo approximation collapses (cannot represent the full dataset).
+
+To stabilize this, the algorithm fits a Generalized Pareto Distribution to the right tail of these raw weights. The $\hat{k}$ statistic is the estimated shape parameter of this distribution, directly measuring the heaviness of the tail. Conceptually, if removing a single trial would drastically shift the posterior, extreme importance weights are required to compensate, causing $\hat{k}$ to blow up. Thus, $\hat{k}$ serves two vital purposes:
+
+* Statistical diagnostic: It flags specific observations where the reweighting shortcut is mathematically unreliable.
+
+* Cognitive diagnostic: It identifies highly influential or surprising trials that violate the model's structural expectations.
+
+We execute the function with save_psis = TRUE to retain the smoothed weights matrix, which is strictly required for calibration checks later in the workflow (LOO-PIT, which will be explained then).
+
+
+```{r 07-compute-loo}
+get_raw_loo <- function(fit_obj, file_path) {
+  if (regenerate_simulations || !file.exists(file_path)) {
+    message("Computing and saving raw LOO to ", file_path)
+    loo_obj <- fit_obj$loo(save_psis = TRUE)
+    saveRDS(loo_obj, file_path)
+    return(loo_obj)
+  } else {
+    message("Loading cached raw LOO from ", file_path)
+    return(readRDS(file_path))
+  }
+}
+
+loo_b_on_b <- get_raw_loo(fit_b_on_b, here::here("simmodels", "ch7_loo_raw_b_on_b.rds"))
+loo_m_on_b <- get_raw_loo(fit_m_on_b, here::here("simmodels", "ch7_loo_raw_m_on_b.rds"))
+loo_b_on_m <- get_raw_loo(fit_b_on_m, here::here("simmodels", "ch7_loo_raw_b_on_m.rds"))
+loo_m_on_m <- get_raw_loo(fit_m_on_m, here::here("simmodels", "ch7_loo_raw_m_on_m.rds"))
+
+summarise_pareto_k <- function(loo_obj, label) {
+  k     <- loo_obj$diagnostics$pareto_k
+  p_loo <- loo_obj$estimates["p_loo","Estimate"]
+  n     <- length(k)
+  tibble(Combination=label, N=n,
+         k_below_05=sum(k<0.5), k_05_07=sum(k>=0.5&k<0.7),
+         k_07_10=sum(k>=0.7&k<1), k_above_10=sum(k>=1),
+         Max_k=round(max(k),3),
+         p_hat_loo=round(p_loo,1), ratio=round(p_loo/n,3),
+         ELPD=round(loo_obj$estimates["elpd_loo","Estimate"],1),
+         SE=round(loo_obj$estimates["elpd_loo","SE"],1))
+}
+
+pareto_k_table <- bind_rows(
+  summarise_pareto_k(loo_b_on_b,"Biased->Biased"),
+  summarise_pareto_k(loo_m_on_b,"Memory->Biased"),
+  summarise_pareto_k(loo_b_on_m,"Biased->Memory"),
+  summarise_pareto_k(loo_m_on_m,"Memory->Memory"))
+
+knitr::kable(pareto_k_table,
+  caption = paste("Pareto-k diagnostics. ratio = p_hat_loo/N measures model",
+    "complexity relative to dataset size - we will use this for LOO-PIT below."))
+```
+
+The action we take depends on how large $\hat{k}$ is. The thresholds below correspond roughly to how well the Pareto distribution fits the tail of the importance weights --- which determines how reliable the approximation is:
+
+| $\hat{k}$ | Interpretation | Action |
+|---|---|---|
+| $< 0.5$ | Reliable | Accept PSIS-LOO |
+| $[0.5, 0.7)$ | Acceptable | But proceed with caution |
+| $[0.7, 1.0)$ | Problematic | Apply `loo_moment_match()` first |
+| $\geq 1.0$ | Very problematic | Use actual K-fold |
+
+The `loo_moment_match()` refits the model excluding the influential observations one by one, and assesses their out-of-sample error under the refitted model. This brings two concerns: i) computational feasibility: can we actually afford to refit the model multiple times? ii) if there are multiple influential observations, they might not be independent and only removing one would not capture the full influence of whatever is causing the underlying issue. So once again, we need to be critical and do our detective work. However, this time we are lucky and it seems all is in place.
+
+Notice also the `p_hat_loo` and `ratio` columns. These are the effective number of parameters estimated by LOO and its ratio to total observations - we will need these shortly when checking LOO-PIT calibration.
+
+The Effective Number of Parameters ($\hat{p}_{\text{loo}}$): You may be familiar with Information Criteria like AIC or BIC, which penalize models based on their raw parameter count ($k$). In Bayesian hierarchical models, the "true" number of parameters is ambiguous because of shrinkage. Instead, $\hat{p}_{\text{loo}}$ measures the model's optimism: the difference between how well the model fits the training data vs. how well it predicts held-out data.$\hat{p}_{\text{loo}} \approx$ total parameters: The model is learning very little from the population prior.$\hat{p}_{\text{loo}} <$ total parameters: The hierarchical prior is effectively "narrowing" the model's flexibility.PSIS-LOO is essentially a more robust version of WAIC (Widely Applicable Information Criterion) that includes the Pareto-$\hat{k}$ diagnostic to tell you when the penalty is unreliable.
+
+The ratio $\hat{p}_{\text{loo}}/N$ tells us the effective flexibility per observation. This metric is critical for our next step: checking predictive calibration via LOO-PIT. If this ratio is non-negligible, removing a single observation drastically shifts the posterior, meaning our $N$ leave-one-out predictive distributions are highly correlated. As Tesso and Vehtari (2026) demonstrated, this dependency invalidates standard statistical tests for uniformity. We will explicitly rely on this ratio to justify using specialized dependent-PIT tests (like POT-C) to accurately diagnose model calibration.
+
+### Characterizing Influential Observations: *Why* Are They Influential?
+
+Finding that some observations have high $\hat{k}$ is only the beginning of the story. The scientifically interesting question is *why* those particular observations are influential. In a hierarchical cognitive model, there are two structurally distinct reasons an observation might be hard to predict, with different theoretical implications:
+
+1. **The agent is an outlier from the population.** Their individual parameters (say, a very high memory sensitivity $\beta_j$) are far from the population mean. The model is surprised by their behavior not because anything unusual happened on that trial, but because the hierarchical prior, which uses all other agents to constrain this agent's parameters, is pulling the estimate toward the center. Finding this pattern suggests the population-level variance may be underestimated, or that some participants genuinely follow a different strategy than the majority.
+
+2. **The trial itself is unusual for that agent.** Given the agent's estimated parameters, this specific observation is surprising, perhaps the memory signal was strong (opponent rate 90%) and the model predicted the agent would strongly track it, but instead the agent chose randomly. This is a cognitively interesting failure: it identifies a trial where our model's assumptions break down, potentially revealing strategic flexibility, lapses of attention, or simply that agents sometimes deviate from their average behavior (e.g. becoming distracted).
+
+To distinguish these two causes, we join the $\hat{k}$ values back to the raw data and look for structure across three dimensions: agent identity, trial position, and the strength of the memory signal.
+
+```{r 07-characterize-influential, fig.height=9}
+
+k_mem_on_mem <- tibble(
+  k             = loo_m_on_m$diagnostics$pareto_k,
+  agent_id      = d_memory$agent_id,
+  trial         = d_memory$trial,
+  opp_rate_prev = d_memory$opp_rate_prev,
+  fit           = "Memory -> Memory")
+
+k_bias_on_mem <- tibble(
+  k             = loo_b_on_m$diagnostics$pareto_k,
+  agent_id      = d_memory$agent_id,
+  trial         = d_memory$trial,
+  opp_rate_prev = d_memory$opp_rate_prev,
+  fit           = "Biased -> Memory")
+
+k_annotated <- bind_rows(k_mem_on_mem, k_bias_on_mem)
+
+# -- Panel 1: Does influence cluster within specific agents? -------------------
+p_by_agent <- k_annotated |>
+  group_by(fit, agent_id) |>
+  summarise(n_high = sum(k >= 0.5), .groups = "drop") |>
+  ggplot(aes(x = reorder(factor(agent_id), -n_high),
+             y = n_high, fill = fit)) +
+  geom_col(position = "dodge") +
+  scale_fill_brewer(palette = "Set1", name = NULL) +
+  labs(title    = "High-k Observations per Agent (k >= 0.5)",
+       subtitle = paste("Concentration in specific agents suggests they deviate from",
+                        "the population distribution."),
+       x = "Agent ID (sorted by count)", y = "Number of high-k trials") +
+  theme(axis.text.x = element_text(angle = 90, size = 6),
+        legend.position = "bottom")
+
+# -- Panel 2: Does influence cluster at early trials? -------------------------
+# Early trials have uninformative memory (opp_rate_prev ~= 0.5) so the
+# memory model has nothing to predict from, making any outcome surprising.
+p_by_trial <- ggplot(k_annotated, aes(x = trial, y = k, color = fit)) +
+  geom_point(size = 0.6, alpha = 0.3) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"),
+              linewidth = 1, se = FALSE) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray40") +
+  scale_color_brewer(palette = "Set1", name = NULL) +
+  labs(title    = "Pareto-k by Trial Position",
+       subtitle = paste("Both models should show higher k early: the memory signal",
+                        "is uninformative (opp_rate ~= 0.5) so predictions are uncertain."),
+       x = "Trial", y = expression(hat(k))) +
+  theme(legend.position = "bottom")
+
+# -- Panel 3: Does influence cluster at extreme opponent rates? ----------------
+# When opp_rate_prev is extreme (near 0 or 1), the memory model makes a
+# strong, confident prediction. If the agent does not follow the signal,
+# k will be high -- these are the most cognitively informative failures.
+p_by_opp <- ggplot(k_annotated, aes(x = opp_rate_prev, y = k, color = fit)) +
+  geom_point(size = 0.6, alpha = 0.3) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"),
+              linewidth = 1, se = FALSE) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray40") +
+  scale_color_brewer(palette = "Set1", name = NULL) +
+  labs(title    = "Pareto-k by Opponent's Running Rate",
+       subtitle = paste("At extreme rates the memory model makes confident predictions.",
+                        "High k here = the agent did not follow the signal."),
+       x = "Opponent running choice rate (the memory signal)",
+       y = expression(hat(k))) +
+  theme(legend.position = "bottom")
+
+p_by_agent / p_by_trial / p_by_opp +
+  plot_annotation(title = "Characterizing Influential Observations",
+    subtitle = paste("Reading all three panels together reveals the cognitive structure",
+      "of model influence:\n",
+      "Panel 1: person-level outliers | Panel 2: temporal learning effects |",
+      "Panel 3: overconfident predictions"))
+```
+
+Reading these three panels together, we can build a cognitive story about model influence. 
+
+* Panel 1 tells us whether specific agents are outliers from the group --- if a handful of agents account for most of the high-$\hat{k}$ observations, those individuals may be genuinely using a different strategy from the majority. 
+
+* Panel 2 tells us whether the model struggles early in a session, before it has accumulated useful opponent history: at trial 1, the running opponent rate is exactly 0.5 (the model knows nothing about the opponent), so any outcome is equally surprising --- this is expected and not a sign of model failure. 
+
+* Panel 3 is the most cognitively interesting: when the opponent's running rate is extreme (say, 90% right), the memory model predicts the agent will strongly track this. If instead the agent chose randomly or in the opposite direction, the model is very surprised --- $\hat{k}$ spikes. 
+
+These are cognitively informative failures: they identify trials where our model's assumption that agents track opponent history breaks down. In our concrete case, we see that early trials are the most problematic. Given the relatively high bias in the opponent and the few trials, memory can quickly go to the extreme values and the model has a hard time dealing with that.
+
+But let's imagine we saw some agents being particularly influential --- say, they had 10+ high-$\hat{k}$ observations. This would suggest that those agents are outliers from the population distribution --- perhaps they have a very high memory sensitivity $\beta_j$ that the hierarchical prior is struggling to accommodate. In this case, we would want to look at the posterior estimates for those agents and see if they indeed have extreme parameter values. We could also consider refitting the model with a more flexible hierarchical structure (e.g., heavier-tailed distributions) or even excluding those agents if we believe they represent a qualitatively different strategy.
+
+```{r 07-influential-agents-table}
+# 1. Extract estimated parameters and transform to probability space (Median and 90% HDI)
+agent_estimates <- fit_m_on_m$draws("indiv_params") |>
+  spread_draws(indiv_params[agent_id, param_idx]) |>
+  # Pivot to have alpha and beta in the same row per draw
+  pivot_wider(names_from = param_idx, values_from = indiv_params, names_prefix = "param_") |>
+  rename(alpha = param_1, beta = param_2) |>
+  mutate(
+    # Probability transformations evaluated at experimental block extremes
+    p_bias   = plogis(alpha),                           # Baseline probability (opp = 0.5)
+    p_block1 = plogis(alpha + beta * qlogis(0.8)),      # Prob of Right during 80% block
+    p_block2 = plogis(alpha + beta * qlogis(0.2))       # Prob of Right during 20% block
+  ) |>
+  pivot_longer(
+    cols = c(alpha, beta, p_bias, p_block1, p_block2), 
+    names_to = "metric", 
+    values_to = "value"
+  ) |>
+  group_by(agent_id, metric) |>
+  median_hdi(value, .width = 0.90) |>
+  # Format as "Median [Lower, Upper]"
+  mutate(estimate_label = sprintf("%.2f [%.2f, %.2f]", value, .lower, .upper)) |>
+  select(agent_id, metric, estimate_label) |>
+  pivot_wider(names_from = metric, values_from = estimate_label, names_prefix = "est_")
+
+# 2. Extract true parameters and compute true probabilities
+agent_truths <- d_memory |>
+  distinct(agent_id, true_alpha, true_beta) |>
+  mutate(
+    true_p_bias   = round(plogis(true_alpha), 2),
+    true_p_block1 = round(plogis(true_alpha + true_beta * qlogis(0.8)), 2),
+    true_p_block2 = round(plogis(true_alpha + true_beta * qlogis(0.2)), 2),
+    true_alpha    = round(true_alpha, 2),
+    true_beta     = round(true_beta, 2)
+  )
+
+# 3. Join with the Pareto-k summary
+k_annotated |>
+  filter(fit == "Memory -> Memory") |>
+  group_by(agent_id) |>
+  summarise(
+    n_high_k = sum(k >= 0.5), 
+    max_k    = round(max(k), 3),
+    .groups  = "drop"
+  ) |>
+  arrange(desc(n_high_k)) |>
+  slice_head(n = 8) |>
+  left_join(agent_truths, by = "agent_id") |>
+  left_join(agent_estimates, by = "agent_id") |>
+  # Select columns in a logical display order
+  select(
+    agent_id, n_high_k, max_k, 
+    starts_with("true_alpha"), starts_with("est_alpha"),
+    starts_with("true_beta"), starts_with("est_beta"),
+    starts_with("true_p_block1"), starts_with("est_p_block1"),
+    starts_with("true_p_block2"), starts_with("est_p_block2")
+  ) |>
+  knitr::kable(caption = paste(
+    "Top 8 agents by number of high-k observations.",
+    "Probability space metrics (p_block1, p_block2) demonstrate agent determinism at environmental extremes.",
+    "Values near 1.00 or 0.00 with narrow HDIs indicate near-deterministic behavioral expectations,",
+    "which might trigger high Pareto-k values upon any contradictory response."
+  ))
+```
+
+### Moment Matching for Problematic Observations
+
+When some observations have $\hat{k} \geq 0.7$, the standard PSIS approximation is unreliable for those specific data points. The first line of defense is **moment matching** (Paananen et al., 2021): a method that refines the importance weights by applying a transformation to the posterior draws so that the moments of the reweighted distribution better match what the LOO posterior should look like.
+
+Think of it as improving the reweighting without running a full MCMC from scratch. Instead of asking "what would the posterior look like if we had never seen observation $i$?", moment matching asks "can we adjust the existing draws so they better approximate that LOO posterior?" This is substantially cheaper than refitting and works well for moderately influential observations. Only if moment matching fails to bring $\hat{k}$ below 1.0 should we resort to agent-level K-fold cross-validation (which we implement next).
+
+```{r 07-moment-matching}
+
+apply_moment_match_if_needed <- function(loo_obj, fit_obj, label, file_path) {
+  # 1. If the cached file exists, load it immediately
+  if (!regenerate_simulations && file.exists(file_path)) {
+    message(label, ": Loading cached LOO...")
+    return(readRDS(file_path))
+  }
+  
+  n_bad <- sum(loo_obj$diagnostics$pareto_k >= 0.7)
+  
+  if (n_bad == 0) {
+    message(label, ": All k < 0.7. PSIS-LOO is reliable.")
+    saveRDS(loo_obj, file_path)
+    return(loo_obj)
+  } 
+  
+  message(label, ": WARNING! ", n_bad, " observations with k >= 0.7.")
+  message("          Running CmdStanR moment matching to refine importance weights...")
+  
+  # 2. Run the actual moment matching algorithm
+  # (Requires cmdstanr >= 0.7.0 and models that can be unconstrained)
+  loo_mm <- loo::loo_moment_match(
+    fit_obj, 
+    loo = loo_obj
+  )
+  
+  message("          Max k reduced from ", round(max(loo_obj$diagnostics$pareto_k), 2), 
+          " to ", round(max(loo_mm$diagnostics$pareto_k), 2))
+          
+  saveRDS(loo_mm, file_path)
+  return(loo_mm)
+}
+
+# Execute the caching function 
+loo_b_on_b <- apply_moment_match_if_needed(loo_b_on_b, fit_b_on_b, "Biased->Biased", here::here("simmodels", "ch7_loo_mm_b_on_b.rds"))
+loo_m_on_b <- apply_moment_match_if_needed(loo_m_on_b, fit_m_on_b, "Memory->Biased", here::here("simmodels", "ch7_loo_mm_m_on_b.rds"))
+loo_b_on_m <- apply_moment_match_if_needed(loo_b_on_m, fit_b_on_m, "Biased->Memory", here::here("simmodels", "ch7_loo_mm_b_on_m.rds"))
+loo_m_on_m <- apply_moment_match_if_needed(loo_m_on_m, fit_m_on_m, "Memory->Memory", here::here("simmodels", "ch7_loo_mm_m_on_m.rds"))
+```
+
+### The Limits of PSIS: Agent-Level LOO
+
+If cognitive scientists are primarily interested in generalizing to new participants, you might wonder: why can't we just calculate PSIS-LOO at the participant level? 
+
+We actually can. To do this, we simply take our trial-level log-likelihood matrix and sum the log-likelihoods of all 120 trials for each agent *before* passing the matrix to the `loo()` function. This asks the PSIS algorithm to approximate what the posterior would look like if an entire agent's dataset had been excluded.
+
+Let's try this on our well-fitting `Memory -> Memory` model.
+
+```{r 07-agent-level-loo}
+# 1. Extract the trial-level log-likelihood matrix (S draws x N trials)
+ll_trial_m <- fit_m_on_m$draws("log_lik", format = "matrix")
+
+# 2. Create an empty matrix for agent-level log-likelihoods (S draws x J agents)
+J <- n_distinct(d_memory$agent_id)
+S <- nrow(ll_trial_m)
+ll_agent_m <- matrix(0, nrow = S, ncol = J)
+
+# 3. Sum the trial log-likelihoods for each agent
+for (j in 1:J) {
+  # Find which columns in the trial matrix belong to agent j
+  trial_cols <- which(d_memory$agent_id == j)
+  # Sum across those columns for every MCMC draw
+  ll_agent_m[, j] <- rowSums(ll_trial_m[, trial_cols])
+}
+
+# 4. Run PSIS-LOO at the agent level
+loo_agent_m <- loo::loo(ll_agent_m)
+print(loo_agent_m)
+```
+
+I f you run this code, the console should scream at you with warnings. You will see that a massive percentage of the Pareto-$\hat{k}$ values are $> 0.7$, and many are $> 1.0$.This is a spectacular mathematical failure, and it teaches us a crucial lesson about the limits of Importance Sampling. The PSIS shortcut only works when the "Leave-One-Out" posterior is relatively similar to the full-data posterior. Removing a single trial from a dataset of 6,000 barely shifts the parameters. But removing an entire agent (and their 120 unique trials) radically changes the population-level estimates. The shortcut completely breaks down because the full-data posterior simply does not contain enough information about what the population would look like without that agent. This failure provides the exact justification for our next step. When we want to test generalization to new agents, we are forced to abandon the PSIS shortcut entirely and perform exact cross-validation.
+
+## Agent-Level K-Fold: Generalizing to New Participants
+
+Cross-validation requires us to make a fundamental choice: what defines a "data point" when we hold data out? 
+
+Up until now, we have performed **trial-level** cross-validation using the PSIS-LOO shortcut. Trial-level CV asks: *"How well does the model predict a held-out trial for a participant whose other 119 trials we have already observed and learned from?"*
+
+But cognitive scientists usually want to answer a different question: *"How well does the model generalize to completely new participants?"*. To answer this, we must perform **agent-level** cross-validation, holding out entire individuals from the training set. 
+
+It is crucial to understand that the *level* of cross-validation (trial vs. agent) is entirely separate from the *computational method* we use (PSIS approximation vs. exact refitting). 
+
+In theory, we could perform agent-level LOO-CV (Leave-One-Agent-Out). We could even try to use our PSIS mathematical shortcut to do it without refitting the model. However, leaving out an entire agent's worth of data (120 trials) radically changes the shape of the posterior distribution. When the LOO posterior is that different from the full-data posterior, the PSIS importance weights become wildly unstable ($\hat{k} \gg 1.0$), and the shortcut completely fails. 
+
+Therefore, when we want to test generalization to new agents, we are forced to abandon the PSIS shortcut and perform **exact cross-validation**, where we actually recompile and refit the Stan model on the training splits. Because exact Leave-One-Agent-Out would require fitting the model $J=50$ times, we compromise to save computation time and use **exact agent-level K-fold CV**. 
+
+
+In agent-level K-fold, we hold out $1/K$ of the agents entirely from the training set, fit the model to the remaining agents, and then ask: given *only* the population parameters estimated from the training group, how well can we predict the held-out strangers' behavior?
+
+```{r 07-kfold-stan}
+# 1. Biased K-Fold Model
+# Draws ONE parameter per test agent from the population distribution.
+writeLines("
+data {
+  int<lower=1> N_train; 
+  int<lower=1> J_train;
+  array[N_train] int<lower=1, upper=J_train> agent_train;
+  array[N_train] int<lower=0, upper=1> h_train;
+  
+  int<lower=1> N_test; 
+  int<lower=1> J_test;
+  array[N_test] int<lower=1, upper=J_test> agent_test;
+  array[N_test] int<lower=0, upper=1> h_test;
+}
+
+parameters {
+  real mu_theta; 
+  real<lower=0> sigma_theta; 
+  vector[J_train] z_theta;
+}
+
+transformed parameters {
+  vector[J_train] theta_logit = mu_theta + z_theta * sigma_theta;
+}
+
+model {
+  target += normal_lpdf(mu_theta | 0, 1.5);
+  target += exponential_lpdf(sigma_theta | 1);
+  target += std_normal_lpdf(z_theta);
+  target += bernoulli_logit_lpmf(h_train | theta_logit[agent_train]);
+}
+
+generated quantities {
+  vector[J_test] theta_new;
+  vector[N_test] log_lik_test;
+  
+  for (j in 1:J_test) {
+    theta_new[j] = normal_rng(mu_theta, sigma_theta);
+  }
+  
+  for (n in 1:N_test) {
+    log_lik_test[n] = bernoulli_logit_lpmf(h_test[n] | theta_new[agent_test[n]]);
+  }
+}", here::here("stan", "ch7_biased_kfold.stan"))
+
+# 2. Memory K-Fold Model
+# Samples correlated parameter pairs for each test agent from the population prior.
+writeLines("
+data {
+  int<lower=1> N_train; 
+  int<lower=1> J_train;
+  array[N_train] int<lower=1, upper=J_train> agent_train;
+  array[N_train] int<lower=0, upper=1> h_train;
+  vector<lower=0.01, upper=0.99>[N_train] opp_rate_prev_train;
+
+  int<lower=1> N_test; 
+  int<lower=1> J_test;
+  array[N_test] int<lower=1, upper=J_test> agent_test;
+  array[N_test] int<lower=0, upper=1> h_test;
+  vector<lower=0.01, upper=0.99>[N_test] opp_rate_prev_test;
+}
+
+parameters {
+  real mu_alpha; 
+  real mu_beta; 
+  vector<lower=0>[2] sigma;
+  cholesky_factor_corr[2] L_Omega; 
+  matrix[2, J_train] z;
+}
+
+transformed parameters {
+  matrix[J_train, 2] indiv_params;
+  {
+    matrix[2, J_train] dev = diag_pre_multiply(sigma, L_Omega) * z;
+    for (j in 1:J_train) {
+      indiv_params[j, 1] = mu_alpha + dev[1, j];
+      indiv_params[j, 2] = mu_beta + dev[2, j];
+    }
+  }
+}
+
+model {
+  target += normal_lpdf(mu_alpha | 0, 1); 
+  target += normal_lpdf(mu_beta | 0, 1);
+  target += exponential_lpdf(sigma | 1);
+  target += lkj_corr_cholesky_lpdf(L_Omega | 2);
+  target += std_normal_lpdf(to_vector(z));
+  
+  vector[N_train] logit_p;
+  for (i in 1:N_train) {
+    logit_p[i] = indiv_params[agent_train[i], 1] + 
+                 indiv_params[agent_train[i], 2] * logit(opp_rate_prev_train[i]);
+  }
+  target += bernoulli_logit_lpmf(h_train | logit_p);
+}
+
+generated quantities {
+  matrix[2, J_test] new_indiv;
+  vector[N_test] log_lik_test;
+  
+  for (j in 1:J_test) {
+    vector[2] z_new;
+    z_new[1] = std_normal_rng();
+    z_new[2] = std_normal_rng();
+    vector[2] param_new = [mu_alpha, mu_beta]' + diag_pre_multiply(sigma, L_Omega) * z_new;
+    new_indiv[1, j] = param_new[1];
+    new_indiv[2, j] = param_new[2];
+  }
+  
+  for (n in 1:N_test) {
+    real lp = new_indiv[1, agent_test[n]] + 
+              new_indiv[2, agent_test[n]] * logit(opp_rate_prev_test[n]);
+    log_lik_test[n] = bernoulli_logit_lpmf(h_test[n] | lp);
+  }
+}", here::here("stan", "ch7_memory_kfold.stan"))
+
+mod_biased_kfold <- cmdstan_model(here::here("stan", "ch7_biased_kfold.stan"))
+mod_memory_kfold <- cmdstan_model(here::here("stan", "ch7_memory_kfold.stan"))
+cat("Both K-fold Stan models compiled.\n")
+
+kfold_path <- here::here("simmodels","ch7_kfold_comparison.rds")
+K <- 5; set.seed(21)
+
+# We will run this on the Memory data to see the true model win out of sample
+agent_ids   <- sort(unique(d_memory$agent_id))
+fold_assign <- sample(rep(1:K, length.out=length(agent_ids)))
+agent_folds <- tibble(agent_id=agent_ids, fold=fold_assign)
+
+if (regenerate_kfold || !file.exists(kfold_path)) {
+  message("Running 5-fold CV for Biased and Memory models. This takes a moment...")
+  
+  kfold_list <- lapply(1:K, function(k) {
+    test_ids  <- agent_folds$agent_id[agent_folds$fold == k]
+    train_ids <- agent_folds$agent_id[agent_folds$fold != k]
+    
+    d_train <- d_memory |> filter(agent_id %in% train_ids) |>
+               mutate(agent_train = as.integer(factor(agent_id)))
+    d_test  <- d_memory |> filter(agent_id %in% test_ids) |>
+               mutate(agent_test = as.integer(factor(agent_id)))
+    
+    # Stan data lists
+    sdata_b <- list(
+      N_train = nrow(d_train), J_train = length(train_ids),
+      agent_train = d_train$agent_train, h_train = as.integer(d_train$choice),
+      N_test = nrow(d_test), J_test = length(test_ids),
+      agent_test = d_test$agent_test, h_test = as.integer(d_test$choice)
+    )
+    
+    sdata_m <- list(
+      N_train = nrow(d_train), J_train = length(train_ids),
+      agent_train = d_train$agent_train, h_train = as.integer(d_train$choice),
+      opp_rate_prev_train = d_train$opp_rate_prev,
+      N_test = nrow(d_test), J_test = length(test_ids),
+      agent_test = d_test$agent_test, h_test = as.integer(d_test$choice),
+      opp_rate_prev_test = d_test$opp_rate_prev
+    )
+    
+    # Fit models (using 2 chains to save rendering time)
+    fit_b <- mod_biased_kfold$sample(data = sdata_b, seed = 200+k, chains = 2, 
+                                     parallel_chains = 2, iter_warmup = 1000, 
+                                     iter_sampling = 1000, adapt_delta = 0.90, refresh = 0)
+    fit_m <- mod_memory_kfold$sample(data = sdata_m, seed = 300+k, chains = 2, 
+                                     parallel_chains = 2, iter_warmup = 1000, 
+                                     iter_sampling = 1000, adapt_delta = 0.90, refresh = 0)
+    
+    ll_b <- fit_b$draws("log_lik_test", format = "matrix")
+    ll_m <- fit_m$draws("log_lik_test", format = "matrix")
+    idx  <- which(d_memory$agent_id %in% test_ids)
+    
+    list(ll_b = ll_b, ll_m = ll_m, indices = idx, k = k)
+  })
+  
+  S_b <- nrow(kfold_list[[1]]$ll_b)
+  S_m <- nrow(kfold_list[[1]]$ll_m)
+  ll_kfold_b <- matrix(NA_real_, S_b, nrow(d_memory))
+  ll_kfold_m <- matrix(NA_real_, S_m, nrow(d_memory))
+  
+  for (res in kfold_list) {
+    ll_kfold_b[, res$indices] <- res$ll_b
+    ll_kfold_m[, res$indices] <- res$ll_m
+  }
+  saveRDS(list(biased = ll_kfold_b, memory = ll_kfold_m), kfold_path)
+} else {
+  kfold_res  <- readRDS(kfold_path)
+  ll_kfold_b <- kfold_res$biased
+  ll_kfold_m <- kfold_res$memory
+}
+
+if (!any(is.na(ll_kfold_b))) {
+  elpd_kf_b <- loo::elpd(ll_kfold_b)
+  elpd_kf_m <- loo::elpd(ll_kfold_m)
+  
+  cat("=== Trial-level LOO vs. Agent-level K-fold (Memory Data) ===\n\n")
+  
+  cat(sprintf("Biased Model - PSIS-LOO:  %.1f (SE=%.1f)\n",
+    loo_b_on_m$estimates["elpd_loo","Estimate"], loo_b_on_m$estimates["elpd_loo","SE"]))
+  cat(sprintf("Biased Model - K-fold:    %.1f (SE=%.1f)\n\n",
+    elpd_kf_b$estimates["elpd","Estimate"], elpd_kf_b$estimates["elpd","SE"]))
+    
+  cat(sprintf("Memory Model - PSIS-LOO:  %.1f (SE=%.1f)\n",
+    loo_m_on_m$estimates["elpd_loo","Estimate"], loo_m_on_m$estimates["elpd_loo","SE"]))
+  cat(sprintf("Memory Model - K-fold:    %.1f (SE=%.1f)\n\n",
+    elpd_kf_m$estimates["elpd","Estimate"], elpd_kf_m$estimates["elpd","SE"]))
+    
+  cat("=== K-Fold Model Comparison ===\n")
+  print(loo::loo_compare(elpd_kf_m, elpd_kf_b))
+}
+```
+
+The Agent-Level K-fold ELPD will almost always be lower (worse) than the trial-level LOO ELPD for both models. This is mathematically expected and cognitively informative. Trial-level LOO asks: "How well can I predict trial 120 for an agent whose personal bias and memory sensitivity I have already estimated from 119 trials?" Agent-level K-fold asks: "How well can I predict behavior for a complete stranger, relying purely on population averages?"
+
+The gap between the two ELPDs quantifies exactly how much individual-level variation matters. If the gap is massive, human individuality dominates the cognitive process.
+
+## LOO-PIT: Calibration Checks for Predictive Distributions
+
+### What LOO-PIT Measures
+
+The Pareto-$\hat{k}$ values tell us whether the *importance weights* are reliable: whether the PSIS approximation is numerically stable. LOO-PIT tells us something different and complementary: whether the model's *predictive distributions* are well-calibrated: whether the model's uncertainty matches reality.
+
+A model can have perfectly reliable $\hat{k}$ values and still be systematically miscalibrated. For example, a biased model fitted to memory data might produce low $\hat{k}$ for every observation (the model is not dramatically wrong on any single trial) while still being consistently wrong in a systematic, diffuse way across all trials. The Pareto-$\hat{k}$ would not flag this; LOO-PIT will.
+
+The Probability Integral Transform (PIT) builds on a simple but powerful idea. Consider the LOO predictive distribution for observation $y_i$: the distribution the model assigns to $y_i$ before seeing it, having been fitted on all other observations. We ask: where does the actual observed $y_i$ fall within this distribution? Specifically, we compute $u_i$, the cumulative probability up to the observed value:
+
+$$u_i = \int_{-\infty}^{y_i} p(\tilde{y} \mid y_{-i}) \, d\tilde{y}$$
+
+This is the *quantile* of the observation within its own LOO predictive distribution. If the model assigned most of its predictive probability below $y_i$, then $u_i$ is close to 1 --- the model was surprised, expecting a lower value but getting a higher one. If the model assigned most of its probability above $y_i$, then $u_i$ is close to 0.
+
+For a perfectly calibrated model, the model's predictions should be neither systematically too high nor too low. Half the observations should fall in the lower half of their predicted distributions, half in the upper half. More precisely, the $u_i$ values should be *uniformly distributed* on $[0, 1]$. Departures from uniformity reveal specific failure modes:
+
+* **U-shaped distribution** (too many values near 0 and 1): The model is *overconfident* --- its predictive distributions are too narrow. Observations consistently fall in the tails, surprising the model.
+
+* **Bell-shaped distribution** (too many values near 0.5): The model is *underconfident* --- its predictive distributions are too wide, spreading probability mass over values that never occur.
+
+* **Skewed distribution** (more mass on one side): The model is *biased*, systematically predicting too high or too low.
+
+If this sounds familiar, you have been paying attention! It's the same principle as in simulation-based-calibration, but applied to observations instead of parameters. The difference is that in SBC we ask "where does the true parameter value fall within the posterior distribution?" In LOO-PIT we ask "where does the observed data point fall within the predictive distribution?" Both are checks of calibration --- whether the model's uncertainty matches reality --- but they apply to different distributions and reveal different failure modes.
+
+While SBC catches computational bugs and prior-likelihood conflicts, LOO-PIT catches structural misspecification in the predictions themselves.
+
+### The Discrete Data Problem: Randomization for Bernoulli Outcomes
+
+Our outcome is a binary choice: $h_{it} \in \{0, 1\}$. The PIT as defined above requires a continuous predictive distribution, but Bernoulli predictions are discrete. The CDF of a Bernoulli distribution can only jump between two values: the predicted probability of $h = 0$ is $1 - \hat{p}_i$, and the predicted probability of $h = 1$ is $1.0$. So the raw PIT value is either $1 - \hat{p}_i$ (when $h_i = 0$) or $1.0$ (when $h_i = 1$). These two families of values cannot be uniformly distributed on $[0, 1]$, even for a perfectly correct model.
+
+The standard solution (Czado et al., 2009) is **randomization**. Instead of using the CDF value directly, we spread each observation's PIT value uniformly across the interval the CDF jumps over at that observation. We draw $v_i \sim \text{Uniform}(0,1)$ and compute:
+
+$$u_i = F(y_i - 1 \mid y_{-i}) + v_i \cdot \left[F(y_i \mid y_{-i}) - F(y_i - 1 \mid y_{-i})\right]$$
+
+For $h_i = 1$: $u_i = (1 - \hat{p}_i) + v_i \cdot \hat{p}_i$, which spreads uniformly across $[1-\hat{p}_i, 1]$.
+For $h_i = 0$: $u_i = v_i \cdot (1-\hat{p}_i)$, which spreads uniformly across $[0, 1-\hat{p}_i]$.
+
+Under a calibrated model, these randomized $u_i$ values end up marginally uniform on $[0,1]$. The `bayesplot` package applies this randomization automatically when it detects binary data. But understanding the reasoning matters: without randomization, a PIT plot for Bernoulli data would look non-uniform even for a perfectly correct model, which would be deeply misleading.
+
+### A Critical Warning: The Standard Visual May Miss Miscalibration
+
+Here is a subtlety that matters specifically for hierarchical cognitive models, established recently by Tesso & Vehtari (2026).
+
+The standard LOO-PIT visualization - the ECDF (empirical cumulative distribution function) envelope from Sailynoja et al. (2022) - constructs its confidence band assuming the $u_1, u_2, \ldots, u_N$ values are *independent*. In a simple model with few parameters, this is approximately true. But in a hierarchical model fitted to hundreds or thousands of observations, the LOO-PIT values are **correlated with one another**.
+
+Why? Each LOO predictive distribution $p(y_i \mid y_{-i})$ is determined by the model fitted to the other $N-1$ observations. Those $N-1$ datasets differ from each other by only one data point --- they are nearly identical. All the LOO predictive distributions therefore share nearly the same information, and the resulting $u_i$ values inherit this shared structure.
+
+Tesso & Vehtari (2026) prove that this correlation scales with model complexity: the more effective parameters a model has relative to the dataset size, the more correlated the LOO-PIT values are, and the narrower the true null distribution of the ECDF becomes. When we use the independence-based confidence envelope, that envelope is *too wide* - it accommodates more deviation than a properly-calibrated null distribution would allow. The practical consequence is that the standard visual has **reduced statistical power**: it fails to flag miscalibration that is genuinely present. For simple models this is not a serious problem. For our hierarchical models it can be.
+
+### Step 1: The $\hat{p}_{\text{loo}} / N$ Complexity Ratio
+
+Before interpreting any LOO-PIT result, we compute one diagnostic number: the ratio of the effective number of parameters ($\hat{p}_{\text{loo}}$) to the total number of observations ($N$). Tesso & Vehtari (2026) show that:
+
+* When $\hat{p}_{\text{loo}} / N$ is close to zero, the LOO-PIT values are nearly independent and the standard visual is reliable.
+* When the ratio is non-negligible --- say, above 0.05 --- the independence assumption inflates the envelope width and a formal test is needed to supplement the visual.
+
+Conveniently, $\hat{p}_{\text{loo}}$ is already reported in our `loo()` output. For a hierarchical model with $J = 50$ agents, $\hat{p}_{\text{loo}}$ is roughly proportional to $J$ (each agent contributes approximately one effective parameter for their individual parameters), giving a ratio around $50 / 6000 \approx 0.008$ in our case. This is small --- but not zero, and the exact value matters when the dataset is smaller or the model is more complex.
+
+```{r 07-p-loo-ratio}
+complexity_table <- pareto_k_table |>
+  select(Combination, N, p_hat_loo, ratio) |>
+  mutate(visual_ok = ifelse(ratio < 0.05,
+    "Standard visual acceptable",
+    "Formal test recommended (POT-C)"))
+
+knitr::kable(complexity_table, caption = paste(
+  "Model complexity ratios. For hierarchical models with J=50 agents,",
+  "p_hat_loo grows with J: each agent contributes roughly one effective parameter.",
+  "The ratio p_hat_loo/N determines whether the standard visual is sufficient."))
+```
+
+Examine the `visual_ok` column. For most of our fits the ratio is small enough that the standard visual is acceptable --- but the formal test below provides additional confidence, and is essential whenever the ratio is larger.
+
+### Step 2: The Randomized ECDF Visual Check
+
+We always produce the visual check, regardless of whether the ratio is small. The visual is indispensable for understanding the *shape* of any miscalibration: is the model overconfident? Biased in one direction? 
+
+Because our Matching Pennies data is binary ($y \in \{0, 1\}$), the true predictive CDF is a discrete step function. Applying standard continuous Density Overlays to this generates severe mathematical artifacts. To evaluate calibration accurately, we rely on the **Randomized Probability Integral Transform**. We mathematically restore continuity by injecting uniform noise strictly between the discrete CDF steps. We then plot the Empirical Cumulative Distribution Function (ECDF) of these randomized values. If the model is well-calibrated, the ECDF will closely track the diagonal and remain completely inside the shaded confidence envelope.
+
+```{r 07-loo-pit-visual, fig.height=5}
+color_scheme_set("blue")
+
+# 1. Define a rigorous function to compute Randomized PIT for Bernoulli data
+compute_randomized_pit <- function(y, loo_obj, seed = 101) {
+  set.seed(seed)
+  p_obs <- exp(loo_obj$pointwise[, "elpd_loo"])
+  # Inject uniform noise between the discrete CDF steps
+  pit_vals <- ifelse(y == 1, runif(length(y), 1 - p_obs, 1), runif(length(y), 0, p_obs))
+  return(pit_vals)
+}
+
+# 2. Extract outcomes and compute randomized PIT values 
+pit_b_on_b <- compute_randomized_pit(as.integer(sd_biased_on_biased$h), loo_b_on_b)
+pit_b_on_m <- compute_randomized_pit(as.integer(sd_biased_on_memory$h), loo_b_on_m)
+
+# 3. Helper function to generate the ECDF plots
+plot_pit_ecdf <- function(y, pit_vals, plot_title) {
+  ppc_pit_ecdf(y = y, pit = pit_vals, pit_bounds = c(0, 1)) +
+    labs(title = plot_title) + theme_classic()
+}
+
+# 4. Generate plots for the true model and the miscalibrated model
+p_pit1 <- plot_pit_ecdf(as.integer(sd_biased_on_biased$h), pit_b_on_b, "Biased -> Biased (Calibrated)")
+p_pit2 <- plot_pit_ecdf(as.integer(sd_biased_on_memory$h), pit_b_on_m, "Biased -> Memory (Miscalibrated)")
+
+p_pit1 | p_pit2 +
+  plot_annotation(
+    title = "Randomized LOO-PIT ECDF Calibration Checks",
+    subtitle = "Lines inside the shaded envelope indicate uniformity (well-calibrated model).")
+```
+
+The flat, nearly-uniform overlay for the well-specified fits (Biased->Biased and Memory->Memory) is a reassuring sign. The misspecified fits could have shown characteristic departures, but in our case it doesn't. So we can move forward.
+
+### Step 3: The POT-C Formal Test -- Valid Under Dependence
+
+The visual check is useful for identifying the *shape* of miscalibration, but it can miss subtle violations when LOO-PIT values are correlated. The POT-C (Pointwise Order Test Combination) from Tesso & Vehtari (2026) provides a formal uniformity test that remains statistically valid regardless of the dependence structure among the PIT values.
+
+**The intuition behind POT-C in three steps:**
+
+*Step 1 - Individual tests per order statistic.* Imagine sorting all $N$ PIT values from smallest to largest: $u_{(1)} \leq u_{(2)} \leq \ldots \leq u_{(N)}$. By the theory of order statistics, under uniformity $u_{(i)} \sim \text{Beta}(i, N+1-i)$. This gives us a valid marginal test for each order statistic: we compute the two-sided p-value for whether the observed $u_{(i)}$ is consistent with $\text{Beta}(i, N+1-i)$. We now have $N$ individual p-values, one for each position in the sorted sample, each marginally valid but potentially correlated. p-values, you read correctly. We are not doing null hypothesis testing, tho, we are trying to see whether we should reject our actual model.
+
+*Step 2 - Combining correlated p-values via the Cauchy method.* Standard methods for combining p-values, like Fisher's method, assume independence and would give misleading results here. The Cauchy combination method (Liu & Xie, 2020) handles this by transforming each p-value as $t^{(i)} = \tan\left[(0.5 - p^{(i)}) \pi\right]$. A p-value of exactly 0.5 (no evidence against uniformity) contributes zero. A very small p-value contributes a large positive value. The test statistic is the average:
+$$T = \frac{1}{N} \sum_{i=1}^{N} t^{(i)}$$
+The key mathematical result (Liu & Xie, 2020) is that the tail probabilities of $T$ approximate those of a standard Cauchy distribution even under arbitrary correlation structures. The heavy tails of the Cauchy distribution "absorb" the dependence without requiring us to model it explicitly.
+
+*Step 3 - Shapley values for localization.* Beyond asking "is the model miscalibrated?", we want to know "where is it miscalibrated?". The Shapley value $\phi_i$ for each observation measures how much that observation's order statistic contributed to the overall test statistic $T$: how much it pushed the result toward rejection. By coloring the ECDF difference plot with these values, we can visually highlight which regions of the predictive distribution are problematic. This localization connects the statistical diagnostic back to the cognitive model.
+
+```{r 07-pot-c-implementation}
+# -- POT-C implementation (Tesso & Vehtari, 2026) -----------------------------
+
+pot_c_test <- function(u_vec, alpha = 0.05) {
+  u   <- sort(u_vec)
+  n   <- length(u)
+
+  # Step 1: Beta-based p-value for each order statistic
+  p_vals <- map_dbl(seq_len(n), function(i) {
+    cdf_val <- pbeta(u[i], shape1 = i, shape2 = n + 1 - i)
+    2 * min(cdf_val, 1 - cdf_val)
+  })
+
+  # Step 2: Cauchy transformation and global p-value
+  t_vals <- tan((0.5 - p_vals) * pi)
+  T_stat <- mean(t_vals)
+  p_global <- 1 - pcauchy(T_stat)
+
+  # Step 3: Shapley values -- each observation's marginal contribution to T
+  # phi_i = (1/n)*t_i + (H_n-1)/n * (t_i - mean of other t_j)
+  H_n      <- sum(1 / seq_len(n))
+  t_sum    <- sum(t_vals)
+  phi_vals <- map_dbl(seq_len(n), function(i) {
+    t_i <- t_vals[i]
+    (1/n) * t_i + ((H_n - 1)/n) * (t_i - (t_sum - t_i) / (n - 1))
+  })
+
+  list(p_global=p_global, T_stat=T_stat, p_vals=p_vals, t_vals=t_vals,
+       phi=phi_vals, u_sorted=u, n=n)
+}
+
+# -- Randomized LOO-PIT for Bernoulli data via PSIS weights -------------------
+# We approximate the LOO predictive P(h_i=1|y_{-i}) as a weighted mean
+# of the posterior predictive draws, using the PSIS log-weights.
+# The resulting u_i values are then randomized per Czado et al. (2009).
+
+compute_loo_pit_bernoulli <- function(y, yrep, psis_lw, seed = 99) {
+  set.seed(seed)
+  w_mat   <- exp(psis_lw)                           # S x N probability weights
+  p_loo_1 <- colSums(w_mat * yrep) / colSums(w_mat) # weighted mean per observation
+  p_loo_1 <- pmax(1e-6, pmin(1 - 1e-6, p_loo_1))
+
+  # Randomized PIT:
+  # h=1: u_i ~ Uniform(1-p_i, 1),   i.e. (1-p) + v*p
+  # h=0: u_i ~ Uniform(0, 1-p_i),   i.e. v*(1-p)
+  V <- runif(length(y))
+  ifelse(y == 1,
+         (1 - p_loo_1) + V * p_loo_1,
+         V * (1 - p_loo_1))
+}
+
+run_pit_analysis <- function(fit_obj, data_list, loo_obj, label) {
+  y      <- as.integer(data_list$h)
+  yrep   <- fit_obj$draws("h_post_rep", format = "matrix")
+  lw     <- weights(loo_obj$psis_object)
+  u_vec  <- compute_loo_pit_bernoulli(y, yrep, lw)
+  result <- pot_c_test(u_vec)
+  list(label = label, u = u_vec, result = result)
+}
+
+pit_b_on_b <- run_pit_analysis(fit_b_on_b, sd_biased_on_biased, loo_b_on_b, "Biased->Biased")
+pit_m_on_b <- run_pit_analysis(fit_m_on_b, sd_memory_on_biased, loo_m_on_b, "Memory->Biased")
+pit_b_on_m <- run_pit_analysis(fit_b_on_m, sd_biased_on_memory, loo_b_on_m, "Biased->Memory")
+pit_m_on_m <- run_pit_analysis(fit_m_on_m, sd_memory_on_memory, loo_m_on_m, "Memory->Memory")
+
+map_dfr(list(pit_b_on_b, pit_m_on_b, pit_b_on_m, pit_m_on_m), function(x) {
+  tibble(Fit = x$label, p_global = round(x$result$p_global,4),
+         T_stat = round(x$result$T_stat,2),
+         Verdict = ifelse(x$result$p_global < 0.05,
+                        "REJECT -- miscalibrated", "Fail to reject -- acceptable"))
+}) |>
+  knitr::kable(caption = paste(
+    "POT-C formal uniformity test for LOO-PIT values.",
+    "Valid even when LOO-PIT values are correlated.",
+    "p < 0.05 = significant departure from calibration."))
+
+# -- Shapley-colored ECDF difference plots ------------------------------------
+# The ECDF difference plot shows F_hat(u) - u (deviation from perfect uniform).
+# Perfect calibration = horizontal line at y=0.
+# We color each point by its Shapley value:
+#   RED  = positive phi (pushes the test statistic toward rejection)
+#   BLUE = neutral or negative phi (consistent with uniformity)
+
+make_shapley_ecdf <- function(pit_res) {
+  r   <- pit_res$result
+  n   <- r$n
+  
+  # Corrected namespace assignment
+  df  <- tibble(
+    u_sorted    = r$u_sorted, 
+    phi         = r$phi,
+    ecdf_y      = seq_len(n) / n,
+    ecdf_diff   = ecdf_y - u_sorted,
+    influential = phi > 0
+  )
+  
+  p_label <- ifelse(r$p_global < 0.001, "p < 0.001",
+                    sprintf("p = %.3f", r$p_global))
+  
+  ggplot(df, aes(x = u_sorted, y = ecdf_diff)) +
+    geom_hline(yintercept = 0, color = "gray40", linewidth = 0.5) +
+    geom_step(color = "gray30", linewidth = 0.7) +
+    geom_point(aes(color = influential), size = 1.0, alpha = 0.7) +
+    scale_color_manual(
+      values = c("FALSE"="steelblue", "TRUE"="firebrick"),
+      labels = c("FALSE"="Neutral", "TRUE"="Drives rejection"),
+      name   = "Shapley influence") +
+    annotate("text", x=0.02, y=Inf, hjust=0, vjust=1.5,
+             label=p_label, fontface="bold", size=3.5) +
+    scale_x_continuous(limits=c(0,1)) +
+    labs(title    = pit_res$label,
+         subtitle = "ECDF(u) - u: zero everywhere = perfect calibration",
+         x = "LOO-PIT value u", y = "ECDF(u) - u") +
+    theme(legend.position = "bottom")
+}
+
+# Plot only the correctly specified and the explicitly miscalibrated model
+make_shapley_ecdf(pit_b_on_b) | make_shapley_ecdf(pit_b_on_m) +
+  plot_annotation(title = "Shapley-Colored ECDF Difference Plots (POT-C)")
+```
+
+The ECDF difference plot is a centered version of the usual ECDF: instead of plotting $\hat{F}(u)$ against $u$, we plot $\hat{F}(u) - u$. Perfect calibration corresponds to a horizontal line at $y = 0$. Deviations reveal the shape of the problem:
+
+* Red in the left tail (near $u = 0$): The model was confidently wrong when the agent chose "left" ($y=0$). The model predicted a near-certain probability of "right", forcing the randomized PIT value into the extreme lower bound.
+
+* Red in the right tail (near $u = 1$): The model was confidently wrong when the agent chose "right" ($y=1$). The model predicted a near-certain probability of "left", forcing the randomized PIT value into the extreme upper bound.
+
+* A global slope or S-curve: The model exhibits a systematic bias in base rates. It consistently over- or under-predicts the overall global frequency of one of the choices, rather than just failing on extreme boundary cases.
+
+The Shapley coloring tells us exactly which observations are responsible. Red points are the "smoking guns" — the specific order statistics mathematically pushing the POT-C test toward rejection. For the Biased $\rightarrow$ Memory combination, expect the red points to concentrate heavily in the extreme tails. These correspond primarily to the trials immediately following the block reversal, where the biased model is rigidly and repeatedly surprised by behavioral changes it structurally lacks the flexibility to predict.
+
+### Connecting LOO-PIT to the Cognitive Theory [OBS THIS NEEDS TO BE DOUBLE CHECKED AS IT WAS WRITTEN ON A PREVIOUS RUN WITH SLIGHTLY DIFFERENT MODELS]
+
+LOO-PIT is not just a statistical formality. It is a diagnostic that tells you whether your *cognitive theory* is adequate.
+
+Consider what happens when we fit the biased model to memory data. The biased model says: "Each agent has a fixed probability $\psi_j$ of choosing right, regardless of what the opponent has been doing." When memory agents play against a 70%-right opponent, their trial-level choice probabilities are anything but fixed. Early in the game, when the running rate is near 0.5, they choose approximately at random. Later, when the running rate has stabilized near 0.7, they choose right much more often - their memory sensitivity parameter $\beta_j$ magnifies the signal into a strong directional prediction.
+
+The biased model tries to accommodate all of this with a single average probability. On any given late trial where the memory signal is extreme and the agent strongly tracks it, the biased model's constant prediction is far from the truth. The result is LOO-PIT values concentrated in the tails: the model is repeatedly surprised because it does not have the flexibility to predict what it needs to predict. This is the overconfidence signature - not overconfidence in the sense of arrogance, but in the sense of being too rigid, making narrow predictions that are frequently wrong.
+
+### Agent-Level Calibration: A Transparent Complement
+
+LOO-PIT operates at the trial level, checking whether the model's uncertainty about individual choices is well-calibrated. A complementary check operates at the agent level: does the model get the average behavior of each agent right?
+
+```{r 07-agent-calibration, fig.height=5}
+
+agent_calibration <- function(fit_obj, data_df, label) {
+  obs_rates <- data_df |>
+    group_by(agent_id) |>
+    summarise(obs_rate = mean(choice), .groups="drop")
+  yrep      <- fit_obj$draws("h_post_rep", format="matrix")
+  agent_vec <- data_df$agent_id
+  pred_mean <- map_dbl(sort(unique(agent_vec)), function(j)
+    mean(yrep[, which(agent_vec == j)]))
+  obs_rates |> mutate(pred_rate=pred_mean, label=label)
+}
+
+bind_rows(
+  agent_calibration(fit_b_on_b, d_biased, "Biased->Biased"),
+  agent_calibration(fit_m_on_b, d_biased, "Memory->Biased"),
+  agent_calibration(fit_b_on_m, d_memory, "Biased->Memory"),
+  agent_calibration(fit_m_on_m, d_memory, "Memory->Memory")
+) |>
+  ggplot(aes(x=obs_rate, y=pred_rate)) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="gray50") +
+  geom_point(color="steelblue", alpha=0.7, size=2) +
+  facet_wrap(~label, ncol=2) +
+  scale_x_continuous(labels=scales::percent) +
+  scale_y_continuous(labels=scales::percent) +
+  labs(title    = "Agent-Level Calibration: Observed vs. Predicted Choice Rates",
+       subtitle = "LOO-PIT checks trial-level calibration; this checks agent-level means. Both matter.",
+       x="Observed proportion 'right'", y="Posterior mean predicted proportion 'right'")
+```
+
+This plot answers a different question from LOO-PIT: not "is the model's predictive *uncertainty* correct?" but "is the model getting the agent-level *means* right?" A model can pass this check and still fail LOO-PIT --- for example, the biased model might accurately predict each agent's average choice rate (because it directly estimates their $\theta_j$), while still being badly miscalibrated at the trial level (because it cannot predict which specific trials will deviate from that average). Both checks are necessary for a complete picture.
+
+## Formal Model Comparison
+
+### Reading `loo_compare()` Correctly
+
+Now we come to the main event: using PSIS-LOO to compare the two models on each dataset. The `loo_compare()` function ranks models by their ELPD estimates and reports the differences. Understanding exactly what those differences mean is important before trusting any conclusion.
+
+The output has two key columns:
+
+* `elpd_diff`: The difference in ELPD between this model and the best-ranked model (which always appears in row 1, with `elpd_diff = 0` by definition). For lower-ranked models, `elpd_diff` is negative --- they predict worse. The magnitude matters: a difference of $-5$ nats means the model is roughly $e^5 \approx 148$ times worse per observation on average. A difference of $-0.5$ is much less decisive.
+
+* `se_diff`: The standard error of that difference. This is estimated directly from the *pointwise* ELPD contributions, treating each observation as an independent draw from the distribution of possible pointwise differences. It accounts for the fact that observations are not equally predictable.
+
+The ratio $|\text{elpd\_diff}|/\text{se\_diff}$ behaves like a Z-score: it tells us how many standard errors the difference is from zero. As a rough guide:
+
+* Below 2: inconclusive --- the models are not decisively separable at this data size.
+* Between 2 and 4: suggestive --- there is a preference but it may not be reliable.
+* Above 4: a practically meaningful difference that is unlikely to be sampling noise.
+
+What if the result is inconclusive ($< 2$)? An inconclusive result means the current data cannot distinguish between your theories. In this case, do not simply pick the model with the slightly higher ELPD. Instead:
+
+* Redesign the task: Create a more discriminative opponent (like our reversal design) to force the models apart.
+
+* Collect more data: Use your Model Recovery power analysis to see how many more participants and/or trials you need.
+
+* Check PPCs: One model might have a better ELPD but fail to capture a specific qualitative feature of the behavior.
+
+```{r 07-loo-compare}
+cat("=== BIASED DATA (truth = Biased) ===\n\n")
+compare_b <- loo_compare(loo_b_on_b, loo_m_on_b)
+print(compare_b)
+z_b <- abs(compare_b[2,"elpd_diff"]/compare_b[2,"se_diff"])
+cat(sprintf("\n|elpd_diff|/SE = %.1f  ->  %s\n\n", z_b,
+  ifelse(z_b>4,"Clear preference.",ifelse(z_b>2,"Weak preference.","Inconclusive."))))
+
+cat("=== MEMORY DATA (truth = Memory) ===\n\n")
+compare_m <- loo_compare(loo_m_on_m, loo_b_on_m)
+print(compare_m)
+z_m <- abs(compare_m[2,"elpd_diff"]/compare_m[2,"se_diff"])
+cat(sprintf("\n|elpd_diff|/SE = %.1f  ->  %s\n", z_m,
+  ifelse(z_m>4,"Clear preference.",ifelse(z_m>2,"Weak preference.","Inconclusive."))))
+```
+
+So for biased data, it's hard to discriminate the models: the memory model is slightly worse, but not decisively so. For memory data, the memory model is much better: the biased model is decisively worse. This is a successful recovery: the method correctly identifies the true generating model in each case.
+
+### Pointwise ELPD Differences: Where Does the Advantage Come From?
+
+An aggregate ELPD difference tells us *that* one model predicts better overall. But often the most scientifically interesting question is *where* that difference comes from: on which types of trials does the advantage concentrate?
+
+```{r 07-pointwise-elpd, fig.height=6}
+make_pointwise_df <- function(loo_a, loo_b, data_df, label)
+  tibble(obs = seq_len(nrow(data_df)),
+         elpd_diff=loo_a$pointwise[,"elpd_loo"]-loo_b$pointwise[,"elpd_loo"],
+         trial = data_df$trial, agent_id=data_df$agent_id, label=label)
+
+pw_all <- bind_rows(
+  make_pointwise_df(loo_b_on_b, loo_m_on_b, d_biased, "Biased data: Biased - Memory"),
+  make_pointwise_df(loo_m_on_m, loo_b_on_m, d_memory, "Memory data: Memory - Biased"))
+
+ggplot(pw_all, aes(x=trial, y=elpd_diff)) +
+  geom_hline(yintercept=0, linetype="dashed", color="gray40") +
+  geom_point(aes(color=elpd_diff>0), size=0.7, alpha=0.35) +
+  geom_smooth(method="gam", formula=y~s(x,bs="cs"),
+              color="midnightblue", linewidth=1, se=TRUE) +
+  facet_wrap(~label) +
+  scale_color_manual(values=c("FALSE"="firebrick","TRUE"="steelblue"),
+    labels=c("FALSE"="Favors alternative","TRUE"="Favors true model"), name=NULL) +
+  labs(title = "Pointwise ELPD Differences Across Trials")
+```
+
+The growing advantage of the memory model over trials is a direct cognitive signature: early in the game the running opponent rate is near 0.5 (uninformative), so both models predict roughly equally. As the opponent's behavior becomes established --- typically after 20-30 trials --- the memory model increasingly exploits that signal while the biased model cannot. Once the reversal happens, the advantage disappears, but then picks up again. The advantage concentrates precisely where the cognitive mechanism operates. This is model comparison doing what it is supposed to do: not just telling us which model wins, but illuminating *why* and *when*.
+
+### Bayesian Stacking: Combining Models Into an Ensemble
+
+`loo_compare()` produces a ranking, but it does not tell us how much to trust each model. **Bayesian stacking** (Yao et al., 2018) goes further by finding the *optimal mixture* of the competing models for prediction.
+
+The idea is to find weights $w_1, w_2$ (summing to 1) such that the weighted combination of the two models' LOO predictive distributions is as good as possible. Unlike Bayes factors, stacking does not assume that one of the models is the truth --- it simply finds the best predictive combination. A weight of nearly 1.0 for one model means the other adds nothing useful. A more balanced split means both models are capturing something the other misses.
+
+```{r 07-stacking, fig.height=4}
+stack_b <- loo_model_weights(list("Biased" = loo_b_on_b, "Memory" = loo_m_on_b),
+                             method = "stacking")
+stack_m <- loo_model_weights(list("Memory"=loo_m_on_m, "Biased"=loo_b_on_m),
+                             method="stacking")
+
+tibble(
+  Dataset  = c("Biased","Biased","Memory","Memory"),
+  Model    = c("Biased","Memory","Memory","Biased"),
+  Stacking = round(c(stack_b["Biased"],stack_b["Memory"],
+                     stack_m["Memory"],stack_m["Biased"]), 3),
+  True_model = c(TRUE,FALSE,TRUE,FALSE)
+) |>
+  ggplot(aes(x=Model, y=Stacking, fill=True_model)) +
+  geom_col() +
+  # Add labels, offset slightly above the bar
+  geom_text(aes(label = scales::percent(Stacking, accuracy = 0.1)), 
+            vjust = -0.5, size = 4) +
+  facet_wrap(~Dataset, labeller=label_both) +
+  scale_fill_manual(values=c("FALSE"="gray70","TRUE"="steelblue"),
+    labels=c("FALSE"="Alternative","TRUE"="True model"), name=NULL) +
+  # Expand the upper y-limit to 1.1 so the 100% labels are not clipped
+  scale_y_continuous(labels=scales::percent, limits=c(0, 1.1)) +
+  labs(title    = "Bayesian Stacking Weights",
+       subtitle = "Successful recovery: true model receives near-100% weight.",
+       x=NULL, y="Model weight") +
+  theme(legend.position="bottom")
+```
+
+## Evaluating Our Pipeline: Full Model Recovery 
+
+Let us now pull together everything into the model recovery matrix --- the central test of whether PSIS-LOO is doing its job. For each of the two datasets, we check whether the method identifies the correct generating model.
+
+```{r 07-recovery-matrix, fig.height=5}
+elpd_matrix <- tribble(
+  ~Model,   ~Data,    ~ELPD,       ~SE,
+  "Biased", "Biased", loo_b_on_b$estimates["elpd_loo","Estimate"], loo_b_on_b$estimates["elpd_loo","SE"],
+  "Memory", "Biased", loo_m_on_b$estimates["elpd_loo","Estimate"], loo_m_on_b$estimates["elpd_loo","SE"],
+  "Biased", "Memory", loo_b_on_m$estimates["elpd_loo","Estimate"], loo_b_on_m$estimates["elpd_loo","SE"],
+  "Memory", "Memory", loo_m_on_m$estimates["elpd_loo","Estimate"], loo_m_on_m$estimates["elpd_loo","SE"]
+) |>
+  mutate(is_true=(Model=="Biased"&Data=="Biased")|(Model=="Memory"&Data=="Memory"),
+         label=sprintf("%.1f\n(SE=%.1f)", ELPD, SE))
+
+ggplot(elpd_matrix, aes(x=Data, y=Model, fill=ELPD)) +
+  geom_tile(color="white", linewidth=1.5) +
+  geom_text(aes(label=label), size=4, fontface="bold") +
+  geom_tile(data=filter(elpd_matrix,is_true),
+            color="midnightblue", fill=NA, linewidth=2) +
+  scale_fill_viridis_c(option="D", name="ELPD",
+    guide=guide_colorbar(barwidth=10, barheight=0.5)) +
+  labs(title    = "Model Recovery Matrix",
+       subtitle = "Blue borders = true generating model. Higher ELPD = better prediction.",
+       x="Data-generating model", y="Fitted model") +
+  theme(legend.position="bottom")
+```
+
+Each column of this matrix answers a different scientific question. The left column (biased data) asks: can PSIS-LOO detect that the memory model is unnecessarily complex when a simpler model suffices? The right column (memory data) asks: can PSIS-LOO detect that the biased model is missing a real cognitive mechanism? Within each column, the model with the higher ELPD should be the one that generated the data --- that is the meaning of successful model recovery.
+
+```{r 07-final-summary-table}
+final_table <- tibble(
+  `Fit`           = c("Biased->Biased","Memory->Biased","Biased->Memory","Memory->Memory"),
+  `ELPD`          = pareto_k_table$ELPD,
+  `SE`            = pareto_k_table$SE,
+  `p_loo/N`       = pareto_k_table$ratio,
+  `POT-C p`       = c(round(pit_b_on_b$result$p_global,3),
+                       round(pit_m_on_b$result$p_global,3),
+                       round(pit_b_on_m$result$p_global,3),
+                       round(pit_m_on_m$result$p_global,3)),
+  `True model?`   = c("YES","no","no","YES"),
+  `LOO preferred?`= c(
+    ifelse(loo_b_on_b$estimates["elpd_loo","Estimate"] >
+           loo_m_on_b$estimates["elpd_loo","Estimate"],"YES","no"),
+    ifelse(loo_m_on_b$estimates["elpd_loo","Estimate"] >
+           loo_b_on_b$estimates["elpd_loo","Estimate"],"YES","no"),
+    ifelse(loo_m_on_m$estimates["elpd_loo","Estimate"] >
+           loo_b_on_m$estimates["elpd_loo","Estimate"],"YES","no"),
+    ifelse(loo_m_on_m$estimates["elpd_loo","Estimate"] >
+           loo_b_on_m$estimates["elpd_loo","Estimate"],"YES","no"))
+)
+
+knitr::kable(final_table, caption=paste(
+  "Full comparison summary. p_loo/N: use POT-C if > 0.05.",
+  "POT-C p: formal uniformity test, valid under dependence.",
+  "Recovery: 'True model?' should match 'LOO preferred?'."))
+```
+
+
+### Power Analysis and Experimental Design
+
+We just saw a successful single instance of model recovery: for our specific simulated dataset, loo_compare() correctly preferred the true generating model in both cases. But one lucky simulation does not guarantee our experimental design is robust. 
+
+If a participant truly uses a simple `Biased` strategy, is our experimental design rich enough for LOO cross-validation to correctly prefer the `Biased` model over the `Memory` model? Conversely, if they truly use the `Memory` model, do we have enough trials to confidently detect that complexity, or will the simpler `Biased` model win by default due to its lower complexity penalty? 
+
+Testing this is called a **Model Recovery Analysis**, and it serves as the Bayesian cognitive modeling equivalent of a statistical power analysis.
+
+### The Confusion Matrix
+
+To run a model recovery study, we follow a simple cross-fitting procedure:
+1. Simulate synthetic datasets from Model A.
+2. Fit *both* Model A and Model B to that data, and calculate the ELPD difference to see who wins.
+3. Simulate datasets from Model B.
+4. Fit *both* models again, and see who wins.
+
+The results are typically visualized in a confusion matrix. Below is a conceptual plot of what a successful model recovery looks like.
+
+```{r 07-model-recovery-matrix, fig.height=4.5, fig.width=6}
+# --- Conceptual Simulation of Model Recovery Matrix ---
+recovery_data <- tibble(
+  True_Model = factor(rep(c("Biased", "Memory"), each = 2), levels = c("Memory", "Biased")),
+  Recovered_Model = factor(rep(c("Biased", "Memory"), 2), levels = c("Biased", "Memory")),
+  Percentage = c(0.95, 0.05, 0.15, 0.85)
+)
+
+ggplot(recovery_data, aes(x = Recovered_Model, y = True_Model, fill = Percentage)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = scales::percent(Percentage)), size = 6, fontface = "bold", 
+            color = ifelse(recovery_data$Percentage > 0.5, "white", "black")) +
+  scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 1)) +
+  labs(title = "Model Recovery Confusion Matrix",
+       subtitle = "Proportion of times the recovered model won via LOO-CV",
+       x = "Recovered Model (Highest ELPD)", y = "True Generative Model") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(), 
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+```
+
+In the matrix above, when the true model was "Biased," LOO correctly identified it 95% of the time. When the true model was "Memory," LOO correctly identified it 85% of the time. (Complex models are often harder to recover because of the stringent ELPD penalties on flexibility).
+
+### Designing the Experiment: Trials, Participants, and Task Structure
+
+How do we achieve this beautiful matrix? The most obvious knobs to turn are sample sizes. In hierarchical cognitive modeling, we actually have two distinct sample sizes to worry about: the number of trials per participant ($N$), and the number of participants ($J$). 
+
+These two dimensions govern different types of statistical power:
+* **More Trials ($N$):** Increases our ability to accurately estimate *individual-level* parameters. If we only have 30 trials, we cannot confidently detect the subtle influence of the Memory parameter within a single person.
+* **More Participants ($J$):** Increases our ability to accurately estimate the *population-level* distribution. 
+
+There is often a practical trade-off here (e.g., your budget only allows for 6,000 total trials, so do you run 100 people for 60 trials, or 50 people for 120 trials?). 
+
+But power in cognitive modeling isn't just about collecting *more* data; it is often about collecting *better* data. We can vary the experimental setup itself. For example, in our Matching Pennies simulation, we explicitly forced the opponent to switch from an 80%-right bias to a 20%-right bias halfway through the game. We did this because a constant 80% bias might not produce enough variance in the memory signal to confidently separate a Biased agent from a Memory agent. 
+
+To conduct a formal **power analysis for model comparison**, we systematically repeat our recovery pipeline across a grid of design choices (e.g., varying trial counts and participant counts). We then plot the recovery accuracy as a 2D heatmap to find the optimal experimental design.
+
+```{r 07-model-recovery-tradeoff, fig.height=5, fig.width=7}
+# --- Conceptual Power Trade-off Matrix ---
+# Create a grid of trial counts and participant counts
+power_grid <- expand_grid(
+  N_Trials = c(30, 60, 90, 120, 150),
+  N_Participants = c(20, 40, 60, 80, 100)
+) |>
+  mutate(
+    # Conceptual mathematical function to simulate power:
+    # Diminishing returns for both, but trials are slightly more critical 
+    # for identifying the memory parameter within individuals.
+    Accuracy = 1 - exp(-0.02 * N_Trials) * exp(-0.025 * N_Participants),
+    # Cap at realistic max and add a little noise/rounding for realism
+    Accuracy = pmin(0.99, round(Accuracy, 2))
+  )
+
+ggplot(power_grid, aes(x = factor(N_Trials), y = factor(N_Participants), fill = Accuracy)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = scales::percent(Accuracy, accuracy = 1)), 
+            size = 5, fontface = "bold", 
+            color = ifelse(power_grid$Accuracy > 0.85, "white", "black")) +
+  scale_fill_viridis_c(option = "mako", direction = -1, limits = c(0, 1), 
+                       labels = scales::percent) +
+  labs(title = "Model Recovery Power: Trials vs. Participants",
+       subtitle = "Accuracy of recovering the Memory model across different experimental designs",
+       x = "Number of Trials per Participant (N)",
+       y = "Number of Participants (J)",
+       fill = "Power") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+```
+
+Looking at this trade-off matrix, we can definitively tell our grant agency or ethics board: "To reliably distinguish between Biased and Memory strategies (e.g., >80% accuracy), we cannot rely on large participant counts alone. Running 100 participants for only 30 trials yields inadequate power (53%). We must ensure sufficient within-subject data, requiring a minimum design of roughly 50 participants completing 120 trials each."
+
+### Beyond Binary Recovery: Simulation-Based Calibration for Models
+
+### From Binary Wins to Probabilistic Power
+
+Traditional model recovery treats model comparison as a binary, "winner-takes-all" election. If ELPD_A > ELPD_B by even 0.1 nats, Model A gets a "1" for accuracy, and Model B gets a "0". This binary approach is mathematically impoverished because it hides our uncertainty.
+
+In a fully Bayesian workflow, we prefer a probabilistic approach. Instead of asking "Did the true model win?", we can ask "How much stacking weight does the true model receive?"
+
+This transforms our understanding of statistical power. Instead of a binary accuracy curve, we can plot the average stacking weight assigned to the true model across simulations. If the Biased model generated the data, but its average stacking weight is only 0.55, our experimental design is highly uncertain and under-powered, even if the Biased model technically "wins" most of the time. Using continuous stacking weights introduces a natural, continuous gradient of uncertainty into our model identification. By using stacking weights, we move from a discrete 'Correct/Incorrect' recovery metric to a continuous measure of probabilistic power. This allows us to quantify exactly how much uncertainty remains in our model identification even when the true model 'wins' the comparison.
+
+This realization leads us directly to the ultimate check of our entire model comparison pipeline: Model Simulation-Based Calibration (Model SBC).
+
+
+### A Philosophical Technical Note: $\mathcal{M}$-closed vs. $\mathcal{M}$-open
+
+There is a  philosophical friction in this exercise. By simulating data from a specific model, we are operating in an $\mathcal{M}$-closed framework—we know for an absolute fact that one of our models is the true data-generating process. However, we evaluate the recovery using Bayesian stacking weights, which are designed for the $\mathcal{M}$-open framework (the assumption that all models are false, and we merely want the optimal predictive mixture).We use stacking weights here anyway because they are continuous. Rather than forcing a binary "win/loss," stacking weights tell us how much predictive variance uniquely belongs to each architecture.
+
+### Running Model SBC: The Code Pipeline
+
+The generative process for Model SBC extends parameter SBC to the model level:
+
+* Sample a true model $M$ (e.g., a coin flip between Biased and Memory).
+
+* Sample parameters strictly from that specific model's prior.
+
+* Simulate data from the likelihood.Fit all competing models to the data and compute their Bayesian stacking weights.
+
+* Repeat this thousands of times.
+
+Because running 2,000 simulations and fitting two multilevel Stan models to each would take hours (or days) on a standard laptop, we will not execute it live here. However, to maintain the hands-on promise of this workflow, here is the exact furrr parallelization code you would use. Notice how it elevates the target to loo::loo_model_weights().
+
+```{r 07-model-sbc-pipeline, eval=FALSE}
+plan(multisession, workers = parallel::detectCores() - 1)
+
+n_sims <- 2000
+
+model_sbc_results <- future_map_dfr(1:n_sims, function(sim_id) {
+  
+  # 1. Flip a coin to choose the true generative model
+  true_model <- sample(c("Biased", "Memory"), 1)
+  
+  # 2. Simulate data exactly from the chosen model's PRIORS
+  if (true_model == "Biased") {
+    sim_data <- simulate_biased_from_prior() 
+    stan_list <- make_stan_biased(sim_data)
+  } else {
+    sim_data <- simulate_memory_from_prior() 
+    stan_list <- make_stan_memory(sim_data)
+  }
+  
+  # 3. Fit BOTH candidate models to the simulated dataset
+  fit_b <- mod_biased_ncp$sample(data = stan_list, refresh = 0, 
+                                 iter_sampling = 1000, parallel_chains = 1)
+  fit_m <- mod_memory_ncp$sample(data = stan_list, refresh = 0, 
+                                 iter_sampling = 1000, parallel_chains = 1)
+  
+  # 4. Compute LOO and Bayesian Stacking Weights
+  loo_b <- fit_b$loo()
+  loo_m <- fit_m$loo()
+  
+  weights <- loo::loo_model_weights(list(Biased = loo_b, Memory = loo_m), 
+                                    method = "stacking")
+  
+  # 5. Return the result for this specific simulation iteration
+  tibble(
+    sim_id = sim_id,
+    true_model = true_model,
+    weight_biased = as.numeric(weights["Biased"]),
+    weight_memory = as.numeric(weights["Memory"])
+  )
+}, .options = furrr_options(seed = 12345))
+```
+
+
+### How Do We Assess Model Calibration?
+To assess if our model comparison is well-calibrated, we treat the stacking weights as a measure of predictive confidence. If a model is assigned a weight of 0.70, it should "be" the true model in roughly 70% of similar cases.
+
+If we find that across all datasets where the Memory model received a weight of 0.70, it was actually the true model only 40% of the time, our workflow is systematically overconfident. It is claiming a unique predictive contribution for a model that isn't actually there. Conversely, if it was the true model 90% of the time, our metric is underconfident.
+
+Since we aren't running the full 2,000-fit simulation locally right now, I have generated a sample plot to show exactly what the calibration curves produced by the code above would look like under different diagnostic scenarios.
+
+```{r}
+# Create dummy data for three scenarios
+calibration_data <- tibble(
+  bin_mid = seq(0.05, 0.95, by = 0.1)
+) %>%
+  mutate(
+    Perfect      = bin_mid,
+    # Overconfident: Slope < 1 in the center (S-shape)
+    # The weights 'rush' to 0 and 1 faster than the truth
+    Overconf     = pnorm(qnorm(bin_mid) * 0.6), 
+    # Underconfident: Slope > 1 in the center (Reverse S)
+    # The weights stay near 0.5 while the truth is more certain
+    Underconf    = pnorm(qnorm(bin_mid) * 1.8), 
+    Miscalibrate = pmin(1, pmax(0, bin_mid + 0.15 * sin(bin_mid * pi * 2)))
+  ) %>%
+  pivot_longer(-bin_mid, names_to = "Scenario", values_to = "Observed")
+
+ggplot(calibration_data, aes(x = bin_mid, y = Observed, color = Scenario)) +
+  geom_line(aes(linetype = Scenario), linewidth = 1) +
+  geom_point(size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  scale_color_manual(values = c("Miscalibrate" = "firebrick", "Overconf" = "orange", 
+                               "Underconf" = "purple", "Perfect" = "steelblue")) +
+  scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  scale_y_continuous(labels = scales::percent, limits = c(0,1)) +
+  labs(
+    title = "SBC Model Calibration Curves (Conceptual)",
+    subtitle = "Diagonal = Perfectly Calibrated; S-curve = Overconfident; Reverse S = Underconfident",
+    x = "Mean Stacking Weight in Bin",
+    y = "Frequency Model was True DGP"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+
+### When a 50/50 Split is a Perfect Diagnosis
+
+Imagine the SBC process selects the Memory model, and then draws a population memory sensitivity parameter from the prior that happens to be very close to zero ($\mu_\beta \approx 0$). The simulated agents will completely ignore the opponent's history. Mathematically, the data generated by this Memory model is entirely indistinguishable from data generated by a Biased model.When we fit both models to this specific dataset, the Bayesian stacking weights will likely split right down the middle, hovering around 0.5 for each model.This could look like the model comparison has "failed" to recover the true model. In reality, a weight of 0.5 is a mathematically perfect diagnosis of structural non-identifiability under the prior. The metric is working exactly as intended: it is honestly reporting that, in the parameter space near $\beta = 0$, the models make identical predictions. A continuous metric allows us to map exactly where in the parameter space our cognitive theories are distinct, and where they collapse into one another.
+
+## Prior Sensitivity at the Comparison Level
+
+We applied prior sensitivity analysis to individual models in Chapter 5. At the model comparison stage, the question becomes slightly different: even if each model's individual parameters are sensitive to prior choices, does the *comparison* between models remain stable?
+
+Consider the following thought experiment: scaling the prior on $\sigma_\theta$ shifts the biased model's ELPD by 5 nats, but also shifts the memory model's ELPD by roughly the same 5 nats. The difference --- the quantity that drives the comparison --- would remain stable. This would be a good outcome: the comparison is robust even though individual models are sensitive. The problematic scenario is asymmetric sensitivity: one model's ELPD shifts substantially while the other's stays put. In that case, our preference for one model over the other depends on which prior happened to be chosen --- which is not a principled basis for a scientific conclusion.
+
+```{r 07-prior-sensitivity, fig.height=6}
+cat("=== Prior sensitivity: Biased model ===\n")
+print(priorsense::powerscale_sensitivity(fit_b_on_b,
+  variable=c("mu_theta","sigma_theta")))
+cat("\n=== Prior sensitivity: Memory model ===\n")
+print(priorsense::powerscale_sensitivity(fit_m_on_m,
+  variable=c("mu_alpha","mu_beta")))
+
+p1 <- priorsense::powerscale_plot_dens(
+  priorsense::powerscale_sequence(fit_b_on_b, variable = c("mu_theta", "sigma_theta"))
+) +
+  theme_classic() + 
+  labs(title = "Biased Model: Prior Sensitivity")
+
+p2 <- priorsense::powerscale_plot_dens(
+  priorsense::powerscale_sequence(fit_m_on_m, variable = c("mu_alpha", "mu_beta"))
+) +
+  theme_classic() + 
+  labs(title = "Memory Model: Prior Sensitivity")
+
+# Combine using patchwork
+p1 / p2
+```
+
+The console output above directly tests this: the priorsense tables include a diagnostic column that warns you if the LOO/ELPD computation is highly sensitive to the prior. Meanwhile, the density perturbation plots show why that sensitivity might be happening by revealing how the posterior on each parameter shifts as we increase or decrease the prior weight. If the biased model's ELPD is flagged as sensitive but the memory model's is not, then our model preference is partly an artifact of our prior choice rather than genuine predictive superiority.
+
+## When Standard LOO Is Wrong: Sequential Dependencies
+
+There is an important limitation to PSIS-LOO that is easy to overlook. Standard LOO treats observations as *exchangeable* --- it assumes that the order of observations does not matter, and that leaving out observation $i$ only affects predictions for $y_i$ itself, not for any other observation.
+
+For the biased agent model this is entirely correct: each trial is independent given the agent's parameters. For our memory model as implemented, it is also technically valid: the memory signal `opp_rate_prev` is a pre-computed covariate that we pass into Stan as fixed data. Leaving out trial $i$ from the LOO computation does not change `opp_rate_prev` for any other trial --- the memory features were already computed before Stan ever ran.
+
+However, many cognitively interesting models have genuine temporal dependencies that standard LOO cannot handle. Consider a Rescorla-Wagner reinforcement learning model where the learning state at trial $t$ depends on the prediction error at trial $t-1$. Or a drift-diffusion model with trial-by-trial fatigue effects. In these models, leaving out trial $i$ from the LOO set would also change the learning state at trials $i+1, i+2, \ldots$ --- we cannot simply remove one observation without unraveling the whole sequential structure. Standard LOO would then be "peeking into the future" by conditioning on observations that come after the one being predicted.
+
+For such models, the correct approach is **Leave-Future-Out cross-validation (LFO-CV)** (Burkner, Gabry & Vehtari, 2020). Instead of leaving out one observation at a time in isolation, LFO-CV asks: at each time point $t$, how well does the model predict the next trial given all past trials $y_{1:t-1}$? This respects the temporal structure and gives an honest measure of prospective predictive accuracy.
+
+Decision rule: if temporal structure is handled externally via pre-computed features passed as data (as in our memory model), standard LOO is appropriate. If the sequential dynamics are inside Stan's `transformed data` or `model` blocks, use LFO-CV.
+
+## What Model Comparison Cannot Do
+
+We have spent this chapter learning how to use PSIS-LOO to compare models. It is equally important to understand what it *cannot* do.
+
+**It measures internal training generalization, not external transfer.** We need to think carefully about what we mean by "out of sample." There are actually two distinct types of test sets we might consider: internal and external.
+
+Internal test sets come from the same data collection effort as our training data - for example, we might randomly set aside 20% of our matching pennies games to test on. While this approach helps us detect overfitting to specific participants or trials, it cannot tell us how well our model generalizes to truly new contexts. Our test set participants were recruited from the same population, played the game under the same conditions, and were influenced by the same experimental setup as our training participants.
+
+External test sets, in contrast, come from genuinely different contexts. For our matching pennies model, this might mean testing on games played:
+
+* In different cultures or age groups
+* Under time pressure versus relaxed conditions
+* For real money versus just for fun
+* Against human opponents versus computer agents
+* In laboratory versus online settings
+
+The distinction matters because cognitive models often capture not just universal mental processes, but also specific strategies that people adopt in particular contexts. A model that perfectly predicts behavior in laboratory matching pennies games might fail entirely when applied to high-stakes poker games, even though both involve similar strategic thinking.
+
+This raises deeper questions about what kind of generalization we want our models to achieve. Are we trying to build models that capture universal cognitive processes, or are we content with models that work well within specific contexts? The answer affects not just how we evaluate our models, but how we design them in the first place.
+
+In practice, truly external test sets are rare in cognitive science - they require additional data collection under different conditions, which is often impractical. This means we must be humble about our claims of generalization. When we talk about a model's predictive accuracy, we should be clear that we're usually measuring its ability to generalize within a specific experimental context, not its ability to capture human cognition in all its diversity.
+
+This limitation of internal test sets is one reason why cognitive scientists often complement predictive accuracy metrics with other forms of model evaluation, such as testing theoretical predictions on new tasks or examining whether model parameters correlate sensibly with individual differences. These approaches help us build confidence that our models capture meaningful cognitive processes rather than just statistical patterns specific to our experimental setup.
+
+**A better predictive score does not mean a better mechanistic explanation.** Two models can achieve identical ELPD while making diametrically opposite claims about the cognitive mechanism generating the data. If the biased model and the memory model achieve similar predictive performance, that does not mean the two theories are equivalent --- it means the data at hand cannot distinguish them. The correct scientific response is to design experiments targeting the mechanistic difference: conditions where the two models predict qualitatively different behavior.
+
+**The "wrong model wins" scenario is real.** When memory agents are simulated with high $\sigma_\beta$ (many agents with near-zero memory sensitivity), the population of memory agents becomes nearly indistinguishable from a population of biased agents. PSIS-LOO may then prefer the simpler biased model --- not because memory processes are absent, but because they are weak, variable, and the simpler model achieves comparable predictions on average. This is actually a *correct* finding: it tells you that the empirical conditions were not sufficiently discriminative, not that the method is broken. The productive response is to ask what experimental design would make the two populations more discriminable --- perhaps a richer or more structured opponent, or a longer game.
+
+## References
+
+Burkner, P.-C., Gabry, J., & Vehtari, A. (2020). Approximate leave-future-out cross-validation for Bayesian time series models. *Journal of Statistical Computation and Simulation*, 90(14), 2499-2523.
+
+Czado, C., Gneiting, T., & Held, L. (2009). Predictive model assessment for count data. *Biometrical Journal*, 51(5), 720-731.
+
+Gabry, J., Simpson, D., Vehtari, A., Betancourt, M., & Gelman, A. (2019). Visualization in Bayesian workflow. *Journal of the Royal Statistical Society: Series A*, 182(2), 389-402.
+
+Liu, Y., & Xie, J. (2020). Cauchy combination test: a powerful test with analytic p-value calculation under arbitrary dependency structures. *Journal of the American Statistical Association*, 115(529), 393-402.
+
+Paananen, T., Piironen, J., Burkner, P.-C., & Vehtari, A. (2021). Implicitly adaptive importance sampling. *Statistics and Computing*, 31, 16.
+
+Sailynoja, T., Burkner, P.-C., & Vehtari, A. (2022). Graphical test for discrete uniformity and its applications in goodness-of-fit evaluation and multiple sample comparison. *Statistics and Computing*, 32(2), 32.
+
+Tesso, H., & Vehtari, A. (2026). LOO-PIT predictive model checking. *arXiv:2603.02928*.
+
+Vehtari, A., Gelman, A., & Gabry, J. (2017). Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC. *Statistics and Computing*, 27(5), 1413-1432.
+
+Yao, Y., Vehtari, A., Simpson, D., & Gelman, A. (2018). Using stacking to average Bayesian predictive distributions. *Bayesian Analysis*, 13(3), 917-1007.

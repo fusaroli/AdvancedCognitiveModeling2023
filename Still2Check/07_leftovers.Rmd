@@ -1,0 +1,199 @@
+## Beyond Binary Recovery: Simulation-Based Calibration for Models
+
+Just as prior sensitivity analysis checks if our parameter inferences are fragile, we must also ask if our model comparison metrics are overconfident. A naive view would treat model recovery as a binary classification problem: simulate a dataset from Model A using one "plausible" set of parameters, fit Models A and B, and check if Model A "wins" via a strictly lower LOO score.
+
+This binary approach is mathematically impoverished. It ignores the joint uncertainty of the parameters and the data, and it hides the continuous geometry of predictive performance. A rigorous Bayesian workflow could extend Simulation-Based Calibration (SBC) to the model level. The generative process for Model SBC looks like this:
+
+* Sample a true model $M$ (e.g., a coin flip between the Biased and Memory models).
+
+* Sample parameters strictly from that specific model's prior: $\theta_M \sim p(\theta \mid M)$.
+
+* Simulate data from the likelihood: $y \sim p(y \mid \theta_M, M)$.
+
+* Fit all competing models to $y$ and compute their Bayesian stacking weights.
+
+* Repeat this process thousands of times to build a massive ensemble of simulated datasets, recording the true generating model and the assigned stacking weights for each.
+
+### How Do We Assess Calibration?
+
+To assess if our model comparison is well-calibrated, we treat the stacking weights as a measure of predictive confidence. While stacking weights are technically coefficients for an optimal ensemble, in a simulation where we know a true model exists, they should behave like a reliable guide: if a model is assigned a weight of $0.70$, it should "be" the true model in roughly $70\%$ of similar cases.If we find that for all datasets where the Memory model received a weight of $0.70$, it was actually the true model only $40\%$ of the time, our workflow is systematically overconfident. It is claiming a unique predictive contribution for a model that isn't actually there. Conversely, if it was the true model $90\%$ of the time, our metric is underconfident, failing to lean into the model that is clearly outperforming the alternative.
+
+## Power Analysis for Model Comparison: Model Recovery
+
+In Chapter 5, we ran Parameter Recovery to ensure our experimental design (120 trials) contained enough information to accurately estimate our parameters. But when dealing with multiple competing theories, we face a higher, more difficult hurdle: **Model Recovery**. 
+
+If a participant truly uses a simple `Biased` strategy, is our experimental design rich enough for LOO cross-validation to correctly prefer the `Biased` model over the `Memory` model? Conversely, if they truly use the `Memory` model, do we have enough trials to confidently detect that complexity, or will the simpler `Biased` model win by default due to its lower complexity penalty? 
+
+Testing this is called a **Model Recovery Analysis**, and it serves as the Bayesian cognitive modeling equivalent of a statistical power analysis.
+
+### The Confusion Matrix
+
+To run a model recovery study, we follow a simple cross-fitting procedure:
+1. Simulate synthetic datasets from Model A.
+2. Fit *both* Model A and Model B to that data, and calculate the ELPD difference to see who wins.
+3. Simulate datasets from Model B.
+4. Fit *both* models again, and see who wins.
+
+The results are typically visualized in a confusion matrix. Below is a conceptual plot of what a successful model recovery looks like.
+
+```{r 07-model-recovery-matrix, fig.height=4.5, fig.width=6}
+# --- Conceptual Simulation of Model Recovery Matrix ---
+recovery_data <- tibble(
+  True_Model = factor(rep(c("Biased", "Memory"), each = 2), levels = c("Memory", "Biased")),
+  Recovered_Model = factor(rep(c("Biased", "Memory"), 2), levels = c("Biased", "Memory")),
+  Percentage = c(0.95, 0.05, 0.15, 0.85)
+)
+
+ggplot(recovery_data, aes(x = Recovered_Model, y = True_Model, fill = Percentage)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = scales::percent(Percentage)), size = 6, fontface = "bold", 
+            color = ifelse(recovery_data$Percentage > 0.5, "white", "black")) +
+  scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 1)) +
+  labs(title = "Model Recovery Confusion Matrix",
+       subtitle = "Proportion of times the recovered model won via LOO-CV",
+       x = "Recovered Model (Highest ELPD)", y = "True Generative Model") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(), 
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        legend.position = "none")
+```
+
+In the matrix above, when the true model was "Biased," LOO correctly identified it 95% of the time. When the true model was "Memory," LOO correctly identified it 85% of the time (complex models are often harder to recover because of the stringent penalties on flexibility).Designing the Experiment (Varying Sample Size)How many trials do we need to achieve this beautiful matrix? If we run the recovery pipeline with $N = 30$ trials, our confusion matrix might look terrible. Perhaps the Biased model wins 100% of the time because 30 trials simply isn't enough data to confidently detect the subtle influence of the Memory parameters, causing LOO to heavily penalize the complex model.To conduct a power analysis for model comparison, we repeat this recovery pipeline across different simulated sample sizes (e.g., $N = 30, 60, 120, 200$ trials). We then plot the recovery accuracy as a function of the number of trials.
+
+```{r}
+# --- Conceptual Power Curve for Model Recovery ---
+power_data <- tibble(
+  N_Trials = rep(c(30, 60, 90, 120, 150, 200), times = 2),
+  Model = rep(c("Biased", "Memory"), each = 6),
+  Accuracy = c(
+    0.70, 0.85, 0.90, 0.95, 0.96, 0.98, # Biased recovery
+    0.10, 0.40, 0.65, 0.85, 0.92, 0.97  # Memory recovery
+  )
+)
+
+ggplot(power_data, aes(x = N_Trials, y = Accuracy, color = Model, group = Model)) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "gray50") +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Biased" = "darkorange", "Memory" = "purple")) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+  labs(title = "Model Recovery Power Curve",
+       subtitle = "Accuracy of LOO-CV model selection across different trial counts",
+       x = "Number of Simulated Trials (N)", 
+       y = "Correct Recovery Rate") +
+  annotate("text", x = 35, y = 0.83, label = "80% Power Threshold", color = "gray30", hjust = 0) +
+  theme_minimal()
+```
+
+Looking at this power curve, we can definitively tell our grant agency or ethics board: "We require a minimum of 120 trials per participant. Any fewer, and our experimental design is under-powered to detect the Memory strategy, leading to false negatives where we wrongly assume participants are just using a Biased heuristic."
+
+### From Binary Wins to Probabilistic Weights
+
+Traditional model recovery treats model comparison as a binary, "winner-takes-all" election. But in a fully Bayesian workflow, we often prefer a probabilistic approach. Instead of asking "Did Model A win?", we ask "How much stacking weight does Model A get when Model A is true?"
+
+This leads us to the ultimate, continuous check of our model comparison pipeline: Model Simulation-Based Calibration (Model SBC).
+
+### Running Model SBC: The Code Pipeline
+
+Because running 2,000 simulations and fitting two multilevel Stan models to each would take hours (or days) on a standard laptop, we will not execute it live here. However, to maintain the hands-on promise of this workflow, here is the exact `furrr` parallelization code you would use to build the Model SBC ensemble. Notice how it mirrors the parameter SBC code from Chapter 5, but elevates the target to the `loo_model_weights()`.
+
+```{r 07-model-sbc-pipeline, eval=FALSE}
+# --- Model SBC Implementation (Conceptual Code) ---
+# eval=FALSE to prevent a massive computational bottleneck during rendering
+
+library(future)
+library(furrr)
+plan(multisession, workers = parallel::detectCores() - 1)
+
+n_sims <- 2000
+
+model_sbc_results <- future_map_dfr(1:n_sims, function(sim_id) {
+  
+  # 1. Flip a coin to choose the true generative model
+  true_model <- sample(c("Biased", "Memory"), 1)
+  
+  # 2. Simulate data exactly from the chosen model's PRIORS
+  if (true_model == "Biased") {
+    sim_data <- simulate_biased_from_prior() # Helper generating J agents from prior
+    stan_list <- make_stan_biased(sim_data)
+  } else {
+    sim_data <- simulate_memory_from_prior() # Helper generating J agents from prior
+    stan_list <- make_stan_memory(sim_data)
+  }
+  
+  # 3. Fit BOTH candidate models to the simulated dataset
+  fit_b <- mod_biased_ncp$sample(data = stan_list, refresh = 0, 
+                                 iter_sampling = 1000, parallel_chains = 1)
+  fit_m <- mod_memory_ncp$sample(data = stan_list, refresh = 0, 
+                                 iter_sampling = 1000, parallel_chains = 1)
+  
+  # 4. Compute LOO and Bayesian Stacking Weights
+  loo_b <- fit_b$loo()
+  loo_m <- fit_m$loo()
+  
+  weights <- loo::loo_model_weights(list(Biased = loo_b, Memory = loo_m), 
+                                    method = "stacking")
+  
+  # 5. Return the result for this specific simulation iteration
+  tibble(
+    sim_id = sim_id,
+    true_model = true_model,
+    weight_biased = as.numeric(weights["Biased"]),
+    weight_memory = as.numeric(weights["Memory"])
+  )
+}, .options = furrr_options(seed = 12345))
+
+# You would then bin these weights and calculate the empirical frequency of the true model.
+```
+
+### Sample Calibration Plot
+Since we aren't running the full 2,000-fit simulation locally right now, I have generated a sample plot to show exactly what the calibration curves produced by the code above would look like under different diagnostic scenarios.
+
+```{r}
+# Create dummy data for three scenarios
+calibration_data <- tibble(
+  bin_mid = seq(0.05, 0.95, by = 0.1)
+) %>%
+  mutate(
+    Perfect      = bin_mid,
+    # Overconfident: Slope < 1 in the center (S-shape)
+    # The weights 'rush' to 0 and 1 faster than the truth
+    Overconf     = pnorm(qnorm(bin_mid) * 0.6), 
+    # Underconfident: Slope > 1 in the center (Reverse S)
+    # The weights stay near 0.5 while the truth is more certain
+    Underconf    = pnorm(qnorm(bin_mid) * 1.8), 
+    Miscalibrate = pmin(1, pmax(0, bin_mid + 0.15 * sin(bin_mid * pi * 2)))
+  ) %>%
+  pivot_longer(-bin_mid, names_to = "Scenario", values_to = "Observed")
+
+ggplot(calibration_data, aes(x = bin_mid, y = Observed, color = Scenario)) +
+  geom_line(aes(linetype = Scenario), linewidth = 1) +
+  geom_point(size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  scale_color_manual(values = c("Miscalibrate" = "firebrick", "Overconf" = "orange", 
+                               "Underconf" = "purple", "Perfect" = "steelblue")) +
+  scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  scale_y_continuous(labels = scales::percent, limits = c(0,1)) +
+  labs(
+    title = "SBC Model Calibration Curves (Conceptual)",
+    subtitle = "Diagonal = Perfectly Calibrated; S-curve = Overconfident; Reverse S = Underconfident",
+    x = "Mean Stacking Weight in Bin",
+    y = "Frequency Model was True DGP"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+### A Philosophical Technical Note: $\mathcal{M}$-closed vs. $\mathcal{M}$-open
+
+There is a deliberate philosophical friction in this exercise. By simulating data from a specific model, we are operating in an $\mathcal{M}$-closed framework—we know for an absolute fact that one of our models is the true data-generating process. However, we evaluate the recovery using Bayesian stacking weights, which are designed for the $\mathcal{M}$-open framework (the real-world assumption that all models are false, and we merely want the optimal predictive mixture).We use stacking weights here anyway because they are continuous. Rather than forcing a binary "win/loss," stacking weights tell us how much predictive variance uniquely belongs to each architecture.
+
+### When a 50/50 Split is a Perfect Diagnosis
+
+Imagine the SBC process selects the Memory model, and then draws a population memory sensitivity parameter from the prior that happens to be very close to zero ($\mu_\beta \approx 0$). The simulated agents will completely ignore the opponent's history. Mathematically, the data generated by this Memory model is entirely indistinguishable from data generated by a Biased model.
+
+When we fit both models to this specific dataset, the Bayesian stacking weights will likely split right down the middle, hovering around 0.5 for each model.
+
+This could look like the model comparison has "failed" to recover the true model. In reality, a weight of 0.5 is a mathematically perfect diagnosis of structural non-identifiability under the prior. The metric is working exactly as intended: it is honestly reporting that, in the parameter space near $\beta = 0$, the models make identical predictions. A continuous metric allows us to map exactly where in the parameter space our cognitive theories are distinct, and where they collapse into one another.
