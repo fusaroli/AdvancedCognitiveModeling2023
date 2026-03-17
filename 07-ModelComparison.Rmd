@@ -54,7 +54,7 @@ By Chapter 6 we had a working Bayesian workflow: specify a generative model, val
 
 In either case, once we have ensured that all models involved pass their individual quality checks, how do we decide which better accounts for the observed data?
 
-There are many ways to compare models, but here we develop a Bayesian predictive approach consistent with our approach in previous chapters. The core argument is that a model should be judged not by how well it explains the data it was *trained* on, but by how well it predicts data it has *never seen*. We formalize this as the Expected Log Predictive Density (ELPD), build an efficient computational approximation via PSIS-LOO, and apply the full workflow to the biased and memory agent models from Chapter 6. This approach also gives us a principled way to identify difficult to predict data points (sometimes called influential observations), which can tell us much about the limits of our models and different mechanisms at work in different portions of the data.
+There are many ways to compare models, but here we develop a Bayesian predictive approach consistent with our approach in previous chapters. The core argument is that a model should be judged not by how well it explains the data it was *trained* on, but by how well it predicts data it has *never seen*. We formalize this as the Expected Log Predictive Density (ELPD), build an efficient computational approximation via PSIS-LOO, and apply the full workflow to the biased and memory agent models from Chapter 6. This approach also gives us a principled way to identify difficult to predict data points (sometimes called influential observations), which can tell us much about the limits of our models and different mechanisms at work in different portions of the data. However, note that focusing on predictive abilities does not directly equate to model most likely to be true! It is a useful pragmatic measure and we should keep it in mind.
 
 As in previous chapters, we heavily rely on simulations to understand these techniques and validate our model comparison procedure. Because we control the data-generating mechanism, we can evaluate not just whether model comparison produces a preference, but whether it produces the *correct* preference — the model recovery test.
 
@@ -64,25 +64,27 @@ Remember, model comparison is not a fail-safe procedure to determine the absolut
 
 After completing this chapter, you will be able to:
 
-* **Explain the failure mode of in-sample fit**: Understand why simply choosing the model that fits the training data best can be misleading.
+* Explain the failure mode of in-sample fit: Understand why simply choosing the model that fits the training data best is misleading and leads to the "memorization" of noise.
 
-* **Understand Cross-Validation**: Grasp the core idea of evaluating models based on their ability to predict unseen data, including K-Fold CV.
+* Understand Cross-Validation: Grasp the core concept of partitioning data into training and test sets to estimate generalization performance.
 
-* **Define ELPD rigorously**: state the Expected Log Predictive Density as a formal target quantity and connect it to the log-score proper scoring rule.
+* Define ELPD rigorously: State the Expected Log Predictive Density as the formal Bayesian target for predictive accuracy.
 
-* **Implement PSIS-LOO**: compute ELPD estimates from existing Stan fits using `loo::loo()`, identify Pareto-$\hat{k}$ diagnostics, and apply `loo::loo_moment_match()` for problematic observations.
+* Implement PSIS-LOO: Compute ELPD estimates from Stan fits and use Pareto-$\hat{k}$ to identify when the importance-sampling approximation is unreliable.
 
-* **Characterize influential observations**: identify *why* specific observations have high $\hat{k}$, linking influence back to the cognitive structure of the experiment.
+* Characterize influential observations: Link high $\hat{k}$ values back to the cognitive structure of the task, distinguishing between person-level outliers and trial-level surprises.
 
-* **Diagnose LOO-PIT calibration correctly**: understand why the standard ECDF visual can be too lenient for complex hierarchical models; compute the $\hat{p}_{\text{loo}}/N$ complexity ratio; implement the POT-C formal test that remains valid when LOO-PIT values are correlated.
+* Perform exact agent-level K-Fold CV: Implement a parallelized cross-validation pipeline to test how models generalize to completely new participants.
 
-* **Interpret `loo_compare()` output**: read `elpd_diff` and `se_diff` correctly and reason about the $|\text{elpd\_diff}|/\text{se\_diff}$ ratio.
+* Diagnose LOO-PIT calibration: Evaluate whether a model's predictive uncertainty matches reality using randomized PIT values and the formal POT-C test.
 
-* **Compute Bayesian stacking weights**: use `loo::loo_model_weights()` to assign ensemble weights to competing models.
+* Interpret loo_compare() and Bayesian Stacking: Reason about the $|elpd\_diff|/se\_diff$ ratio and use stacking weights to find the optimal predictive mixture of models.
 
-* **Execute model recovery**: design a 2x2 simulation study where the true generating model is known and verify that PSIS-LOO identifies it correctly.
+* Conduct Power Analysis for Model Recovery: Use 2x2 confusion matrices and 2D trade-off plots (Trials vs. Participants) to determine if an experimental design is discriminative enough to identify the true cognitive mechanism.
 
-* **Identify when LOO is invalid**: recognize that trial-level LOO is inappropriate for sequentially dependent data and describe the Leave-Future-Out remedy.
+* Evaluate Model Calibration via SBC: Move beyond binary "wins" to assess the probabilistic calibration of model weights using Simulation-Based Calibration for Models.
+
+* Identify sequentially dependent data: Recognize when trial-level exchangeability is violated and describe the Leave-Future-Out (LFO-CV) remedy.
 
 ## Why In-Sample Fit Fails: The Overfitting Trap
 
