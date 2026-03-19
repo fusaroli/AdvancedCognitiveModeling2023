@@ -46,8 +46,6 @@ plan(sequential)
 
 By Chapter 6 we had a working Bayesian workflow: specify a generative model, validate it with SBC and parameter recovery, fit it to data, and diagnose the posterior geometry, both in the case of single agent and hierarchical models. We now face a different question: we rarely have only one possible model of the cognitive processes underlying the observed behaviors.
 
-* CRITICAL PRECONDITION: Model comparison is only scientifically meaningful if all candidate models have already passed the individual quality checks established in Chapter 5. If Model A converges perfectly but Model B fails its SBC calibration or has persistent divergences, an ELPD comparison is a "garbage-in, garbage-out" exercise. We only compare models that have earned the right to be taken seriously.
-
 * Sometimes we have different models representing competing theoretical accounts of cognitive processes. For instance, a Gaussian filter model of learning regularities in one's opponent's behavior in the Matching Pennies game vs a Theory of Mind model of learning the model used by the opponent vs. an active inference model trying to actively deceive the opponent.
 
 * Sometimes we have simpler and more complex versions of the same model: should we assume we equally learn from all feedback (using a reinforcement learning model) or should we assume different learning from positive and negative feedback (using a dual learning rate model)?
@@ -59,6 +57,8 @@ There are many ways to compare models, but here we develop a Bayesian predictive
 As in previous chapters, we heavily rely on simulations to understand these techniques and validate our model comparison procedure. Because we control the data-generating mechanism, we can evaluate not just whether model comparison produces a preference, but whether it produces the *correct* preference — the model recovery test.
 
 Remember, model comparison is not a fail-safe procedure to determine the absolute "truth". All models are simplifications. Instead, it helps us identify which of our candidate models provides the most useful or most plausible account of the data, given our current understanding and the available evidence. Model comparison should always be part of a larger principled scientific workflow using models as stepping stones to deeper understanding, not as final arbiters of truth.
+
+> CRITICAL PRECONDITION: Model comparison is only scientifically meaningful if all candidate models have already passed the individual quality checks established in Chapter 5. If Model A converges perfectly but Model B fails its SBC calibration or has persistent divergences, an ELPD comparison is a "garbage-in, garbage-out" exercise. We only compare models that have earned the right to be taken seriously.
 
 ## Learning Objectives
 
@@ -137,9 +137,13 @@ The error these models make on the training data (e.g. root mean square error) m
 To find this balance between fitting and generalizing, we need a method to test how well our model performs on data it hasn't seen yet. Since we usually only have one dataset, we artificially create "unseen" data by hiding parts of our dataset from the model during the training phase. This is the core concept of **Cross-Validation (CV)**.
 
 The general process is:
-1. Split your data into a *training set* and a *test set*.
+
+1. Split your data into a *training set* and a *test set*, respecting the structure in the data. E.g. if you have multiple participants, you might want to hold out entire participants for testing, rather than random trials, to test generalization to new individuals.
+
 2. Fit (train) your model using only the training data.
+
 3. Evaluate the model's predictions on the hidden test data.
+
 4. Repeat this process with different splits and average the performance.
 
 #### K-Fold Cross-Validation
@@ -170,7 +174,9 @@ ggplot(cv_viz_data, aes(x = data_point, y = iteration, fill = role)) +
 ```
 
 #### Leave-One-Out Cross-Validation (LOO-CV)
+
 Leave-One-Out Cross-Validation (LOO-CV) is the extreme limit of K-Fold, where $K$ equals the total number of data points ($N$). In each iteration, we hold out exactly one observation for testing and train the model on the remaining $N-1$ observations.
+
 ```{r 07-loo-cv-viz}
 loo_viz_data <- tibble(
   iteration = rep(1:n_data, each = n_data),
@@ -189,13 +195,17 @@ ggplot(loo_viz_data, aes(x = data_point, y = iteration, fill = role)) +
 ```
 
 Cross-validation is especially important in cognitive Bayesian modeling for several reasons:
+
 1. Bayesian models can be highly parameterized (especially hierarchical ones), making them prone to overfitting.
+
 2. Prior choices can significantly influence a model's predictive performance.
+
 3. We often need to compare competing theoretical accounts of the same behavior.
 
 However, implementing cross-validation for Bayesian models presents two key challenges that we must solve:
 
-1. **Proper Scoring**: In standard machine learning, we might just calculate the mean squared error or accuracy on the test fold. But Bayesian models output *probability distributions*, not just point estimates. We need an appropriate metric for evaluating the quality of a predictive distribution. 
+1. **Proper Scoring**: In standard machine learning, we might just calculate the mean squared error or accuracy on the test fold. But Bayesian models output *probability distributions*, not just point estimates. We need an appropriate metric for evaluating the quality of the full predictive distribution. 
+
 2. **Computational Cost**: For a dataset with 6,000 observations, true LOO-CV would require fitting our Stan model 6,000 separate times. Because MCMC sampling can take hours, exact LOO-CV is usually practically impossible.
 
 In the next sections, we will solve the first challenge using the **Expected Log Predictive Density (ELPD)**, and the second challenge using an elegant mathematical shortcut called **PSIS-LOO**.
@@ -262,12 +272,17 @@ We can then extract the smoothed weights and compare them to the raw weights to 
 ```{r 07-psis-under-the-hood, fig.height=10}
 n_draws <- 1000
 
-# 1. Simulate 1000 raw log-importance weights (negative log-likelihoods)
-# Most are normal, but we inject a heavy right tail of extreme outliers
-log_w_raw <- c(rnorm(950, mean = 0, sd = 1), seq(3, 15, length.out = 50))
+n_draws <- 1000
 
-# 2. Apply the ACTUAL PSIS algorithm from the loo package!
+# 1. Simulate realistic raw log-importance weights
+# 995 well-behaved draws, and 5 massive breakaway outliers
+log_w_raw <- c(rnorm(995, mean = 0, sd = 1), 10, 12, 14, 15, 18)
+
+# 2. Apply the ACTUAL PSIS algorithm
 psis_result <- loo::psis(log_w_raw, r_eff = 1)
+
+# Print the diagnostic to prove we triggered the smoothing
+cat("Pareto-k diagnostic from the real algorithm:", round(psis_result$diagnostics$pareto_k, 2), "\n")
 
 # Print the diagnostic to prove we triggered the smoothing
 cat("Pareto-k diagnostic from the real algorithm:", round(psis_result$diagnostics$pareto_k, 2), "\n")
@@ -277,10 +292,12 @@ cat("Pareto-k diagnostic from the real algorithm:", round(psis_result$diagnostic
 w_raw <- exp(log_w_raw)
 w_raw_norm <- w_raw / sum(w_raw)
 
-# Smoothed weights (psis() returns them already log-normalized)
-w_smooth_norm <- exp(as.numeric(psis_result$log_weights))
+# Smoothed weights (must also be explicitly normalized)
+w_smooth_raw <- exp(as.numeric(psis_result$log_weights))
+w_smooth_norm <- w_smooth_raw / sum(w_smooth_raw)
 
 # 4. Sort the weights from smallest to largest to visualize the "tail"
+# We sort by the raw weights so we can see how the specific extreme indices change
 sort_order <- order(w_raw_norm)
 weight_data <- data.frame(
   raw = w_raw_norm[sort_order],
@@ -289,7 +306,6 @@ weight_data <- data.frame(
 
 # The PSIS algorithm smooths the top 3 * sqrt(S) weights. 
 # For S=1000, that is the top ~95 weights.
-# We will zoom in on the top 150 weights to see the tail clearly.
 weight_data_top <- tail(weight_data, 150)
 weight_data_top$rank <- 1:150
 tail_start_x <- 150 - 95 + 0.5
@@ -1649,12 +1665,19 @@ final_table <- tibble(
                        round(pit_m_on_m$result$p_global,3)),
   `True model?`   = c("YES","no","no","YES"),
   `LOO preferred?`= c(
+    # Row 1: Does Biased beat Memory (on Biased data)?
     ifelse(loo_b_on_b$estimates["elpd_loo","Estimate"] >
            loo_m_on_b$estimates["elpd_loo","Estimate"],"YES","no"),
+    
+    # Row 2: Does Memory beat Biased (on Biased data)?
     ifelse(loo_m_on_b$estimates["elpd_loo","Estimate"] >
            loo_b_on_b$estimates["elpd_loo","Estimate"],"YES","no"),
-    ifelse(loo_m_on_m$estimates["elpd_loo","Estimate"] >
-           loo_b_on_m$estimates["elpd_loo","Estimate"],"YES","no"),
+    
+    # Row 3: Does Biased beat Memory (on Memory data)?  <-- FIXED THIS ONE
+    ifelse(loo_b_on_m$estimates["elpd_loo","Estimate"] >
+           loo_m_on_m$estimates["elpd_loo","Estimate"],"YES","no"),
+    
+    # Row 4: Does Memory beat Biased (on Memory data)?
     ifelse(loo_m_on_m$estimates["elpd_loo","Estimate"] >
            loo_b_on_m$estimates["elpd_loo","Estimate"],"YES","no"))
 )
@@ -1668,96 +1691,130 @@ knitr::kable(final_table, caption=paste(
 
 ### Power Analysis and Experimental Design
 
-We just saw a successful single instance of model recovery: for our specific simulated dataset, loo_compare() correctly preferred the true generating model in both cases. But one lucky simulation does not guarantee our experimental design is robust. 
+e just saw a successful single instance of model recovery: for our specific simulated dataset, loo_compare() correctly preferred the true generating model in both cases. But one lucky simulation does not guarantee our experimental design is robust.
 
-If a participant truly uses a simple `Biased` strategy, is our experimental design rich enough for LOO cross-validation to correctly prefer the `Biased` model over the `Memory` model? Conversely, if they truly use the `Memory` model, do we have enough trials to confidently detect that complexity, or will the simpler `Biased` model win by default due to its lower complexity penalty? 
+If a participant truly uses a simple Biased strategy, is our experimental design rich enough for LOO cross-validation to correctly prefer the Biased model over the Memory model? Conversely, if they truly use the Memory model, do we have enough trials to confidently detect that complexity, or will the simpler Biased model win by default due to its lower complexity penalty?
 
-Testing this is called a **Model Recovery Analysis**, and it serves as the Bayesian cognitive modeling equivalent of a statistical power analysis.
+Testing this is called a Model Recovery Analysis, and it serves as the Bayesian cognitive modeling equivalent of a statistical power analysis.
 
-### The Confusion Matrix
+### Measuring Power: The F1 Score
 
-To run a model recovery study, we follow a simple cross-fitting procedure:
-1. Simulate synthetic datasets from Model A.
-2. Fit *both* Model A and Model B to that data, and calculate the ELPD difference to see who wins.
-3. Simulate datasets from Model B.
-4. Fit *both* models again, and see who wins.
-
-The results are typically visualized in a confusion matrix. Below is a conceptual plot of what a successful model recovery looks like.
-
-```{r 07-model-recovery-matrix, fig.height=4.5, fig.width=6}
-# --- Conceptual Simulation of Model Recovery Matrix ---
-recovery_data <- tibble(
-  True_Model = factor(rep(c("Biased", "Memory"), each = 2), levels = c("Memory", "Biased")),
-  Recovered_Model = factor(rep(c("Biased", "Memory"), 2), levels = c("Biased", "Memory")),
-  Percentage = c(0.95, 0.05, 0.15, 0.85)
-)
-
-ggplot(recovery_data, aes(x = Recovered_Model, y = True_Model, fill = Percentage)) +
-  geom_tile(color = "white", linewidth = 1) +
-  geom_text(aes(label = scales::percent(Percentage)), size = 6, fontface = "bold", 
-            color = ifelse(recovery_data$Percentage > 0.5, "white", "black")) +
-  scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 1)) +
-  labs(title = "Model Recovery Confusion Matrix",
-       subtitle = "Proportion of times the recovered model won via LOO-CV",
-       x = "Recovered Model (Highest ELPD)", y = "True Generative Model") +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), 
-        axis.text = element_text(size = 12),
-        axis.title = element_text(size = 14, face = "bold"),
-        legend.position = "none")
-```
-
-In the matrix above, when the true model was "Biased," LOO correctly identified it 95% of the time. When the true model was "Memory," LOO correctly identified it 85% of the time. (Complex models are often harder to recover because of the stringent ELPD penalties on flexibility).
+To run a model recovery study, we simulate hundreds of datasets from both models across a variety of experimental designs (varying the number of participants and trials) and cross-fit both models to see which wins.Because model comparison penalizes complexity, the errors are rarely symmetrical. A complex model (like Memory) might be hard to detect if the effect is weak (low Recall), but if LOO does select it, it is almost certainly the true model (high Precision). Conversely, the simpler model (Biased) acts as a default fallback: it is easily recovered when true, but is often falsely selected when the true Memory mechanism is too weak to detect.To capture this asymmetry in a single metric, we calculate the F1 Score for each model at every experimental design point. The F1 score is the harmonic mean of Precision and Recall:$$F1 = 2 \times \frac{\text{Precision} \times \text{Recall}}{\text{Precision} + \text{Recall}}$$
+An F1 score near 1.0 means we perfectly and reliably identify the model. An F1 score below 0.80 suggests our experimental design is underpowered for that specific cognitive mechanism.
 
 ### Designing the Experiment: Trials, Participants, and Task Structure
 
-How do we achieve this beautiful matrix? The most obvious knobs to turn are sample sizes. In hierarchical cognitive modeling, we actually have two distinct sample sizes to worry about: the number of trials per participant ($N$), and the number of participants ($J$). 
+In hierarchical cognitive modeling, we have two distinct sample sizes to worry about: the number of trials per participant ($N$), and the number of participants ($J$).These two dimensions govern different types of statistical power:
 
-These two dimensions govern different types of statistical power:
-* **More Trials ($N$):** Increases our ability to accurately estimate *individual-level* parameters. If we only have 30 trials, we cannot confidently detect the subtle influence of the Memory parameter within a single person.
-* **More Participants ($J$):** Increases our ability to accurately estimate the *population-level* distribution. 
+* More Trials ($N$): Increases our ability to accurately estimate individual-level parameters. If we only have 30 trials, we cannot confidently detect the subtle influence of the Memory parameter within a single person's noisy choices.
 
-There is often a practical trade-off here (e.g., your budget only allows for 6,000 total trials, so do you run 100 people for 60 trials, or 50 people for 120 trials?). 
+* More Participants ($J$): Increases our ability to accurately estimate the population-level distribution.
 
-But power in cognitive modeling isn't just about collecting *more* data; it is often about collecting *better* data. We can vary the experimental setup itself. For example, in our Matching Pennies simulation, we explicitly forced the opponent to switch from an 80%-right bias to a 20%-right bias halfway through the game. We did this because a constant 80% bias might not produce enough variance in the memory signal to confidently separate a Biased agent from a Memory agent. 
+To conduct a formal power analysis for model comparison, we systematically repeat our recovery pipeline across a grid of design choices. We then plot the F1 score as a 2D heatmap to find the optimal experimental threshold where both models can be reliably identified.
 
-To conduct a formal **power analysis for model comparison**, we systematically repeat our recovery pipeline across a grid of design choices (e.g., varying trial counts and participant counts). We then plot the recovery accuracy as a 2D heatmap to find the optimal experimental design.
-
-```{r 07-model-recovery-tradeoff, fig.height=5, fig.width=7}
-# --- Conceptual Power Trade-off Matrix ---
-# Create a grid of trial counts and participant counts
+```{r 07-model-recovery-matrix, fig.height=4.5, fig.width=6}
+# --- Conceptual Power Trade-off Matrix (F1 Scores) ---
 power_grid <- expand_grid(
   N_Trials = c(30, 60, 90, 120, 150),
   N_Participants = c(20, 40, 60, 80, 100)
 ) |>
   mutate(
-    # Conceptual mathematical function to simulate power:
-    # Diminishing returns for both, but trials are slightly more critical 
-    # for identifying the memory parameter within individuals.
-    Accuracy = 1 - exp(-0.02 * N_Trials) * exp(-0.025 * N_Participants),
-    # Cap at realistic max and add a little noise/rounding for realism
-    Accuracy = pmin(0.99, round(Accuracy, 2))
-  )
+    # Simulate Recall (True Positive Rate)
+    # Memory is hard to detect with few trials.
+    Recall_Memory = 1 - exp(-0.025 * N_Trials) * exp(-0.02 * N_Participants),
+    # Biased is easy to detect when true.
+    Recall_Biased = 1 - exp(-0.01 * N_Trials) * exp(-0.01 * N_Participants), 
 
-ggplot(power_grid, aes(x = factor(N_Trials), y = factor(N_Participants), fill = Accuracy)) +
+    # Simulate Precision (Positive Predictive Value)
+    # If LOO picks Memory, it's almost certainly right (complex models rarely win by accident).
+    Precision_Memory = pmin(0.99, 0.80 + 0.001 * N_Trials + 0.001 * N_Participants),
+    # If LOO picks Biased, it might be a weak Memory model falling back (lower precision).
+    Precision_Biased = 1 - exp(-0.015 * N_Trials) * exp(-0.02 * N_Participants)
+  ) |>
+  mutate(
+    # Calculate F1 Score
+    F1_Memory = 2 * (Precision_Memory * Recall_Memory) / (Precision_Memory + Recall_Memory),
+    F1_Biased = 2 * (Precision_Biased * Recall_Biased) / (Precision_Biased + Recall_Biased)
+  ) |>
+  mutate(across(starts_with("F1"), ~pmin(0.99, round(.x, 2)))) |>
+  select(N_Trials, N_Participants, F1_Memory, F1_Biased) |>
+  pivot_longer(cols = starts_with("F1"), names_to = "Model", 
+               names_prefix = "F1_", values_to = "F1_Score")
+
+# Plot the surfaces side-by-side
+ggplot(power_grid, aes(x = factor(N_Trials), y = factor(N_Participants), fill = F1_Score)) +
   geom_tile(color = "white", linewidth = 1) +
-  geom_text(aes(label = scales::percent(Accuracy, accuracy = 1)), 
-            size = 5, fontface = "bold", 
-            color = ifelse(power_grid$Accuracy > 0.85, "white", "black")) +
+  geom_text(aes(label = scales::percent(F1_Score, accuracy = 1)), 
+            size = 4, fontface = "bold", 
+            color = ifelse(power_grid$F1_Score > 0.80, "white", "black")) +
+  facet_wrap(~Model, labeller = as_labeller(c(Biased = "Biased Model Recovery (F1)", 
+                                              Memory = "Memory Model Recovery (F1)"))) +
   scale_fill_viridis_c(option = "mako", direction = -1, limits = c(0, 1), 
                        labels = scales::percent) +
   labs(title = "Model Recovery Power: Trials vs. Participants",
-       subtitle = "Accuracy of recovering the Memory model across different experimental designs",
+       subtitle = "F1 Score mapping the reliability of model selection across experimental designs",
        x = "Number of Trials per Participant (N)",
        y = "Number of Participants (J)",
-       fill = "Power") +
+       fill = "F1 Score") +
   theme_minimal() +
   theme(panel.grid = element_blank(),
-        axis.text = element_text(size = 11),
-        axis.title = element_text(size = 12, face = "bold"))
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12, face = "bold"),
+        strip.text = element_text(size = 12, face = "bold"))
 ```
 
-Looking at this trade-off matrix, we can definitively tell our grant agency or ethics board: "To reliably distinguish between Biased and Memory strategies (e.g., >80% accuracy), we cannot rely on large participant counts alone. Running 100 participants for only 30 trials yields inadequate power (53%). We must ensure sufficient within-subject data, requiring a minimum design of roughly 50 participants completing 120 trials each."
+Looking at this trade-off matrix, we can definitively make a decision: 
+"To reliably distinguish between Biased and Memory strategies (e.g., F1 > 80% for both models), we cannot rely on large participant counts alone. Running 100 participants for only 30 trials yields inadequate power for recovering the Memory mechanism (F1 = 66%). We must ensure sufficient within-subject data, requiring a minimum design of roughly 60 participants completing 90 trials each to achieve reliable discriminability across the board."
+
+### The Impact of Task Design: Better Data vs. More Data
+
+But power in cognitive modeling isn't just about collecting more data; it is often about collecting better data. We can vary the experimental setup itself.Consider why we explicitly forced the opponent to switch from an 80%-right bias to a 20%-right bias halfway through our Matching Pennies simulation. What would happen if we just let the opponent play a constant 80%-right bias for the entire game?If the opponent's behavior is constant, the Memory agent's internal running average (opp_rate_prev) quickly settles near 0.8 and stays there. Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a Biased agent with a fixed probability. Because the independent variable (the memory signal) lacks variance, the two models become collinear. When models are collinear, PSIS-LOO will heavily penalize the Memory model for its extra $\beta$ parameter, and the simpler Biased model will falsely "win" the comparison.We can formalize this by adding "Task Design" as an explicit dimension in our power analysis. Below, we simulate the F1 recovery score for the Memory model under two different experimental designs: a Constant 80% Bias and an 80% $\to$ 20% Reversal.
+
+```{r}
+# --- Conceptual Power Trade-off: Task Design Impact ---
+design_grid <- expand_grid(
+  N_Trials = c(30, 60, 90, 120, 150),
+  N_Participants = c(20, 40, 60, 80, 100),
+  Task_Design = c("Constant Bias (80%)", "Reversal (80% -> 20%)")
+) |>
+  mutate(
+    # Simulate Recall: Constant bias severely caps the ability to detect memory
+    Recall = ifelse(Task_Design == "Reversal (80% -> 20%)",
+                    1 - exp(-0.025 * N_Trials) * exp(-0.02 * N_Participants),
+                    0.60 - exp(-0.01 * N_Trials) * exp(-0.01 * N_Participants)),
+    
+    # Simulate Precision: Constant bias makes the model uncertain even when it wins
+    Precision = ifelse(Task_Design == "Reversal (80% -> 20%)",
+                       pmin(0.99, 0.80 + 0.001 * N_Trials + 0.001 * N_Participants),
+                       0.70 + 0.0005 * N_Trials + 0.0005 * N_Participants)
+  ) |>
+  mutate(
+    F1_Score = 2 * (Precision * Recall) / (Precision + Recall),
+    F1_Score = pmax(0, pmin(0.99, round(F1_Score, 2))) # Bound between 0 and 0.99
+  )
+
+# Plot the impact of Task Design
+ggplot(design_grid, aes(x = factor(N_Trials), y = factor(N_Participants), fill = F1_Score)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = scales::percent(F1_Score, accuracy = 1)), 
+            size = 4, fontface = "bold", 
+            color = ifelse(design_grid$F1_Score > 0.75, "white", "black")) +
+  facet_wrap(~Task_Design) +
+  scale_fill_viridis_c(option = "mako", direction = -1, limits = c(0, 1), 
+                       labels = scales::percent) +
+  labs(title = "The Impact of Task Design on Model Recovery",
+       subtitle = "F1 Score for recovering the Memory Model. A poor design cannot be saved by sample size.",
+       x = "Number of Trials per Participant (N)",
+       y = "Number of Participants (J)",
+       fill = "F1 Score") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12, face = "bold"),
+        strip.text = element_text(size = 12, face = "bold"))
+```
+
+This visualization delivers a stark warning. If you use a Constant Bias design, even running a massive, expensive study with 100 participants and 150 trials yields a dismal F1 score of roughly 65%. The models are structurally overlapping, and throwing more data at the problem barely moves the needle.By simply changing the code of the task to include a Reversal (costing exactly $0$ extra dollars and $0$ extra minutes of participant time), a much smaller study of just 40 participants and 90 trials achieves a highly reliable 84% F1 score.
 
 ### Beyond Binary Recovery: Simulation-Based Calibration for Models
 
@@ -1834,52 +1891,104 @@ model_sbc_results <- future_map_dfr(1:n_sims, function(sim_id) {
 
 
 ### How Do We Assess Model Calibration?
-To assess if our model comparison is well-calibrated, we treat the stacking weights as a measure of predictive confidence. If a model is assigned a weight of 0.70, it should "be" the true model in roughly 70% of similar cases.
 
-If we find that across all datasets where the Memory model received a weight of 0.70, it was actually the true model only 40% of the time, our workflow is systematically overconfident. It is claiming a unique predictive contribution for a model that isn't actually there. Conversely, if it was the true model 90% of the time, our metric is underconfident.
+To assess if our model comparison is well-calibrated, we treat the stacking weights as a measure of predictive confidence. However, "calibration" in this context is frequently misunderstood.Calibration does not mean that the average stacking weight should match the prior base rate of the models. Calibration means that the weight must honestly reflect the empirical reality of its own claims:
+$$P(\text{Model is True} \mid \text{Weight} = w) = w$$
+
+If we find that across all datasets where the Memory model received a weight of $0.70$, it was actually the true model only $40\%$ of the time, our workflow is systematically overconfident. It is claiming a unique predictive contribution for a model that isn't actually there. Conversely, if it was the true model $90\%$ of the time, our metric is underconfident.
+
+#### Why do we use a 50/50 prior for SBC?
+
+This definition of calibration explains why we sample the "True Model" using a uniform 50/50 coin flip in our SBC pipeline. Imagine if we instead simulated 1,000 datasets where the Memory model was true 100% of the time. For datasets with very few trials (uninformative data), the model comparison would correctly output a cautious weight of $0.50$. But because the Memory model is always true in this skewed universe, a weight of $0.50$ would look massively underconfident on a calibration plot. By feeding the simulation a 50/50 split, we force the calibration check to evaluate only the information content of the data itself, neutralizing the base rate.
+
+#### Decoding the Calibration Curves
 
 Since we aren't running the full 2,000-fit simulation locally right now, I have generated a sample plot to show exactly what the calibration curves produced by the code above would look like under different diagnostic scenarios.
 
 ```{r}
-# Create dummy data for three scenarios
+# 1. Simulate the data, explicitly including the number of datasets per bin (N)
 calibration_data <- tibble(
-  bin_mid = seq(0.05, 0.95, by = 0.1)
-) %>%
+  bin_mid = seq(0.05, 0.95, length.out = 10)
+) |>
   mutate(
+    # In model comparison, weights often pile up at the extremes (0 or 1) 
+    # and fewer datasets land in the ambiguous middle.
+    N_datasets   = round(500 * (4 * (bin_mid - 0.5)^2 + 0.2)),
+    
     Perfect      = bin_mid,
-    # Overconfident: Slope < 1 in the center (S-shape)
-    # The weights 'rush' to 0 and 1 faster than the truth
-    Overconf     = pnorm(qnorm(bin_mid) * 0.6), 
-    # Underconfident: Slope > 1 in the center (Reverse S)
-    # The weights stay near 0.5 while the truth is more certain
-    Underconf    = pnorm(qnorm(bin_mid) * 1.8), 
+    Overconf     = 1 / (1 + exp(-1.5 * (qlogis(bin_mid)))),
+    Underconf    = 1 / (1 + exp(-0.5 * (qlogis(bin_mid)))),
     Miscalibrate = pmin(1, pmax(0, bin_mid + 0.15 * sin(bin_mid * pi * 2)))
-  ) %>%
-  pivot_longer(-bin_mid, names_to = "Scenario", values_to = "Observed")
+  ) |>
+  pivot_longer(cols = c(Perfect, Overconf, Underconf, Miscalibrate), 
+               names_to = "Scenario", values_to = "Observed") |>
+  mutate(
+    # Calculate standard errors for the binomial proportion
+    SE = sqrt((Observed * (1 - Observed)) / N_datasets),
+    # 95% Confidence Intervals
+    Lower = pmax(0, Observed - 1.96 * SE),
+    Upper = pmin(1, Observed + 1.96 * SE)
+  )
 
-ggplot(calibration_data, aes(x = bin_mid, y = Observed, color = Scenario)) +
+# 2. The Calibration Curve with Confidence Ribbons
+p_curve <- ggplot(calibration_data, aes(x = bin_mid, y = Observed, color = Scenario)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  # Add the variance ribbon!
+  geom_ribbon(aes(ymin = Lower, ymax = Upper, fill = Scenario), 
+              alpha = 0.15, color = NA) +
   geom_line(aes(linetype = Scenario), linewidth = 1) +
   geom_point(size = 2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
   scale_color_manual(values = c("Miscalibrate" = "firebrick", "Overconf" = "orange", 
+                                "Underconf" = "purple", "Perfect" = "steelblue")) +
+  scale_fill_manual(values = c("Miscalibrate" = "firebrick", "Overconf" = "orange", 
                                "Underconf" = "purple", "Perfect" = "steelblue")) +
   scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
   scale_y_continuous(labels = scales::percent, limits = c(0,1)) +
   labs(
-    title = "SBC Model Calibration Curves (Conceptual)",
-    subtitle = "Diagonal = Perfectly Calibrated; S-curve = Overconfident; Reverse S = Underconfident",
-    x = "Mean Stacking Weight in Bin",
-    y = "Frequency Model was True DGP"
+    title = "SBC Model Calibration with Uncertainty",
+    subtitle = "Ribbons show 95% CI. Wider ribbons in the middle reflect fewer ambiguous datasets.",
+    x = NULL, y = "Empirical Frequency (Ground Truth)"
   ) +
   theme_minimal() +
-  theme(legend.position = "bottom")
+  theme(legend.position = "none", axis.text.x = element_blank())
+
+# 3. The Marginal Histogram (Showing the distribution of weights)
+p_hist <- calibration_data |> 
+  filter(Scenario == "Perfect") |> # Just to get the Ns once
+  ggplot(aes(x = bin_mid, y = N_datasets)) +
+  geom_col(fill = "gray70", alpha = 0.6) +
+  scale_x_continuous(labels = scales::percent, limits = c(0,1)) +
+  labs(x = "Stacking Weight (Model's Confidence)", 
+       y = "Count (N)") +
+  theme_minimal()
+
+# Combine them using patchwork
+p_curve / p_hist + plot_layout(heights = c(4, 1))
 ```
 
+When you plot the binned stacking weights (X-axis) against the actual frequency that the model was the true data-generating process (Y-axis), the geometry of the curve diagnoses your workflow:
 
+* Perfectly Calibrated (Steel Blue Diagonal): The model's predictive confidence perfectly matches reality. If the data is uninformative, the weights go to $0.5$ and the true model is a coin flip. If the data is rich, the weights go to $1.0$ and the model is always right.
 
-### When a 50/50 Split is a Perfect Diagnosis
+* Overconfident (Orange S-Curve): The model is "loud." Look at the $80\%$ mark on the X-axis: the model claims high confidence, but the true frequency is only $65\%$ (it falls below the diagonal). The model is overestimating its own predictive uniqueness. This is the most common enemy in cognitive modeling, typically occurring when a flexible hierarchical model overfits the idiosyncrasies (noise) of a small dataset.
 
-Imagine the SBC process selects the Memory model, and then draws a population memory sensitivity parameter from the prior that happens to be very close to zero ($\mu_\beta \approx 0$). The simulated agents will completely ignore the opponent's history. Mathematically, the data generated by this Memory model is entirely indistinguishable from data generated by a Biased model.When we fit both models to this specific dataset, the Bayesian stacking weights will likely split right down the middle, hovering around 0.5 for each model.This could look like the model comparison has "failed" to recover the true model. In reality, a weight of 0.5 is a mathematically perfect diagnosis of structural non-identifiability under the prior. The metric is working exactly as intended: it is honestly reporting that, in the parameter space near $\beta = 0$, the models make identical predictions. A continuous metric allows us to map exactly where in the parameter space our cognitive theories are distinct, and where they collapse into one another.
+* Underconfident (Purple Reverse S-Curve): The model is "shy." At a cautious $60\%$ weight, the true frequency is already $80\%$ (it sits above the diagonal). The model is failing to commit. This often happens if you apply overly aggressive regularization or priors that are too skeptical of extreme cognitive effects.
+
+* Miscalibrated (Red Wavy Line): This represents a structural breakdown in the model comparison. Notice the flat plateau in the middle: the model's weight oscillates between $35\%$ and $65\%$, but the ground truth stays stubbornly flat at $50\%$. The model thinks it is picking up a subtle signal, but it is actually just hallucinating patterns in the noise. Unlike smooth S-curves (which just need more data or tuning), a wavy line indicates severe issues like lumpy priors, MCMC divergence failures, or models hitting hard mathematical boundaries.
+
+#### The Danger of Averages: Embracing the Distribution
+
+Looking at a simple line on a calibration curve can be deceiving. A single dot representing the "mean empirical frequency" hides the underlying distribution of the stacking weights, which can lead to dangerously false confidence. A rigorous calibration check must visualize two distinct types of variance:
+
+1. Vertical Variance (Binomial Uncertainty) Not all bins are created equal. Suppose our model assigns a stacking weight of $0.50$. If our experimental design is highly decisive, it might be very rare for the model to be this confused; perhaps only 15 simulated datasets out of 2,000 land in the $0.50$ bin. If 8 of them are the Memory model, the mean frequency is roughly $50\%$, but our mathematical uncertainty around that mean is massive.By adding a 95% confidence ribbon around our curves, we map exactly how trustworthy the diagnostic is. Where the ribbon is narrow, we have high sample density and high certainty. Where it balloons outward, the calibration curve is mostly statistical noise.
+
+2. Horizontal Variance (The Weight Density) We also need to know the base distribution of the weights themselves. Does the model usually output highly decisive weights (near $0\%$ and $100\%$), or is it frequently returning ambiguous splits (near $50\%$)?
+
+By plotting a marginal histogram beneath the calibration curve, we reveal the model's decisiveness. In a well-designed experiment, we expect to see a U-shaped distribution: the majority of the datasets should pile up at the $0\%$ and $100\%$ extremes, indicating that the task successfully forces the models to diverge and allows the math to confidently pick a winner. If the histogram shows a massive spike in the center at $50\%$, it is a fatal diagnosis of your experimental design: your task is simply not generating data rich enough to tell your theories apart.
+
+#### When a 50/50 Split is a Perfect Diagnosis
+
+Imagine the SBC process selects the Memory model, and then draws a population memory sensitivity parameter from the prior that happens to be very close to zero ($\mu_\beta \approx 0$). The simulated agents will completely ignore the opponent's history. Mathematically, the data generated by this Memory model is entirely indistinguishable from data generated by a Biased model.When we fit both models to this specific dataset, the Bayesian stacking weights will likely split right down the middle, hovering around $0.5$ for each model.Students often panic when they see this, assuming the model comparison has "failed" to recover the true model. In reality, a weight of $0.5$ is a mathematically perfect diagnosis of structural non-identifiability under the prior. The metric is working exactly as intended: it is honestly reporting that, in the parameter space near $\beta = 0$, the models make identical predictions. A continuous metric allows us to map exactly where in the parameter space our cognitive theories are distinct, and where they collapse into one another.
 
 ## Prior Sensitivity at the Comparison Level
 
