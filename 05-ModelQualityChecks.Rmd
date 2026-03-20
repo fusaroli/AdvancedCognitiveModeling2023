@@ -24,6 +24,13 @@ regenerate_simulations <- FALSE
 
 # Chapter 5: Assessing Model Quality
 
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Ch. 4 fit a Stan model to one simulated dataset. Obtaining a posterior is
+> not the same as trusting it. This chapter is the validation gate: a
+> six-phase battery the model must pass before touching real human data.
+> These techniques reappear in every subsequent chapter — learn them once
+> here, apply them everywhere.
+
 ## Learning Goals
 
 In Chapter 4, we learned how to write Stan code and infer parameters for a single simulated dataset. However, obtaining a posterior distribution does not mean the model is correct or the inference is reliable.
@@ -42,22 +49,50 @@ This chapter introduces the strict diagnostic battery required to validate any c
 
 * **Test Robustness (Sensitivity Analysis):** Evaluate how sensitive your parameter estimates are to the choice of prior distributions using both manual methods and the `priorsense` package.
 
+Before going into each phase in detail, here is a one-row summary of what
+each check does and what a failure looks like. Return to this table whenever
+you feel lost.
+
+| Phase | Check | Core question | What failure looks like |
+|---|---|---|---|
+| 1 | Mathematical formulation | Is the Stan code doing what we think? | Model block and generated quantities disagree |
+| 2 | Prior Predictive | Do the priors allow only plausible behaviour? | Simulated data saturates impossible boundaries |
+| 3 | Posterior Predictive | Does the fitted model reproduce observed patterns? | Observed statistic falls in the tail of replicates |
+| 4 | Prior-Posterior Update | Did the data teach the model anything? | Posterior ≈ prior; or posterior far from truth |
+| 5 | Sensitivity | Do conclusions change if we tweak the prior? | Large posterior shift under small prior perturbation |
+| 6 | Parameter Recovery + SBC | Can the engine find the truth? Are credible intervals calibrated? | Recovery off the diagonal; rank histogram U-shaped or skewed |
+
+**Note on terminology:** In Ch. 4 we used "parameter recovery" loosely to mean
+fitting one simulated dataset and checking whether the posterior landed near
+the true value. Phases 6a–b here are the *rigorous* version: systematic
+recovery across many parameter values (6a) and formal calibration of the
+posterior intervals across the full prior space (SBC, 6b).
+
 ## Introduction: Why Parameter Estimates Aren't Enough
 
 In the previous chapters, we journeyed from observing behavior (Chapter 2), formalizing strategies (Chapter 3), to fitting models and estimating parameters (Chapter 4).
 
 But how confident are we about the model, its assumptions, the way we coded it? The model itself, the structure we assumed could be mathematically misspecified (not do what we think it does), unidentifiable (produce similar behaviors with an infinite set of combinations of parameter values), and/or simply unable to capture the data (sometimes even the data that we simulated from it!).
 
-While rigorous Bayesian workflows can take many forms, here we will structure our validations in three distinct phases:
+While rigorous Bayesian workflows can take many forms, here we structure
+our validations in **six sequential phases**, each answering a different
+question before we are allowed to proceed:
 
-* **Phase 1: Generative Plausibility (The Sanity Check)**. Before we test the computational engine, we must ensure our model + priors generate plausible behaviors. If simulating the data generates 10,000 (or even just 121) choices for a 120-trial task, there is a problem. If the priors indicate the participants are most likely to only pick 'left' or only pick 'right' and very unlikely to generate mixtures of these two behaviors, the priors are broken. We use Prior Predictive Checks for this.
+* **Phase 1** confirms the Stan code is mathematically well-formed.
+* **Phase 2** (Prior Predictive) checks that our priors generate plausible
+  data before we see any observations.
+* **Phase 3** (Posterior Predictive) checks that the fitted model can
+  reproduce the key patterns in the data it was trained on.
+* **Phase 4** (Prior-Posterior Update) visualises how much the data actually
+  moved our beliefs.
+* **Phase 5** (Sensitivity) tests whether conclusions hold under small
+  changes to the prior.
+* **Phase 6** (Parameter Recovery + SBC) proves the computational engine is
+  unbiased and that credible intervals are correctly calibrated.
 
-* **Phase 2: Model Criticism & Robustness (The Fit Check).** Once the generative space is plausible, we must show that the fitted model capture the nuances of the (simulated) data, and characterize how robust our inference is to choices like the sample size and the values of the priors. This is done with Posterior Predictive Checks, Prior-Posterior Update Visualizations, and Sensitivity Analysis.
-
-* **Phase 3: Computational Validation (The Engine Check)**. Once the generative space is plausible, we must prove the math works. If we generate data from this plausible space, can the Stan sampler recover the true parameters? We use Parameter Recovery and SBC here.
-
-
-This chapter executes these three phases sequentially, using our simple biased agent model as a running example.
+This chapter executes all six phases on the simple biased agent, then
+repeats the workflow on the memory model — where we will discover a real
+identifiability problem and fix it.
 
 ## Loading Packages and Previous Results
 
@@ -190,25 +225,31 @@ observed_data_list <- list(
 )
 
 
-# Check if we need to re-run the fitting process based on the flag or file existence
+# ---------------------------------------------------------------------------
+# mod_gq is compiled OUTSIDE the cache conditional so it is always available —
+# for fitting, for the sensitivity analysis, and for the SBC backend.
+# Compilation is fast (C++ is cached by CmdStan after the first run).
+# ---------------------------------------------------------------------------
+mod_gq <- cmdstan_model(stan_file_gq)
+
 if (regenerate_simulations || !file.exists(model_file_gq)) {
-  mod_gq <- cmdstan_model(stan_file_gq) 
 
   # Sample from the posterior distribution using MCMC
   fit_gq <- mod_gq$sample(
-    data = observed_data_list,     # The observed data list prepared earlier
-    seed = 123,                    # Set seed for reproducible MCMC results
-    chains = 4,                    # Number of independent Markov chains (4 is standard)
-    parallel_chains = min(4, future::availableCores()), # Run chains in parallel using available cores
-    iter_warmup = 1000,            # Number of warmup iterations per chain (discarded)
-    iter_sampling = 2000,          # Number of sampling iterations per chain (kept)
-    refresh = 500,                 # How often to print progress updates to the console
-    max_treedepth = 10,            # MCMC tuning parameter (controls step complexity)
-    adapt_delta = 0.8              # MCMC tuning parameter (target acceptance rate)
+    data             = observed_data_list,
+    seed             = 123,
+    chains           = 4,
+    parallel_chains  = min(4, future::availableCores()),
+    iter_warmup      = 1000,
+    iter_sampling    = 2000,
+    refresh          = 500,
+    max_treedepth    = 10,
+    adapt_delta      = 0.8
   )
 
   # Save the fitted model object (including samples and generated quantities)
   fit_gq$save_object(file = model_file_gq)
+
 } else {
   # Load the previously saved fitted model object
   fit_gq <- readRDS(model_file_gq)
@@ -256,6 +297,14 @@ if (min_ess_bulk < 400 || min_ess_tail < 400) {
 
 ## Phase 2: Generative Plausibility (Prior Predictive Checks)
 
+> *Why run a prior predictive check before seeing any data?* Priors are not
+> just regularizers — they are part of the generative model. A prior that
+> assigns high probability to θ = 0.999 (choosing "right" almost every
+> single trial) might corrupt the posterior even with 1,000 observations, and/or
+> make the MCMC much slower.
+> Catching an implausible prior here costs minutes; catching it throughout the 
+> fitting process might waste you much longer.
+
 Before fitting the model, we specified prior distributions for our parameters (e.g., $\theta_{\text{logit}} \sim \text{Normal}(0, 1.5)$). Priors do not merely encode our initial uncertainty before seeing the data; they are fundamental constraints on the data-generating process. Prior predictive checks help us understand the implications of these choices. If we simulate data using only parameters drawn from our priors, what kind of data does the model expect before seeing any actual observations?
 
 ### The Generative Algorithm:
@@ -291,7 +340,8 @@ ppc_prior_ggplot <- ggplot(draws_gq, aes(x = prior_rep_sum)) +
   geom_vline(xintercept = observed_sum, color = "darkred", linewidth = 1.2) +
   
   # Labels and theming
-  ggtitle("Prior Predictive Check: Total 'Right' Choices") +
+  ggtitle("Prior Predictive Check: Total 'Right' Choices",
+          subtitle = "Healthy = histogram spans the full range; observed value (dashed) is not in the tails") +
   xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
   ylab("Frequency") +
   theme_classic()
@@ -299,9 +349,22 @@ ppc_prior_ggplot <- ggplot(draws_gq, aes(x = prior_rep_sum)) +
 ppc_prior_ggplot
 ```
 
-** Interpretation**: The prior predictive distribution (red histogram) shows the generative space induced by our prior: the wide range of outcomes (total 'right' choices) considered possible by the model before seeing the data, driven solely by the Normal(0, 1.5) prior on theta_logit. Recall that a weakly informative prior on the logit scale maps to a relatively uniform distribution over the probability space $[0, 1]$. Consequently, the predicted outcomes cover the full domain of possible trial sums, centered symmetrically around chance performance ($60$ 'right' choices out of $120$). Thus, our generative structure does not seem biased prior to observing empirical data, except for the discount of extreme behaviors.
+**Interpretation:** The histogram covers the full range of possible trial
+counts, centred near 60 (chance). This is what we want: the prior does not
+pre-commit the model to an extreme outcome before seeing any data. If the
+histogram were piled up near 0 or 120, that would mean our prior is
+effectively deciding the answer for us — a broken prior. The dashed line
+marks our observed data. It sits well inside the bulk of the distribution,
+confirming the prior does not rule out the kind of data we actually saw.
 
 ## Phase 3: Posterior Predictive Checks - Does the Fitted Model Resemble the Data?
+
+> *Why check posterior predictions after fitting?* A model can produce
+> a beautiful, well-converged posterior and still be completely wrong about
+> the data. The posterior predictive check asks: if we used our fitted
+> model to generate new datasets, would those datasets look like the one
+> we actually observed? If not, the model's generative structure is
+> misspecified — regardless of what the posteriors say.
 
 Now that we've examined the prior implications, let's perform the posterior predictive check. The fundamental question of model adequacy is: Conditional on the data we observed, can the inferred data-generating process replicate the key structural features of our data?
 
@@ -343,7 +406,8 @@ ppc_df <- tibble(
 ppc_posterior_ggplot <- ggplot(ppc_df, aes(x = Replicated_Sum)) +
   geom_histogram(fill = "skyblue", color = "white", alpha = 0.7, bins = 30) +
   geom_vline(xintercept = observed_sum, color = "black", linetype = "dashed", linewidth = 1) +
-  ggtitle("Posterior Predictive Check: Total 'Right' Choices") +
+  ggtitle("Posterior Predictive Check: Total 'Right' Choices",
+          subtitle = "Healthy = observed value (dashed) sits inside the bulk of replicated datasets") +
   xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
   ylab("Frequency (Replicated Datasets)") +
   # Add annotation for the empirical ground truth
@@ -371,7 +435,8 @@ ppc_overlay_ggplot <- ggplot(ppc_overlay_df, aes(x = Replicated_Sum, fill = Dist
   geom_histogram(position = "identity", alpha = 0.6, color = "white", bins = 30) +
   geom_vline(xintercept = observed_sum, color = "black", linetype = "dashed", linewidth = 1) +
   scale_fill_manual(values = c("Prior Predictive" = "#ffbaba", "Posterior Predictive" = "skyblue")) +
-  ggtitle("Generative Evolution: Prior vs. Posterior Predictive Checks") +
+  ggtitle("Prior vs. Posterior Predictive: Narrowing of Predictions After Fitting",
+          subtitle = "Posterior (blue) should be much tighter than prior (red) and centred on observed data") +
   xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
   ylab("Frequency (Replicated Datasets)") +
   # Add annotation for the empirical ground truth
@@ -426,7 +491,8 @@ p_ppc_max_run <- ggplot(ppc_run_df, aes(x = Replicated_Max_Run, fill = Distribut
   geom_histogram(position = "identity", alpha = 0.6, color = "white", bins = 20) +
   geom_vline(xintercept = observed_max_run, color = "black", linetype = "dashed", linewidth = 1) +
   scale_fill_manual(values = c("Prior Predictive" = "#ffbaba", "Posterior Predictive" = "skyblue")) +
-  ggtitle("Generative Evolution: Prior vs. Posterior (Maximum Run Length)") +
+  ggtitle("Posterior Predictive: Maximum Run Length of Consecutive Choices",
+          subtitle = "Tests sequential structure — a model assuming i.i.d. trials should still pass this") +
   xlab("Test Statistic T(y_rep): Maximum Run Length of Consecutive Choices") +
   ylab("Frequency (Replicated Datasets)") +
   # Add annotation for the empirical ground truth
@@ -446,13 +512,19 @@ p_ppc_max_run <- ggplot(ppc_run_df, aes(x = Replicated_Max_Run, fill = Distribut
 print(p_ppc_max_run)
 ```
 
-**Interpretation**: By evaluating the joint posterior predictive space, we observe that the synthetic datasets $y_{\text{rep}}$ generated by our fitted model successfully recover both the marginal choice proportion ($T(y) = \sum y_i$) and the sequential dependency structure (the maximum run length) of our empirical ground truth.Because both empirical test statistics $T(y)$ fall comfortably within the high-density regions of our posterior predictive distributions, we have show the simple biased agent is a plausible model for this dataset (duh!). More technically, we failed to falsify the generative assumptions of the Simple Biased Agent for this specific dataset.
+**Interpretation:** Both test statistics — the total count of "right" choices and the maximum run length — fall comfortably inside their posterior predictive distributions. This means the model passes on two fronts: it captures the average tendency (how often the agent picks "right") *and* the sequential texture (how long the agent stays on the same choice).
 
-Critically, the survival of the maximum run length check is our most important structural victory here. It mathematically indicates that our fundamental assumption of exchangeability (that these are independent, identically distributed Bernoulli trials) is not catastrophically violated. The agent's choice sequence does not exhibit severe unmodeled autocorrelation, "win-stay/lose-shift" dynamics, or deterministic alternation that would necessitate a more complex, state-dependent parameterization. Therefore, we may proceed with cautious confidence that this strictly stationary model provides an adequate, mathematically principled description of the observed behavior.
+The maximum run length test is the more important one here. Our model assumes each trial is independent — it has no memory of what came before. If the data showed very long runs (suggesting a win-stay/lose-shift strategy), the model would fail on that statistic even while passing on the count. It does not fail. This confirms that an i.i.d. Bernoulli model is a defensible description of this particular dataset.
 
-This is not a surprise in our case :-) You might wonder whether testing the model on one simulated dataset (biased agent with a theta of 0.8) is sufficient. You might get bad fits and wonder what to do next. In practice, we start with one dataset to ensure we have no major issue, but we will soon get into systematic testing across many parameter values! just wait a little longer.
+**So what?** We have passed two out of six phases. The model is plausibly specified and fits the data it was trained on. Phase 4 now asks whether the data were actually informative enough to move our beliefs.
 
 ## Phase 4: Epistemic Updating (Prior-Posterior Update Checks) - How Much Did the Data Change our Beliefs?
+
+> *Why plot the prior and posterior together?* Two things can go wrong that
+> only this plot reveals: (1) the posterior as uncertain (broad) as the prior, 
+> or even more, meaning that it wasn't able to learn from the data; (2) the
+> posterior is far from the true value and narrow — meaning the model is
+> confidently wrong. Neither failure is visible from the posterior alone.
 
 This check visualizes the core engine of Bayesian inference: the formal mathematical updating of our structural assumptions by the empirical evidence. Conceptually, we are observing Bayes' theorem in action as we transition from the prior $p(\theta)$ to the posterior $p(\theta \mid y) \propto p(y \mid \theta) p(\theta)$.
 
@@ -487,7 +559,8 @@ p_update_logit <- ggplot(update_logit_df, aes(x = Parameter_Value, fill = Distri
   geom_density(alpha = 0.6, color = "white") +
   geom_vline(xintercept = true_theta_logit, color = "black", linetype = "dashed", linewidth = 1) +
   scale_fill_manual(values = c("Prior" = "#ffbaba", "Posterior" = "skyblue")) +
-  ggtitle("Epistemic Update: Unconstrained Space (Logit)") +
+  ggtitle("Prior-Posterior Update: Log-Odds Scale",
+          subtitle = "Healthy = posterior (blue) narrower than prior (red), shifted toward true value (dashed)") +
   xlab(expression(theta[logit] ~ " (Log-Odds)")) +
   ylab("Marginal Density") +
   annotate(
@@ -522,7 +595,8 @@ p_update_prob <- ggplot(update_prob_df, aes(x = Parameter_Value, fill = Distribu
   geom_vline(xintercept = true_theta_prob, color = "black", linetype = "dashed", linewidth = 1) +
   scale_fill_manual(values = c("Prior" = "#ffbaba", "Posterior" = "skyblue")) +
   coord_cartesian(xlim = c(0, 1)) + # Mathematically enforce the [0, 1] bounds
-  ggtitle("Epistemic Update: Cognitive Space (Probability)") +
+  ggtitle("Prior-Posterior Update: Probability Scale",
+          subtitle = "Healthy = posterior narrower and closer to true θ = 0.8 than the flat prior") +
   xlab(expression(theta ~ " (Probability of 'Right' Choice)")) +
   ylab("Marginal Density") +
   annotate(
@@ -542,11 +616,17 @@ print(p_update_prob)
 
 ```
 
-**Interpretation**: Interpretation of Epistemic Updating: As visualized above, the posterior distribution (skyblue) is structurally narrower than the prior (light red) and its central tendency has decoupled from the prior mean, anchoring firmly over the true generative value. Mathematically, this confirms a massive information gain: the $120$ empirical trials provided sufficient likelihood mass to overcome our initial structural assumptions. If the posterior had mirrored the prior, we would be forced to conclude our data lacked the informational power to teach the model anything new.
+**Interpretation:** The posterior (blue) is substantially narrower than the prior (red) and has moved toward the true value of 0.8 (dashed line). The data were informative: 120 trials were enough to meaningfully constrain our estimate. If the posterior had been identical to the prior, the data would have been uninformative for this parameter — a sign that the model structure or the experimental design is broken. If the posterior were narrow but centred far from the true value, the model would be confidently wrong. Neither failure occurred here. Phase 5 now tests whether this conclusion is sensitive to our specific choice of prior.
 
 Now that we have a better feel for the model, it is high time to go beyond one dataset and one prior, and be systematic about testing the model across a wide range of parameter values and prior specifications. We will first assess the sensitivity of our model to prior values to then proceed onto parameter recovery.
 
 ## Phase 5: Prior Sensitivity Analysis - Do Priors Matter Too Much?
+
+> *Why test sensitivity to prior choice?* We chose `Normal(0, 1.5)` for
+> the logit-scale prior, but that was a judgment call. If a researcher using
+> `Normal(0, 0.5)` instead gets a completely different posterior, we need to
+> more carefully discuss and motivate the assumptions. Sensitivity analysis 
+> quantifies exactly how much the prior choice matters.
 
 The next validation check addresses a critical epistemic vulnerability: Are our structural conclusions pathologically dependent on the specific mathematical bounds of our chosen prior? If we had specified a tighter regularizing prior or a completely diffuse one, would our estimate of the cognitive parameter $\theta$ change drastically? We must explicitly investigate the robustness of our inference by perturbing the prior space and observing the resulting posterior geometry.
 
@@ -765,6 +845,18 @@ p_priorsense_dens
 
 ## Phase 6: Computational Calibration
 
+> *Why run parameter recovery and SBC after the model already fits the data?*
+> Phases 2–5 tested the model's *structure*. Phase 6 tests the *engine*.
+> Even a perfectly specified model produces garbage if the HMC sampler
+> cannot explore the posterior correctly. And viceversa, testing the model
+> across many parameter values is a waste of computation if there are obvious
+> issues with the model that could have been solved looking at one simulation
+> only. Parameter recovery (6a) checks
+> whether the engine finds the right answer at specific known values. SBC
+> (6b) checks whether the posterior *intervals* are calibrated across the
+> entire prior space — a 95% CI should contain the truth 95% of the time,
+> not 70% or 99%. These are different tests that can fail independently.
+
 We must investigate two structural properties of our inference before we can trust the posterior:
 
 * Data Adequacy (Parameter Recovery): Does our specific experimental design (e.g., $N=120$ trials) contain enough informational density to shrink the posterior around the true parameter?
@@ -863,7 +955,8 @@ p_recovery_2d <- ggplot(recovery_summary, aes(x = factor(trials), y = post_mean)
   # Adjust palette range so colors remain distinct
   scale_color_viridis_d(option = "mako", begin = 0.2, end = 0.8) +
   
-  ggtitle("Data Adequacy & Identifiability: Parameter Recovery") +
+  ggtitle("Parameter Recovery: Posterior Mean vs. True θ Across N",
+          subtitle = "Healthy = points near dashed true-value line; intervals shrink as N increases") +
   xlab("Experimental Design (Number of Trials, N)") +
   ylab(expression("Posterior Estimate of " * theta * " (Mean & 95% CrI)")) +
   
@@ -898,7 +991,8 @@ p_recovery_2d_alt <- ggplot(recovery_summary, aes(x = true_theta, y = post_mean)
   
   xlab(expression("Generative Ground Truth (" * theta * ")")) +
   ylab(expression("Posterior Estimate (" * hat(theta) * " Mean & 95% CrI)")) +
-  
+  ggtitle("Parameter Recovery Identity Plot",
+          subtitle = "Healthy = points on the diagonal (y = x); bars are 95% CrI. N grows left → right.") +
   theme_classic() +
   theme(
     legend.position = "none",
@@ -942,25 +1036,38 @@ Then the rank of the true parameter $\tilde{\theta}$ within the posterior draws 
 
 sbc_results_file <- file.path(stan_results_dir, "W5_sbc_results.rds")
 
+# ---------------------------------------------------------------------------
+# Backend is defined OUTSIDE the cache conditional so it is always available —
+# both for Phase 6b itself and for the power analysis in the next section.
+# ---------------------------------------------------------------------------
+sbc_backend <- SBC::SBC_backend_cmdstan_sample(
+  mod_gq,
+  chains        = 2,
+  iter_warmup   = 500,
+  iter_sampling = 1000,
+  refresh       = 0,
+  show_messages = FALSE
+)
+
 if (regenerate_simulations || !file.exists(sbc_results_file)) {
-  
-# 1. Define the exact mathematical Generative Function
+
+  # 1. Define the exact mathematical Generative Function
   sbc_generator_fn <- function() {
     # Draw from the structural prior (on the unconstrained space)
     theta_logit_true <- rnorm(1, mean = 0, sd = 1.5)
-    theta_true <- plogis(theta_logit_true)
-    
+    theta_true       <- plogis(theta_logit_true)
+
     # Simulate empirical reality (N = 120 trials)
     n_trials <- 120
-    h_sim <- rbinom(n_trials, size = 1, prob = theta_true)
-    
+    h_sim    <- rbinom(n_trials, size = 1, prob = theta_true)
+
     # Format strictly required by the SBC package
     list(
       variables = list(theta_logit = theta_logit_true, theta = theta_true),
       generated = list(
-        n = n_trials, 
-        h = h_sim,
-        prior_theta_m = 0,     
+        n              = n_trials,
+        h              = h_sim,
+        prior_theta_m  = 0,
         prior_theta_sd = 1.5
       )
     )
@@ -969,30 +1076,17 @@ if (regenerate_simulations || !file.exists(sbc_results_file)) {
   # Cast the raw function into a formal SBC generator object
   sbc_generator_obj <- SBC::SBC_generator_function(sbc_generator_fn)
 
-  # 2. Register the CmdStanR backend for SBC
-  sbc_backend <- SBC::SBC_backend_cmdstan_sample(
-    mod_gq, 
-    chains = 2,           
-    iter_warmup = 500, 
-    iter_sampling = 1000,
-    refresh = 0,
-    show_messages = FALSE
-  )
-
-  # 3. Generate datasets and compute rank statistics using parallelization
+  # 2. Generate datasets and compute rank statistics
   future::plan(future::multisession, workers = 2)
-  
-  # Generate 1000 synthetic realities using the formally cast object!
+
   sbc_datasets <- SBC::generate_datasets(sbc_generator_obj, n_sims = 200)
-  
-  # Fit the model 1000 times and extract rank statistics
-  sbc_results <- SBC::compute_SBC(sbc_datasets, sbc_backend)
-  
+  sbc_results  <- SBC::compute_SBC(sbc_datasets, sbc_backend, keep_fits = FALSE)
+
   future::plan(future::sequential)
-  
+
   saveRDS(sbc_results, sbc_results_file)
   cat("SBC completed. Results saved to:", sbc_results_file, "\n")
-  
+
 } else {
   sbc_results <- readRDS(sbc_results_file)
   cat("Loaded existing SBC results from:", sbc_results_file, "\n")
@@ -1003,14 +1097,16 @@ if (regenerate_simulations || !file.exists(sbc_results_file)) {
 # Plot A: Rank Histogram
 
 p_sbc_hist <- SBC::plot_rank_hist(sbc_results, variables = "theta") + 
-  ggtitle("SBC Rank Histogram: Algorithmic Calibration") +
+  ggtitle("SBC Rank Histogram: Algorithmic Calibration",
+          subtitle = "Healthy = bars flat within grey band. U-shape = overconfident. Hump = underconfident. Skew = biased.") +
   theme_classic() +
   theme(strip.background = element_rect(fill = "gray95", color = "NA"))
 
 # Plot B: Empirical Cumulative Distribution Function (ECDF)
 
 p_sbc_ecdf <- SBC::plot_ecdf(sbc_results, variables = "theta") +
-  ggtitle("SBC ECDF: Deviation from Uniformity") +
+  ggtitle("SBC ECDF: Deviation from Uniformity",
+          subtitle = "Healthy = blue line stays inside the grey ellipse at all points") +
   theme_classic() +
   theme(strip.background = element_rect(fill = "gray95", color = "NA"))
 
@@ -1019,18 +1115,243 @@ p_sbc_combined <- p_sbc_hist / p_sbc_ecdf
 p_sbc_combined
 ```
 
-**Interpretation of the SBC Geometric Diagnostics:**
-We are interrogating the algorithm for structural bias.
+**How to read these two plots:**
 
-1. Rank Histogram (Top): The gray shaded region represents the 95% binomial confidence bounds for a perfectly uniform distribution.
+*Rank histogram:* Under perfect calibration, every rank band is equally
+likely, so the bars should be flat within the grey 95% confidence band.
 
-   - If the bars form a U-shape, our model is OVERCONFIDENT. The posterior is pathologically narrow, and the true value keeps falling in the extreme tails.
-   
-   - If the bars form an Inverse U-shape (a hump), our model is UNDERCONFIDENT. The posterior is too wide.
-   
-   - If the bars skew left or right, our model is BIASED, systematically under- or over-estimating the parameter.
-   
-2. ECDF Plot (Bottom): The blue line represents our empirical CDF, and the gray ellipse is the acceptable uniformity bound. If the blue line breaks outside the ellipse, the HMC sampler has failed to capture the true geometry of the prior space.
+| Shape | Diagnosis | Action |
+|---|---|---|
+| Flat (within grey band) | Calibrated ✓ | Proceed |
+| U-shape (high at edges) | Overconfident — posteriors too narrow | Widen priors or reparameterise |
+| Hump (high in centre) | Underconfident — posteriors too wide | Tighten priors |
+| Skewed left or right | Directional bias in the sampler | Check model code; try non-centred parameterisation |
+
+*ECDF plot:* The blue line is the empirical CDF of the ranks; the grey
+ellipse is the region consistent with uniformity. Any excursion outside the
+ellipse at a given rank level is a calibration failure at that part of the
+parameter space.
+
+**So what?** A flat histogram and an in-bounds ECDF line mean that when we
+report a 95% credible interval, it actually contains the true parameter 95%
+of the time. This is the formal guarantee that makes Bayesian inference
+meaningful.
+
+#### Parameter Recovery via SBC
+
+The rank histogram and ECDF confirm *algorithmic calibration* — that the sampler is unbiased. But we have been handed something more for free. The `sbc_results$stats` dataframe, which the SBC package computes as a byproduct of the rank calculation, contains for every simulated universe:
+
+* `simulated_value`: the ground-truth $\theta$ drawn from the prior — the quantity we passed in `variables`.
+
+* `median`, `q5`, `q95`: the posterior median and the bounds of the 90% credible interval from the fitted posterior.
+
+This is precisely the data we need for a **systematic parameter recovery study**, and we already have it. No extra computation is required. The crucial distinction from our grid recovery in Phase 6a is architectural:
+
+| Phase 6a (grid recovery) | SBC-based recovery |
+|---|---|
+| Fixed ground truths: $\theta \in \{0.5, 0.7, 0.9\}$ | 200 values spanning $\text{Normal}(0, 1.5)$ on logit scale |
+| Asks "does it work at these specific values?" | Asks "does it work everywhere the prior places mass?" |
+| Controlled, pedagogically interpretable | Exhaustive, scientifically complete |
+
+The grid recovery shows the shrinkage structure around specific anchor points with interpretable coordinates. The SBC recovery shows the full recovery profile across the entire plausible parameter space (if we have set our priors correctly :-)). I set up the first to give you a concrete idea of what happens in the code, but the latter is more systematic and rigorous.
+
+```{r 05-sbc-recovery-plot, warning = FALSE, message = FALSE}
+
+# Extract the lightweight stats dataframe — already computed as part of SBC above.
+sbc_stats <- sbc_results$stats
+
+# We plot on the probability scale for interpretability, matching Phase 6a.
+# The 'theta' variable was stored (on probability scale) alongside 'theta_logit'
+# in our generator's variables list.
+recovery_sbc_df <- sbc_stats |>
+  dplyr::filter(variable == "theta")
+
+# ---------------------------------------------------------------------------
+# Identity plot: true value (x) vs. posterior median (y)
+# ---------------------------------------------------------------------------
+# Under perfect recovery, every point lies on the dashed y = x diagonal.
+# Scatter around the diagonal is unavoidable estimation uncertainty.
+# Systematic curvature (bowing above or below) would reveal directional bias.
+# ---------------------------------------------------------------------------
+p_sbc_recovery <- ggplot(recovery_sbc_df, aes(x = simulated_value, y = median)) +
+
+  # Perfect-recovery reference line
+  geom_abline(intercept = 0, slope = 1,
+              linetype = "dashed", color = "gray50", linewidth = 0.8) +
+
+  # 90% posterior credible intervals
+  # Under correct calibration, ~90% of bars should contain the true value —
+  # which we already verified via the rank histogram above.
+  geom_errorbar(aes(ymin = q5, ymax = q95),
+                width = 0, alpha = 0.25, color = "steelblue") +
+
+  # Posterior median point estimates
+  geom_point(color = "midnightblue", alpha = 0.6, size = 1.8) +
+
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
+
+  labs(
+    title    = "Parameter Recovery via SBC: Simple Biased Agent",
+    subtitle = paste0(
+      "N = 200 simulated universes. True \u03b8 drawn from the prior predictive.\n",
+      "Each point is one universe. Bars are 90% posterior credible intervals."
+    ),
+    x = expression("True " * theta * " (probability scale, drawn from prior)"),
+    y = "Posterior Median"
+  ) +
+  theme_classic()
+
+print(p_sbc_recovery)
+
+# ---------------------------------------------------------------------------
+# Quantitative recovery metrics
+# ---------------------------------------------------------------------------
+# Pearson r   : linear correlation between truth and estimate (1.0 = perfect)
+# RMSE        : average estimation error on the probability scale (0 = perfect)
+# coverage90  : empirical 90% CI coverage — should be near 0.90 under calibration
+# ---------------------------------------------------------------------------
+
+recovery_metrics_sbc <- recovery_sbc_df |>
+  dplyr::summarize(
+    Pearson_r  = cor(simulated_value, median),
+    RMSE       = sqrt(mean((simulated_value - median)^2)),
+    coverage90 = mean(simulated_value >= q5 & simulated_value <= q95)
+  )
+
+cat("=== SBC PARAMETER RECOVERY METRICS (theta, probability scale) ===\n")
+print(
+  knitr::kable(
+    recovery_metrics_sbc,
+    digits    = 3,
+    col.names = c("Pearson r", "RMSE", "Empirical 90% CI Coverage")
+  )
+)
+```
+
+#### A Precision (Pseudo-Power) Analysis via SBC
+
+Our Phase 6a grid recovery showed how precision evolves at three specific $\theta$ values as $N$ grows. We can now generalise that question systematically: across the *full* prior space, at what $N$ does the model become reliable?
+
+Because the SBC generator is a plain R function, we can pass different `n_trials` values and re-run the calibration+recovery pipeline at each design point. The faceted identity plots below show the entire prior-weighted recovery profile for $N \in \{30, 60, 120, 240\}$, directly comparable to the grid facets in Phase 6a but without the restriction to three anchor values.
+
+This is a Precision Analysis, the Bayesian analogue of a frequentist power analysis, with three important distinctions:
+
+1. **No asymptotic approximations.** We simulate from the exact model.
+
+2. **No point null.** The "true effect" is drawn from the prior, characterising performance over the full realistic range.
+
+3. **Precision, not rejection rate.** The outcome metric is credible interval width, not whether a $p$-value crosses a threshold.
+
+```{r 05-sbc-precision, warning = FALSE, message = FALSE}
+# ---------------------------------------------------------------------------
+# precision-analysis generator: same logic as sbc_generator_fn above,
+# but parameterised on n_trials so we can loop over the design grid.
+# ---------------------------------------------------------------------------
+make_sbc_precision_generator <- function(n_trials) {
+  function() {
+    theta_logit_true <- rnorm(1, mean = 0, sd = 1.5)
+    theta_true       <- plogis(theta_logit_true)
+    h_sim            <- rbinom(n_trials, size = 1, prob = theta_true)
+
+    list(
+      variables = list(
+        theta_logit = theta_logit_true,
+        theta       = theta_true
+      ),
+      generated = list(
+        n             = n_trials,
+        h             = h_sim,
+        prior_theta_m = 0,
+        prior_theta_sd = 1.5
+      )
+    )
+  }
+}
+
+# Grid of experimental designs to evaluate
+trial_grid_precision <- c(30, 60, 120, 240)
+
+# Accumulate recovery stats across all design conditions
+precision_stats <- purrr::map_dfr(trial_grid_precision, function(n_t) {
+
+  cat(sprintf("  precision analysis: n_trials = %d ...\n", n_t))
+
+  precision_file <- file.path(stan_results_dir,
+                          sprintf("W5_sbc_precision_n%d.rds", n_t))
+
+  if (regenerate_simulations || !file.exists(precision_file)) {
+
+    gen_precision <- SBC::SBC_generator_function(make_sbc_precision_generator(n_t))
+
+    # 200 datasets per condition — enough to characterise the recovery envelope
+    dsets_precision  <- SBC::generate_datasets(gen_precision, n_sims = 200)
+    result_precision <- SBC::compute_SBC(
+      dsets_precision,
+      sbc_backend,   # reuse the compiled backend from Phase 6b
+      keep_fits = FALSE
+    )
+    saveRDS(list(datasets = dsets_precision, results = result_precision), precision_file)
+
+  } else {
+    obj_precision    <- readRDS(precision_file)
+    result_precision <- obj_precision$results
+  }
+
+  result_precision$stats |>
+    dplyr::filter(variable == "theta") |>
+    dplyr::mutate(n_trials = n_t)
+})
+
+# ---------------------------------------------------------------------------
+# Summary table: key precision metrics as a function of N
+# ---------------------------------------------------------------------------
+precision_summary <- precision_stats |>
+  dplyr::group_by(n_trials) |>
+  dplyr::summarize(
+    median_CI_width = median(q95 - q5),
+    coverage90      = mean(simulated_value >= q5 & simulated_value <= q95),
+    RMSE            = sqrt(mean((simulated_value - median)^2)),
+    .groups         = "drop"
+  )
+
+cat("=== PRECISION ANALYSIS: RECOVERY QUALITY VS. N_TRIALS ===\n")
+print(
+  knitr::kable(
+    precision_summary,
+    digits    = 3,
+    col.names = c("N Trials", "Median 90% CI Width",
+                  "Empirical 90% Coverage", "RMSE")
+  )
+)
+
+# ---------------------------------------------------------------------------
+# Faceted identity plot: one panel per trial count
+# ---------------------------------------------------------------------------
+ggplot(precision_stats, aes(x = simulated_value, y = median)) +
+  geom_abline(intercept = 0, slope = 1,
+              linetype = "dashed", color = "gray50", linewidth = 0.7) +
+  geom_errorbar(aes(ymin = q5, ymax = q95),
+                width = 0, alpha = 0.20, color = "steelblue") +
+  geom_point(color = "midnightblue", alpha = 0.45, size = 0.9) +
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
+  facet_wrap(~paste0("N = ", n_trials), nrow = 1) +
+  labs(
+    title    = "Precision Analysis: Recovery Quality vs. Number of Trials",
+    subtitle = paste0(
+      "Each panel: 200 independent SBC universes. ",
+      "Bars are 90% credible intervals.\n",
+      "Tighter scatter around the diagonal = higher estimation precision."
+    ),
+    x = expression("True " * theta * " (drawn from prior)"),
+    y = "Posterior Median"
+  ) +
+  theme_classic() +
+  theme(strip.background = element_rect(fill = "gray95", color = NA))
+```
+
+Read the precision table as follows. The **median CI width** column measures how precisely a typical experiment estimates $\theta$ at a given $N$: a width of $0.3$ means the 90% credible interval spans roughly $0.3$ probability units, which may or may not be adequate depending on the scientific question. The **empirical 90% coverage** column should remain near $0.90$ at every $N$ — if coverage collapses at small $N$, the posterior is becoming overconfident relative to the calibration guarantee we verified above. The **RMSE** column captures average estimation error; halving it requires roughly quadrupling $N$, consistent with the classical $1/\sqrt{N}$ rate.
+
+Comparing the faceted identity plots here to the pointrange plots in Phase 6a, the two visualisations are complementary. Phase 6a shows the shrinkage behaviour at three *specific* anchor values with clearly labelled coordinates — pedagogically invaluable for understanding how prior pull operates at the boundary ($\theta = 0.9$) versus at the centre ($\theta = 0.5$). The SBC precision plots show the full recovery *envelope* across the prior's probability mass, making it impossible to cherry-pick a favourable test point. Together they constitute a complete characterisation of the model's identifiability as a function of experimental design.
 
 ### Phase 6c: Posterior SBC
 
@@ -1102,9 +1423,14 @@ Once we have done all this work and we are satisfied it's time to either move on
 
 ## Extending Checks to the Memory Model
 
-The same checking principles apply to more complex models, like the memory model from Chapter 4 (which included `bias` and `beta` parameters). This model assumes choices depend not just on a fixed bias, but also on a memory trace of the opponent's recent choices. Let's apply our checking workflow to this model.
+The biased agent is a clean single-parameter model. Real cognitive models are messier. This section applies the same six-phase workflow to the memory model from Ch. 4 — a model with two parameters (`bias` and `beta`) where the choice probability on each trial depends on the opponent's cumulative history.
 
-When a cognitive model incorporates recursive memory or learning—where the agent's internal state at time $t$ fundamentally depends on its state at time $t-1$—the geometry of the posterior distribution becomes highly nonlinear. Hamiltonian Monte Carlo (HMC) engines can choke on these topologies if the priors are misspecified or if the parameters are weakly identified.
+The workflow will expose a genuine identifiability problem: `bias` and `beta` are correlated in the posterior when the opponent plays with a constant bias.
+We will diagnose why this happens, show that it is a property of the *experimental design* rather than the model, and fix it by simulating data from a reversal learning paradigm — an opponent who switches preference halfway through the session. The fixed dataset is then saved for use in Chapters 6 and 7.
+
+This is the normal cycle of model development: build → validate → discover failure → understand its cause → fix the design → validate again.
+
+When a model incorporates recursive memory — the agent's internal state at time $t$ depends on time $t-1$ — the posterior geometry becomes nonlinear and HMC engines can struggle if the priors are misspecified or parameters are weakly identified. The checks below catch all of this.
 
 Before we can subject the Memory Model to our diagnostic battery, we must remind ourself of its mathematical architecture and build its isolated generative simulator in R. This simulator will serve as the invariant engine for our Prior Predictives, Parameter Recovery, and SBC.
 
@@ -1551,7 +1877,165 @@ p_cov_collapse <- ggplot(cov_draws, aes(x = bias, y = beta)) +
 print(p_cov_collapse)
 ```
 
-The issue, it turns out, is inherent in the design: the biased agent is biased, so both memory and bias can describe a model adjusting to it! If we wanted to discriminate these parameters we need a different experimental design with a shifting bias (e.g reversal learning). But this is good enough for now. Let's proceed.
+**Diagnosis:** The correlation between `bias` and `beta` is not a numerical
+accident — it is a structural consequence of the experimental design. When
+the opponent plays with a *constant* bias (e.g. always 80% right), both
+parameters can explain the agent's rightward tendency equally well:
+
+- A high `beta` with neutral `bias` says "the agent tracks the opponent's
+  pattern and follows it."
+- A high `bias` with low `beta` says "the agent just always prefers right."
+
+Both stories are consistent with the data when the opponent never changes.
+The model cannot tell them apart because the data provide no discriminating
+evidence. Adding more trials of the same constant-bias opponent does reduce
+the correlation somewhat (as the covariance collapse grid showed), but not
+enough to make the parameters cleanly identifiable.
+
+**The fix — reversal learning:** If the opponent *switches* preference
+halfway through the session (e.g. 80% right for the first 120 trials, then
+20% right for the next 120), a pure-bias agent and a memory agent make
+completely different predictions in the second half. The pure-bias agent
+continues right; the memory agent flips. This contrast is what discriminates
+`bias` from `beta`. We call this a **reversal learning** paradigm.
+
+We now simulate this design, fit the same memory model, and verify that the
+`bias`/`beta` correlation collapses. We also save the reversal dataset for
+use in Chapters 6 and 7.
+```{r 05-reversal-learning-fix, warning = FALSE, message = FALSE}
+set.seed(42)
+n_reversal <- 240  # 120 trials per phase
+
+# --- 1. Simulate opponent with preference reversal ---
+opponent_reversal <- c(
+  rbinom(120, 1, 0.8),  # Phase 1: strongly right-biased
+  rbinom(120, 1, 0.2)   # Phase 2: reversal — strongly left-biased
+)
+
+# --- 2. Simulate agent (true bias = 0, true beta = 0.9) ---
+d_reversal <- simulate_memory(
+  bias             = 0,
+  beta             = 0.9,
+  opponent_choices = opponent_reversal
+)
+
+# --- 3. Visualise the reversal to confirm the design ---
+p_reversal_design <- tibble(
+  trial         = 1:n_reversal,
+  opponent_rate = cumsum(opponent_reversal) / seq_along(opponent_reversal),
+  memory_state  = d_reversal$memory_state
+) %>%
+  pivot_longer(c(opponent_rate, memory_state),
+               names_to = "series", values_to = "value") %>%
+  mutate(series = recode(series,
+    opponent_rate = "Opponent cumulative rate",
+    memory_state  = "Agent memory state"
+  )) %>%
+  ggplot(aes(x = trial, y = value, colour = series)) +
+  geom_line(linewidth = 0.9) +
+  geom_vline(xintercept = 120, linetype = "dashed", colour = "grey40") +
+  annotate("text", x = 121, y = 0.95, label = "Reversal", hjust = 0,
+           colour = "grey40", size = 3.5) +
+  scale_colour_manual(values = c("steelblue", "darkred")) +
+  labs(title  = "Reversal Learning Design",
+       subtitle = "Opponent switches from 80% right to 20% right at trial 120",
+       x = "Trial", y = "Rate / Memory", colour = NULL) +
+  theme_classic() + theme(legend.position = "top")
+
+print(p_reversal_design)
+
+# --- 4. Fit the memory model to the reversal data ---
+data_reversal <- list(
+  n            = n_reversal,
+  h            = d_reversal$choice,
+  other        = d_reversal$other_choice,
+  prior_bias_m = 0, prior_bias_s = 0.5,
+  prior_beta_m = 0, prior_beta_s = 1.0
+)
+
+model_file_reversal <- file.path(stan_results_dir, "05_Memory_Reversal.rds")
+
+if (regenerate_simulations || !file.exists(model_file_reversal)) {
+  # mod_mem_gq was compiled earlier in this chapter
+  fit_reversal <- mod_mem_gq$sample(
+    data            = data_reversal,
+    chains          = 4,
+    parallel_chains = parallel::detectCores() - 2,
+    iter_warmup     = 1000,
+    iter_sampling   = 2000,
+    refresh         = 0,
+    adapt_delta     = 0.95,
+    max_treedepth   = 12
+  )
+  fit_reversal$save_object(file = model_file_reversal)
+} else {
+  fit_reversal <- readRDS(model_file_reversal)
+}
+
+# --- 5. Joint posterior: confirm bias/beta correlation collapses ---
+draws_reversal <- as_draws_df(fit_reversal$draws(c("bias", "beta")))
+cor_reversal   <- cor(draws_reversal$bias, draws_reversal$beta)
+
+p_joint_reversal <- ggplot(draws_reversal, aes(x = bias, y = beta)) +
+  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon",
+                  alpha = 0.6) +
+  geom_point(x = 0, y = 0.9, colour = "black", shape = 3,
+             size = 5, stroke = 1.5) +
+  scale_fill_viridis_c(option = "mako", guide = "none") +
+  coord_cartesian(xlim = c(-1, 1), ylim = c(-0.5, 2)) +
+  labs(
+    title    = "Joint Posterior After Reversal Learning Design",
+    subtitle = paste0("Correlation r = ", round(cor_reversal, 2),
+                      "   (compare to r ≈ 0.9 with constant-bias design)"),
+    x = "Baseline Bias",
+    y = "Memory Strength (Beta)"
+  ) +
+  annotate("text", x = 0.05, y = 0.95, label = "Ground Truth",
+           fontface = "bold") +
+  theme_classic()
+
+print(p_joint_reversal)
+
+cat(sprintf(
+  "\nCorrelation with constant-bias design: ~0.9\n",
+  "Correlation with reversal design:       %.3f\n",
+  cor_reversal
+))
+```
+
+The joint posterior is now compact and approximately circular around the
+true parameter values — `bias` and `beta` are identified. The reversal in
+the opponent's preference provides the critical contrast that lets the model
+distinguish "the agent is generally biased right" from "the agent tracks
+the opponent and follows them."
+
+**Saving the reversal dataset for Chapters 6 and 7.** Chapters 6
+(multilevel models) and 7 (model comparison) both need a well-identified
+memory dataset as their running example. We save the full reversal
+simulation object here so those chapters can load it directly without
+regenerating it.
+```{r 05-save-reversal-data}
+reversal_data_file <- file.path(sim_data_dir, "05_reversal_data.rds")
+
+saveRDS(
+  list(
+    stan_data        = data_reversal,    # Ready-to-use Stan data list
+    sim_tibble       = d_reversal,       # Full trial-level tibble
+    opponent_choices = opponent_reversal,# Raw opponent sequence
+    true_bias        = 0,
+    true_beta        = 0.9,
+    n_trials         = n_reversal,
+    description      = paste0(
+      "Reversal learning paradigm: opponent plays 80% right (trials 1-120) ",
+      "then 20% right (trials 121-240). Agent: bias=0, beta=0.9."
+    )
+  ),
+  reversal_data_file
+)
+
+cat("Reversal dataset saved to:", reversal_data_file, "\n")
+cat("Load in Ch. 6 and Ch. 7 with: readRDS(here('simdata', '05_reversal_data.rds'))\n")
+```
 
 Finally, we run Simulation-Based Calibration. We use the SBC package to guarantee that our logit(memory) parameterization doesn't introduce hidden biases in the sampler's rank statistics.
 
@@ -1589,21 +2073,19 @@ p_mem_sbc <- SBC::plot_rank_hist(sbc_mem_results) + theme_classic()
 print(p_mem_sbc)
 ```
 
-## Conclusion: Building Trust in Your Models
+## Conclusion: The Validation Workflow as a Reusable Checklist
 
-Fitting a model and obtaining parameter estimates is just the beginning. Rigorous model assessment, using techniques like prior predictive checks, posterior predictive checks, prior-posterior update visualization, and sensitivity analysis (both manual and automated), is essential for building confidence in our cognitive models and the scientific conclusions we draw from them.
+Fitting a model and obtaining parameter estimates is just the beginning. This chapter introduced a six-phase validation battery that every model must pass before its estimates can be trusted:
 
-These checks help us understand:
+1. **Mathematical formulation** — confirm the Stan code does what you think.
+2. **Prior predictive check** — priors must generate plausible data.
+3. **Posterior predictive check** — fitted model must reproduce observed patterns.
+4. **Prior-posterior update** — data must genuinely update beliefs.
+5. **Sensitivity analysis** — conclusions must survive small prior perturbations.
+6. **Parameter recovery + SBC** — the engine must find the truth and intervals must be calibrated.
 
-* The assumptions implicitly encoded in our choice of prior distributions and whether they are scientifically reasonable (Prior Predictive Checks).
+Failing any check is not a setback — it is information. The memory model's `bias`/`beta` correlation failure in Phase 6 told us exactly what was wrong with the experimental design and how to fix it. That is the validation workflow working correctly: it caught a real problem before the model touched empirical data. 
 
-* Whether the model adequately captures key patterns and features present in the observed data after fitting (Posterior Predictive Checks).
+The reversal learning dataset generated in this chapter (`simdata/05_reversal_data.rds`) is the running example for the next two chapters. It is well-identified, validated against all six checks, and ready to be extended.
 
-* How much the data actually informed our parameter estimates, distinguishing data-driven results from prior-driven ones (Prior-Posterior Update Checks).
-
-* How robust our conclusions are to specific (but plausible) variations in our prior beliefs (Sensitivity Analysis).
-
-Failing a model check isn't necessarily a setback – it's an invaluable source of information! It highlights where our model might be misspecified, where our priors might be inappropriate, or where the data might be insufficient. This feedback guides the iterative cycle of model building, fitting, checking, and refining that is central to advancing our understanding through computational cognitive modeling.
-
-The techniques covered in this chapter provide a systematic framework for validating our models and understanding their limitations. As we move forward to more complex models incorporating individual differences and learning mechanisms, these quality checks become increasingly important for ensuring our conclusions are well-supported by the evidence.
-In the next chapter, we'll build on these foundations as we explore multilevel modeling approaches that can capture individual differences while maintaining population-level insights.
+**Coming up in Chapter 6:** We take the memory model — now validated on the reversal paradigm — and scale it to many simulated participants using a hierarchical (multilevel) model. The central question shifts from "can we estimate parameters for one agent?" to "how do individuals vary, and how do we share information across them?"

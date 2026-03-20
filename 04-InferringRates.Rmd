@@ -1,12 +1,20 @@
 
 # From simulation to model fitting
 
-In Chapter 4, we formalized verbal models into computational agents and explored their behavior through simulation by *setting* their parameters (like bias `rate` or WSLS rules). However, when analyzing real experimental data, we don't know the true parameter values underlying a participant's behavior. The core task shifts from simulation to **parameter estimation**: inferring the plausible values of model parameters *given* the observed data.
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Ch. 3 built forward models — code that generates data *from* known parameters.
+> This chapter reverses the arrow: given observed choices, we infer the parameters
+> that most plausibly produced them. This is **Bayesian parameter estimation**, and
+> it is the engine at the heart of all remaining chapters. We fit to *simulated*
+> data here precisely because we know the ground truth — a sanity check before the
+> engine is handed real human data in Ch. 5.
+
+In Chapter 3, we formalized verbal models into computational agents and explored their behavior through simulation by *setting* their parameters (like bias `rate` or WSLS rules). However, when analyzing real experimental data, we don't know the true parameter values underlying a participant's behavior. The core task shifts from simulation to **parameter estimation**: inferring the plausible values of model parameters *given* the observed data.
 
 
 ## Learning Goals
 
-This chapter transitions from simulating predefined models (Chapter 4) to inferring model parameters from data using Bayesian methods. By the end of this chapter, you will be able to:
+This chapter transitions from simulating predefined models (Chapter 3) to inferring model parameters from data using Bayesian methods. By the end of this chapter, you will be able to:
 
 * **Model Cognitive Processes:** Apply these techniques to estimate parameters for simple cognitive strategies, including biased choice and different types of memory models.
 * **Master Reparameterization:** Learn to rethink the mathematical form of models. You will appreciate the utility of the log-odds transformation for mapping bounded probability parameters into unbounded spaces.
@@ -24,7 +32,7 @@ Why is this a challenge?
 
 3.  **Model Plausibility:** We need to determine not just *if* a model fits, but *how well* it fits, what are its strengths and limitations, and whether the estimated parameter values are theoretically meaningful.
 
-Consider the biased agent from Chapter 4. We simulated agents with a known `rate`. Now, imagine you only have the sequence of choices (the `h` data) from an unknown agent. How can you estimate the underlying `rate` that most likely generated those choices?
+Consider the biased agent from Chapter 3. We simulated agents with a known `rate`. Now, imagine you only have the sequence of choices (the `h` data) from an unknown agent. How can you estimate the underlying `rate` that most likely generated those choices?
 
 **Our Approach: Bayesian Inference with Stan**
 
@@ -35,6 +43,17 @@ This chapter introduces **Bayesian inference** as our primary tool for parameter
 3.  **Evaluate Fits:** Examine the results to understand parameter estimates and their uncertainty.
 
 As a crucial validation step, we will first apply these methods to **simulated data**, where we know the true parameters. This allows us to check if our models and fitting procedures work correctly – a process called **parameter recovery**.
+
+> **Terminology note — "parameter recovery" used carefully:**
+> Here and in the conclusion of this chapter, we use "parameter recovery" loosely
+> to mean: *fitting a model to one simulated dataset and checking whether the
+> posterior lands near the true value.* This is a useful first sanity check.
+> In Ch. 5 we will use the term more precisely to mean a *systematic* study that
+> repeats this across dozens of datasets at many different true parameter values
+> and noise levels. That is a qualitatively different (and stronger) validation.
+> The even stricter test — Simulation-Based Calibration (SBC) — checks whether
+> posterior *intervals* are correctly calibrated across the entire prior space.
+> These distinctions will matter a lot in Ch. 5, so don't worry about them too much now, you'll hear more about them.
 
 ## Simulating data
 
@@ -52,15 +71,15 @@ Here we build a new simulation of random agents with bias and noise. The code an
 regenerate_simulations <- FALSE 
 
 # Load required packages using pacman::p_load
-# This function installs packages if missing, then loads them.
 pacman::p_load(
-  tidyverse,    # Data manipulation and plotting
-  here,         # Robust file paths
-  cmdstanr,     # Stan interface
-  posterior,    # Posterior analysis
-  bayesplot,    # Plotting MCMC
-  furrr,        # Parallel processing
-  future        # Future backend
+  tidyverse,
+  here,
+  cmdstanr,
+  posterior,
+  bayesplot,
+  furrr,
+  future,
+  patchwork     
 )
 
 # Parallel Setup: Leave 2 cores free for system stability
@@ -148,6 +167,109 @@ p1 <- ggplot(d, aes(x = trial, y = cumulative_rate, group = true_rate, color = t
 
 print(p1)
 ```
+
+## How the Posterior Is Actually Computed
+
+Before we hand this problem to Stan, it is worth understanding what Stan is
+actually *doing* — because "posterior ∝ prior × likelihood" is easy to say
+and hard to see. This section builds a posterior by hand using a **grid
+approximation**: a brute-force method that works when there is only one
+parameter and we are willing to evaluate every possible value of it.
+
+**The setup.** Suppose an agent made 3 choices, picking "right" on trials 1
+and 3 and "left" on trial 2 (`h = c(1, 0, 1)`). We want to know: what is
+the most plausible value of θ — the agent's underlying bias toward "right"?
+
+**Bayes' rule** tells us:
+
+$$P(\theta \mid \text{data}) \propto P(\theta) \times P(\text{data} \mid \theta)$$
+
+In words: the posterior is proportional to the prior (what we believed before
+seeing the data) multiplied by the likelihood (how probable the data is under
+each value of θ). We then re-normalize so the result sums to 1.
+```{r 04-bayes-by-hand, fig.cap="Grid approximation with 3 observed choices. The posterior (blue) is the pointwise product of the prior (red) and the likelihood (green), re-normalized. Notice that the prior is flat — every value of θ was equally plausible beforehand — and the posterior peaks near θ = 0.7, which best explains seeing 2 'right' choices out of 3."}
+
+# 1. Define a coarse grid of 10 candidate values for theta
+theta_grid <- seq(0.1, 1.0, by = 0.1)
+
+# 2. Prior: uniform — Beta(1,1) — every value equally plausible before seeing data
+prior <- rep(1, length(theta_grid))
+prior <- prior / sum(prior)   # Normalize to sum to 1
+
+# 3. Observed data
+h <- c(1, 0, 1)   # 2 "right" out of 3 trials
+
+# 4. Likelihood: P(data | theta)
+# Each choice is Bernoulli(theta), so the joint likelihood is the product
+# across trials
+likelihood <- sapply(theta_grid, function(th) {
+  prod(dbinom(h, size = 1, prob = th))
+})
+
+# 5. Unnormalized posterior: prior * likelihood (pointwise)
+posterior_unnorm <- prior * likelihood
+
+# 6. Normalize so it sums to 1
+posterior <- posterior_unnorm / sum(posterior_unnorm)
+
+# --- Display as a table ---
+grid_table <- tibble(
+  `θ`           = theta_grid,
+  `Prior`       = round(prior, 3),
+  `Likelihood`  = round(likelihood, 4),
+  `Posterior`   = round(posterior, 3)
+)
+
+knitr::kable(grid_table,
+             caption = "Grid approximation: prior × likelihood → posterior (3 observations)")
+
+# --- Plot all three distributions ---
+grid_long <- grid_table %>%
+  rename(theta = `θ`, prior = Prior, likelihood = Likelihood, posterior = Posterior) %>%
+  pivot_longer(c(prior, likelihood, posterior),
+               names_to = "distribution", values_to = "mass") %>%
+  mutate(distribution = factor(distribution,
+                                levels = c("prior", "likelihood", "posterior"),
+                                labels = c("Prior", "Likelihood", "Posterior")))
+
+ggplot(grid_long, aes(x = theta, y = mass, fill = distribution)) +
+  geom_col(position = "dodge", alpha = 0.8, width = 0.08) +
+  scale_fill_manual(values = c("Prior" = "red", "Likelihood" = "darkgreen",
+                                "Posterior" = "blue")) +
+  scale_x_continuous(breaks = theta_grid) +
+  labs(
+    title    = "Bayes by Hand: Prior × Likelihood → Posterior",
+    subtitle = "Data: h = c(1, 0, 1) — two 'right' choices out of three trials",
+    x        = "θ  (probability of choosing 'right')",
+    y        = "Probability mass",
+    fill     = NULL
+  ) +
+  theme_classic() +
+  theme(legend.position = "top")
+```
+
+Three things to notice from the table and the plot:
+
+1. **The prior is flat.** Before seeing any data, every value of θ is equally
+   plausible. This is what `Beta(1, 1)` means — maximal prior ignorance.
+
+2. **The likelihood peaks near θ = 0.7.** The agent chose "right" 2 out of
+   3 times, so θ = 0.7 makes the observed sequence most probable. Values near
+   0 or 1 make it very improbable.
+
+3. **The posterior is the pointwise product, re-normalized.** It is narrower
+   than the prior (the data ruled out extreme values) and centred on the
+   likelihood peak. This is exactly the "update": the data shifted our beliefs
+   from flat to concentrated.
+
+**Why Stan instead of a grid?** This worked with 1 parameter and 10 grid
+points. With 2 parameters and 100 grid points each, we need 100 × 100 = 10,000
+evaluations. With 5 parameters: 100⁵ = **10 billion**. The grid grows
+exponentially — this is the *curse of dimensionality*. Stan's Hamiltonian
+Monte Carlo (HMC) sampler sidesteps this by *sampling* from regions of high
+posterior probability rather than evaluating every possible combination. The
+samples it returns are the blue histogram you will see in the next section —
+same idea, just no grid required.
 
 ## Building our First Stan Model: Inferring Bias Rate
 
@@ -420,6 +542,15 @@ if (regenerate_simulations || !file.exists(model_file_bernoulli)) {
 
 ### Assessing MCMC Health (The Mandatory Diagnostics)
 
+> *Why check diagnostics before looking at the estimates?* The posterior
+> distribution Stan returns is only valid if the sampler explored the parameter
+> space correctly. If it did not — due to divergent transitions, poor mixing, or
+> insufficient samples — the numbers in the posterior are artifacts of the
+> algorithm, not properties of the model. Looking at estimates from a broken
+> sampler is like reading a map drawn by a robot that kept falling over: the map
+> looks plausible but cannot be trusted. Diagnostics are the check that the robot
+> walked properly before you navigate with its map.
+
 Before we look at the parameter estimates, we MUST check whether the model was able to sample the posterior space: the health of the MCMC chains. Fitting a model is like sending a robotic explorer (the sampler) to map a landscape (the posterior). If the robot's tracks are broken, the map is mathematically invalid. We must check:
 
 1.  **Divergences:** Did the simulation crash? (Zero tolerance).
@@ -444,12 +575,13 @@ draws_df <- as_draws_df(fit_bernoulli$draws())
 # A healthy trace plot is well-mixed with no wandering
 p_trace <- mcmc_trace(draws_df, pars = "theta") + 
   theme_classic() + 
-  ggtitle("Trace Plot: Well-mixed chains")
+  ggtitle("Trace Plot", 
+          subtitle = "Healthy = all chains overlap and fluctuate around the same stable band")
 
 # A healthy rank histogram has uniform bars across all chains
-p_rank <- mcmc_rank_hist(draws_df, pars = "theta") + 
+p_rank <- mcmc_rank_overlay(draws_df, pars = "theta", ref_line = TRUE) + 
   theme_classic() + 
-  ggtitle("Rank Histogram: Chains explored the same space")
+  ggtitle("Trank plot", subtitle = "Healthy = chains interleave uniformly around the reference line — no chain dominates any rank band")
 
 p_trace / p_rank
 
@@ -460,16 +592,17 @@ ggplot(draws_df) +
   geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", linewidth = 1.2) +
   scale_fill_manual(values = c("Posterior" = "blue", "Prior" = "red")) +
   labs(
-    title = "Parameter Recovery (Rate, Theta)",
-    x = "Rate/Theta (Probability of Choosing Right)",
-    y = "Density",
-    fill = "Distribution"
+    title    = "Prior-Posterior Update: Bias Parameter (θ)",
+    subtitle = "Healthy = posterior (blue) is narrower than prior (red) and shifted toward the true value (dashed)",
+    x        = "θ  (Probability of Choosing Right)",
+    y        = "Density",
+    fill     = "Distribution"
   ) +
   theme_classic()
 ```
 
 
-As we can see from the posterior estimates and the prior posterior update check, our model is doing a decent job. It doesn't exactly reconstruct the rate of 0.8, but 0.755 is pretty close and 0.8 is included within the credible interval.
+The posterior (blue) is substantially narrower than the prior (red) and has shifted toward the true value of 0.8 (dashed line). The posterior mean is approximately 0.755, not exactly 0.8 — this is expected with only 120 trials and is not a sign that something is wrong. What matters is that (a) the posterior is much more informative than the prior, confirming the data were indeed informative, and (b) the true value 0.8 sits comfortably within the credible interval. If the posterior were identical to the prior, the data would be telling us nothing; if the posterior were centered far from the true value and excluded it, the model would be misspecified.
 
 Now we build the same model, but using the log odds scale for the theta parameter, which will become useful later when we condition theta on variables and build multilevel models (as we can do what we want in a log odds space and it will always be bound between 0 and 1).
 
@@ -889,7 +1022,7 @@ samples_memory$summary()
 ```
 
 
-We can see that the model has now estimated both the bias and the role of previous memory. Bias should reflect the bias in the setup (0.5 which in log odds is 0), and the beta coefficient for memory (roughly 1). More on the quality checks of the models in the next chapter.
+The trace plots should show the same "hairy caterpillar" pattern as before — well-mixed chains with no systematic drift. The prior-posterior update plots tell the story: the posterior for `bias` should be narrow and centred near 0 (log-odds of 0.5 = unbiased), and the posterior for `beta` should be centred near 1 (the true generating value). The data have meaningfully updated both parameters away from their priors. Formal quality checks — prior predictive checks, systematic parameter recovery, and SBC — come in Ch. 5.
 
 ### Memory Model 2: Internal State Variable
 
@@ -1382,15 +1515,24 @@ We learned how to:
 
 * **Recognize connections** between these models and broader frameworks like Kalman filters and HGF.
 
-By fitting these models, we moved beyond simply describing behavior (like the cumulative rates in Chapter 4) to quantifying underlying latent parameters (like `bias`, `beta`, `forgetting`).
+By fitting these models, we moved beyond simply describing behavior (like the cumulative rates in Chapter 3) to quantifying underlying latent parameters (like `bias`, `beta`, `forgetting`).
 
-However, successfully recovering the parameters of *one* simulated agent is merely a preliminary sanity check. In a rigorous Bayesian workflow, a single fit is never enough. 
+However, a single fit to a single simulated dataset is only a preliminary
+sanity check — the equivalent of flipping a coin once to check if it's fair.
+It does not tell us whether the model behaves well across a wide range of
+parameter values, whether our credible intervals are correctly calibrated, or
+whether the fitted model can actually reproduce the patterns in the data.
 
-* Does the model successfully recover parameters across a wide range of noise levels and true values? 
-* Is our computational engine unbiased, or does it systematically under- or over-estimate uncertainty? 
-* Can the fitted model actually generate data that looks like the data we observed? 
-* Are our inferences overly sensitive to our choice of prior distributions?
+**Coming up in Chapter 5:** We take the Stan models built in this chapter and
+subject them to a four-phase validation battery before they are allowed near
+real human data:
 
-To answer these questions, we must subject our models to a strict diagnostic battery. In Chapter 5, we will take the models developed here and run full **Parameter Recovery** studies, **Simulation-Based Calibration (SBC)**, **Predictive Checks**, and **Prior Sensitivity Analysis**. Only after passing those tests will a model earn the right to touch real empirical data.
+1. **Prior Predictive Check** — do the priors allow only cognitively plausible behavior?
+2. **Parameter Recovery** — does the model find the right answer across many simulated datasets and noise levels?
+3. **Simulation-Based Calibration (SBC)** — are our posterior intervals actually calibrated (does a 95% CI contain the truth 95% of the time)?
+4. **Posterior Predictive Check** — does the fitted model reproduce key patterns in the observed data?
+
+Only after passing all four tests does a model earn the right to touch real
+empirical data.
 
 

@@ -1,1244 +1,1191 @@
 ---
-title: "08-MixtureModels"
+title: "Chapter 8: Mixture Models"
 output: html_document
 date: "2025-03-07"
 ---
 
-# Mixture models
+```{r ch8_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = TRUE,
+  warning   = FALSE,
+  message   = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = "center",
+  out.width  = "80%",
+  dpi        = 300
+)
 
-When we model human cognition and behavior, we often find ourselves facing a puzzling reality: people don't always follow a single, consistent strategy. Consider a person playing our matching pennies game - sometimes they might carefully track their opponent's patterns, other times they might rely on a simple bias toward choosing "heads," and occasionally they might respond completely randomly when their attention lapses. Traditional cognitive models that assume a single process are ill-equipped to capture this complexity.
+# Set to TRUE to rerun all Stan fits and SBC; FALSE loads saved results.
+regenerate_simulations <- FALSE
 
-Mixture models provide an elegant solution to this challenge. Rather than assuming behavior reflects just one cognitive process, mixture models allow us to combine multiple different processes within a unified modeling framework. 
+# Directory scaffolding
+for (d in c("stan", "simdata", "simmodels")) {
+  if (!dir.exists(d)) dir.create(d)
+}
 
-In the previous chapter, we explored model comparison techniques that help us select between competing cognitive models. Mixture models approach in a sense reframe that very problem - instead of asking "which model is correct?", they allow us to ask "how much does each model contribute?" This shift acknowledges the possibility that multiple cognitive processes might coexist, either within a single individual or across a population.
+pacman::p_load(
+  tidyverse,   # core data manipulation and ggplot2
+  here,        # robust project-relative paths
+  posterior,   # posterior array tools
+  cmdstanr,    # CmdStan R interface
+  bayesplot,   # MCMC diagnostic plots
+  patchwork,   # multi-panel composition
+  loo,         # PSIS-LOO cross-validation
+  priorsense,  # prior sensitivity via power-scaling
+  SBC,         # Simulation-Based Calibration
+  furrr,       # parallel mapping
+  future       # async backend
+)
+
+theme_set(theme_classic())
+```
+
+# Mixture Models
+
+When we model human cognition and behavior, people do not always follow a single, consistent strategy. A participant in a matching-pennies game might sometimes carefully exploit a detected pattern in the opponent's behavior, and other times respond essentially at random when attention lapses. Traditional single-process models are structurally misspecified when this is the case: they attribute lapse-driven variance to the strategic parameter, inflating its uncertainty and biasing its location.
+
+Mixture models provide an elegant and principled solution. Rather than assuming behavior reflects one cognitive process, they represent observations as draws from a **weighted combination** of component distributions, each corresponding to a distinct process. This reframes the question addressed in Chapter 7 — *which model is correct?* — into a richer question: *how much does each process contribute, and for which observations?*
+
+Because each component must be marginalized analytically before writing Stan code, mixture models also serve as a concrete introduction to a class of computational constraint that applies broadly: **discrete parameters cannot be sampled by HMC and must be integrated out**. Mastering this principle is prerequisite for hidden Markov models, contamination models, and finite mixture clusters.
 
 ### Learning Objectives
 
-After completing this chapter, you will be able to:
+After completing this chapter you will be able to:
 
-1. Understand how mixture models combine multiple cognitive processes
+1. Specify a mixture model as a marginalized sum of component log-likelihoods and articulate *why* marginalization is required in Stan.
+2. Identify and correct the vectorisation error that makes the mixture likelihood computationally wrong when component densities are applied to arrays.
+3. Validate a mixture model with SBC, extracting both calibration diagnostics and parameter recovery from the same simulation bank.
+4. Characterize the likelihood-level identifiability constraint that limits what binary choice data can tell us about mixture parameters, and visualise the posterior aliasing manifold.
+5. Extend the single-agent model to a hierarchical mixture model with a non-centred parameterisation.
 
-2. Implement mixture models for different types of behavioral data using Stan
+---
 
-3. Estimate mixture weights and component-specific parameters
+## 1  Motivation: When are Mixtures Visible?
 
-4. Evaluate mixture models through posterior predictive checks
+Before developing the mathematics, consider a concrete case where a mixture is visually transparent. In many response-time tasks, a participant sometimes deliberates carefully (producing a log-normal RT distribution) and sometimes responds inattentively (producing a roughly uniform RT distribution). The resulting marginal distribution is a weighted blend.
 
-5. Compare mixture models to single-process alternatives
+```{r ch8-rt-motivation}
+set.seed(8)
+n_obs     <- 500
+pi_delib  <- 0.80       # 80 % deliberate
+mu_log    <- 6.2        # mean of log(RT), deliberate process ≈ 500 ms
+sigma_log <- 0.20
+min_lapse <- 200
+max_lapse <- 2000
 
-### Chapter Roadmap
+component <- rbinom(n_obs, 1, pi_delib)  # 1 = deliberate, 0 = lapse
 
-In this chapter, we will:
-
-1. Examine reaction time data to visualize how mixture distributions appear in practice
-
-2. Develop a theoretical foundation for mixture modeling
-
-3. Implement a simple mixture model combining biased and random choice processes (thus going back to our matching pennies example)
-
-4. Evaluate and validate this model through posterior checks
-
-5. Extend to multilevel mixture models that capture individual differences
-
-6. Compare mixture models with traditional single-process approaches
-
-## Visualizing Mixture Distributions: Reaction Time Example
-
-Before diving into the mathematics and implementation of mixture models, let's start with a concrete example that visually demonstrates why we need them. Reaction time (RT) data provides a particularly clear window into the mixture of cognitive processes.
-
-In many cognitive tasks, participants are asked to respond as quickly as possible while still being accurate. However, attention fluctuates over time. Let's simulate a scenario where participants sometimes engage in deliberate thinking (producing a log-normal distribution of RTs) and sometimes experience attentional lapses (producing more or less random responses with a uniform distribution of RTs).
-
-
-
-
-```{r, 08_setup}
-# Flag to control whether to regenerate simulations
-regenerate_simulations <- TRUE
-
-# Load necessary packages
-library(tidyverse)
-library(here)
-library(posterior)
-library(cmdstanr)
-library(bayesplot)
-library(patchwork)
-library(loo)
-set.seed(123) # For reproducible results
-
-
-# Number of observations
-n_obs <- 500
-
-# Parameters for the two processes
-# Process 1: Deliberate thinking (log-normal distribution)
-mu_delib <- 6.2     # Mean of log(RT) for deliberate process (≈ 500ms)
-sigma_delib <- 0.2  # SD of log(RT) for deliberate process
-
-# Process 2: Attentional lapses (uniform distribution)
-min_lapse <- 200    # Minimum RT during attentional lapses (ms)
-max_lapse <- 2000   # Maximum RT during attentional lapses (ms)
-
-# Mixture weight (proportion of deliberate responses)
-pi_delib <- 0.8    # 80% deliberate thinking, 20% attentional lapses
-
-# Simulate the mixture
-process <- rbinom(n_obs, 1, pi_delib)  # 1 = deliberate, 0 = lapse
-
-# Generate RTs from the appropriate distribution based on process
-rt <- numeric(n_obs)
-for (i in 1:n_obs) {
-  if (process[i] == 1) {
-    # Deliberate process - log-normal distribution
-    rt[i] <- rlnorm(1, mu_delib, sigma_delib)
-  } else {
-    # Attentional lapse - uniform distribution
-    rt[i] <- runif(1, min_lapse, max_lapse)
-  }
-}
-
-# Combine into a data frame
 rt_data <- tibble(
-  observation = 1:n_obs,
-  rt = rt,
-  process = ifelse(process == 1, "Deliberate", "Attentional Lapse"),
-  log_rt = log(rt)
+  rt        = ifelse(component == 1,
+                     rlnorm(n_obs, mu_log, sigma_log),
+                     runif(n_obs, min_lapse, max_lapse)),
+  log_rt    = log(rt),
+  process   = ifelse(component == 1, "Deliberate", "Lapse")
 )
 
-# Summary statistics by process
-rt_summary <- rt_data %>%
-  group_by(process) %>%
-  summarize(
-    count = n(),
-    proportion = n()/n_obs,
-    mean_rt = mean(rt),
-    median_rt = median(rt),
-    sd_rt = sd(rt)
-  )
-
-# Display summary
-knitr::kable(rt_summary, digits = 2)
-```
-
-Now, let's visualize the reaction time distribution:
-```{r}
-# Create histogram of reaction times with overlaid density curves
-p1 <- ggplot() +
-  # Histogram of all data
-  geom_histogram(data = rt_data, aes(x = rt, y = ..density..), 
-                bins = 30, fill = "gray80", color = "black", alpha = 0.5) +
-  
-  # Density curves for each component
-  geom_density(data = rt_data %>% filter(process == "Deliberate"), 
-              aes(x = rt, fill = "Deliberate Thinking"), 
-              alpha = 0.4) +
-  
-  # We can't use geom_density for uniform distribution (it would smooth it)
-  # Instead, overlay the theoretical uniform density
-  geom_segment(aes(x = min_lapse, xend = max_lapse, 
-                  y = 1/(max_lapse-min_lapse), yend = 1/(max_lapse-min_lapse),
-                  color = "Attentional Lapse"), 
-              linewidth = 1.5, alpha = 0.8) +
-  
-  # Overall density
-  geom_density(data = rt_data, aes(x = rt), color = "black", linewidth = 1) +
-  
-  # Aesthetics
-  scale_fill_manual(values = c("Deliberate Thinking" = "blue"),
-                   name = "Process") +
-  scale_color_manual(values = c("Attentional Lapse" = "red"),
-                    name = "Process") +
-  labs(title = "Reaction Time Distribution",
-       subtitle = "A mixture of deliberate thinking and attentional lapses",
-       x = "Reaction Time (ms)",
-       y = "Density") +
+# RT scale
+p1 <- ggplot(rt_data, aes(x = rt)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 50, fill = "grey80", colour = "white") +
+  geom_density(aes(colour = process, fill = process),
+               data = rt_data |> filter(process == "Deliberate"),
+               alpha = 0.25, linewidth = 0.9) +
+  geom_segment(
+    aes(x = min_lapse, xend = max_lapse,
+        y = 1 / (max_lapse - min_lapse),
+        yend = 1 / (max_lapse - min_lapse),
+        colour = "Lapse"),
+    linewidth = 1.2
+  ) +
+  scale_colour_manual(values = c(Deliberate = "#2166AC", Lapse = "#D6604D"),
+                      name = NULL) +
+  scale_fill_manual(values  = c(Deliberate = "#2166AC", Lapse = "#D6604D"),
+                    name = NULL, guide = "none") +
   coord_cartesian(xlim = c(0, 2000)) +
-  theme_minimal() +
+  labs(title    = "Reaction-time distribution",
+       subtitle = "A mixture of deliberate (log-normal) and lapse (uniform) processes",
+       x = "RT (ms)", y = "Density") +
   theme(legend.position = "top")
 
-# Also plot the log RT
-p2 <- ggplot() +
-  geom_histogram(data = rt_data, aes(x = log_rt, y = ..density..), 
-                bins = 30, fill = "gray80", color = "black", alpha = 0.5) +
-  geom_density(data = rt_data %>% filter(process == "Deliberate"), 
-              aes(x = log_rt, fill = "Deliberate Thinking"), 
-              alpha = 0.4) +
-  geom_density(data = rt_data, aes(x = log_rt), color = "black", linewidth = 1) +
-  scale_fill_manual(values = c("Deliberate Thinking" = "blue"),
-                   name = "Process") +
-  labs(title = "Log Reaction Time Distribution",
-       subtitle = "Log transformation highlights the mixture components",
-       x = "Log Reaction Time",
-       y = "Density") +
-  theme_minimal() +
+# Log-RT scale
+p2 <- ggplot(rt_data, aes(x = log_rt)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 50, fill = "grey80", colour = "white") +
+  geom_density(aes(colour = process, fill = process),
+               data = rt_data |> filter(process == "Deliberate"),
+               alpha = 0.25, linewidth = 0.9) +
+  scale_colour_manual(values = c(Deliberate = "#2166AC"), name = NULL) +
+  scale_fill_manual(values  = c(Deliberate = "#2166AC"), name = NULL) +
+  labs(title    = "Log-RT distribution",
+       subtitle = "Log transformation clarifies the deliberate component",
+       x = "log RT", y = "Density") +
   theme(legend.position = "top")
 
-# Display both plots
 p1 / p2
 ```
 
+In the RT case, the two components have genuinely different support structures — the lapse process contributes probability mass across a 1,800 ms window, while the deliberate process is tightly concentrated. Each observation therefore carries real information about which component generated it, so the mixture is well-identified from the marginal distribution alone.
 
-In this example, we can clearly see how the overall reaction time distribution (black line) is a combination of two distinct processes:
+We will return to this point in Section 6. For binary choice data, the identifiability picture is dramatically different.
 
-* Deliberate Thinking (Blue): A log-normal distribution centered around 500ms, representing focused cognitive processing of the task.
+---
 
-* Attentional Lapses (Red Line): A uniform distribution spanning from very quick to very slow responses, representing trials where attention has drifted, leading to either impulsive responses or delayed responses due to mind-wandering.
+## 2  Theoretical Framework
 
-The mixture of these processes creates a complex distribution with a prominent peak (from the deliberate process) and extended tails (from the attentional lapses). A standard single-process model assuming only a log-normal distribution would fail to capture these extended tails, leading to poor fit and potentially misleading conclusions about the cognitive processes involved.
+### 2.1  The Mixture Density
 
-This is exactly the situation where mixture models excel. They allow us to represent observed data as coming from a weighted combination of different underlying processes. Next, we'll formalize this intuition and extend it to decision-making models.
+A $K$-component mixture model assigns the following marginal density (or mass function) to each observation $y_i$:
 
-## Theoretical Foundation for Mixture Models
+$$
+p(y_i) = \sum_{k=1}^{K} \pi_k \, p_k(y_i \mid \theta_k),
+\qquad \pi_k \ge 0, \quad \sum_{k=1}^{K} \pi_k = 1.
+\tag{1}
+$$
 
-### The Mixture Model Framework
+Each $p_k(\cdot \mid \theta_k)$ is a component distribution with its own parameter vector $\theta_k$, and $\pi_k$ is the corresponding mixing weight. Given independent observations, the joint likelihood is
 
-At their core, mixture models represent data as coming from a weighted combination of different "component" distributions or processes. Mathematically, a mixture model can be expressed as:
+$$
+p(y \mid \pi, \theta) = \prod_{i=1}^{n} \sum_{k=1}^{K} \pi_k \, p_k(y_i \mid \theta_k).
+\tag{2}
+$$
 
-p(y) = π_1p_1(y) + π_2p_2(y) + … + π_kp_k(y)
+The log-likelihood therefore contains a **sum inside a log** — this cannot be factored into independent additive contributions per component, which makes mixture models more computationally demanding than standard regression.
 
-Where:
+### 2.2  The Latent-Variable Augmentation
 
-* p(y) is the overall probability of observing data point y
+An equivalent and conceptually useful representation introduces a latent component indicator $z_i \in \{1, \ldots, K\}$:
 
-* p_j(y) is the probability of y according to component model j
+$$
+z_i \sim \text{Categorical}(\boldsymbol{\pi}), \qquad
+y_i \mid z_i = k \sim p_k(y_i \mid \theta_k).
+\tag{3}
+$$
 
-* π_j is the weight or mixing proportion of component j (with all π_j summing to 1)
+If we could observe $z_i$ the model would decompose into $K$ separate standard likelihoods. Unfortunately $z_i$ is unobserved, so we sum (integrate) over all possible component assignments to recover equation (1). This is the **marginalisation** step.
 
-Each component distribution p_j(y) can have its own parameters, and the mixing proportions π_j  determine how much each component contributes to the overall model.
+### 2.3  Why Stan Requires Marginalisation
 
-### Mixture Models and Latent Variables
+Stan's Hamiltonian Monte Carlo sampler operates on a continuous, differentiable log posterior. It cannot directly sample discrete random variables such as $z_i$. **Marginalising $z_i$ before writing any Stan code is not optional; it is a structural requirement.** The joint model $(z_i, y_i)$ must be reduced to the marginal model $p(y_i)$ expressed entirely through continuous parameters.
 
-An alternative and often useful way to think about mixture models is through latent (unobserved) variables. We can introduce a latent categorical variable z that indicates which component generated each observation. For example, in a two-component mixture:
+Stan provides `log_mix()` as a numerically stable implementation of the per-observation mixture contribution:
 
-* z_i = 1 means observation i came from component 1
-* z_i=2 means observation i came from component 2
+$$
+\texttt{log\_mix}(\pi, \ell_1, \ell_2) \;=\; \log\!\bigl[\pi \, e^{\ell_1} + (1-\pi) \, e^{\ell_2}\bigr],
+\tag{4}
+$$
 
+where $\ell_1 = \log p_1(y_i \mid \theta_1)$ and $\ell_2 = \log p_2(y_i \mid \theta_2)$.
 
-We can then formulate the mixture model as:
+### 2.4  Our Running Model: Bias–Noise Mixture for Binary Choices
 
-p(y_i, z_i) = p(z_i)p(y_i∣z_i)
+We model binary choices as a mixture of a **biased process** and a **random process**:
 
-Where p(z_i=j)=π_j is the prior probability of component j, and p(y_i∣z_i = j) is the likelihood of y_i under component j.
+$$
+y_i \sim (1-\pi)\,\text{Bernoulli}(\theta) + \pi\,\text{Bernoulli}(0.5),
+\tag{5}
+$$
 
-This latent variable perspective is particularly useful for implementing mixture models in Bayesian frameworks like Stan.
+where $\theta = \text{logit}^{-1}(\alpha)$ is the probability of choosing "right" under the biased process, and $\pi = \text{logit}^{-1}(\nu)$ is the probability that any given trial is generated by the random process. Both are modelled on the logit scale:
 
-### Applications in Cognitive Modeling
+$$
+\alpha \sim \text{Normal}(0,\, 1), \qquad
+\nu \sim \text{Normal}(-1,\, 1).
+\tag{6}
+$$
 
-In cognitive modeling, mixture models can represent several important phenomena:
+The centring of $\nu$ at $-1$ weakly favours noise below 50 %, reflecting the prior belief that most trials are deliberate.
 
-* Attentional fluctuations: As in our reaction time example, performance may reflect both focused engagement and attentional lapses
+---
 
-* Strategy switching: Individuals might switch between different strategies over time
+## 3  Prior Predictive Check
 
-* Dual-process theories: Behavior might arise from multiple cognitive systems (e.g., automatic vs. controlled)
+Before writing any Stan code, we simulate from the prior to verify that the implied distribution over observable behaviour is scientifically plausible.
 
-* Individual differences: Different individuals might use different strategies
+```{r ch8-prior-predictive}
+set.seed(8)
+n_prior <- 10000
 
-* Exploration vs. exploitation: Some decisions might reflect exploring new options while others exploit known rewards
-
-## Implementing a Basic Mixture Model
-
-Now that we understand the theoretical foundation, let's implement a simple mixture model for choice data. We'll model behavior as a mixture of two processes:
-
-* A biased process that chooses option 1, let's say "right", with some probability θ
-* A random process that chooses randomly (50/50) between options 1 and 0, or "right" and "left"
-
-This could represent, for example, a person who sometimes carefully performs a task but occasionally responds randomly due to attentional lapses.
-
-### Simulating Mixed Strategy Data
-
-In previous chapters we generated data to use for fitting models. Let's use that same data but focus on a particular agent who might be mixing strategies:
-
-```{r}
-# Load data from a previous chapter
-d <- read_csv("simdata/W3_randomnoise.csv")
-
-# Choose data with some bias (0.8) and noise (0.1)
-dd <- d %>% subset(rate == 0.8 & noise == 0.1)
-
-# Prepare data for Stan
-data <- list(
-  n = 120,
-  h = dd$choice
+prior_df <- tibble(
+  alpha    = rnorm(n_prior, 0,  1),
+  nu       = rnorm(n_prior, -1, 1),
+  theta    = plogis(alpha),
+  pi_noise = plogis(nu),
+  # Marginalised effective probability of choosing "right"
+  theta_eff = (1 - plogis(nu)) * plogis(alpha) + 0.5 * plogis(nu)
 )
 
-# Display summary statistics
-mean_choice <- mean(dd$choice)
-cat("Mean choice (proportion of 'right' choices):", mean_choice, "\n")
+p_bias <- ggplot(prior_df, aes(x = theta)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 60, fill = "#2166AC", alpha = 0.7) +
+  labs(title    = expression("Prior on " * theta * " (bias)"),
+       subtitle = "Normal(0, 1) on logit scale",
+       x = expression(theta), y = "Density") +
+  scale_x_continuous(limits = c(0, 1))
+
+p_noise <- ggplot(prior_df, aes(x = pi_noise)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 60, fill = "#D6604D", alpha = 0.7) +
+  labs(title    = expression("Prior on " * pi * " (noise weight)"),
+       subtitle = "Normal(-1, 1) on logit scale",
+       x = expression(pi), y = "Density") +
+  scale_x_continuous(limits = c(0, 1))
+
+p_eff <- ggplot(prior_df, aes(x = theta_eff)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 60, fill = "grey40", alpha = 0.7) +
+  geom_vline(xintercept = 0.5, linetype = "dashed", colour = "black") +
+  labs(title    = expression("Prior on " * theta[eff] * " = (1-" * pi * ")" * theta * " + 0.5" * pi),
+       subtitle = "Marginalised effective choice probability",
+       x = expression(theta[eff]), y = "Density") +
+  scale_x_continuous(limits = c(0, 1))
+
+(p_bias + p_noise) / p_eff
 ```
 
-Let's visualize this data to see if we can detect patterns suggestive of a mixture:
-```{r}
-# Calculate running proportion of right choices
-running_prop <- cumsum(dd$choice) / seq_along(dd$choice)
+The prior on $\theta$ is diffuse but centred at 0.5, spanning the full plausible range of biases. The noise prior concentrates most mass below $\pi = 0.5$, reflecting the scientific expectation that participants are mostly deliberate. The marginalised effective probability $\theta_{\text{eff}}$ is correspondingly diffuse but slightly shrunk toward 0.5. These are all scientifically defensible starting points.
 
-# Plot actual choices over time
-p1 <- ggplot(dd, aes(x = trial)) +
-  geom_point(aes(y = choice), alpha = 0.5) +
-  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red") +
-  labs(title = "Sequence of Choices",
-       subtitle = "0 = left, 1 = right",
-       x = "Trial",
-       y = "Choice") +
-  theme_minimal()
+> **Note:** If you found that the noise prior placed more than ≈ 30 % of its mass above $\pi = 0.4$, that would indicate the prior is too permissive. This is the value of checking the prior predictive before fitting: it costs nothing and can prevent days of debugging a misspecified model.
 
-# Plot running average
-p2 <- ggplot(dd, aes(x = trial)) +
-  geom_line(aes(y = running_prop)) +
-  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red") +
-  geom_hline(yintercept = 0.8, linetype = "dashed", color = "blue") +
-  labs(title = "Running Proportion of Right Choices",
-       subtitle = "Red: random choice (0.5), Blue: true bias (0.8)",
-       x = "Trial",
-       y = "Proportion Right") +
-  ylim(0, 1) +
-  theme_minimal()
+---
 
-p1 / p2
+## 4  Stan Implementation: Single-Agent Model
+
+### 4.1  A Critical Vectorisation Trap
+
+The Stan code in the original version of this chapter contained a subtle but consequential error. It called:
+
+```
+target += log_sum_exp(
+  log(pi) + bernoulli_logit_lpmf(h | 0),
+  log(1-pi) + bernoulli_logit_lpmf(h | bias)
+);
 ```
 
-For binary choice data, it's harder to visually detect a mixture compared to reaction times. The overall proportion of right choices falls between what we'd expect from random choice (0.5) and fully biased choice with rate 0.8, which is consistent with a mixture of these processes.
+where `h` is a **vector**. `bernoulli_logit_lpmf(h | 0)` with a vector `h` returns the **scalar** $\sum_i \log p_1(y_i)$ — the joint log-probability of all observations under component 1. `log_sum_exp` then computes:
 
-### Stan Implementation of a Mixture Model
+$$
+\log\!\Bigl[\pi \prod_i p_1(y_i) \;+\; (1-\pi) \prod_i p_2(y_i)\Bigr].
+$$
 
-Now let's implement a Stan model that represents choices as coming from a mixture of a biased process and a random process:
+This is not a mixture model. It is a model in which **all $n$ observations simultaneously come from one component or the other** — equivalent to a global discrete model-selection variable, not per-trial latent class assignment. The correct log-likelihood is:
 
+$$
+\sum_{i=1}^{n} \log\!\Bigl[\pi \, p_1(y_i) + (1-\pi) \, p_2(y_i)\Bigr],
+$$
 
-```{r}
-stan_mixture_model <- "
-// Mixture model for binary choice data
-// Combines a biased choice process with a random choice process
+which requires iterating `log_mix()` **inside a loop over observations**.
 
+### 4.2  The Correct Stan Model
+
+```{r ch8-write-single-stan}
+single_mixture_stan <- "
 data {
-  int<lower=1> n;  // Number of trials
-  array[n] int h;  // Choice data (0/1)
+  int<lower=1> n;
+  array[n] int<lower=0, upper=1> h;
 }
 
 parameters {
-  real bias;        // Bias parameter for biased process (logit scale)
-  real noise_logit; // Mixing weight for random process (logit scale)
+  real alpha;        // logit-scale bias (biased component)
+  real nu;           // logit-scale mixing weight (random component)
 }
 
 model {
-  // Priors
-  target += normal_lpdf(bias | 0, 1);          // Prior for bias parameter (centered at 0.5 in prob scale)
-  target += normal_lpdf(noise_logit | -1, 1);  // Prior for noise proportion (favors lower noise)
-  
-  // Mixture likelihood using log_sum_exp for numerical stability
-  target += log_sum_exp(
-    log(inv_logit(noise_logit)) +            // Log probability of random process
-    bernoulli_logit_lpmf(h | 0),             // Log likelihood under random process (p=0.5)
-    
-    log1m(inv_logit(noise_logit)) +          // Log probability of biased process
-    bernoulli_logit_lpmf(h | bias)           // Log likelihood under biased process
-  );
+  real noise_p = inv_logit(nu);
+
+  target += normal_lpdf(alpha | 0, 1);
+  target += normal_lpdf(nu    | -1, 1);
+
+  // Correct: one log_mix call per observation.
+  // logit(0.5) = 0.0, so bernoulli_logit_lpmf(h[i] | 0.0) is used for
+  // the random component — keeping both calls on the logit scale for
+  // consistency and to avoid an implicit probability-to-logit conversion.
+  for (i in 1:n)
+    target += log_mix(noise_p,
+                      bernoulli_logit_lpmf(h[i] | 0.0),    // random component
+                      bernoulli_logit_lpmf(h[i] | alpha));  // biased component
 }
 
 generated quantities {
-  // Transform parameters to probability scale for easier interpretation
-  real<lower=0, upper=1> noise_p = inv_logit(noise_logit);  // Proportion of random choices
-  real<lower=0, upper=1> bias_p = inv_logit(bias);          // Bias toward right in biased choices
-  
-  // Predicted distributions
+  real<lower=0, upper=1> theta   = inv_logit(alpha);  // bias, probability scale
+  real<lower=0, upper=1> pi_hat  = inv_logit(nu);     // noise weight, prob scale
+
+  // lprior is required by priorsense::powerscale_sensitivity()
+  real lprior = normal_lpdf(alpha | 0, 1) + normal_lpdf(nu | -1, 1);
+
   vector[n] log_lik;
-  array[n] int pred_component;  // Which component generated each prediction (1=random, 0=biased)
-  array[n] int pred_choice;     // Predicted choices
-  
-  // Calculate log likelihood for each observation (for model comparison)
+  array[n] int pred_choice;
+
   for (i in 1:n) {
-    log_lik[i] = log_sum_exp(
-      log(noise_p) + bernoulli_logit_lpmf(h[i] | 0),
-      log1m(noise_p) + bernoulli_logit_lpmf(h[i] | bias)
-    );
-  }
-  
-  // Generate posterior predictions
-  for (i in 1:n) {
-    // First determine which component to use
-    pred_component[i] = bernoulli_rng(noise_p);
-    
-    // Then generate prediction from appropriate component
-    if (pred_component[i] == 1) {
-      // Random component
+    log_lik[i] = log_mix(pi_hat,
+                         bernoulli_logit_lpmf(h[i] | 0.0),
+                         bernoulli_logit_lpmf(h[i] | alpha));
+
+    if (bernoulli_rng(pi_hat))
       pred_choice[i] = bernoulli_rng(0.5);
-    } else {
-      // Biased component
-      pred_choice[i] = bernoulli_rng(bias_p);
-    }
+    else
+      pred_choice[i] = bernoulli_rng(theta);
   }
 }
 "
 
-# Write the Stan model to a file
-write_stan_file(
-  stan_mixture_model,
-  dir = "stan/",
-  basename = "W8_MixtureSingle.stan"
+write_stan_file(single_mixture_stan, dir = "stan/", basename = "ch8_mixture_single.stan")
+mod_single <- cmdstan_model(
+  "stan/ch8_mixture_single.stan",
+  cpp_options   = list(stan_threads = TRUE),
+  stanc_options = list("O1")
 )
-
-# Compile the model
-file <- file.path("stan/W8_MixtureSingle.stan")
-mod_mixture <- cmdstan_model(file, 
-                           cpp_options = list(stan_threads = TRUE),
-                           stanc_options = list("O1"))
 ```
 
-### Fitting and Evaluating the Mixture Model
+### 4.3  Data
 
-Now let's fit the model and evaluate its performance:
+We use the simulated matching-pennies data introduced in earlier chapters, selecting the agent with rate 0.8 and noise 0.1. This gives us a ground truth against which to assess recovery: $\theta = 0.8$, $\pi = 0.1$.
 
-```{r}
+```{r ch8-load-data}
+d    <- read_csv("simdata/W3_randomnoise.csv", show_col_types = FALSE)
+dd   <- d |> dplyr::filter(rate == 0.8, noise == 0.1)
+data <- list(n = nrow(dd), h = as.integer(dd$choice))
 
-# File path for saved model results
-model_file <- "simmodels/W8_singlemixture.RDS"
+cat("Trials:", data$n, "| Proportion '1':", round(mean(data$h), 3), "\n")
+```
 
-# Check if we need to rerun the simulation
-if (regenerate_simulations || !file.exists(model_file)) {
-  # Fit the model
-  samples <- mod_mixture$sample(
-    data = data,
-    seed = 123,
-    chains = 2,
-    parallel_chains = 2,
-    threads_per_chain = 1,
-    iter_warmup = 2000,
-    iter_sampling = 2000,
-    refresh = 500,
-    max_treedepth = 20,
-    adapt_delta = 0.99,
+### 4.4  Fitting with Pathfinder Initialisation
+
+Mixture model posteriors can have multimodal or ridge-shaped geometry (see Section 6). Pathfinder — a multi-path variational approximation — provides stable starting points and avoids the Uniform(−2, 2) default initialisation that often fails when parameters are on very different scales or interact.
+
+If Pathfinder itself fails (e.g., because the variational approximation diverges near the ridge), the fallback must not be `NULL`. Passing `NULL` to `init` triggers Stan's Uniform(−2, 2) default, which places chains at random points that may lie far from the high-probability region and immediately generate divergent transitions. Instead we define an explicit per-chain jittered initialisation centred on the prior medians: $\alpha = 0$ (i.e., $\theta = 0.5$) and $\nu = -1$ (i.e., $\pi \approx 0.27$). A small Gaussian jitter of SD 0.1 ensures chains start at distinct points, which is necessary for $\hat{R}$ to be meaningful.
+
+```{r ch8-fit-single}
+single_fit_file <- "simmodels/ch8_single_mixture.RDS"
+
+if (regenerate_simulations || !file.exists(single_fit_file)) {
+
+  # Explicit per-chain jittered initialisation at prior medians.
+  # Used as Pathfinder fallback; safe for ridge-shaped posteriors.
+  safe_init <- lapply(seq_len(4), function(i) list(
+    alpha = rnorm(1, 0.0, 0.1),
+    nu    = rnorm(1, -1.0, 0.1)
+  ))
+
+  init_pf <- tryCatch(
+    mod_single$pathfinder(
+      data      = data,
+      seed      = 8,
+      num_paths = 4,
+      refresh   = 0
+    ),
+    error = function(e) {
+      message("Pathfinder failed — falling back to jittered prior-centre initialisation.")
+      safe_init
+    }
   )
-  
-  # Save the results
-  samples$save_object(file = model_file)
-  cat("Generated new model fit and saved to", model_file, "\n")
+
+  fit_single <- mod_single$sample(
+    data            = data,
+    init            = init_pf,
+    seed            = 8,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 2000,
+    refresh         = 500
+  )
+
+  fit_single$save_object(single_fit_file)
 } else {
-  # Load existing results
-  samples <- readRDS(model_file)
-  cat("Loaded existing model fit from", model_file, "\n")
+  fit_single <- readRDS(single_fit_file)
 }
 
-# Extract summary statistics
-summary <- samples$summary(c("bias_p", "noise_p"))
-print(summary)
-
+fit_single$summary(c("alpha", "nu", "theta", "pi_hat"))
 ```
 
-### Model Diagnostics
+### 4.5  Geometry Diagnostics
 
-Let's check the model diagnostics to ensure our inference is reliable:
+```{r ch8-single-diagnostics}
+draws_single <- as_draws_df(fit_single$draws())
 
-```{r}
-# Extract draws for diagnostics
-draws <- as_draws_df(samples$draws())
+# Required diagnostic thresholds (cheatsheet):
+# Divergences = 0 | R-hat < 1.01 | Bulk & Tail ESS > 400 | E-BFMI > 0.2
+diag <- fit_single$diagnostic_summary()
+cat("Divergences:", sum(diag$num_divergent), "\n")
+cat("Max R-hat:  ", round(max(fit_single$summary()$rhat, na.rm = TRUE), 4), "\n")
+cat("Min ESS:    ", round(min(fit_single$summary()$ess_bulk, na.rm = TRUE)), "\n")
 
-# Check for convergence with trace plots
-p1 <- mcmc_trace(draws, pars = c("bias_p", "noise_p")) +
-  ggtitle("Trace Plots for Mixture Model Parameters") +
-  theme_minimal()
-
-# Examine parameter distributions
-p2 <- mcmc_hist(draws, pars = c("bias_p", "noise_p")) +
-  ggtitle("Posterior Distributions") +
-  theme_minimal()
-
-# Display diagnostics
-p1
-p2
-
-# Check for potential divergences
-cat("Number of divergent transitions:", sum(draws$.divergent), "\n")
+# Trace plots for the two sampled parameters
+mcmc_trace(draws_single, pars = c("alpha", "nu")) +
+  ggtitle("Trace plots: logit-scale parameters") +
+  scale_colour_viridis_d(option = "mako", begin = 0.15, end = 0.85, guide = "none")
 ```
 
-### Parameter Recovery Analysis
-
-To verify that our model can accurately recover parameters, let's examine how close our inferred parameters are to the true values used in the simulation:
-
-```{r}
-# True parameters (from the simulation)
-true_bias <- 0.8
-true_noise <- 0.1
-
-# Calculate parameter recovery metrics
-bias_error <- mean(draws$bias_p) - true_bias
-noise_error <- mean(draws$noise_p) - true_noise
-
-cat("Parameter Recovery Results:\n")
-cat("Bias parameter - True:", true_bias, "Estimated:", round(mean(draws$bias_p), 3), 
-    "Error:", round(bias_error, 3), "\n")
-cat("Noise parameter - True:", true_noise, "Estimated:", round(mean(draws$noise_p), 3), 
-    "Error:", round(noise_error, 3), "\n")
-
-# Generate prior samples in probability space
-set.seed(123)
-n_samples <- nrow(draws)
-prior_samples <- tibble(
-  bias_prior = inv_logit_scaled(rnorm(n_samples, 0, 1)),
-  noise_prior = inv_logit_scaled(rnorm(n_samples, 0, 1))
-)
-
-# Prepare data for plotting
-recovery_data <- tibble(
-  parameter = rep(c("Bias", "Noise"), each = nrow(draws)),
-  posterior = c(draws$bias_p, draws$noise_p),
-  prior = c(prior_samples$bias_prior, prior_samples$noise_prior),
-  true_value = rep(c(true_bias, true_noise), each = nrow(draws)),
-  type = "Posterior"
-)
-
-prior_data <- tibble(
-  parameter = rep(c("Bias", "Noise"), each = nrow(prior_samples)),
-  value = c(prior_samples$bias_prior, prior_samples$noise_prior),
-  true_value = rep(c(true_bias, true_noise), each = nrow(prior_samples)),
-  type = "Prior"
-)
-
-# Visualize parameter recovery with priors
-ggplot() +
-  # Add prior densities
-  geom_histogram(data = prior_data, aes(x = value, fill = type), 
-                 alpha = 0.5, bins = 30) +
-  # Add posterior densities
-  geom_histogram(data = recovery_data, aes(x = posterior, fill = type), 
-                 alpha = 0.5, bins = 30) +
-  # Add true values
-  geom_vline(data = recovery_data %>% distinct(parameter, true_value), 
-             aes(xintercept = true_value), 
-             linetype = "dashed", size = 1, color = "black") +
-  # Facet by parameter
-  facet_wrap(~parameter, scales = "free") +
-  # Formatting
-  scale_fill_manual(values = c("Posterior" = "blue", "Prior" = "red"),
-                    name = "Distribution") +
-  labs(title = "Parameter Recovery Analysis",
-       subtitle = "Dashed lines show true values used in simulation",
-       x = "Parameter Value (probability scale)",
-       y = "Count") +
-  theme_minimal() +
-  theme(legend.position = "bottom")
+```{r ch8-single-pairs}
+# Pairwise geometry on the probability scale — reveals ridge if present
+mcmc_pairs(
+  fit_single$draws(),
+  pars      = c("theta", "pi_hat"),
+  off_diag_fun = "scatter",
+  off_diag_args = list(size = 0.3, alpha = 0.2)
+) +
+  labs(title = "Posterior geometry: bias × noise",
+       subtitle = "A ridge along the aliasing manifold is expected for binary data (see Section 6)")
 ```
 
-The model has recovered the true parameters reasonably well, providing confidence in our approach. In a real project, we'd want to run this across a broad range of parameter values!
+---
 
-### Posterior Predictive Checks
+## 5  Validation: Simulation-Based Calibration
 
-```{r}
-# Generate posterior and prior predictive samples
-n_samples <- 100
+SBC simultaneously certifies two properties. When rank statistics are uniform, the sampler is **computationally unbiased** (calibration). The joint distribution of true values and posterior summaries across all SBC datasets provides **parameter recovery** — the same information conveyed by a recovery grid, but derived from a principled random draw over the full prior rather than a hand-chosen set of grid points.
 
-# First, generate posterior predictive samples
-post_pred_samples <- matrix(NA, nrow = n_samples, ncol = data$n)
-post_component_samples <- matrix(NA, nrow = n_samples, ncol = data$n)
+### 5.1  Generator and Backend
 
-# Sample from posterior distributions
-post_sample_indices <- sample(1:nrow(draws), n_samples, replace = TRUE)
+```{r ch8-sbc-setup}
+sbc_gen_fn <- function() {
+  # Draw from prior (logit scale — must match Stan parameter names exactly)
+  alpha_true <- rnorm(1, 0, 1)
+  nu_true    <- rnorm(1, -1, 1)
 
-for(i in 1:n_samples) {
-  idx <- post_sample_indices[i]
-  noise_p_sample <- draws$noise_p[idx]
-  bias_p_sample <- draws$bias_p[idx]
-  
-  for(j in 1:data$n) {
-    # Determine component (0 = biased, 1 = random)
-    component <- rbinom(1, 1, noise_p_sample)
-    post_component_samples[i,j] <- component
-    
-    if(component == 1) {
-      # Random component
-      post_pred_samples[i,j] <- rbinom(1, 1, 0.5)
-    } else {
-      # Biased component
-      post_pred_samples[i,j] <- rbinom(1, 1, bias_p_sample)
-    }
-  }
+  theta_true <- plogis(alpha_true)
+  pi_true    <- plogis(nu_true)
+
+  n <- 120
+  component <- rbinom(n, 1, pi_true)
+  h <- as.integer(ifelse(
+    component == 1,
+    rbinom(n, 1, 0.5),
+    rbinom(n, 1, theta_true)
+  ))
+
+  list(
+    variables = list(alpha = alpha_true, nu = nu_true),
+    generated = list(n = n, h = h)
+  )
 }
 
-# Now, generate prior predictive samples in the same way
-prior_pred_samples <- matrix(NA, nrow = n_samples, ncol = data$n)
-prior_component_samples <- matrix(NA, nrow = n_samples, ncol = data$n)
+sbc_generator <- SBC::SBC_generator_function(sbc_gen_fn)
 
-# Generate samples from prior distributions
-prior_noise_samples <- inv_logit_scaled(rnorm(n_samples, 0, 1))
-prior_bias_samples <- inv_logit_scaled(rnorm(n_samples, 0, 1))
-
-for(i in 1:n_samples) {
-  noise_p_prior <- prior_noise_samples[i]
-  bias_p_prior <- prior_bias_samples[i]
-  
-  for(j in 1:data$n) {
-    # Determine component (0 = biased, 1 = random)
-    component <- rbinom(1, 1, noise_p_prior)
-    prior_component_samples[i,j] <- component
-    
-    if(component == 1) {
-      # Random component
-      prior_pred_samples[i,j] <- rbinom(1, 1, 0.5)
-    } else {
-      # Biased component
-      prior_pred_samples[i,j] <- rbinom(1, 1, bias_p_prior)
-    }
-  }
-}
-
-# Calculate summary statistics from predictive samples
-# For posterior
-post_pred_means <- apply(post_pred_samples, 1, mean)
-post_pred_run_lengths <- apply(post_pred_samples, 1, function(x) mean(rle(x)$lengths))
-
-# For prior
-prior_pred_means <- apply(prior_pred_samples, 1, mean)
-prior_pred_run_lengths <- apply(prior_pred_samples, 1, function(x) mean(rle(x)$lengths))
-
-# Calculate observed statistics
-obs_mean <- mean(data$h)
-obs_runs <- mean(rle(data$h)$lengths)
-
-# Prepare data for visualization
-pred_means_data <- tibble(
-  mean = c(post_pred_means, prior_pred_means),
-  type = factor(c(rep("Posterior", n_samples), rep("Prior", n_samples)),
-                levels = c("Prior", "Posterior"))
+sbc_backend <- SBC::SBC_backend_cmdstan_sample(
+  mod_single,
+  chains        = 2,
+  iter_warmup   = 500,
+  iter_sampling = 1000,
+  refresh       = 0,
+  show_messages = FALSE
 )
-
-pred_runs_data <- tibble(
-  run_length = c(post_pred_run_lengths, prior_pred_run_lengths),
-  type = factor(c(rep("Posterior", n_samples), rep("Prior", n_samples)),
-                levels = c("Prior", "Posterior"))
-)
-
-# Visualize posterior and prior predictive checks
-p1 <- ggplot() +
-  # Add prior predictive distribution
-  geom_histogram(data = pred_means_data %>% filter(type == "Prior"),
-                 aes(x = mean, fill = type), bins = 30, alpha = 0.5) +
-  # Add posterior predictive distribution
-  geom_histogram(data = pred_means_data %>% filter(type == "Posterior"),
-                 aes(x = mean, fill = type), bins = 30, alpha = 0.5) +
-  # Add observed statistic
-  geom_vline(xintercept = obs_mean, color = "black", size = 1, linetype = "dashed") +
-  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
-                    name = "Distribution") +
-  labs(title = "Predictive Check: Mean",
-       subtitle = "Dashed line shows observed data value",
-       x = "Mean (proportion of right choices)",
-       y = "Count") +
-  theme_minimal()
-
-p2 <- ggplot() +
-  # Add prior predictive distribution
-  geom_histogram(data = pred_runs_data %>% filter(type == "Prior"),
-                 aes(x = run_length, fill = type), bins = 30, alpha = 0.5) +
-  # Add posterior predictive distribution
-  geom_histogram(data = pred_runs_data %>% filter(type == "Posterior"),
-                 aes(x = run_length, fill = type), bins = 30, alpha = 0.5) +
-  # Add observed statistic
-  geom_vline(xintercept = obs_runs, color = "black", size = 1, linetype = "dashed") +
-  scale_fill_manual(values = c("Prior" = "red", "Posterior" = "blue"),
-                    name = "Distribution") +
-  labs(title = "Predictive Check: Run Lengths",
-       subtitle = "Dashed line shows observed data value",
-       x = "Mean run length",
-       y = "Count") +
-  theme_minimal()
-
-# Display the plots side by side with shared legend
-p1 + p2 + plot_layout(guides = "collect") & 
-  theme(legend.position = "bottom")
 ```
 
+```{r ch8-sbc-run}
+sbc_file <- "simmodels/ch8_sbc_results.RDS"
 
-Our model appears to capture both the overall proportion of right choices and the distribution of run lengths in the observed data. This suggests the mixture model is adequately representing the data-generating process.
+if (regenerate_simulations || !file.exists(sbc_file)) {
+  future::plan(future::multisession, workers = max(1, parallel::detectCores() - 2))
 
-## Parameter Interpretation
+  # S = 1000 certifies the rank statistic at the 95 % level.
+  # For development, reduce to 200.
+  sbc_datasets <- SBC::generate_datasets(sbc_generator, n_sims = 1000)
+  sbc_results  <- SBC::compute_SBC(sbc_datasets, sbc_backend)
 
-The mixture model provides valuable insights into the cognitive processes underlying the observed behavior:
-
-* Bias Parameter (θ): The bias parameter (estimated as approximately r round(mean(draws$bias_p), 2)) represents the probability of choosing the right option when the participant is following the biased process.
-
-* Noise Parameter (π): The noise parameter (estimated as approximately r round(mean(draws$noise_p), 2)) represents the proportion of choices that come from the random process rather than the biased process. This can be interpreted as the frequency of attentional lapses or exploratory behavior.
-
-The mixture model thus decomposes behavior into two distinct processes, providing a more nuanced understanding than a single-process model could offer. This has important cognitive implications: for instance, besides the usual focus on "deliberate" reaction times, individual variations attentional lapses might be affected by the experimental condition, or an underlying diagnosis, thus providing richer information.
-
-## Multilevel Mixture Models
-
-Now let's extend our approach to a multilevel (hierarchical) mixture model that can accommodate individual differences across multiple participants. This allows us to estimate both population-level parameters and individual-specific variations.
-
-### Stan Implementation
-
-
-```{r}
-stan_multilevel_mixture_model <- "
-// Multilevel mixture model for binary choice data
-// Allows individual differences in both bias and mixture weights
-
-functions {
-  real normal_lb_rng(real mu, real sigma, real lb) {
-    real p = normal_cdf(lb | mu, sigma);  // cdf for bounds
-    real u = uniform_rng(p, 1);
-    return (sigma * inv_Phi(u)) + mu;  // inverse cdf for value
-  }
+  future::plan(future::sequential)
+  saveRDS(sbc_results, sbc_file)
+} else {
+  sbc_results <- readRDS(sbc_file)
 }
+```
 
+### 5.2  Calibration: ECDF-Difference Plots
+
+The primary calibration diagnostic is the ECDF-difference plot (Säilynoja et al. 2022). A well-calibrated sampler produces rank statistics that are uniform on $\{0, 1, \ldots, S\}$, so the ECDF should fall along the horizontal zero line. Deviations outside the 95 % envelope indicate structural bias or over/underconfidence.
+
+```{r ch8-sbc-ecdf-diff, fig.height=4}
+SBC::plot_ecdf_diff(sbc_results, variables = c("alpha", "nu")) +
+  labs(title    = "SBC calibration: ECDF-difference plots",
+       subtitle = "Deviations outside the grey band indicate a miscalibrated sampler") +
+  theme(strip.background = element_rect(fill = "grey95", colour = NA),
+        strip.text = element_text(face = "bold"))
+```
+
+```{r ch8-sbc-rank-hist, fig.height=4}
+SBC::plot_rank_hist(sbc_results, variables = c("alpha", "nu")) +
+  labs(title    = "SBC calibration: rank histograms",
+       subtitle = "U-shape → overconfident; hump → underconfident; skew → biased") +
+  theme(strip.background = element_rect(fill = "grey95", colour = NA),
+        strip.text = element_text(face = "bold"))
+```
+
+### 5.3  Parameter Recovery
+
+The `stats` component of the SBC output contains the `simulated_value` (the true prior draw) alongside posterior summaries for each simulation. Plotting posterior mean against true value directly provides the recovery assessment — no separate grid-based recovery study is required.
+
+```{r ch8-sbc-recovery, fig.height=4}
+recovery_df <- sbc_results$stats |>
+  dplyr::filter(variable %in% c("alpha", "nu")) |>
+  dplyr::mutate(
+    param_label = dplyr::recode(variable,
+      alpha = "alpha (logit bias)",
+      nu    = "nu (logit noise)"
+    ),
+    # Calibration coverage: does the 95 % CrI contain the truth?
+    covered_95 = simulated_value >= q5 & simulated_value <= q95
+  )
+
+# Coverage summary
+recovery_df |>
+  dplyr::group_by(param_label) |>
+  dplyr::summarise(
+    coverage_95 = mean(covered_95),
+    rmse        = sqrt(mean((mean - simulated_value)^2)),
+    .groups = "drop"
+  ) |>
+  print()
+
+# Recovery scatter: posterior mean vs. true value
+ggplot(recovery_df, aes(x = simulated_value, y = mean)) +
+  geom_point(aes(colour = covered_95), size = 0.7, alpha = 0.5) +
+  geom_linerange(aes(ymin = q5, ymax = q95, colour = covered_95),
+                 linewidth = 0.25, alpha = 0.3) +
+  geom_abline(intercept = 0, slope = 1,
+              linetype = "dashed", colour = "black", linewidth = 0.8) +
+  facet_wrap(~param_label, scales = "free") +
+  scale_colour_manual(
+    values = c("TRUE" = "#2166AC", "FALSE" = "#D6604D"),
+    name   = "95 % CrI covers truth"
+  ) +
+  labs(
+    title    = "Parameter recovery from SBC simulations",
+    subtitle = "Each point is one SBC dataset; dashed line = perfect recovery (y = x)",
+    x        = "True value (prior draw)",
+    y        = "Posterior mean"
+  ) +
+  theme(
+    legend.position    = "top",
+    strip.background   = element_rect(fill = "grey95", colour = NA),
+    strip.text         = element_text(face = "bold"),
+    panel.grid.major   = element_line(colour = "grey92", linetype = "dotted")
+  )
+```
+
+Recovery should be unbiased across the full prior range. The fraction of 95 % credible intervals covering the truth should be close to 0.95. Systematic deviations — for instance, the noise parameter $\nu$ recovering poorly near $\nu \approx -2$ (i.e., $\pi \approx 0.12$) — would indicate that 120 trials provide insufficient information to distinguish very low noise from zero noise, a legitimate finding about the experimental design, not a modelling failure.
+
+---
+
+## 6  Identifiability: The Bernoulli Aliasing Problem
+
+### 6.1  The Algebraic Constraint
+
+For a single binary trial the probability of observing $y_i = 1$ under the bias–noise mixture is:
+
+$$
+P(y_i = 1) = (1 - \pi)\,\theta + \pi \cdot 0.5 = \theta - \pi(\theta - 0.5).
+\tag{7}
+$$
+
+This depends on $(\theta, \pi)$ only through the linear combination $\theta_{\text{eff}} = (1-\pi)\theta + 0.5\pi$. For i.i.d. binary observations, the **entire dataset** carries information only about this one-dimensional quantity. Consequently, infinitely many $(\theta, \pi)$ pairs are observationally equivalent: for any fixed observed proportion $\bar{y}$, the set
+
+$$
+\bigl\{(\theta, \pi) : (1-\pi)\,\theta + 0.5\,\pi = \bar{y}\bigr\}
+\tag{8}
+$$
+
+is a curve in parameter space, and the posterior will be smeared along this curve. This is the **aliasing manifold**.
+
+The mixture model is not wrong — it is simply not identified from the marginal binary likelihood alone. The bias and noise parameters are individually interpretable and scientifically meaningful; the data just cannot separate them without additional structure (e.g., trial-level covariates, joint RT and accuracy modelling, or experimental manipulations of the noise rate).
+
+### 6.2  Visualising the Posterior Ridge
+
+```{r ch8-aliasing-manifold}
+draws_prob <- as_draws_df(fit_single$draws()) |>
+  dplyr::select(theta, pi_hat)
+
+obs_prop   <- mean(data$h)
+
+# Aliasing manifold: all (theta, pi) consistent with observed proportion
+pi_grid    <- seq(0, 0.95, by = 0.002)
+theta_mani <- (obs_prop - 0.5 * pi_grid) / (1 - pi_grid)
+manifold   <- tibble(pi_hat = pi_grid, theta = theta_mani) |>
+  dplyr::filter(theta >= 0, theta <= 1)
+
+ggplot(draws_prob, aes(x = pi_hat, y = theta)) +
+  geom_point(alpha = 0.06, size = 0.5, colour = "#2166AC") +
+  geom_line(data = manifold, colour = "#D6604D", linewidth = 1.0) +
+  annotate("text", x = 0.45, y = 0.92, colour = "#D6604D", hjust = 0,
+           label = expression(hat(theta)[eff] == bar(y))) +
+  labs(
+    title    = "Posterior geometry and the aliasing manifold",
+    subtitle = "Red curve: all (π, θ) pairs consistent with the observed choice proportion",
+    x        = expression(pi ~ "(noise weight)"),
+    y        = expression(theta ~ "(bias)")
+  ) +
+  coord_cartesian(xlim = c(0, 0.6), ylim = c(0.5, 1.0))
+```
+
+The posterior concentrates along the red aliasing manifold rather than converging to a point. This is not a sampling pathology — it is the correct Bayesian representation of what the data actually contain. The prior does provide some regularisation (the posterior does not extend to the full manifold), but with 120 binary observations and diffuse priors, the two parameters remain substantially correlated.
+
+### 6.3  Why the RT Case is Different
+
+Recall from Section 1 that the RT mixture was visually transparent. The reason is that the two components have **different likelihoods for the same observation value**. A 400 ms response is extremely unlikely under the uniform lapse process but highly probable under the log-normal deliberate process. This trial-level likelihood contrast provides information about $z_i$ for each observation, breaking the aliasing. With binary choices, both the biased process (at some $\theta$) and the random process (at 0.5) assign non-zero probability to both outcomes, so the aliasing cannot be broken by observation values alone.
+
+This comparison motivates a practical principle: if you want a mixture model's components to be individually identified, ensure that the components are distinguishable at the level of individual observations, not merely at the level of marginal statistics. Two strategies accomplish this in practice.
+
+**Strategy A: Joint modelling of complementary outcome types.** If reaction time $rt_i$ is observed alongside each binary choice $y_i$, the per-trial joint likelihood becomes:
+
+$$
+p(y_i, rt_i) = (1-\pi)\; p_{\text{bias}}(y_i \mid \theta)\; p_{\text{LN}}(rt_i \mid \mu, \sigma) \;+\; \pi\; p_{\text{rand}}(y_i \mid 0.5)\; p_{\text{unif}}(rt_i \mid a, b).
+\tag{8a}
+$$
+
+Because $p_{\text{LN}}(rt_i \mid \mu, \sigma) / p_{\text{unif}}(rt_i \mid a, b)$ varies continuously with $rt_i$, every observation now provides direct evidence about $z_i$. A short RT carries high likelihood under the log-normal deliberate component and low likelihood under the uniform lapse component, or vice versa for an unusually long RT. The aliasing manifold collapses to a point: the two-dimensional parameter space $(\theta, \pi)$ is identified by the joint data stream, not just the marginal choice proportion.
+
+**Strategy B: Experimental manipulation of the noise rate.** Suppose participants complete a single-task block ($c_i = 0$) and a dual-task block ($c_i = 1$), where the additional cognitive load is expected to increase lapse frequency but leave the deliberate bias intact. We model $\pi$ as a function of condition while holding $\theta$ constant:
+
+$$
+\nu_i = \gamma_0 + \gamma_1 c_i, \qquad \pi_i = \text{logit}^{-1}(\nu_i).
+\tag{8b}
+$$
+
+The aliasing constraint now applies separately within each condition:
+
+$$
+(1 - \pi_0)\,\theta + 0.5\,\pi_0 = \bar{y}_0, \qquad
+(1 - \pi_1)\,\theta + 0.5\,\pi_1 = \bar{y}_1.
+\tag{8c}
+$$
+
+These are two linear equations in the three unknowns $(\theta, \pi_0, \pi_1)$ — or equivalently $(\theta, \gamma_0, \gamma_1)$. If $\pi_0 \ne \pi_1$ (i.e., if the dual-task manipulation actually changes the noise rate), the two manifolds intersect at a unique point and all three parameters are identified. The identifiability here does not require RT data at all: the experimental design does the work by breaking the single-condition degeneracy.
+
+---
+
+## 7  Prior Sensitivity Analysis
+
+Section 6 established analytically that the binary likelihood cannot separate $\theta$ and $\pi$: the data constrain only $\theta_{\text{eff}} = (1-\pi)\theta + 0.5\pi$. A direct corollary is that the posterior for at least one of the individual parameters must be sensitive to the prior. `priorsense::powerscale_sensitivity()` quantifies this sensitivity without refitting the model. It uses Pareto-smoothed importance sampling to evaluate the perturbed posterior:
+
+$$
+p_{\alpha,\beta}(\theta, \pi \mid y) \propto p(y \mid \theta, \pi)^{\alpha}\; p(\theta, \pi)^{\beta},
+\tag{11}
+$$
+
+where $\alpha$ and $\beta$ are power-scaling factors. Sensitivity to the prior corresponds to varying $\beta$ while holding $\alpha = 1$; sensitivity to the likelihood corresponds to varying $\alpha$ while holding $\beta = 1$. The summary statistic $\hat{\psi}$ measures how much the posterior mean shifts (in units of posterior SD) as the scaling factor departs from 1. Values above $\approx 0.05$ indicate non-negligible sensitivity.
+
+The `priorsense` workflow requires a `lprior` variable in the Stan model's `generated quantities` block, which accumulates the log prior density. This was added to the single-agent Stan model in §4.2 and will be added to the multilevel model in §8.2. The `powerscale_sensitivity()` call then reads `lprior` as the prior contribution and uses `log_lik` as the likelihood contribution.
+
+```{r ch8-priorsense}
+# powerscale_sensitivity works with CmdStanFit objects via the posterior package.
+# It reads 'lprior' and 'log_lik' from generated quantities automatically.
+sensitivity <- priorsense::powerscale_sensitivity(
+  fit_single,
+  variable = c("alpha", "nu")
+)
+
+print(sensitivity)
+```
+
+```{r ch8-priorsense-plot, fig.height=5}
+# Density deformation under power-scaling shows which parameters are affected.
+priorsense::powerscale_plot_dens(fit_single, variables = c("alpha", "nu")) +
+  labs(
+    title    = "Prior sensitivity: power-scaled posterior densities",
+    subtitle = expression(
+      "Stronger deformation = greater dependence on the prior"
+    )
+  ) +
+  theme(
+    strip.background = element_rect(fill = "grey95", colour = NA),
+    strip.text       = element_text(face = "bold"),
+    legend.position  = "bottom"
+  )
+```
+
+The expected pattern is instructive: $\hat{\psi}$ for $\nu$ (noise, logit scale) should be substantially higher than $\hat{\psi}$ for $\alpha$ (bias, logit scale). This is the quantitative signature of the aliasing manifold. The bias $\theta$ is constrained by the data through $\theta_{\text{eff}} \approx \bar{y}$, so the posterior mean of $\alpha$ is relatively stable under prior perturbation. The noise weight $\pi$, by contrast, receives almost no direct information from binary i.i.d. data, so its posterior is nearly proportional to its prior. A strong $\hat{\psi}$ for $\nu$ is therefore not a modelling failure — it is an empirical confirmation of the §6 identifiability analysis and should be reported alongside it.
+
+> **Workflow note.** If `powerscale_sensitivity()` returns a Pareto-$\hat{k}$ warning for the prior scaling direction, it signals that the prior and likelihood are in strong conflict — the perturbed posterior is too far from the fitted posterior to be reliably approximated by importance sampling. In that case, refit with scaled priors explicitly. For the noise parameter under typical experimental conditions this warning is unlikely because the prior is doing most of the work; conflict warnings are more characteristic of well-identified parameters with informative priors.
+
+---
+
+## 8  Posterior Predictive Checks and LOO
+
+### 8.1  Posterior Predictive Checks
+
+Posterior predictive draws are computed in the `generated quantities` block and extracted directly from the fitted object. This avoids the manual simulation loop in the original chapter, which re-implemented in R what Stan already computed.
+
+```{r ch8-ppc}
+# S x n matrix of posterior predictive choices (0/1)
+yrep <- fit_single$draws("pred_choice", format = "matrix")
+y    <- as.integer(data$h)
+
+# PPC 1: proportion of "1" choices
+p_mean <- bayesplot::ppc_stat(
+  y    = y,
+  yrep = yrep,
+  stat = "mean"
+) + labs(title = "PPC: proportion of right choices", x = "Mean choice")
+
+# PPC 2: mean run length — sensitive to serial structure
+obs_run  <- mean(rle(y)$lengths)
+pred_run <- apply(yrep, 1, function(x) mean(rle(x)$lengths))
+
+p_run <- ggplot(tibble(run = pred_run), aes(x = run)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 40, fill = "#2166AC", alpha = 0.7) +
+  geom_vline(xintercept = obs_run, colour = "#D6604D",
+             linewidth = 1.0, linetype = "dashed") +
+  annotate("text", x = obs_run + 0.05, y = Inf, vjust = 1.5,
+           label = "Observed", colour = "#D6604D", size = 3.5, hjust = 0) +
+  labs(title = "PPC: mean run length",
+       subtitle = "Sensitive to sequential autocorrelation the mean cannot detect",
+       x = "Mean run length", y = "Density")
+
+p_mean / p_run
+```
+
+> **Interpretation**: If the run-length check fails (observed value in the tail of the predictive distribution) while the mean check passes, the data contain sequential dependence that a fully i.i.d. mixture model cannot reproduce. In that case, consider a hidden Markov model with Markov-dependent $z_i$ (Section 10).
+
+### 8.2  PSIS-LOO and Pareto-$\hat{k}$ Diagnostics
+
+```{r ch8-loo}
+log_lik_mat <- fit_single$draws("log_lik", format = "matrix")
+r_eff       <- loo::relative_eff(exp(log_lik_mat),
+                                  chain_id = rep(1:4, each = 2000))
+loo_single  <- loo::loo(log_lik_mat, r_eff = r_eff)
+
+print(loo_single)
+plot(loo_single, label_points = TRUE,
+     main = "PSIS-LOO Pareto-k diagnostics")
+```
+
+Pareto-$\hat{k}$ values above 0.7 indicate observations for which the full-data posterior is a poor approximation to the leave-one-out posterior. In a mixture model, such observations are often concentrated near $y = 0.5$ (where the biased and random components are most confounded) or in long runs of the same choice (which the i.i.d. model cannot anticipate).
+
+### 8.3  LOO-PIT
+
+For continuous outcomes, LOO-PIT values should be uniform. For binary outcomes the CDF is a step function, so the standard PIT is discrete and requires randomisation to achieve uniformity. The `loo::loo_pit()` function applies this randomisation automatically.
+
+```{r ch8-loo-pit}
+psis_obj <- loo_single$psis_object
+lw       <- weights(psis_obj, log = TRUE, normalize = TRUE)  # draws × obs
+
+yrep_int <- matrix(as.integer(yrep), nrow = nrow(yrep))
+pit_vals <- loo::loo_pit(x = yrep_int, y = y, lw = lw)
+
+bayesplot::ppc_pit_ecdf(pit_vals) +
+  labs(title    = "LOO-PIT: predictive calibration",
+       subtitle = "Uniform distribution (diagonal) indicates well-calibrated uncertainty") +
+  theme(strip.background = element_rect(fill = "grey95", colour = NA))
+```
+
+---
+
+## 9  Multilevel Mixture Model
+
+### 9.1  Generative Model
+
+When data come from $J$ participants, we extend the model hierarchically. Each participant $j$ has their own bias $\alpha_j$ and noise $\nu_j$, which are drawn from a bivariate normal population distribution:
+
+$$
+\begin{pmatrix} \alpha_j \\ \nu_j \end{pmatrix}
+= \begin{pmatrix} \mu_\alpha \\ \mu_\nu \end{pmatrix}
++ \mathbf{L}\,\boldsymbol{z}_j,
+\qquad
+\boldsymbol{z}_j \sim \text{Normal}_2(\mathbf{0}, \mathbf{I}),
+\tag{9}
+$$
+
+where $\mathbf{L} = \text{diag}(\tau) \cdot \mathbf{L}_\Omega$ is the Cholesky factor of the parameter covariance matrix, $\tau$ is the vector of population standard deviations, and $\mathbf{L}_\Omega$ is the Cholesky factor of the correlation matrix. This is the non-centred parameterisation (NCP) introduced in Chapter 6.
+
+**Priors:**
+
+$$
+\mu_\alpha \sim \text{Normal}(0, 1), \qquad
+\mu_\nu \sim \text{Normal}(-1, 0.5),
+$$
+$$
+\tau_k \sim \text{Half-Normal}(0, 0.3), \quad k = 1, 2,
+\qquad
+\mathbf{L}_\Omega \sim \text{LKJ}(2).
+$$
+
+**Per-trial likelihood** (same correction as in Section 4.1):
+
+$$
+y_{t,j} \sim \log\text{-mix}\!\bigl(\text{logit}^{-1}(\nu_j),\; \text{Bern}(0.5),\; \text{Bern}(\text{logit}^{-1}(\alpha_j))\bigr).
+\tag{10}
+$$
+
+### 9.2  Stan Code
+
+```{r ch8-write-multilevel-stan}
+multilevel_mixture_stan <- "
 data {
-  int<lower=1> trials;       // Number of trials per agent
-  int<lower=1> agents;       // Number of agents
-  array[trials, agents] int h;  // Choice data (0/1)
+  int<lower=1> trials;
+  int<lower=1> agents;
+  array[trials, agents] int<lower=0, upper=1> h;
 }
 
 parameters {
-  // Population-level parameters
-  real biasM;                // Population mean of bias (logit scale)
-  real noiseM;               // Population mean of noise proportion (logit scale)
-  
-  // Population standard deviations
-  vector<lower=0>[2] tau;    // SDs for [bias, noise]
-  
-  // Individual z-scores (non-centered parameterization)
-  matrix[2, agents] z_IDs;
-  
-  // Correlation matrix
-  cholesky_factor_corr[2] L_u;
+  real muA;                         // population mean bias (logit)
+  real muN;                         // population mean noise (logit)
+  vector<lower=0>[2] tau;           // population SDs: [bias, noise]
+  matrix[2, agents] z_IDs;          // standardised individual offsets
+  cholesky_factor_corr[2] L_Omega;  // Cholesky of correlation matrix
 }
 
 transformed parameters {
-  // Individual parameters (constructed from non-centered parameterization)
-  matrix[agents, 2] IDs;
-  IDs = (diag_pre_multiply(tau, L_u) * z_IDs)';
+  // Non-centred: individual offsets on the logit scale
+  matrix[agents, 2] IDs = (diag_pre_multiply(tau, L_Omega) * z_IDs)';
 }
 
 model {
-  // Priors for population means
-  target += normal_lpdf(biasM | 0, 1);     // Prior for population bias mean
-  target += normal_lpdf(noiseM | -1, 0.5); // Prior for population noise mean (favoring lower noise)
-  
-  // Priors for population SDs (half-normal)
-  target += normal_lpdf(tau[1] | 0, 0.3) - normal_lccdf(0 | 0, 0.3);
-  target += normal_lpdf(tau[2] | 0, 0.3) - normal_lccdf(0 | 0, 0.3);
-  
-  // Prior for correlation matrix
-  target += lkj_corr_cholesky_lpdf(L_u | 2);
-  
-  // Prior for individual z-scores
+  target += normal_lpdf(muA | 0, 1);
+  target += normal_lpdf(muN | -1, 0.5);
+
+  // tau is declared vector<lower=0>[2], so Stan applies the log Jacobian
+  // of the log transform automatically. The truncation normalising constant
+  // is already absorbed into the unconstrained parameterisation; manually
+  // subtracting normal_lccdf() would add unnecessary AD nodes for a
+  // constant that cancels. Vectorised call covers both SD elements.
+  target += normal_lpdf(tau | 0, 0.3);
+
+  target += lkj_corr_cholesky_lpdf(L_Omega | 2);
   target += std_normal_lpdf(to_vector(z_IDs));
-  
-  // Likelihood
+
+  // Per-agent, per-trial mixture likelihood (correct loop structure).
+  // Both components use bernoulli_logit_lpmf for scale consistency:
+  // logit(0.5) = 0.0, so the random component is bernoulli_logit_lpmf(h | 0.0).
   for (i in 1:agents) {
-    target += log_sum_exp(
-      log(inv_logit(noiseM + IDs[i,2])) +          // Prob of random process for agent i
-      bernoulli_logit_lpmf(h[,i] | 0),             // Likelihood under random process
-      
-      log1m(inv_logit(noiseM + IDs[i,2])) +        // Prob of biased process for agent i
-      bernoulli_logit_lpmf(h[,i] | biasM + IDs[i,1])  // Likelihood under biased process
-    );
+    real noise_i = inv_logit(muN + IDs[i, 2]);
+    real alpha_i = muA + IDs[i, 1];
+
+    for (t in 1:trials)
+      target += log_mix(noise_i,
+                        bernoulli_logit_lpmf(h[t, i] | 0.0),
+                        bernoulli_logit_lpmf(h[t, i] | alpha_i));
   }
 }
 
 generated quantities {
-  // Prior predictive samples
-  real biasM_prior = normal_rng(0, 1);
-  real<lower=0> biasSD_prior = normal_lb_rng(0, 0.3, 0);
-  real noiseM_prior = normal_rng(-1, 0.5);
-  real<lower=0> noiseSD_prior = normal_lb_rng(0, 0.3, 0);
-  
-  // Transform to probability scale for easier interpretation
-  real<lower=0, upper=1> bias_mean = inv_logit(biasM);
-  real<lower=0, upper=1> noise_mean = inv_logit(noiseM);
-  
-  // Correlation between parameters
-  corr_matrix[2] Omega = multiply_lower_tri_self_transpose(L_u);
-  real bias_noise_corr = Omega[1,2];
-  
-  // For each agent, generate individual parameters and predictions
+  // Population-level summaries
+  real<lower=0, upper=1> pop_bias  = inv_logit(muA);
+  real<lower=0, upper=1> pop_noise = inv_logit(muN);
+  corr_matrix[2] Omega             = multiply_lower_tri_self_transpose(L_Omega);
+  real bias_noise_corr             = Omega[1, 2];
+
+  // lprior is required by priorsense::powerscale_sensitivity().
+  // Must mirror every term in the model block exactly.
+  real lprior = normal_lpdf(muA | 0, 1)
+              + normal_lpdf(muN | -1, 0.5)
+              + normal_lpdf(tau | 0, 0.3)
+              + lkj_corr_cholesky_lpdf(L_Omega | 2)
+              + std_normal_lpdf(to_vector(z_IDs));
+
+  // Individual parameters
   array[agents] real<lower=0, upper=1> agent_bias;
   array[agents] real<lower=0, upper=1> agent_noise;
-  array[trials, agents] int pred_component;
-  array[trials, agents] int pred_choice;
+
+  // Per-trial log-lik (needed for LOO and priorsense)
   array[trials, agents] real log_lik;
-  
-  // Calculate individual parameters and generate predictions
+
   for (i in 1:agents) {
-    // Individual parameters
-    agent_bias[i] = inv_logit(biasM + IDs[i,1]);
-    agent_noise[i] = inv_logit(noiseM + IDs[i,2]);
-    
-    // Log likelihood calculations
-    for (t in 1:trials) {
-      log_lik[t,i] = log_sum_exp(
-        log(agent_noise[i]) + bernoulli_logit_lpmf(h[t,i] | 0),
-        log1m(agent_noise[i]) + bernoulli_logit_lpmf(h[t,i] | logit(agent_bias[i]))
-      );
-    }
-    
-    // Generate predictions
-    for (t in 1:trials) {
-      pred_component[t,i] = bernoulli_rng(agent_noise[i]);
-      if (pred_component[t,i] == 1) {
-        // Random component
-        pred_choice[t,i] = bernoulli_rng(0.5);
-      } else {
-        // Biased component
-        pred_choice[t,i] = bernoulli_rng(agent_bias[i]);
-      }
-    }
+    real alpha_i = muA + IDs[i, 1];
+    real noise_i = inv_logit(muN + IDs[i, 2]);
+
+    agent_bias[i]  = inv_logit(alpha_i);
+    agent_noise[i] = noise_i;
+
+    for (t in 1:trials)
+      log_lik[t, i] = log_mix(noise_i,
+                               bernoulli_logit_lpmf(h[t, i] | 0.0),
+                               bernoulli_logit_lpmf(h[t, i] | alpha_i));
   }
 }
 "
 
-# Write the model to a file
-write_stan_file(
-  stan_multilevel_mixture_model,
-  dir = "stan/",
-  basename = "W8_MixtureMultilevel.stan"
-)
-
-# Compile the model
-file <- file.path("stan/W8_MixtureMultilevel.stan")
-mod_multilevel_mixture <- cmdstan_model(
-  file, 
-  cpp_options = list(stan_threads = TRUE),
+write_stan_file(multilevel_mixture_stan,
+                dir = "stan/", basename = "ch8_mixture_multilevel.stan")
+mod_multi <- cmdstan_model(
+  "stan/ch8_mixture_multilevel.stan",
+  cpp_options   = list(stan_threads = TRUE),
   stanc_options = list("O1")
 )
 ```
 
-### Preparing Data for the Multilevel Model
+### 9.3  Simulating Multilevel Data
 
-Now we'll prepare data from multiple agents for the multilevel model:
+```{r ch8-simulate-multilevel}
+set.seed(801)
+n_agents <- 30
+n_trials <- 120
 
-```{r}
-# Set random seed for reproducibility
-set.seed(12345)
+# Population parameters (logit scale)
+muA_true   <- qlogis(0.75)   # mean bias ≈ 0.75
+muN_true   <- qlogis(0.12)   # mean noise ≈ 0.12
+tauA_true  <- 0.50
+tauN_true  <- 0.40
 
-# Simulation parameters
-agents <- 20
-trials <- 120
+# Individual parameters (logit scale)
+alpha_j <- rnorm(n_agents, muA_true, tauA_true)
+nu_j    <- rnorm(n_agents, muN_true, tauN_true)
 
-# Population-level parameters
-rate_M <- 1.386  # Population mean of bias (~0.8 in probability space)
-rate_SD <- 0.65  # Population SD of bias
-noise_M <- -2.2  # Population mean of noise (~0.1 in probability space)
-noise_SD <- 0.5  # Population SD of noise
+# Generate choice matrix [trials x agents]
+h_matrix <- matrix(NA_integer_, nrow = n_trials, ncol = n_agents)
 
-# Print population parameters in probability space for clarity
-cat("Population parameters in probability space:\n")
-cat("Mean rate:", round(plogis(rate_M), 2), "\n")
-cat("Mean noise:", round(plogis(noise_M), 2), "\n")
-
-# Generate random agent parameters
-agent_rates <- rnorm(agents, rate_M, rate_SD)
-agent_noises <- rnorm(agents, noise_M, noise_SD)
-
-# Convert to probability space for easier interpretation
-agent_rates_prob <- plogis(agent_rates)
-agent_noises_prob <- plogis(agent_noises)
-
-# Generate choice data
-generate_agent_data <- function(agent_id, rate, noise, n_trials) {
-  # Convert parameters to probability space
-  rate_p <- plogis(rate)
-  noise_p <- plogis(noise)
-  
-  # Initialize vectors
-  choices <- numeric(n_trials)
-  components <- numeric(n_trials)  # 0 = biased, 1 = random
-  
-  for (t in 1:n_trials) {
-    # Determine which component generates this choice
-    component <- rbinom(1, 1, noise_p)
-    components[t] <- component
-    
-    if (component == 1) {
-      # Random component (0.5 probability)
-      choices[t] <- rbinom(1, 1, 0.5)
-    } else {
-      # Biased component
-      choices[t] <- rbinom(1, 1, rate_p)
-    }
+for (j in seq_len(n_agents)) {
+  theta_j <- plogis(alpha_j[j])
+  pi_j    <- plogis(nu_j[j])
+  for (t in seq_len(n_trials)) {
+    h_matrix[t, j] <- if (rbinom(1, 1, pi_j) == 1)
+      rbinom(1, 1, 0.5)
+    else
+      rbinom(1, 1, theta_j)
   }
-  
-  return(tibble(
-    agent = agent_id,
-    trial = 1:n_trials,
-    choice = choices,
-    component = components,
-    true_rate = rate,
-    true_rate_prob = rate_p,
-    true_noise = noise,
-    true_noise_prob = noise_p
+}
+
+data_multi <- list(
+  trials = n_trials,
+  agents = n_agents,
+  h      = h_matrix
+)
+
+# True individual parameters for later recovery plots
+true_params <- tibble(
+  agent     = seq_len(n_agents),
+  alpha_true = alpha_j,
+  nu_true    = nu_j,
+  theta_true = plogis(alpha_j),
+  pi_true    = plogis(nu_j),
+  # No-pooling "estimate": raw data mean per agent
+  nopool_theta = colMeans(h_matrix)
+)
+
+cat("Population bias  (prob scale):", round(plogis(muA_true), 3), "\n")
+cat("Population noise (prob scale):", round(plogis(muN_true), 3), "\n")
+```
+
+### 9.4  Fitting
+
+The same Pathfinder-with-safe-fallback pattern from §4.4 applies here, with one important difference: the multilevel model has additional structure that the fallback initialisation must respect. Setting `tau` to a small positive value (rather than drawing from the full half-normal prior) avoids starting near the funnel geometry. Setting `z_IDs` to near-zero ensures all individual parameters begin at their population means. Setting `L_Omega` to the identity matrix provides a neutral starting correlation. All values are jittered slightly across chains.
+
+```{r ch8-fit-multilevel}
+multi_fit_file <- "simmodels/ch8_multilevel_mixture.RDS"
+
+if (regenerate_simulations || !file.exists(multi_fit_file)) {
+
+  # Explicit per-chain jittered initialisation at prior-centre values.
+  # tau near zero avoids the NCP funnel; z_IDs = 0 starts all agents
+  # at the population mean; L_Omega = I provides neutral correlation.
+  safe_init_m <- lapply(seq_len(4), function(i) list(
+    muA     = rnorm(1,  0.0, 0.1),
+    muN     = rnorm(1, -1.0, 0.1),
+    tau     = abs(rnorm(2, 0.1, 0.02)),
+    z_IDs   = matrix(rnorm(2 * n_agents, 0, 0.05), 2, n_agents),
+    L_Omega = diag(2)
   ))
-}
 
-# Generate data for all agents
-d <- map_df(1:agents, function(id) {
-  generate_agent_data(
-    agent_id = id,
-    rate = agent_rates[id],
-    noise = agent_noises[id],
-    n_trials = trials
-  )
-})
-
-# Create matrix where columns are agents, rows are trials
-h_matrix <- d %>%
-  dplyr::select(agent, trial, choice) %>%
-  pivot_wider(
-    names_from = agent,
-    values_from = choice
-  ) %>%
-  dplyr::select(-trial) %>%
-  as.matrix()
-
-# Summary statistics
-agent_summary <- d %>%
-  group_by(agent, true_rate_prob, true_noise_prob) %>%
-  summarize(
-    mean_choice = mean(choice),
-    prop_component_1 = mean(component),
-    n_trials = n()
+  init_pf_m <- tryCatch(
+    mod_multi$pathfinder(data = data_multi, seed = 801,
+                         num_paths = 4, refresh = 0),
+    error = function(e) {
+      message("Pathfinder failed — falling back to jittered prior-centre initialisation.")
+      safe_init_m
+    }
   )
 
-# Prepare data for Stan
-data_multilevel <- list(
-  trials = trials,
-  agents = agents,
-  h = h_matrix
-)
-
-# Verify the dimensions of the matrix
-print(paste("Matrix dimensions (trials × agents):", paste(dim(h_matrix), collapse = " × ")))
-
-# Display summary of agent parameters
-cat("\nAgent parameters summary:\n")
-print(summary(agent_summary))
-
-# Plot agent-level parameters
-ggplot(agent_summary, aes(x = true_rate_prob, y = true_noise_prob)) +
-  geom_point(alpha = 0.7) +
-  geom_text(aes(label = agent), hjust = -0.3, vjust = 0) +
-  labs(
-    title = "True Agent Parameters",
-    subtitle = "Each point represents one agent",
-    x = "Rate (probability of choosing right when using biased component)",
-    y = "Noise (probability of using random component)",
-    size = "Mean Choice"
-  ) +
-  theme_minimal()
-
-# Plot choice patterns for a few selected agents
-selected_agents <- c(1, 5, 10, 15, 20)
-d_selected <- d %>% filter(agent %in% selected_agents)
-
-ggplot(d_selected, aes(x = trial, y = choice, color = factor(agent))) +
-  geom_line(alpha = 0.5) +
-  geom_point(aes(shape = factor(component)), size = 2) +
-  scale_shape_manual(values = c(16, 4), 
-                    labels = c("Biased", "Random"),
-                    name = "Component") +
-  labs(
-    title = "Choice Patterns for Selected Agents",
-    subtitle = "Circles = biased component, X = random component",
-    x = "Trial",
-    y = "Choice (0/1)",
-    color = "Agent"
-  ) +
-  theme_minimal() +
-  facet_wrap(~agent, ncol = 1)
-
-```
-
-### Fitting and Evaluating the Multilevel Model
-
-```{r}
-# File path for saved multilevel model results
-multilevel_model_file <- "simmodels/W8_multimixture.RDS"
-
-# Check if we need to rerun the simulation
-if (regenerate_simulations || !file.exists(multilevel_model_file)) {
-  # Fit the multilevel model
-  multilevel_samples <- mod_multilevel_mixture$sample(
-    data = data_multilevel,
-    seed = 123,
-    chains = 2,
-    parallel_chains = 2,
-    threads_per_chain = 2,
-    iter_warmup = 2000,
-    iter_sampling = 2000,
-    refresh = 500,
-    max_treedepth = 20,
-    adapt_delta = 0.99,
+  fit_multi <- mod_multi$sample(
+    data            = data_multi,
+    init            = init_pf_m,
+    seed            = 801,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 2000,
+    refresh         = 500
   )
-  
-  # Save the results
-  multilevel_samples$save_object(file = multilevel_model_file)
-  cat("Generated new multilevel model fit and saved to", multilevel_model_file, "\n")
+
+  fit_multi$save_object(multi_fit_file)
 } else {
-  # Load existing results
-  multilevel_samples <- readRDS(multilevel_model_file)
-  cat("Loaded existing multilevel model fit from", multilevel_model_file, "\n")
+  fit_multi <- readRDS(multi_fit_file)
 }
 
-# Summary of population-level parameters
-summary_ml <- multilevel_samples$summary(c("bias_mean", "noise_mean", "bias_noise_corr"))
-print(summary_ml)
+fit_multi$summary(c("pop_bias", "pop_noise", "tau", "bias_noise_corr"))
 ```
 
-### Examining Individual Differences
+```{r ch8-multilevel-diagnostics}
+diag_m <- fit_multi$diagnostic_summary()
+cat("Divergences:", sum(diag_m$num_divergent), "\n")
+cat("Max R-hat:  ",
+    round(max(fit_multi$summary()$rhat, na.rm = TRUE), 4), "\n")
+cat("Min ESS:    ",
+    round(min(fit_multi$summary()$ess_bulk, na.rm = TRUE)), "\n")
+```
 
-The multilevel mixture model allows us to examine individual differences in both bias and mixture weights:
+> **Debugging note.** If you see divergences in the multilevel mixture model, the most common cause is the noise SD $\tau_\nu$ approaching zero, which creates a funnel geometry in the NCP. Tighten the half-normal prior on $\tau_\nu$ (e.g., from $\text{Half-Normal}(0, 0.3)$ to $\text{Half-Normal}(0, 0.2)$) and check whether the SBC ECDF-difference for $\nu$ shows a U-shape (overconfidence). Do **not** respond by increasing `adapt_delta` without first investigating the parameterisation. Note that the safe fallback initialisation in §9.4 already places `tau` away from zero; if divergences persist despite that, the prior itself needs tightening.
 
-```{r}
-# Extract draws for individual parameters
-draws_ml <- as_draws_df(multilevel_samples$draws())
+### 9.5  Partial-Pooling Shrinkage
 
-# First, we need to extract all the necessary parameters
-# Population-level parameters
-biasM <- mean(draws_ml$biasM)
-noiseM <- mean(draws_ml$noiseM)
-tau1 <- mean(draws_ml$`tau[1]`)
-tau2 <- mean(draws_ml$`tau[2]`)
+A hallmark of hierarchical models is that individual estimates are shrunk toward the group mean, with more shrinkage for agents whose data are less informative. The shrinkage plot below compares the raw per-agent data mean (no-pooling) with the posterior mean of `agent_bias[j]` (partial pooling).
 
-# Create a dataframe to store the individual parameters
-individual_params <- tibble(
-  agent = 1:data_multilevel$agents,
-  bias = numeric(data_multilevel$agents),
-  noise = numeric(data_multilevel$agents)
-)
+```{r ch8-shrinkage}
+draws_multi <- as_draws_df(fit_multi$draws())
 
-# Loop through agents to extract and transform z_IDs to actual parameter values
-for (i in 1:data_multilevel$agents) {
-  # Extract the z-scores for this agent
-  z1_name <- paste0("z_IDs[1,", i, "]")
-  z2_name <- paste0("z_IDs[2,", i, "]")
-  
-  # Calculate bias and noise based on the multilevel structure
-  # Note: This assumes the model uses z-scores to represent deviations from population means
-  z1 <- mean(draws_ml[[z1_name]])
-  z2 <- mean(draws_ml[[z2_name]])
-  
-  # Transform back to original scale
-  individual_params$bias[i] <- plogis(biasM + z1 * tau1)  # Convert to probability scale
-  individual_params$noise[i] <- plogis(noiseM + z2 * tau2)  # Convert to probability scale
-}
+# Extract posterior means of individual bias parameters
+agent_cols <- paste0("agent_bias[", seq_len(n_agents), "]")
+post_bias_means <- draws_multi |>
+  dplyr::select(dplyr::all_of(agent_cols)) |>
+  dplyr::summarise(dplyr::across(everything(), mean)) |>
+  tidyr::pivot_longer(everything(),
+                      names_to  = "param",
+                      values_to = "post_mean") |>
+  dplyr::mutate(agent = as.integer(
+    stringr::str_extract(param, "\\d+")))
 
-# Get the true values from our generated data frame 'd'
-true_params <- d %>%
-  group_by(agent) %>%
-  summarize(
-    true_rate = first(true_rate),
-    true_rate_prob = first(true_rate_prob),
-    true_noise = first(true_noise),
-    true_noise_prob = first(true_noise_prob)
+shrinkage_df <- true_params |>
+  dplyr::left_join(post_bias_means, by = "agent")
+
+pop_mean_est <- mean(draws_multi$pop_bias)
+
+ggplot(shrinkage_df) +
+  geom_segment(
+    aes(x = nopool_theta, xend = post_mean, y = agent, yend = agent),
+    arrow     = arrow(length = unit(0.18, "cm"), type = "closed"),
+    colour    = "#2166AC",
+    linewidth = 0.6,
+    alpha     = 0.7
+  ) +
+  geom_point(aes(x = nopool_theta, y = agent), shape = 1, size = 2.5) +
+  geom_point(aes(x = post_mean, y = agent), colour = "#2166AC", size = 2.5) +
+  geom_point(aes(x = theta_true, y = agent), shape = 4,
+             colour = "#D6604D", size = 2.5) +
+  geom_vline(xintercept = pop_mean_est,
+             linetype = "dashed", colour = "grey50", linewidth = 0.8) +
+  labs(
+    title    = "Partial-pooling shrinkage",
+    subtitle = "Open circles: no-pooling (data mean); blue filled: posterior mean; red ×: true value",
+    x        = "Bias parameter (probability scale)",
+    y        = "Agent"
   )
-
-# Join with the true parameter values
-individual_params <- individual_params %>%
-  left_join(true_params, by = "agent")
-
-# Check the result
-head(individual_params)
-
-# Plot individual parameter estimates
-p1 <- ggplot(individual_params, aes(x = bias, y = noise)) +
-  geom_point(size = 3, alpha = 0.7) +
-  geom_hline(yintercept = mean(draws_ml$noise_mean), linetype = "dashed") +
-  geom_vline(xintercept = mean(draws_ml$bias_mean), linetype = "dashed") +
-  labs(title = "Individual Parameter Estimates",
-       subtitle = "Each point represents one agent",
-       x = "Bias Parameter (θ)",
-       y = "Noise Parameter (π)") +
-  theme_minimal()
-
-# Plot correlation between true and estimated parameters
-p2 <- ggplot(individual_params, aes(x = inv_logit_scaled(true_rate), y = bias)) +
-  geom_point(size = 3, alpha = 0.7) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
-  labs(title = "Parameter Recovery: Bias",
-       subtitle = "True vs. estimated bias parameter",
-       x = "True Bias",
-       y = "Estimated Bias") +
-  theme_minimal()
-
-# Display plots
-p1
-p2
 ```
 
-### Interpreting Parameter Correlations
+Agents whose raw data means are far from the group mean are pulled back more strongly — they are more likely to be statistical outliers than genuinely extreme individuals. Note also that the posterior means are systematically closer to the true values (red crosses) than the raw data means, confirming that partial pooling improves estimation accuracy.
 
-An important advantage of multilevel mixture models is their ability to reveal correlations between parameters across individuals:
+### 9.6  Population Parameter Recovery
 
-```{r}
-# Visualize correlation between parameters
-ggplot() +
-  geom_histogram(aes(x = draws_ml$bias_noise_corr), bins = 30, fill = "steelblue", alpha = 0.7) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  labs(title = "Correlation Between Bias and Noise Parameters",
-       subtitle = "Population-level correlation across individuals",
-       x = "Correlation Coefficient",
-       y = "Count") +
-  theme_minimal()
+```{r ch8-multilevel-recovery}
+pop_params <- c("pop_bias", "pop_noise")
+fit_multi$summary(pop_params) |>
+  dplyr::mutate(
+    true = c(plogis(muA_true), plogis(muN_true))
+  ) |>
+  dplyr::select(variable, mean, q5, q95, true, rhat, ess_bulk)
 ```
 
-The correlation between bias and noise parameters can provide important insights into cognitive processes. For example, a negative correlation might suggest that individuals with stronger biases tend to have fewer random lapses, while a positive correlation could indicate that strong biases are associated with more exploratory behavior.
-However, in the simulation process we did not include any correlation between the bias and noise parameters, so the correlation we observe here is correctly estimated as centered at 0.
+---
 
-## Comparing Single-Process and Mixture Models
+## 10  Model Comparison
 
-Finally, let's compare our mixture model with a single-process alternative to determine which better captures the observed behavior.
+### 10.1  Single-Process Baseline
 
-### Single-Process Model
+We fit a simple biased-agent model — no noise component — to the same data used in Section 4. This is the model that emerges when we constrain $\pi = 0$.
 
-First, let's implement a simple single-process model that assumes all choices come from a biased process:
-
-```{r}
-# Stan model for single-process biased agent
-stan_biased_model <- "
+```{r ch8-biased-stan}
+biased_stan <- "
 data {
-  int<lower=1> n;  // Number of trials
-  array[n] int h;  // Choice data (0/1)
+  int<lower=1> n;
+  array[n] int<lower=0, upper=1> h;
 }
-
 parameters {
-  real bias;  // Bias parameter (logit scale)
+  real alpha;
 }
-
 model {
-  // Prior
-  target += normal_lpdf(bias | 0, 1);
-  
-  // Likelihood (all choices come from biased process)
-  target += bernoulli_logit_lpmf(h | bias);
+  target += normal_lpdf(alpha | 0, 1);
+  target += bernoulli_logit_lpmf(h | alpha);
 }
-
 generated quantities {
-  real<lower=0, upper=1> bias_p = inv_logit(bias);  // Bias on probability scale
-  
-  // Log likelihood for model comparison
+  real<lower=0, upper=1> theta = inv_logit(alpha);
   vector[n] log_lik;
-  for (i in 1:n) {
-    log_lik[i] = bernoulli_logit_lpmf(h[i] | bias);
-  }
-  
-  // Posterior predictions
   array[n] int pred_choice;
   for (i in 1:n) {
-    pred_choice[i] = bernoulli_rng(bias_p);
+    log_lik[i]    = bernoulli_logit_lpmf(h[i] | alpha);
+    pred_choice[i] = bernoulli_logit_rng(alpha);
   }
 }
 "
 
-# Write the model to a file
-write_stan_file(
-  stan_biased_model,
-  dir = "stan/",
-  basename = "W8_BiasedSingle.stan"
-)
-
-# Compile the model
-file <- file.path("stan/W8_BiasedSingle.stan")
+write_stan_file(biased_stan, dir = "stan/", basename = "ch8_biased_single.stan")
 mod_biased <- cmdstan_model(
-  file, 
-  cpp_options = list(stan_threads = TRUE),
+  "stan/ch8_biased_single.stan",
+  cpp_options   = list(stan_threads = TRUE),
   stanc_options = list("O1")
 )
+```
 
-# File path for saved single-process model results
-biased_model_file <- "simmodels/W8_biased_single.RDS"
+```{r ch8-fit-biased}
+biased_fit_file <- "simmodels/ch8_biased_single.RDS"
 
-# Check if we need to rerun the simulation
-if (regenerate_simulations || !file.exists(biased_model_file)) {
-  # Fit the single-process model
-  biased_samples <- mod_biased$sample(
-    data = data,
-    seed = 123,
-    chains = 2,
-    parallel_chains = 2,
-    threads_per_chain = 2,
-    iter_warmup = 2000,
-    iter_sampling = 2000,
-    refresh = 500,
-    max_treedepth = 20,
-    adapt_delta = 0.99,
+if (regenerate_simulations || !file.exists(biased_fit_file)) {
+  fit_biased <- mod_biased$sample(
+    data            = data,
+    seed            = 8,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 2000,
+    refresh         = 500
   )
-  
-  # Save the results
-  biased_samples$save_object(file = biased_model_file)
-  cat("Generated new single-process model fit and saved to", biased_model_file, "\n")
+  fit_biased$save_object(biased_fit_file)
 } else {
-  # Load existing results
-  biased_samples <- readRDS(biased_model_file)
-  cat("Loaded existing single-process model fit from", biased_model_file, "\n")
+  fit_biased <- readRDS(biased_fit_file)
 }
 
-# Summary of single-process model
-summary_biased <- biased_samples$summary("bias_p")
-print(summary_biased)
+fit_biased$summary("theta")
 ```
 
+### 10.2  ELPD Comparison
 
-### Model Comparison
+```{r ch8-loo-compare}
+log_lik_b <- fit_biased$draws("log_lik", format = "matrix")
+r_eff_b   <- loo::relative_eff(exp(log_lik_b), chain_id = rep(1:4, each = 2000))
+loo_biased <- loo::loo(log_lik_b, r_eff = r_eff_b)
 
-Now let's compare the single-process model with our mixture model using leave-one-out cross-validation (LOO-CV):
-
-
-```{r}
-# Calculate LOO for both models
-loo_mixture <- samples$loo()
-loo_biased <- biased_samples$loo()
-
-# Compare models
-comparison <- loo_compare(loo_mixture, loo_biased)
+comparison <- loo::loo_compare(loo_single, loo_biased)
 print(comparison)
-
-# Calculate model weights
-weights <- loo_model_weights(list(
-  "Mixture" = loo_mixture, 
-  "Single-Process" = loo_biased
-))
-print(weights)
-
-# Visualize model comparison
-ggplot(tibble(
-  model = names(weights),
-  weight = as.numeric(weights)
-)) +
-  geom_col(aes(x = model, y = weight, fill = model), alpha = 0.7) +
-  scale_fill_brewer(palette = "Set1") +
-  labs(title = "Model Comparison via LOO-CV",
-       subtitle = "Higher weights indicate better predictive performance",
-       x = NULL,
-       y = "Model Weight") +
-  theme_minimal() +
-  theme(legend.position = "none") +
-  geom_text(aes(x = model, y = weight + 0.05, 
-                label = scales::percent(weight, accuracy = 0.1)))
 ```
 
-Based on the model comparison, the single model appears to better capture the data-generating process than the single-process alternative. This might seem counterintuitive, but it highlights that predictive performance is not necessarily the best way of choosing your model.
-What happens here is that a combination of two binomials can be mathematically reduced to a single binomial (in this case with a lower rate that the biased component). This is why the single-process model performs better in terms of LOO-CV, even though the mixture model is more realistic and provides a richer interpretation of the data. Theory should guide you in this case.
+```{r ch8-stacking-weights}
+weights_stacking <- loo::loo_model_weights(
+  list(mixture = loo_single, biased = loo_biased),
+  method = "stacking"
+)
+print(weights_stacking)
+```
 
-### Applications of Mixture Models in Cognitive Science
+### 10.3  Interpretation
 
-Mixture models have found numerous applications in cognitive science. Here are a few examples that highlight their versatility:
+The comparison result should show a near-zero ELPD difference with a standard error larger than the difference itself. This is the correct outcome, for reasons established in Section 6. Any $(1-\pi)\text{Bern}(\theta) + \pi\text{Bern}(0.5)$ mixture is **likelihood-equivalent** to $\text{Bern}(\theta_{\text{eff}})$ for i.i.d. binary data. The biased model, in effect, estimates $\hat{\theta}_{\text{eff}}$ directly. PSIS-LOO has no basis on which to prefer one parameterisation over the other, and Bayesian stacking weights will similarly be indeterminate. The prior sensitivity analysis in Section 7 already made this outcome predictable: high $\hat{\psi}$ for the noise parameter is the per-fit signal of the same degeneracy that manifests here as indistinguishable ELPD.
 
-* Attention and Vigilance: Modeling attentional lapses during sustained attention tasks as a mixture of focused and random responses.
+This finding does *not* mean the mixture model is useless. It means that to identify the components separately, the analysis requires one of the structural interventions described in Section 6.3: joint modelling of RT and accuracy, a between-condition predictor on $\pi$, or trial-level covariates that predict component membership. In practice, the mixture model is scientifically justified by theory and produces richer parameter estimates that are interpretable under the generative story — even when LOO cannot disambiguate models, theoretical grounding should guide model selection.
 
-* Memory: Representing recognition memory as a mixture of more implicit familiarity and more explicit recollection processes, each with distinct characteristics.
+---
 
-*Decision Making: Modeling economic choices as combinations of heuristic and deliberative processes, with the proportion varying based on task demands.
+## 11  Extensions
 
-* Learning: Capturing the transition from rule-based to automatic processing during skill acquisition, with the mixture weights shifting over time.
+**Mixtures with $K > 2$ components.** The framework extends naturally: replace the scalar mixing weight $\pi$ with a $K$-simplex $\boldsymbol{\pi} \sim \text{Dirichlet}(\boldsymbol{\alpha})$ and loop over $K$ terms in `log_sum_exp`. The label-switching problem (components can permute their identities between chains) becomes more severe as $K$ grows; post-processing the draws to enforce a canonical ordering (e.g., $\theta_1 < \theta_2 < \ldots$) or placing informative asymmetric priors on the components is required.
 
-* Individual Differences: Identifying subgroups of participants who employ qualitatively different strategies to solve the same task.
+**Hidden Markov Models.** If the latent component $z_i$ is not i.i.d. but follows a first-order Markov chain, the model is an HMC with a transition matrix. The forward algorithm marginalises over all state sequences in $\mathcal{O}(nK^2)$ time, and is implementable in Stan's `functions` block. HMMs are the natural model when behavioural strategies change gradually across trials, as in online learning or sequential decision-making tasks.
 
-## Conclusion
+**Contamination models for RT data.** The deliberate + lapse structure in Section 1 is a special case of the *contamination model* (Ratcliff & Tuerlinckx 2002), widely used in RT modelling. The deliberate component is typically an ex-Gaussian or a shifted log-normal; the contamination component is uniform over a physiologically plausible range. Because the components have different support structures, the mixture is well-identified even from marginal RT data alone — unlike the binary case.
 
-Mixture models represent a crucial step forward in our cognitive modeling toolkit, allowing us to capture the complexity and variability inherent in human behavior. Through this chapter, we've seen how combining multiple cognitive strategies within a single model can provide richer and more realistic accounts of decision-making processes.
+**Finite mixture clustering.** When the component means $\theta_k$ are themselves unknown parameters, the model becomes a finite mixture cluster model. Each individual is assigned (softly) to one of $K$ latent subgroups with distinct cognitive parameters. This is a principled alternative to post-hoc clustering of posterior means, and produces coherent uncertainty over cluster membership.
 
-Several key insights emerge from our exploration of mixture models:
+---
 
-* Beyond Single-Process Simplifications: Mixture models allow us to move beyond the false choice between oversimplified single-strategy models and intractably complex specifications. By combining a small number of interpretable components, we can capture substantial behavioral complexity while maintaining mathematical and computational tractability.
+## 12  Conclusion
 
-* Bayesian Implementation: The Bayesian implementation of mixture models in Stan provides powerful tools for inference. We can estimate not only the parameters of different cognitive strategies but also their relative contributions to behavior and how they might vary across individuals.
+Mixture models are a powerful and principled tool for cognitive modelling when behaviour reflects more than one underlying process. Several key lessons from this chapter should inform their use:
 
-* Model Validation: Mixture models require careful attention to identifiability and validation. Through parameter recovery studies and posterior predictive checks, we've seen how to verify that our specifications can reliably recover true parameter values and generate realistic behavioral patterns.
+**Discrete parameters must be marginalised before writing Stan code.** The latent component indicator $z_i$ cannot be sampled by HMC. Summing over components using `log_mix()` inside a per-observation loop is not optional. The vectorised form — passing a vector to the component density function before calling `log_sum_exp` — produces a structurally incorrect likelihood that models all-or-nothing component assignment rather than per-trial mixing.
 
+**Scale consistency inside `log_mix()` matters.** Both component log-likelihoods should be evaluated on the same scale. Use `bernoulli_logit_lpmf(h[i] | 0.0)` for a random component at 0.5, not `bernoulli_lpmf(h[i] | 0.5)`. The results are numerically identical but the logit-scale form is consistent, avoids an implicit transformation, and keeps the model's parameterisation coherent.
 
+**Constrained parameter declarations absorb truncation automatically.** Declaring `vector<lower=0>[2] tau` means Stan applies the log Jacobian of the constraint transform internally. Manually subtracting `normal_lccdf()` is redundant and adds unnecessary autodiff nodes. This applies to any constrained parameter: the truncation correction is only required when placing a truncated prior on an *unconstrained* quantity.
 
+**SBC is the right validation tool.** Mixture models are harder to calibrate than standard regression models because the posterior is often ridge-shaped and component-specific parameters may be weakly identified. Running 1,000 SBC datasets and inspecting ECDF-difference plots for both calibration and parameter recovery is the minimum validation required before fitting to empirical data. A U-shaped ECDF-difference for the noise parameter is a common failure mode that signals overconfidence.
+
+**Prior sensitivity quantifies what identifiability analysis predicts.** Section 6 showed analytically that $\pi$ is not identified from binary i.i.d. data. Section 7's `priorsense` analysis made this empirical: a high $\hat{\psi}$ for the noise logit $\nu$ and a low $\hat{\psi}$ for the bias logit $\alpha$ is the expected fingerprint. Reporting both analyses together — the manifold plot and the power-scaling sensitivities — gives the reader a complete picture of what the data do and do not constrain.
+
+**Initialisation is not a detail.** Mixture model posteriors can have ridge or funnel geometry that causes Stan's Uniform(−2, 2) default initialisation to fail immediately. Use Pathfinder as the primary initialisation method and define an explicit jittered prior-centre fallback. For hierarchical models, initialise the population SD vector `tau` at small positive values, not at zero or at wide prior draws.
+
+**A model that loses a LOO comparison is not necessarily wrong.** In the binary case, the mixture model and the biased model have equivalent ELPD because they are parameterisations of the same likelihood. Theory should guide model choice here, not predictive scores alone. Model comparison and theoretical justification are complementary, not competing, sources of evidence. The degeneracy-breaking strategies in Section 6.3 describe the experimental and modelling decisions that would, in a future study, make LOO comparison informative.
