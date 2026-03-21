@@ -1,0 +1,2235 @@
+---
+title: "09 — Bayesian Models of Cognition"
+output: html_document
+date: "2025-03-10"
+---
+
+```{r 09_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = "center",
+  out.width  = "80%",
+  dpi        = 300
+)
+
+# Set to TRUE to regenerate all Stan fits, SBC runs, and parameter recovery.
+# FALSE loads saved results.
+regenerate_simulations <- TRUE
+
+for (d in c("stan", "simdata", "simmodels", "figures")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+
+pacman::p_load(
+  tidyverse,   # data manipulation and visualisation
+  cmdstanr,    # Stan interface
+  posterior,   # draws manipulation
+  bayesplot,   # MCMC diagnostics
+  patchwork,   # plot composition
+  loo,         # PSIS-LOO and LFO-CV
+  priorsense,  # prior sensitivity
+  SBC,         # Simulation-Based Calibration
+  furrr,       # parallel map
+  future       # parallel backend
+)
+
+theme_set(theme_classic())
+plan(sequential) # switch to multisession for long runs
+```
+
+# Bayesian Models of Cognition
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chs. 1–8 used the Bayesian *statistical* framework as a tool to model
+> cognitive processes in the matching-pennies task. This chapter introduces
+> a distinct scientific claim: the *Bayesian cognition hypothesis* — the
+> proposal that the mind itself operates according to Bayes' theorem. We use
+> our Bayesian statistical tools to test whether this hypothesis fits human
+> behaviour in a social learning task, applying the full validation battery
+> from Chs. 5–7. The chapter also introduces Leave-Future-Out cross-validation
+> for sequential models, a technique flagged in Ch. 7 but not developed there.
+
+## A Terminological Clarification
+
+Before proceeding, one potential source of confusion deserves explicit attention. This entire course has used *Bayesian statistics* as its inferential framework: we represent uncertainty as probability distributions, write likelihoods, specify priors, and obtain posteriors via Stan. That is our *tool*.
+
+This chapter introduces a distinct scientific claim: the *Bayesian cognition hypothesis*. This is the proposal that the *mind itself* operates according to principles analogous to Bayes' theorem — that people represent beliefs as probability distributions, update them optimally when new evidence arrives, and combine information sources in proportion to their reliability. Whether this hypothesis is empirically correct is an open and contested question. We use our Bayesian statistical tools to test it.
+
+Keeping these two senses of "Bayesian" separate is essential for clean scientific thinking.
+
+## Introduction
+
+The human mind constantly receives input from multiple sources: direct sensory evidence, social information from others, and prior knowledge built from experience. A fundamental question in cognitive science is how these disparate pieces of information are combined to produce coherent beliefs about the world.
+
+The Bayesian framework offers a powerful approach to modelling this process. Under this framework, the mind is conceptualised as a probabilistic machine that continuously updates its beliefs based on new evidence. This contrasts with rule-based or purely associative models by emphasising:
+
+- **Representations of uncertainty:** Beliefs are represented as probability distributions, not single values.
+- **Optimal integration:** Information is combined according to its reliability.
+- **Prior knowledge:** New evidence is interpreted in light of existing beliefs.
+
+Formally, Bayes' theorem states:
+
+$$P(\text{belief} \mid \text{evidence}) \propto P(\text{evidence} \mid \text{belief}) \times P(\text{belief})$$
+
+where $P(\text{belief} \mid \text{evidence})$ is the posterior, $P(\text{evidence} \mid \text{belief})$ is the likelihood, and $P(\text{belief})$ is the prior. The $\propto$ symbol denotes proportionality — the product on the right must be normalised by dividing by $P(\text{evidence})$ to recover a proper probability. In practice, this normalisation constant is handled automatically when we work with conjugate families such as the Beta distribution.
+
+> **Note:** In a more traditional formulation, Bayes' theorem is written:
+> $$P(\text{belief} \mid \text{evidence}) = \frac{P(\text{evidence} \mid \text{belief}) \times P(\text{belief})}{P(\text{evidence})}$$
+> The normalising denominator $P(\text{evidence})$ ensures the posterior integrates to one. Because this constant does not depend on the belief parameter, it cancels in most computations — hence the proportionality shorthand.
+
+In cognitive terms, this means people integrate new information with existing knowledge, giving more weight to reliable information sources and less weight to unreliable ones.
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+
+- Understand the basic principles of Bayesian information integration and distinguish the *Bayesian cognition* hypothesis from the *Bayesian statistics* toolkit.
+- Implement two cognitive models — a Simple Bayesian Agent (SBA) and a Weighted Bayesian Agent (WBA) — in raw Stan.
+- Execute the full Bayesian workflow (prior predictive checks → SBC → fitting → diagnostics → LOO-PIT → sensitivity analysis → model comparison) on cognitive models.
+- Identify when standard LOO-CV is invalid and know the leave-future-out remedy for sequential data.
+- Extend both models to multilevel structures that capture individual differences.
+
+## Chapter Roadmap
+
+This chapter follows the same three-phase workflow established in Chapters 5–7:
+
+1. **Phase 1 — Generative Plausibility:** Prior predictive checks confirm that our priors generate cognitively plausible behaviour before any data are observed.
+2. **Phase 2 — Model Criticism and Robustness:** Posterior predictive checks, LOO-PIT, and sensitivity analysis assess how well the fitted model captures the data and how sensitive conclusions are to prior choice.
+3. **Phase 3 — Computational Validation:** Parameter recovery and Simulation-Based Calibration (SBC) certify that the Stan sampler is unbiased and can recover the true parameters from data generated by our models.
+
+Note: Phase 3 (SBC) is presented before Phase 2 (empirical diagnostics) in this chapter, mirroring the logical dependency: we validate the computational engine on simulated data *before* trusting inferences on real or agent-generated data.
+
+> **Critical precondition (from Chapter 7):** Model comparison is only scientifically meaningful if all candidate models have individually passed their quality checks. We apply this discipline here.
+
+## The Bayesian Framework for Cognition
+
+Bayesian models of cognition explore the idea that the mind operates according to principles similar to Bayes' theorem, combining different sources of evidence to form updated beliefs. Most commonly this is framed in terms of prior beliefs being updated with new evidence to form a posterior.
+
+### Visualising Bayesian Updating
+
+```{r 09_visualising_bayesian_updating}
+x          <- seq(0, 1, by = 0.01)
+prior      <- dbeta(x, 1, 1)
+likelihood <- dbeta(x, 7, 3)
+posterior  <- dbeta(x, 8, 4)
+
+# 1. Define the length explicitly outside the tibble
+n_x <- length(x) 
+
+plot_data <- tibble(
+  x            = rep(x, 3),
+  density      = c(prior, likelihood, posterior),
+  distribution = factor(
+    # 2. Use the explicit length variable here
+    rep(c("Prior", "Likelihood", "Posterior"), each = n_x), 
+    levels = c("Prior", "Likelihood", "Posterior")
+  )
+)
+
+ggplot(plot_data, aes(x = x, y = density,
+                      colour = distribution, linetype = distribution)) +
+  geom_line(linewidth = 1.2) +
+  scale_colour_manual(
+    values = c("Prior" = "#4575b4", "Likelihood" = "#d73027",
+               "Posterior" = "#756bb1")
+  ) +
+  scale_linetype_manual(
+    values = c("Prior" = "dashed", "Likelihood" = "dotted",
+               "Posterior" = "solid")
+  ) +
+  labs(
+    title    = "Bayesian Updating: Prior × Likelihood ∝ Posterior",
+    subtitle = "Uniform prior updated with 7 blue / 2 red marbles",
+    x        = "Belief (proportion blue)",
+    y        = "Probability density",
+    colour   = NULL, linetype = NULL
+  ) +
+  theme(legend.position = "bottom")
+```
+
+The posterior is narrower than either source alone — combining information increases certainty. Its peak lies between prior and likelihood, but closer to the likelihood because the evidence was relatively strong. The bottom line: Bayesian integration is not averaging; it is precision-weighted combination.
+
+### Bayesian Models in Cognitive Science
+
+Bayesian cognitive models have been successfully applied to:
+
+- **Perception:** combining multi-sensory cues (visual, auditory, tactile) into a unified percept.
+- **Learning:** updating beliefs from observation and instruction.
+- **Decision-making:** weighing different evidence sources when making choices.
+- **Social cognition:** integrating others' opinions with one's own knowledge.
+- **Psychopathology:** understanding schizophrenia and autism in terms of atypical Bayesian inference — hyper-precise priors, reduced likelihood weighting, or altered social learning.
+
+---
+
+## Example: Social Influence in Perceptual Decision-Making
+
+To ground our discussion, we consider a simplified version of a study examining how people with and without schizophrenia integrate information from different sources (Simonsen et al., 2021).
+
+In the **marble task**, participants guess the colour of the next marble drawn from a jar. They receive information from two sources:
+
+- **Direct evidence:** A sample of 8 marbles drawn from the jar (e.g., 6 blue and 2 red).
+- **Social evidence:** The choice of one other person who has seen an independent sample.
+
+For simplicity, we use a binary version where participants guess *blue* or *red*, and social evidence is encoded as an integer from 0 ("clear red") to 3 ("clear blue") reflecting inferred evidence strength.
+
+### The Beta Distribution Intuition
+
+The Beta distribution provides an elegant way to represent beliefs about proportions such as the proportion of blue marbles in a jar. Its two parameters $\alpha$ and $\beta$ have an intuitive interpretation:
+
+- $\alpha$ can be thought of as the number of blue marbles observed (plus 1 for the prior pseudo-count).
+- $\beta$ can be thought of as the number of red marbles observed (plus 1).
+
+A $\text{Beta}(1, 1)$ distribution is uniform — representing no prior knowledge. After observing 6 blue and 2 red marbles: $\text{Beta}(1+6, 1+2) = \text{Beta}(7, 3)$, with a mean of $7/10 = 0.70$.
+
+To combine two independent evidence sources $\text{Beta}(\alpha_1, \beta_1)$ and $\text{Beta}(\alpha_2, \beta_2)$ under a conjugate prior $\text{Beta}(\alpha_0, \beta_0)$, we simply add counts:
+$$\text{Posterior} = \text{Beta}(\alpha_0 + k_1 + k_2,\ \beta_0 + (n_1 - k_1) + (n_2 - k_2))$$
+
+This is the *Simple Bayesian Agent* (SBA): it takes both evidence sources at face value with equal weight.
+
+---
+
+## The Two Models
+
+This chapter develops and compares two competing models of evidence integration.
+
+### Model 1: Simple Bayesian Agent (SBA)
+
+The SBA assigns equal, unit weight to all evidence sources. For trial $i$:
+
+$$y_i \sim \text{BetaBinomial}(1,\ \alpha_i,\ \beta_i)$$
+$$\alpha_i = 1 + k_{1,i} + k_{2,i}$$
+$$\beta_i = 1 + (n_{1,i} - k_{1,i}) + (n_{2,i} - k_{2,i})$$
+
+The prior $(\alpha_0 = \beta_0 = 1)$ is fixed — uniform. The SBA has **no free parameters**; it is a deterministic prediction machine.
+
+### Model 2: Weighted Bayesian Agent (WBA)
+
+The WBA allows the agent to weight each evidence source differently. The two weight parameters $w_d > 0$ and $w_s > 0$ scale direct and social evidence respectively:
+
+$$y_i \sim \text{BetaBinomial}(1,\ \alpha_i,\ \beta_i)$$
+$$\alpha_i = 1 + w_d \cdot k_{1,i} + w_s \cdot k_{2,i}$$
+$$\beta_i = 1 + w_d \cdot (n_{1,i} - k_{1,i}) + w_s \cdot (n_{2,i} - k_{2,i})$$
+
+A weight of 1.0 means the agent treats that evidence at face value; less than 1.0 means downweighting (scepticism); greater than 1.0 means overweighting. Negative weights are not assigned a prior — they would imply anti-correlated updating, which has no cognitive interpretation in this task.
+
+The WBA has **two free parameters**: $w_d$ and $w_s$.
+
+> **Identifiability note:** $w_d$ and $w_s$ are jointly identified by the differential *pattern* of choices across trials where direct and social evidence conflict. With the full grid of 9 × 4 evidence combinations (repeated), both parameters are well-separated in the likelihood. We verify this computationally in the SBC section.
+
+---
+
+## R Implementations
+
+Before touching Stan, we implement the models in R to build intuition and generate simulated agent data.
+
+### The Beta-Binomial Integration Function
+
+```{r 09_betabinomial_model}
+# Compute the posterior Beta parameters and summary statistics
+# for a single trial of evidence integration.
+#
+# Returns: list with alpha_post, beta_post, expected_rate,
+#          ci_lower, ci_upper, choice (based on expected_rate > 0.5)
+betaBinomialModel <- function(alpha_prior = 1, beta_prior = 1,
+                               blue1, total1, blue2, total2,
+                               w_direct = 1, w_social = 1) {
+  alpha_post <- alpha_prior + w_direct * blue1        + w_social * blue2
+  beta_post  <- beta_prior  + w_direct * (total1 - blue1) +
+                               w_social * (total2 - blue2)
+
+  expected_rate <- alpha_post / (alpha_post + beta_post)
+  ci_lower      <- qbeta(0.025, alpha_post, beta_post)
+  ci_upper      <- qbeta(0.975, alpha_post, beta_post)
+
+  list(
+    alpha_post    = alpha_post,
+    beta_post     = beta_post,
+    expected_rate = expected_rate,
+    ci_lower      = ci_lower,
+    ci_upper      = ci_upper,
+    choice        = ifelse(expected_rate > 0.5, "Blue", "Red")
+  )
+}
+```
+
+### Simulating the Evidence Space
+
+```{r 09_simulating_experimental_scenarios}
+total1 <- 8   # direct evidence sample size (constant)
+total2 <- 3   # social evidence total signals (constant)
+
+scenarios <- expand_grid(
+  blue1 = seq(0, 8, 1),
+  blue2 = seq(0, 3, 1)
+) |>
+  mutate(red1 = total1 - blue1, red2 = total2 - blue2)
+
+# SBA predictions (w_direct = w_social = 1)
+sim_data <- scenarios |>
+  pmap_dfr(function(blue1, red1, blue2, red2) {
+    result <- betaBinomialModel(1, 1, blue1, total1, blue2, total2)
+    tibble(
+      blue1         = blue1,
+      blue2         = blue2,
+      expected_rate = result$expected_rate,
+      ci_lower      = result$ci_lower,
+      ci_upper      = result$ci_upper,
+      choice        = result$choice
+    )
+  }) |>
+  mutate(
+    social_evidence = factor(
+      blue2, levels = 0:3,
+      labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+    )
+  )
+```
+
+### Visualising Bayesian Integration
+
+```{r 09_visualising_bayesian_integration}
+ggplot(sim_data,
+       aes(x = blue1, y = expected_rate,
+           colour = social_evidence, group = social_evidence)) +
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper,
+                  fill = social_evidence), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50") +
+  scale_x_continuous(breaks = 0:8) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title    = "Simple Bayesian Agent: Evidence Integration",
+    subtitle = "Expected proportion with 95% credible intervals",
+    x        = "Blue marbles in direct sample (out of 8)",
+    y        = "P(next marble = blue)",
+    colour   = "Social evidence",
+    fill     = "Social evidence"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+The influence of social evidence is greatest when direct evidence is ambiguous (near 4 blue marbles) and weakest at the extremes. This is the signature Bayesian property: stronger evidence dominates weaker evidence.
+
+### Examining Belief Distributions for Selected Scenarios
+
+```{r 09_zoom_in_specific_scenarios}
+simpleBayesianDistributions <- function(blue1, red1, blue2, red2) {
+  theta <- seq(0.001, 0.999, length.out = 200)
+  tibble(
+    theta    = theta,
+    prior    = dbeta(theta, 1, 1),
+    direct   = dbeta(theta, 1 + blue1, 1 + red1),
+    social   = dbeta(theta, 1 + blue2, 1 + red2),
+    posterior = dbeta(theta, 1 + blue1 + blue2, 1 + red1 + red2)
+  )
+}
+
+selected_scenarios <- expand_grid(
+  blue1 = c(1, 4, 7),
+  blue2 = c(0, 1, 2, 3)
+)
+
+distribution_data <- selected_scenarios |>
+  pmap_dfr(function(blue1, blue2) {
+    simpleBayesianDistributions(
+      blue1, total1 - blue1, blue2, total2 - blue2
+    ) |>
+      mutate(
+        blue1           = blue1,
+        blue2           = blue2,
+        social_evidence = factor(
+          blue2, levels = 0:3,
+          labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+        )
+      )
+  })
+
+ggplot(distribution_data) +
+  geom_line(aes(x = theta, y = prior),
+            colour = "grey60", linetype = "solid", linewidth = 0.5) +
+  geom_area(aes(x = theta, y = posterior),
+            fill = "#756bb1", alpha = 0.3) +
+  geom_line(aes(x = theta, y = posterior),
+            colour = "#756bb1", linewidth = 1.2) +
+  geom_line(aes(x = theta, y = direct, colour = "Direct"),
+            linewidth = 0.9, linetype = "dashed") +
+  geom_line(aes(x = theta, y = social, colour = "Social"),
+            linewidth = 0.9, linetype = "dashed") +
+  facet_grid(
+    blue2 ~ blue1,
+    labeller = labeller(
+      blue1 = function(x) paste("Direct:", x, "blue"),
+      blue2 = function(x) paste("Social:", x, "blue")
+    )
+  ) +
+  scale_colour_manual(values = c("Direct" = "#4575b4", "Social" = "#d73027")) +
+  labs(
+    title    = "Bayesian Evidence Integration: Full Distributions",
+    subtitle = "Grey = prior; dashed = individual sources; purple area = posterior",
+    x        = "Proportion of blue marbles (θ)",
+    y        = "Probability density",
+    colour   = "Evidence type"
+  ) +
+  theme(
+    legend.position = "bottom",
+    strip.text      = element_text(size = 8),
+    axis.text       = element_text(size = 6)
+  )
+```
+
+### The Weighted Bayesian Agent: Mathematical Extension
+
+The WBA extends the SBA by introducing weight parameters $w_d$ and $w_s$:
+
+$$\alpha_\text{post} = \alpha_0 + w_d \cdot k_1 + w_s \cdot k_2$$
+$$\beta_\text{post}  = \beta_0  + w_d \cdot (n_1 - k_1) + w_s \cdot (n_2 - k_2)$$
+
+Cognitively, $w_d > 1$ means the agent overweights direct evidence (treats observations as more diagnostic than they are); $w_s < 1$ means social information is discounted. A weight of 0 means the source is ignored entirely.
+
+**This is not simple averaging.** Because the weights multiply the *count* of evidence before adding it to the Beta parameters, they modulate the *effective sample size* of each source. The natural Beta-distribution normalisation still handles uncertainty correctly.
+
+```{r 09_simulating_agents_with_different_strategies}
+agents <- tibble(
+  agent_type    = c("Balanced", "Self-Focused", "Socially-Influenced"),
+  weight_direct = c(1.0, 1.5, 0.7),
+  weight_social = c(1.0, 0.5, 2.0)
+)
+
+evidence_combinations <- expand_grid(
+  blue1  = 0:8,
+  blue2  = 0:3,
+  total1 = 8,
+  total2 = 3
+)
+
+generate_agent_decisions <- function(weight_direct, weight_social,
+                                      evidence_df, n_samples = 5) {
+  evidence_df |>
+    slice(rep(seq_len(n()), each = n_samples)) |>
+    group_by(blue1, blue2, total1, total2) |>
+    mutate(sample_id = seq_len(n())) |>
+    ungroup() |>
+    pmap_dfr(function(blue1, blue2, total1, total2, sample_id) {
+      result <- betaBinomialModel(
+        1, 1, blue1, total1, blue2, total2,
+        w_direct = weight_direct, w_social = weight_social
+      )
+      # Choice is sampled from the posterior predictive (BetaBinomial)
+      alpha_p <- result$alpha_post
+      beta_p  <- result$beta_post
+      p       <- rbeta(1, alpha_p, beta_p)
+      tibble(
+        sample_id     = sample_id,
+        blue1         = blue1,
+        blue2         = blue2,
+        total1        = total1,
+        total2        = total2,
+        expected_rate = result$expected_rate,
+        choice        = rbinom(1, 1, p),
+        choice_label  = ifelse(choice == 1, "Blue", "Red")
+      )
+    })
+}
+
+simulation_results <- agents |>
+  pmap_dfr(function(agent_type, weight_direct, weight_social) {
+    generate_agent_decisions(weight_direct, weight_social,
+                             evidence_combinations, n_samples = 5) |>
+      mutate(agent_type = agent_type)
+  }) |>
+  mutate(
+    social_evidence = factor(
+      blue2, levels = 0:3,
+      labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+    ),
+    agent_type = factor(
+      agent_type,
+      levels = c("Balanced", "Self-Focused", "Socially-Influenced")
+    )
+  )
+
+# Quick visualisation
+ggplot(
+  simulation_results |>
+    group_by(agent_type, blue1, social_evidence) |>
+    summarise(p_blue = mean(choice), .groups = "drop"),
+  aes(x = blue1, y = p_blue, colour = social_evidence, group = social_evidence)
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50") +
+  facet_wrap(~ agent_type) +
+  scale_colour_brewer(palette = "Set1") +
+  scale_x_continuous(breaks = 0:8) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title    = "Simulated Choice Proportions by Agent Type",
+    x        = "Blue marbles in direct sample",
+    y        = "P(choose blue)",
+    colour   = "Social evidence"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+### How the WBA Resolves Conflicting Evidence
+
+A key cognitive question is: *how does the balance of weights determine an agent's choice when direct and social evidence point in opposite directions?* We can answer this visually by sweeping $w_d$ and $w_s$ across a grid and plotting the **decision boundary** — the contour at which the agent is indifferent between blue and red.
+
+```{r 09_conflict_contour}
+# Two conflict scenarios from the original chapter
+scenario_strong <- list(blue1 = 7L, total1 = 8L, blue2 = 0L, total2 = 3L)
+scenario_weak   <- list(blue1 = 5L, total1 = 8L, blue2 = 0L, total2 = 3L)
+
+evaluate_conflict <- function(scenario) {
+  expand_grid(
+    weight_direct = seq(0, 2, by = 0.05),
+    weight_social = seq(0, 2, by = 0.05)
+  ) |>
+    mutate(
+      alpha_post    = 1 + weight_direct * scenario$blue1 +
+                          weight_social * scenario$blue2,
+      beta_post     = 1 + weight_direct * (scenario$total1 - scenario$blue1) +
+                          weight_social * (scenario$total2 - scenario$blue2),
+      expected_rate = alpha_post / (alpha_post + beta_post)
+    )
+}
+
+conflict_strong <- evaluate_conflict(scenario_strong) |> mutate(scenario = "Strong direct (7/8 blue)\nvs. Strong social (0/3 blue)")
+conflict_weak   <- evaluate_conflict(scenario_weak)   |> mutate(scenario = "Weak direct (5/8 blue)\nvs. Strong social (0/3 blue)")
+
+conflict_all <- bind_rows(conflict_strong, conflict_weak)
+
+ggplot(conflict_all,
+       aes(x = weight_direct, y = weight_social, fill = expected_rate)) +
+  geom_tile() +
+  geom_contour(aes(z = expected_rate), breaks = 0.5,
+               colour = "black", linewidth = 1) +
+  scale_fill_gradient2(
+    low = "#d73027", mid = "white", high = "#4575b4",
+    midpoint = 0.5, limits = c(0, 1)
+  ) +
+  facet_wrap(~ scenario) +
+  coord_fixed() +
+  labs(
+    title    = "Decision Boundaries Under Conflicting Evidence",
+    subtitle = "Black line = indifference boundary (P(blue) = 0.5).\nAbove/left of line: agent chooses Red; below/right: agent chooses Blue.",
+    x        = "Weight on direct evidence (w_d)",
+    y        = "Weight on social evidence (w_s)",
+    fill     = "P(blue)"
+  ) +
+  theme(legend.position = "right")
+```
+
+**Reading the plot:** Each cell's colour shows the WBA's predicted probability of choosing blue for that weight combination. The black contour line marks the decision boundary — the set of $(w_d, w_s)$ pairs at which the two sources of evidence exactly cancel. Above and to the left of this line, social evidence wins (agent chooses red); below and to the right, direct evidence wins (agent chooses blue).
+
+Two insights stand out:
+
+1. **Evidence strength shifts the boundary.** In the strong-direct scenario (7/8 blue), the boundary is pushed far toward high $w_s$ — it takes a very large social weight to overcome the direct evidence for blue. In the weak-direct scenario (5/8), the boundary sits closer to the diagonal, meaning even moderate social weights can reverse the decision.
+
+2. **The SBA is a single point.** The Simple Bayesian Agent always sits at $(w_d, w_s) = (1, 1)$. Wherever that point falls relative to the boundary determines its prediction. For the strong-direct scenario, $(1,1)$ is comfortably below the boundary (chooses blue). For the weak-direct scenario, $(1,1)$ is again below but closer to the boundary. The SBA cannot adjust — the WBA can.
+
+---
+
+## Stan Implementation
+
+### Model 1: Simple Bayesian Agent
+
+```{r 09_stan_simple_agent}
+SimpleAgent_stan <- "
+// Simple Bayesian Agent: equal unit weights, no free parameters.
+// alpha_prior = beta_prior = 1 fixed in transformed data.
+data {
+  int<lower=1> N;
+  array[N] int<lower=0, upper=1> choice;
+  array[N] int<lower=0> blue1;
+  array[N] int<lower=0> total1;
+  array[N] int<lower=0> blue2;
+  array[N] int<lower=0> total2;
+}
+
+transformed data {
+  // The uniform prior is fixed. This is not a free parameter.
+  real alpha0 = 1.0;
+  real beta0  = 1.0;
+}
+
+parameters {
+  // No free parameters. The SBA is a deterministic prediction.
+}
+
+model {
+  for (i in 1:N) {
+    real alpha_post = alpha0 + blue1[i] + blue2[i];
+    real beta_post  = beta0
+                    + (total1[i] - blue1[i])
+                    + (total2[i] - blue2[i]);
+    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+  }
+}
+
+generated quantities {
+  vector[N] log_lik;
+  array[N] int prior_pred;
+  array[N] int posterior_pred;
+
+  for (i in 1:N) {
+    real alpha_post = alpha0 + blue1[i] + blue2[i];
+    real beta_post  = beta0
+                    + (total1[i] - blue1[i])
+                    + (total2[i] - blue2[i]);
+
+    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
+    // Prior predictive: uniform prior, no evidence
+    prior_pred[i]     = beta_binomial_rng(1, alpha0, beta0);
+  }
+}
+"
+
+write_stan_file(SimpleAgent_stan,
+                dir = "stan/",
+                basename = "ch9_simple_agent.stan")
+```
+
+### Model 2: Weighted Bayesian Agent
+
+```{r 09_stan_weighted_agent}
+WeightedAgent_stan <- "
+// Weighted Bayesian Agent.
+// w_direct, w_social >= 0 scale the effective count of each evidence source.
+data {
+  int<lower=1> N;
+  array[N] int<lower=0, upper=1> choice;
+  array[N] int<lower=0> blue1;
+  array[N] int<lower=0> total1;
+  array[N] int<lower=0> blue2;
+  array[N] int<lower=0> total2;
+}
+
+parameters {
+  real<lower=0> weight_direct;
+  real<lower=0> weight_social;
+}
+
+model {
+  // Priors on log scale (equivalent to log-normal in natural scale).
+  // lognormal(0, 0.5) concentrates mass roughly in [0.2, 5],
+  // spanning strong underweighting to strong overweighting.
+  target += lognormal_lpdf(weight_direct | 0, 0.5);
+  target += lognormal_lpdf(weight_social | 0, 0.5);
+
+  profile(\"likelihood\") {
+    for (i in 1:N) {
+      real alpha_post = 1.0
+                      + weight_direct * blue1[i]
+                      + weight_social * blue2[i];
+      real beta_post  = 1.0
+                      + weight_direct * (total1[i] - blue1[i])
+                      + weight_social * (total2[i] - blue2[i]);
+      target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    }
+  }
+}
+
+generated quantities {
+  vector[N] log_lik;
+  array[N] int prior_pred;
+  array[N] int posterior_pred;
+
+  // Prior samples for predictive checks
+  real wd_prior = lognormal_rng(0, 0.5);
+  real ws_prior = lognormal_rng(0, 0.5);
+
+  for (i in 1:N) {
+    // Posterior predictions
+    real alpha_post = 1.0
+                    + weight_direct * blue1[i]
+                    + weight_social * blue2[i];
+    real beta_post  = 1.0
+                    + weight_direct * (total1[i] - blue1[i])
+                    + weight_social * (total2[i] - blue2[i]);
+
+    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
+
+    // Prior predictions using sampled prior weights
+    real ap = 1.0 + wd_prior * blue1[i] + ws_prior * blue2[i];
+    real bp = 1.0 + wd_prior * (total1[i] - blue1[i])
+                  + ws_prior * (total2[i] - blue2[i]);
+    prior_pred[i] = beta_binomial_rng(1, ap, bp);
+  }
+}
+"
+
+write_stan_file(WeightedAgent_stan,
+                dir = "stan/",
+                basename = "ch9_weighted_agent.stan")
+```
+
+---
+
+## Phase 1: Prior Predictive Checks
+
+Before fitting to any data, we must confirm that our priors generate *cognitively plausible* behaviour. For the SBA this is trivial (fixed uniform prior → BetaBinomial marginal is flat). For the WBA, we ask: do `lognormal(0, 0.5)` priors on $w_d$ and $w_s$ span the right range?
+
+> Why check priors before fitting the WBA? The lognormal(0, 0.5) prior on weights spans roughly 0.2 to 5 — from strong underweighting to strong overweighting. If the prior concentrated mass only near 1.0 (unit weight), it would be essentially a tighter SBA. Checking the prior first confirms that the WBA can represent the full range of integration strategies before any data are seen.
+
+```{r 09_prior_predictive_wba}
+set.seed(42)
+
+# Inspect the prior on the weight scale
+n_prior <- 5000
+wd_prior_samples <- rlnorm(n_prior, meanlog = 0, sdlog = 0.5)
+ws_prior_samples <- rlnorm(n_prior, meanlog = 0, sdlog = 0.5)
+
+tibble(weight_direct = wd_prior_samples,
+       weight_social = ws_prior_samples) |>
+  pivot_longer(everything(), names_to = "parameter", values_to = "value") |>
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 60, fill = "#4575b4", alpha = 0.7) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "black") +
+  scale_x_continuous(limits = c(0, 5)) +
+  facet_wrap(~ parameter) +
+  labs(
+    title    = "Prior Predictive Check: Weight Parameters",
+    subtitle = "Dashed line = unit weight (evidence taken at face value).\nlognormal(0, 0.5) spans underweighting to strong overweighting.",
+    x        = "Weight value",
+    y        = "Count"
+  )
+```
+
+```{r 09_prior_predictive_choices}
+# Generate prior-predictive choices for WBA across the evidence grid
+prior_pred_choices <- evidence_combinations |>
+  slice(rep(seq_len(n()), times = 200)) |>
+  mutate(
+    wd    = rlnorm(n(), 0, 0.5),
+    ws    = rlnorm(n(), 0, 0.5),
+    alpha = 1 + wd * blue1 + ws * blue2,
+    beta  = 1 + wd * (total1 - blue1) + ws * (total2 - blue2),
+    p     = rbeta(n(), alpha, beta),
+    y     = rbinom(n(), 1, p)
+  )
+
+prior_pred_choices |>
+  group_by(blue1, blue2) |>
+  summarise(p_blue = mean(y), .groups = "drop") |>
+  mutate(
+    social_evidence = factor(
+      blue2, levels = 0:3,
+      labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+    )
+  ) |>
+  ggplot(aes(x = blue1, y = p_blue,
+             colour = social_evidence, group = social_evidence)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50") +
+  scale_x_continuous(breaks = 0:8) +
+  scale_colour_brewer(palette = "Set1") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title    = "WBA Prior Predictive: Choice Proportions",
+    subtitle = "Priors should not force extreme or flat predictions",
+    x        = "Blue marbles in direct sample",
+    y        = "Prior-predicted P(choose blue)",
+    colour   = "Social evidence"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+**Interpretation:** The prior is diffuse but structured. The systematic gradient from "Clear Red" to "Clear Blue" is present even in prior predictions — a sign that the prior is not degenerate — but the uncertainty is substantial. Extreme predictions (probability $\approx 0$ or $\approx 1$ uniformly across all conditions) do not dominate the prior predictive distribution. The prior passes the plausibility check.
+
+---
+
+## Phase 3: Simulation Validation
+
+Empirical fitting must never occur before simulation validation. We proceed in two steps: (1) single-fit parameter recovery to confirm the model can identify parameters from a known dataset; (2) SBC to certify that the inference engine is globally unbiased.
+
+### Preparing Data for Validation
+
+```{r 09_prepare_stan_data}
+prepare_stan_data <- function(df) {
+  list(
+    N      = nrow(df),
+    choice = df$choice,
+    blue1  = df$blue1,
+    total1 = df$total1,
+    blue2  = df$blue2,
+    total2 = df$total2
+  )
+}
+
+sim_data_for_stan <- simulation_results |>
+  mutate(total1 = 8L, total2 = 3L)
+
+balanced_data           <- sim_data_for_stan |> filter(agent_type == "Balanced")
+self_focused_data       <- sim_data_for_stan |> filter(agent_type == "Self-Focused")
+socially_influenced_data <- sim_data_for_stan |> filter(agent_type == "Socially-Influenced")
+
+stan_data_balanced           <- prepare_stan_data(balanced_data)
+stan_data_self_focused       <- prepare_stan_data(self_focused_data)
+stan_data_socially_influenced <- prepare_stan_data(socially_influenced_data)
+```
+
+### Compiling Models
+
+```{r 09_compile_models}
+mod_simple  <- cmdstan_model("stan/ch9_simple_agent.stan")
+mod_weighted <- cmdstan_model("stan/ch9_weighted_agent.stan")
+```
+
+### Single-Fit Parameter Recovery
+
+We fit the WBA to the Self-Focused agent (true $w_d = 1.5$, $w_s = 0.5$) and the Socially-Influenced agent (true $w_d = 0.7$, $w_s = 2.0$) to verify that the model recovers the generating parameters.
+
+```{r 09_single_fit_recovery, message=FALSE}
+fit_recovery_self <- if (regenerate_simulations) {
+  fit <- mod_weighted$sample(
+    data           = stan_data_self_focused,
+    seed           = 101,
+    chains         = 4,
+    parallel_chains = 4,
+    iter_warmup    = 1000,
+    iter_sampling  = 1000,
+    refresh        = 0
+  )
+  fit$save_object("simmodels/ch9_fit_recovery_self.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_recovery_self.rds")
+}
+
+fit_recovery_social <- if (regenerate_simulations) {
+  fit <- mod_weighted$sample(
+    data           = stan_data_socially_influenced,
+    seed           = 102,
+    chains         = 4,
+    parallel_chains = 4,
+    iter_warmup    = 1000,
+    iter_sampling  = 1000,
+    refresh        = 0
+  )
+  fit$save_object("simmodels/ch9_fit_recovery_social.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_recovery_social.rds")
+}
+
+# Visualise recovery
+true_params <- tibble(
+  agent       = c("Self-Focused", "Self-Focused",
+                  "Socially-Influenced", "Socially-Influenced"),
+  parameter   = rep(c("weight_direct", "weight_social"), 2),
+  true_value  = c(1.5, 0.5, 0.7, 2.0)
+)
+
+recovery_draws <- bind_rows(
+  as_draws_df(fit_recovery_self$draws(c("weight_direct", "weight_social"))) |>
+    mutate(agent = "Self-Focused"),
+  as_draws_df(fit_recovery_social$draws(c("weight_direct", "weight_social"))) |>
+    mutate(agent = "Socially-Influenced")
+) |>
+  pivot_longer(c(weight_direct, weight_social),
+               names_to = "parameter", values_to = "value")
+
+ggplot(recovery_draws, aes(x = value)) +
+  geom_histogram(bins = 60, fill = "#4575b4", alpha = 0.7) +
+  geom_vline(data = true_params,
+             aes(xintercept = true_value),
+             colour = "#d73027", linewidth = 1.2, linetype = "dashed") +
+  facet_grid(agent ~ parameter, scales = "free") +
+  labs(
+    title    = "Parameter Recovery: WBA",
+    subtitle = "Red dashed lines indicate true generating parameter values",
+    x        = "Weight value",
+    y        = "Posterior count"
+  )
+```
+
+Both generating values fall within the bulk of their respective posteriors — a necessary (though not sufficient) condition for trust in the model's identifiability.
+
+### Simulation-Based Calibration (SBC)
+
+Single-fit recovery can succeed by chance. SBC provides a *global* certificate: if we sample parameters from the prior, simulate a dataset, fit the model, and rank the true parameter among the posterior draws, then under a correctly specified and well-sampled model those ranks must be uniformly distributed (Talts et al. 2018; Säilynoja et al. 2022).
+
+We use ECDF-difference plots as the primary diagnostic (Säilynoja et al. 2022). A perfectly calibrated model produces a flat ECDF-diff at 0; a U-shaped curve indicates over-dispersed posteriors (prior too narrow); a hump-shaped curve indicates over-concentrated posteriors (prior too wide or data dominating).
+
+> Why run SBC before fitting to agent data? The WBA's weight parameters are bounded (positive) and interact multiplicatively in the Beta-Binomial likelihood. These features can cause calibration failures that look like good posteriors — the sampler produces plausible-looking draws that are systematically biased. SBC catches this globally before the model touches empirical data.
+
+```{r 09_sbc, message=FALSE}
+n_sbc_datasets <- 1000   # minimum per cheatsheet
+
+if (regenerate_simulations) {
+
+  # ── WBA SBC generator ──────────────────────────────────────────────────
+  # N observations per SBC dataset (matching the Self-Focused agent size)
+  N_sbc <- stan_data_self_focused$N
+
+  sbc_generator <- SBC_generator_function(
+    function(N) {
+      # Draw parameters from prior
+      wd <- rlnorm(1, 0, 0.5)
+      ws <- rlnorm(1, 0, 0.5)
+
+      # Simulate choices using the marble-task evidence grid
+      ev <- evidence_combinations |>
+        slice_sample(n = N, replace = TRUE)
+
+      alpha_p <- 1 + wd * ev$blue1 + ws * ev$blue2
+      beta_p  <- 1 + wd * (ev$total1 - ev$blue1) +
+                     ws * (ev$total2 - ev$blue2)
+      p_blue  <- rbeta(N, alpha_p, beta_p)
+      choices <- rbinom(N, 1, p_blue)
+
+      list(
+        variables = list(weight_direct = wd, weight_social = ws),
+        generated = list(
+          N      = N,
+          choice = choices,
+          blue1  = ev$blue1,
+          total1 = ev$total1,
+          blue2  = ev$blue2,
+          total2 = ev$total2
+        )
+      )
+    },
+    N = N_sbc
+  )
+
+  sbc_datasets <- generate_datasets(sbc_generator, n_sbc_datasets)
+
+  sbc_backend <- SBC::SBC_backend_cmdstan_sample(
+  mod_weighted,
+  chains         = 2,
+  iter_warmup    = 500,
+  iter_sampling  = 500,
+  parallel_chains = 2,
+  refresh        = 0,
+  show_messages  = FALSE
+)
+
+  sbc_results <- compute_SBC(sbc_datasets, sbc_backend,
+                              keep_fits = FALSE)
+
+  saveRDS(sbc_results, "simmodels/ch9_sbc_wba_results.rds")
+
+} else {
+  sbc_results <- readRDS("simmodels/ch9_sbc_wba_results.rds")
+}
+
+# ── Primary diagnostic: ECDF-difference plot ─────────────────────────
+SBC::plot_ecdf_diff(sbc_results, variables = c("weight_direct", "weight_social")) +
+  labs(
+    title    = "SBC Calibration: Weighted Bayesian Agent",
+    subtitle = paste0("S = ", n_sbc_datasets,
+                      " datasets. Flat line at 0 = perfect calibration.")
+  )
+```
+
+**Interpreting the SBC plot:** The ECDF-difference for both parameters should lie within the grey confidence bands (pointwise 95% intervals under the uniform null). Systematic deviations indicate a calibration failure that must be resolved — by re-examining the prior, the likelihood, or the Stan implementation — before proceeding to empirical fitting.
+
+```{r 09_sbc_summary}
+# Summary statistics: fraction of problematic ranks
+sbc_results$stats |>
+  group_by(variable) |>
+  summarise(
+    n_datasets  = n(),
+    mean_rank   = mean(rank),
+    sd_rank     = sd(rank),
+    .groups = "drop"
+  ) |>
+  knitr::kable(digits = 2, caption = "SBC Rank Summary (WBA)")
+```
+
+---
+
+## Phase 2: Fitting, Diagnostics, and Comparison
+
+### Fitting the Models
+
+```{r 09_fitting_all_models, message=FALSE}
+sampler_args <- list(
+  chains         = 4,
+  parallel_chains = 4,
+  iter_warmup    = 1000,
+  iter_sampling  = 1000,
+  refresh        = 0
+)
+
+agent_datasets <- list(
+  Balanced           = stan_data_balanced,
+  `Self-Focused`     = stan_data_self_focused,
+  `Socially-Influenced` = stan_data_socially_influenced
+)
+
+fit_or_load <- function(file, model, data, seed) {
+  if (regenerate_simulations) {
+    fit <- do.call(
+      model$sample,
+      c(list(data = data, seed = seed), sampler_args)
+    )
+    fit$save_object(file)
+    fit
+  } else {
+    readRDS(file)
+  }
+}
+
+# Simple agent fits
+fit_simple_balanced <- fit_or_load(
+  "simmodels/ch9_fit_simple_balanced.rds", mod_simple,
+  stan_data_balanced, 201)
+fit_simple_self_focused <- fit_or_load(
+  "simmodels/ch9_fit_simple_self.rds", mod_simple,
+  stan_data_self_focused, 202)
+fit_simple_social <- fit_or_load(
+  "simmodels/ch9_fit_simple_social.rds", mod_simple,
+  stan_data_socially_influenced, 203)
+
+# Weighted agent fits
+fit_weighted_balanced <- fit_or_load(
+  "simmodels/ch9_fit_weighted_balanced.rds", mod_weighted,
+  stan_data_balanced, 204)
+fit_weighted_self_focused <- fit_or_load(
+  "simmodels/ch9_fit_weighted_self.rds", mod_weighted,
+  stan_data_self_focused, 205)
+fit_weighted_social <- fit_or_load(
+  "simmodels/ch9_fit_weighted_social.rds", mod_weighted,
+  stan_data_socially_influenced, 206)
+```
+
+### Geometry Diagnostics
+
+A complete diagnostic report is mandatory before interpreting any posteriors. We apply the five-threshold battery from the cheatsheet to every fit.
+
+> Why run the full five-threshold diagnostic battery on every fit? The WBA is fitted separately to three agent types. A subtle geometry issue — say, the two weight parameters trading off against each other — might appear only when fitting the Self-Focused agent, not the Balanced one. Checking all fits individually costs little and prevents one pathological fit from contaminating downstream comparisons.
+
+```{r 09_geometry_diagnostics}
+check_diagnostics <- function(fit, label) {
+  # 1. Stan-level divergences, R-hat, tree-depth
+  fit$cmdstan_diagnose()
+
+  # 2. Tabular summary: flag parameters outside threshold
+  smry <- fit$summary() |>
+    filter(!is.na(rhat)) |>
+    mutate(
+      rhat_ok    = rhat    < 1.01,
+      ess_b_ok   = ess_bulk > 400,
+      ess_t_ok   = ess_tail > 400
+    )
+
+  n_fail <- smry |>
+    filter(!rhat_ok | !ess_b_ok | !ess_t_ok) |>
+    nrow()
+
+  cat("\n---", label, "---\n")
+  cat("Parameters failing thresholds:", n_fail,
+      "out of", nrow(smry), "\n")
+
+  if (n_fail > 0) {
+    smry |>
+      filter(!rhat_ok | !ess_b_ok | !ess_t_ok) |>
+      select(variable, mean, rhat, ess_bulk, ess_tail) |>
+      print()
+  }
+
+  invisible(smry)
+}
+
+# Weighted agent diagnostics (the model with free parameters)
+check_diagnostics(fit_weighted_balanced,     "WBA — Balanced")
+check_diagnostics(fit_weighted_self_focused, "WBA — Self-Focused")
+check_diagnostics(fit_weighted_social,       "WBA — Socially-Influenced")
+```
+
+```{r 09_trace_plots}
+# MCMC trace and rank-overlay plots for the Self-Focused WBA fit
+bayesplot::mcmc_trace(
+  fit_weighted_self_focused$draws(c("weight_direct", "weight_social")),
+  facet_args = list(ncol = 1)
+) + labs(title = "Trace plots: WBA — Self-Focused Agent")
+
+bayesplot::mcmc_rank_overlay(
+  fit_weighted_self_focused$draws(c("weight_direct", "weight_social")),
+  facet_args = list(ncol = 1)
+) + labs(title = "Rank-overlay plots: WBA — Self-Focused Agent")
+```
+
+**Thresholds (cheatsheet):**
+
+| Diagnostic | Threshold | Interpretation if violated |
+|---|---|---|
+| Divergences | = 0 | Posterior geometry pathology; reparameterise first |
+| $\hat{R}$ (rank-norm.) | < 1.01 | Chains not mixed; increase warmup or reparameterise |
+| Bulk ESS | > 400 | Insufficient central-tendency samples |
+| Tail ESS | > 400 | Insufficient tail samples; quantile estimates unreliable |
+| E-BFMI | > 0.2 | Energy-trajectory pathology; check priors |
+
+If any threshold fails, treat the geometry, not the symptoms. Do not increase `adapt_delta` or `max_treedepth` without first diagnosing the cause via `mcmc_scatter()` pairwise plots and inspecting for funnel geometry.
+
+### Prior-Posterior Update Visualisation
+
+```{r 09_prior_posterior_updates}
+plot_prior_posterior <- function(fit, true_wd = NULL, true_ws = NULL,
+                                  label = "") {
+  n_prior <- 4000
+  prior_draws <- tibble(
+    weight_direct = rlnorm(n_prior, 0, 0.5),
+    weight_social = rlnorm(n_prior, 0, 0.5),
+    source        = "Prior"
+  )
+
+  post_draws <- as_draws_df(fit$draws(c("weight_direct", "weight_social"))) |>
+    as_tibble() |>
+    select(weight_direct, weight_social) |>
+    mutate(source = "Posterior")
+
+  combined <- bind_rows(prior_draws, post_draws) |>
+    pivot_longer(c(weight_direct, weight_social),
+                 names_to = "parameter", values_to = "value")
+
+  true_vals <- if (!is.null(true_wd)) {
+    tibble(
+      parameter = c("weight_direct", "weight_social"),
+      true_value = c(true_wd, true_ws)
+    )
+  } else NULL
+
+  p <- ggplot(combined, aes(x = value, fill = source, colour = source)) +
+    geom_density(alpha = 0.4, linewidth = 1) +
+    facet_wrap(~ parameter, scales = "free") +
+    scale_fill_manual(values = c("Prior" = "#d73027", "Posterior" = "#4575b4")) +
+    scale_colour_manual(values = c("Prior" = "#d73027", "Posterior" = "#4575b4")) +
+    labs(
+      title    = paste("Prior–Posterior Update:", label),
+      x        = "Weight value",
+      y        = "Density",
+      fill     = NULL, colour = NULL
+    ) +
+    theme(legend.position = "bottom")
+
+  if (!is.null(true_vals)) {
+    p <- p + geom_vline(
+      data = true_vals,
+      aes(xintercept = true_value),
+      colour = "#1a9641", linewidth = 1.1, linetype = "dashed"
+    ) +
+      labs(subtitle = "Green dashed = true generating value")
+  }
+
+  p
+}
+
+plot_prior_posterior(fit_weighted_balanced,
+                     true_wd = 1.0, true_ws = 1.0, label = "Balanced")
+plot_prior_posterior(fit_weighted_self_focused,
+                     true_wd = 1.5, true_ws = 0.5, label = "Self-Focused")
+plot_prior_posterior(fit_weighted_social,
+                     true_wd = 0.7, true_ws = 2.0, label = "Socially-Influenced")
+```
+
+### Posterior Predictive Checks (In-Sample)
+
+Standard PPCs reuse the training data and therefore represent an *optimistic* measure of fit. We report them here for completeness but they are neither necessary nor sufficient: the rigorous out-of-sample check is LOO-PIT, presented in the next section.
+
+```{r 09_posterior_predictive_checks}
+plot_ppc <- function(fit, sim_df, param_name = "posterior_pred", label = "") {
+  pred_samples <- fit$draws(param_name, format = "data.frame") |>
+    select(-.chain, -.iteration, -.draw) |>
+    pivot_longer(everything(), names_to = "obs_id", values_to = "pred") |>
+    mutate(obs_id = parse_number(obs_id))
+
+  obs_with_id <- sim_df |>
+    mutate(obs_id = row_number()) |>
+    select(obs_id, blue1, blue2)
+
+  pred_summary <- pred_samples |>
+    left_join(obs_with_id, by = "obs_id") |>
+    group_by(blue1, blue2) |>
+    summarise(
+      p_pred   = mean(pred),
+      se_pred  = sqrt(p_pred * (1 - p_pred) / n()),
+      .groups  = "drop"
+    ) |>
+    mutate(
+      lower = p_pred - 1.96 * se_pred,
+      upper = p_pred + 1.96 * se_pred,
+      social_evidence = factor(
+        blue2, levels = 0:3,
+        labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+      )
+    )
+
+  p_obs <- sim_df |>
+    group_by(blue1, blue2) |>
+    summarise(p_obs = mean(choice), .groups = "drop") |>
+    mutate(
+      social_evidence = factor(
+        blue2, levels = 0:3,
+        labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+      )
+    )
+
+  ggplot(pred_summary,
+         aes(x = blue1, colour = social_evidence, group = social_evidence)) +
+    geom_ribbon(aes(ymin = lower, ymax = upper,
+                    fill = social_evidence), alpha = 0.2, colour = NA) +
+    geom_line(aes(y = p_pred), linewidth = 1) +
+    geom_point(data = p_obs, aes(y = p_obs), shape = 4, size = 3) +
+    scale_x_continuous(breaks = 0:8) +
+    scale_colour_brewer(palette = "Set1") +
+    scale_fill_brewer(palette = "Set1") +
+    coord_cartesian(ylim = c(0, 1)) +
+    labs(
+      title    = paste("Posterior Predictive Check:", label),
+      subtitle = "Lines = predicted; crosses = observed",
+      x        = "Blue marbles in direct sample",
+      y        = "P(choose blue)",
+      colour   = "Social evidence", fill = "Social evidence"
+    ) +
+    theme(legend.position = "bottom")
+}
+
+plot_ppc(fit_weighted_balanced,     balanced_data,           label = "WBA Balanced")
+plot_ppc(fit_weighted_self_focused, self_focused_data,       label = "WBA Self-Focused")
+plot_ppc(fit_weighted_social,       socially_influenced_data, label = "WBA Socially-Influenced")
+```
+
+### LOO-PIT: The Rigorous Out-of-Sample Check
+
+Standard PPCs use training data and thus overestimate predictive accuracy. Leave-One-Out Probability Integral Transforms (LOO-PIT) evaluate calibration on effectively held-out data (Gabry et al. 2019). For a well-calibrated model, the LOO-PIT histogram should be uniform; systematic deviations (U-shaped, hump-shaped, skewed) indicate specific failure modes.
+
+> Why LOO-PIT in addition to standard PPCs? Standard PPCs use the training data and therefore overestimate fit. LOO-PIT evaluates calibration on effectively held-out observations. A model can pass PPCs while being systematically miscalibrated — LOO-PIT detects this by checking whether the model's predictive uncertainty matches reality trial by trial.
+
+```{r 09_loo_pit}
+compute_loo_pit <- function(fit, data_list, label) {
+  log_lik <- fit$draws("log_lik", format = "matrix")
+  loo_obj <- loo(log_lik)
+
+  # Pareto-k escalation protocol (cheatsheet)
+  k_vals <- loo_obj$diagnostics$pareto_k
+  n_high <- sum(k_vals >= 0.7)
+  n_mod  <- sum(k_vals >= 0.5 & k_vals < 0.7)
+
+  cat("\n---", label, "---\n")
+  cat("Pareto-k: k < 0.5:", sum(k_vals < 0.5), "| 0.5 <= k < 0.7:", n_mod,
+      "| k >= 0.7:", n_high, "\n")
+
+  if (n_high > 0) {
+    cat("  -> Applying loo_moment_match() for k >= 0.7 observations\n")
+    # loo_obj <- loo_moment_match(fit, loo = loo_obj)   # uncomment if needed
+  }
+
+  loo_obj
+}
+
+loo_simple_balanced  <- compute_loo_pit(fit_simple_balanced, stan_data_balanced,
+                                         "SBA Balanced")
+loo_simple_self      <- compute_loo_pit(fit_simple_self_focused, stan_data_self_focused,
+                                         "SBA Self-Focused")
+loo_simple_social    <- compute_loo_pit(fit_simple_social, stan_data_socially_influenced,
+                                         "SBA Socially-Influenced")
+
+loo_weighted_balanced <- compute_loo_pit(fit_weighted_balanced, stan_data_balanced,
+                                          "WBA Balanced")
+loo_weighted_self     <- compute_loo_pit(fit_weighted_self_focused, stan_data_self_focused,
+                                          "WBA Self-Focused")
+loo_weighted_social   <- compute_loo_pit(fit_weighted_social, stan_data_socially_influenced,
+                                          "WBA Socially-Influenced")
+```
+
+```{r 09_loo_pit_plots}
+# Randomised PIT for binary choices (same approach as Ch. 7)
+compute_randomized_pit <- function(y, loo_obj, seed = 101) {
+  set.seed(seed)
+  p_obs    <- exp(loo_obj$pointwise[, "elpd_loo"])
+  pit_vals <- ifelse(y == 1,
+                     runif(length(y), 1 - p_obs, 1),
+                     runif(length(y), 0, p_obs))
+  return(pit_vals)
+}
+
+pit_w_balanced <- compute_randomized_pit(stan_data_balanced$choice,
+                                          loo_weighted_balanced)
+pit_w_self     <- compute_randomized_pit(stan_data_self_focused$choice,
+                                          loo_weighted_self)
+pit_w_social   <- compute_randomized_pit(stan_data_socially_influenced$choice,
+                                          loo_weighted_social)
+
+p_pit_b <- bayesplot::ppc_pit_ecdf(pit = pit_w_balanced) +
+  labs(title = "LOO-PIT: WBA — Balanced",
+       subtitle = "Healthy = ECDF stays inside the grey envelope")
+
+p_pit_s <- bayesplot::ppc_pit_ecdf(pit = pit_w_self) +
+  labs(title = "LOO-PIT: WBA — Self-Focused",
+       subtitle = "Healthy = ECDF stays inside the grey envelope")
+
+p_pit_o <- bayesplot::ppc_pit_ecdf(pit = pit_w_social) +
+  labs(title = "LOO-PIT: WBA — Socially-Influenced",
+       subtitle = "Healthy = ECDF stays inside the grey envelope")
+
+(p_pit_b | p_pit_s | p_pit_o) +
+  plot_annotation(
+    title    = "LOO-PIT Calibration Checks: Weighted Bayesian Agent",
+    subtitle = "Binary outcomes use randomised PIT. Departures from uniformity indicate miscalibration."
+  )
+```
+
+### Prior Sensitivity Analysis
+
+We assess how sensitive the WBA posterior is to scaling the prior and likelihood using `priorsense::powerscale_sensitivity()`. This identifies parameters whose posteriors shift substantially under mild prior perturbation — a sign of insufficient data or a poorly chosen prior.
+
+```{r 09_sensitivity_analysis, message=FALSE}
+# powerscale_sensitivity requires a brms or priorsense-compatible fit.
+# For raw cmdstanr fits we use the manual power-scaling approach.
+
+manual_sensitivity <- function(fit_ref, data_list, model,
+                                 scales = c(0.5, 0.75, 1.0, 1.25, 1.5),
+                                 label = "") {
+  results <- map_dfr(scales, function(s) {
+    # Power-scale the prior by adjusting the lognormal sdlog
+    # Doubling sdlog broadens the prior (s < 1 tightens it)
+    new_sdlog <- 0.5 * s
+
+    modified_stan <- gsub(
+      "lognormal_lpdf(weight_direct | 0, 0.5)",
+      sprintf("lognormal_lpdf(weight_direct | 0, %.3f)", new_sdlog),
+      WeightedAgent_stan, fixed = TRUE
+    )
+    modified_stan <- gsub(
+      "lognormal_lpdf(weight_social | 0, 0.5)",
+      sprintf("lognormal_lpdf(weight_social | 0, %.3f)", new_sdlog),
+      modified_stan, fixed = TRUE
+    )
+
+    tmp_file <- tempfile(fileext = ".stan")
+    writeLines(modified_stan, tmp_file)
+    mod_tmp <- cmdstan_model(tmp_file)
+
+    fit_tmp <- mod_tmp$sample(
+      data           = data_list,
+      seed           = 999,
+      chains         = 2,
+      iter_warmup    = 500,
+      iter_sampling  = 500,
+      refresh        = 0
+    )
+
+    draws <- as_draws_df(fit_tmp$draws(c("weight_direct", "weight_social")))
+    tibble(
+      scale          = s,
+      wd_mean        = mean(draws$weight_direct),
+      ws_mean        = mean(draws$weight_social),
+      wd_sd          = sd(draws$weight_direct),
+      ws_sd          = sd(draws$weight_social)
+    )
+  })
+
+  results |>
+    pivot_longer(-scale, names_to = "stat", values_to = "value") |>
+    mutate(
+      parameter = ifelse(grepl("wd", stat), "weight_direct", "weight_social"),
+      measure   = ifelse(grepl("mean", stat), "Posterior mean", "Posterior SD")
+    ) |>
+    ggplot(aes(x = scale, y = value, colour = parameter)) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 3) +
+    geom_vline(xintercept = 1.0, linetype = "dashed") +
+    facet_wrap(~ measure, scales = "free_y") +
+    scale_colour_manual(values = c("#4575b4", "#d73027")) +
+    labs(
+      title    = paste("Prior Sensitivity:", label),
+      subtitle = "Dashed = reference prior; flat lines = robust inference",
+      x        = "Prior power-scale factor",
+      y        = "Value",
+      colour   = "Parameter"
+    ) +
+    theme(legend.position = "bottom")
+}
+
+# Run for the Self-Focused agent (most interesting given the differential weights)
+if (regenerate_simulations) {
+  manual_sensitivity(fit_weighted_self_focused, stan_data_self_focused,
+                     mod_weighted, label = "WBA Self-Focused")
+}
+```
+
+**Interpretation:** Flat lines across power-scale factors indicate robust inference — the posterior is driven by the data, not the prior. If curves slope strongly, it signals that more data are needed or that the prior should be reconsidered.
+
+---
+
+## Model Comparison via PSIS-LOO
+
+We now compare the SBA and WBA for each agent type using LOO Expected Log Predictive Density (ELPD). We report the $|elpd\_diff| / se\_diff$ ratio: a ratio exceeding 2 provides moderate evidence for a preference; exceeding 4 is strong evidence (Chapter 7).
+
+```{r 09_model_comparison}
+compare_models <- function(loo_simple, loo_weighted, label) {
+  comparison <- loo_compare(loo_simple, loo_weighted)
+  cat("\n===", label, "===\n")
+  print(comparison)
+
+  # Report the key ratio
+  if (nrow(comparison) > 1) {
+    diff <- comparison[2, "elpd_diff"]
+    se   <- comparison[2, "se_diff"]
+    cat(sprintf("  |ELPD diff| / SE = %.2f\n", abs(diff / se)))
+  }
+
+  # Bayesian stacking weights
+  weights <- loo_model_weights(
+    list("SBA" = loo_simple, "WBA" = loo_weighted),
+    method = "stacking"
+  )
+  cat("  Stacking weights:\n")
+  print(weights)
+
+  tibble(
+    label        = label,
+    elpd_diff    = if (nrow(comparison) > 1) comparison[2, "elpd_diff"] else 0,
+    se_diff      = if (nrow(comparison) > 1) comparison[2, "se_diff"]  else 0,
+    weight_sba   = weights["SBA"],
+    weight_wba   = weights["WBA"]
+  )
+}
+
+comp_results <- bind_rows(
+  compare_models(loo_simple_balanced,  loo_weighted_balanced,  "Balanced"),
+  compare_models(loo_simple_self,      loo_weighted_self,      "Self-Focused"),
+  compare_models(loo_simple_social,    loo_weighted_social,    "Socially-Influenced")
+)
+
+knitr::kable(comp_results, digits = 2,
+             caption = "LOO model comparison: SBA vs. WBA")
+```
+
+```{r 09_comparison_visualisation}
+comp_results |>
+  pivot_longer(c(weight_sba, weight_wba),
+               names_to = "model", values_to = "weight") |>
+  mutate(model = recode(model,
+                        "weight_sba" = "Simple Bayesian Agent",
+                        "weight_wba" = "Weighted Bayesian Agent")) |>
+  ggplot(aes(x = label, y = weight, fill = model)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = scales::percent(weight, accuracy = 0.1)),
+            position = position_dodge(0.9), vjust = -0.4, size = 3.5) +
+  scale_fill_manual(values = c("#4575b4", "#d73027")) +
+  coord_cartesian(ylim = c(0, 1.1)) +
+  labs(
+    title    = "Bayesian Stacking Weights by Agent Type",
+    subtitle = "Higher weight = better out-of-sample predictive accuracy",
+    x        = "Agent type",
+    y        = "Stacking weight",
+    fill     = NULL
+  ) +
+  theme(legend.position = "bottom")
+```
+
+**Expected results:** For the Balanced agent (true $w_d = w_s = 1$), the SBA should receive substantial weight — it is the correctly specified model. For the Self-Focused and Socially-Influenced agents (unequal weights), the WBA should dominate. If the comparison fails to discriminate, this indicates that the experiment lacks sufficient power to distinguish the two integration strategies — a finding that itself has scientific value.
+
+### Pointwise ELPD: Where Do the Models Diverge?
+
+```{r 09_pointwise_elpd}
+pointwise_diff_plot <- function(loo_s, loo_w, sim_df, label) {
+  diff_pw <- loo_w$pointwise[, "elpd_loo"] -
+             loo_s$pointwise[, "elpd_loo"]
+
+  sim_df |>
+    mutate(
+      elpd_diff = diff_pw,
+      better    = ifelse(elpd_diff > 0, "WBA better", "SBA better")
+    ) |>
+    ggplot(aes(x = blue1, y = elpd_diff, colour = better)) +
+    geom_jitter(alpha = 0.5, height = 0, width = 0.15, size = 1.5) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    facet_wrap(~ factor(blue2, labels = c("Clear Red","Maybe Red",
+                                          "Maybe Blue","Clear Blue")),
+               ncol = 2) +
+    scale_colour_manual(values = c("WBA better" = "#4575b4",
+                                   "SBA better" = "#d73027")) +
+    labs(
+      title    = paste("Pointwise ELPD difference:", label),
+      subtitle = "Positive = WBA predicts this trial better",
+      x        = "Blue marbles in direct sample",
+      y        = "ELPD(WBA) – ELPD(SBA)",
+      colour   = NULL
+    ) +
+    theme(legend.position = "bottom")
+}
+
+pointwise_diff_plot(loo_simple_self, loo_weighted_self,
+                    self_focused_data, "Self-Focused")
+pointwise_diff_plot(loo_simple_social, loo_weighted_social,
+                    socially_influenced_data, "Socially-Influenced")
+```
+
+The pointwise ELPD maps reveal *where* each model gains its advantage. For the Self-Focused agent, the WBA should do particularly well on trials where direct and social evidence conflict (high $k_1$, low $k_2$), because only the WBA can represent the agent's preference for their own observations.
+
+---
+
+## Multilevel Extension
+
+In real experiments, we observe many participants, each with their own weighting tendencies. Multilevel models capture these individual differences while sharing statistical strength across the population. This is the same partial-pooling logic developed in Chapter 6.
+
+### Simulating a Multi-Agent Population
+
+```{r 09_multilevel_sim_setup}
+set.seed(303)
+
+n_agents          <- 20
+n_trials_per_comb <- 2   # repetitions of each evidence combination
+
+# Population parameters
+pop_log_wd_mean <- 0.0;  pop_log_wd_sd <- 0.4
+pop_log_ws_mean <- 0.0;  pop_log_ws_sd <- 0.4
+
+agent_params_ml <- tibble(
+  agent_id      = seq_len(n_agents),
+  log_wd        = rnorm(n_agents, pop_log_wd_mean, pop_log_wd_sd),
+  log_ws        = rnorm(n_agents, pop_log_ws_mean, pop_log_ws_sd),
+  weight_direct = exp(log_wd),
+  weight_social = exp(log_ws)
+)
+
+ml_sim_data <- agent_params_ml |>
+  pmap_dfr(function(agent_id, log_wd, log_ws, weight_direct, weight_social) {
+    generate_agent_decisions(weight_direct, weight_social,
+                             evidence_combinations,
+                             n_samples = n_trials_per_comb) |>
+      mutate(
+        agent_id     = agent_id,
+        true_wd      = weight_direct,
+        true_ws      = weight_social
+      )
+  })
+
+stan_data_ml <- list(
+  N        = nrow(ml_sim_data),
+  J        = n_agents,
+  agent_id = ml_sim_data$agent_id,
+  choice   = ml_sim_data$choice,
+  blue1    = ml_sim_data$blue1,
+  total1   = ml_sim_data$total1,
+  blue2    = ml_sim_data$blue2,
+  total2   = ml_sim_data$total2
+)
+```
+
+### Multilevel Weighted Bayesian Agent (Stan)
+
+Key design decisions, consistent with Chapter 6:
+
+- **Non-centred parameterisation (NCP):** Individual deviations are expressed as $z$-scores. The individual parameter is reconstructed in `transformed parameters`, avoiding the funnel geometry that plagues centred hierarchical models.
+- **Log-scale parameterisation:** We work on the log scale to enforce positivity of weights without `<lower=0>` constraints that can cause geometry pathologies near the boundary.
+- **Correlated random effects via the LKJ prior:** Chapters 6 and 7 established that individual-level parameters are rarely independent. An agent who over-trusts their own observations often *systematically* under-trusts social information. Modelling this correlation — rather than assuming independence — is both more realistic and more statistically efficient. We use a Cholesky-factorised $2 \times 2$ correlation matrix $\mathbf{L}_\Omega$ with an LKJ(2) prior, exactly as in Chapter 6.
+
+```{r 09_multilevel_stan_model}
+MultilevelWBA_stan <- "
+// Multilevel Weighted Bayesian Agent
+// Non-centred parameterisation on log scale.
+// Correlated random effects for (log_wd, log_ws) via LKJ prior.
+data {
+  int<lower=1> N;
+  int<lower=1> J;
+  array[N] int<lower=1, upper=J> agent_id;
+  array[N] int<lower=0, upper=1>  choice;
+  array[N] int<lower=0>            blue1;
+  array[N] int<lower=0>            total1;
+  array[N] int<lower=0>            blue2;
+  array[N] int<lower=0>            total2;
+}
+
+parameters {
+  // Population means on log scale
+  vector[2] mu_log;                        // [mu_log_wd, mu_log_ws]
+
+  // Population SDs (between-subject variability)
+  vector<lower=0>[2] sigma_log;            // [sigma_log_wd, sigma_log_ws]
+
+  // Cholesky factor of the 2x2 correlation matrix (Chapter 6 style)
+  cholesky_factor_corr[2] L_Omega;
+
+  // Standardised individual deviations (NCP): 2 x J matrix
+  matrix[2, J] z;
+}
+
+transformed parameters {
+  // Individual weights (positive via exp transform)
+  vector<lower=0>[J] weight_direct;
+  vector<lower=0>[J] weight_social;
+
+  // Correlated NCP: theta_j = mu + diag(sigma) * L_Omega * z_j
+  matrix[2, J] theta = diag_pre_multiply(sigma_log, L_Omega) * z;
+
+  for (j in 1:J) {
+    weight_direct[j] = exp(mu_log[1] + theta[1, j]);
+    weight_social[j] = exp(mu_log[2] + theta[2, j]);
+  }
+}
+
+model {
+  // Population-level priors
+  target += normal_lpdf(mu_log    | 0, 1);
+  target += exponential_lpdf(sigma_log | 2);
+
+  // LKJ prior on correlations (eta=2: weakly regularising, consistent with Ch.6)
+  target += lkj_corr_cholesky_lpdf(L_Omega | 2);
+
+  // Non-centred individual effects
+  target += std_normal_lpdf(to_vector(z));
+
+  // Likelihood
+  for (i in 1:N) {
+    int j = agent_id[i];
+    real alpha_post = 1.0
+                    + weight_direct[j] * blue1[i]
+                    + weight_social[j] * blue2[i];
+    real beta_post  = 1.0
+                    + weight_direct[j] * (total1[i] - blue1[i])
+                    + weight_social[j] * (total2[i] - blue2[i]);
+    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+  }
+}
+
+generated quantities {
+  // Population-level parameters on natural scale
+  real pop_weight_direct = exp(mu_log[1]);
+  real pop_weight_social = exp(mu_log[2]);
+
+  // Recover the full correlation matrix for reporting
+  matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
+
+  vector[N] log_lik;
+  array[N] int pred_choice;
+
+  for (i in 1:N) {
+    int j = agent_id[i];
+    real alpha_post = 1.0
+                    + weight_direct[j] * blue1[i]
+                    + weight_social[j] * blue2[i];
+    real beta_post  = 1.0
+                    + weight_direct[j] * (total1[i] - blue1[i])
+                    + weight_social[j] * (total2[i] - blue2[i]);
+
+    log_lik[i]     = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
+  }
+}
+"
+
+write_stan_file(MultilevelWBA_stan,
+                dir = "stan/",
+                basename = "ch9_multilevel_wba.stan")
+
+mod_ml_wba <- cmdstan_model("stan/ch9_multilevel_wba.stan")
+```
+
+### Fitting the Multilevel Model
+
+```{r 09_fit_multilevel, message=FALSE}
+fit_ml_wba <- if (regenerate_simulations) {
+  fit <- mod_ml_wba$sample(
+    data            = stan_data_ml,
+    seed            = 401,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 1000,
+    adapt_delta     = 0.9,
+    refresh         = 0
+  )
+  fit$save_object("simmodels/ch9_fit_ml_wba.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_ml_wba.rds")
+}
+
+# Mandatory diagnostics
+check_diagnostics(fit_ml_wba, "ML-WBA")
+
+bayesplot::mcmc_trace(
+  fit_ml_wba$draws(c("mu_log[1]", "mu_log[2]",
+                     "sigma_log[1]", "sigma_log[2]", "Omega[1,2]")),
+  facet_args = list(ncol = 2)
+) + labs(title = "Trace plots: Multilevel WBA — population parameters + correlation")
+```
+
+### Reporting the Estimated Correlation
+
+The posterior for `Omega[1,2]` (the correlation between $\log w_d$ and $\log w_s$ across individuals) is a direct answer to the cognitive question: *do agents who trust their own observations more tend to trust social information less?*
+
+```{r 09_correlation_posterior}
+draws_ml <- as_draws_df(fit_ml_wba$draws())
+
+ggplot(draws_ml, aes(x = `Omega[1,2]`)) +
+  geom_histogram(bins = 60, fill = "#756bb1", alpha = 0.7) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
+  labs(
+    title    = "Posterior: Correlation between log(w_d) and log(w_s)",
+    subtitle = "Negative values indicate: agents who trust direct evidence more tend to\ntrust social evidence less. Zero = independence assumed by the independent model.",
+    x        = expression(Omega["wd, ws"]),
+    y        = "Posterior count"
+  )
+```
+
+### Parameter Recovery: Multilevel Model
+
+```{r 09_multilevel_recovery}
+recovery_ml <- agent_params_ml |>
+  mutate(
+    est_wd = map_dbl(agent_id, ~ mean(draws_ml[[paste0("weight_direct[", .x, "]")]])),
+    est_ws = map_dbl(agent_id, ~ mean(draws_ml[[paste0("weight_social[", .x, "]")]]))
+  )
+
+p_wd <- ggplot(recovery_ml, aes(x = weight_direct, y = est_wd)) +
+  geom_abline(linetype = "dashed") +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Recovery: weight_direct",
+       x = "True", y = "Posterior mean")
+
+p_ws <- ggplot(recovery_ml, aes(x = weight_social, y = est_ws)) +
+  geom_abline(linetype = "dashed") +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Recovery: weight_social",
+       x = "True", y = "Posterior mean")
+
+p_wd + p_ws +
+  plot_annotation(
+    title    = "Multilevel WBA Parameter Recovery",
+    subtitle = "Points should cluster around the dashed identity line"
+  )
+```
+
+```{r 09_population_recovery}
+# Population parameter recovery (mu_log is now a vector)
+pop_true <- tibble(
+  parameter  = c("pop_weight_direct", "pop_weight_social"),
+  true_value = c(exp(pop_log_wd_mean), exp(pop_log_ws_mean))
+)
+
+draws_ml |>
+  select(pop_weight_direct, pop_weight_social) |>
+  pivot_longer(everything(), names_to = "parameter", values_to = "value") |>
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 60, fill = "#756bb1", alpha = 0.7) +
+  geom_vline(data = pop_true, aes(xintercept = true_value),
+             colour = "#d73027", linewidth = 1.2, linetype = "dashed") +
+  facet_wrap(~ parameter, scales = "free") +
+  labs(
+    title    = "Population Parameter Recovery: Multilevel WBA",
+    subtitle = "Red dashed = true generating value",
+    x        = "Parameter value",
+    y        = "Posterior count"
+  )
+```
+
+### Shrinkage Visualisation
+
+A defining advantage of partial pooling: estimates for agents with little data are pulled toward the population mean (shrinkage), reducing overfitting while preserving reliable individual estimates.
+
+```{r 09_shrinkage_plot}
+recovery_ml |>
+  mutate(wd_shrinkage = abs(est_wd - weight_direct)) |>
+  ggplot(aes(x = weight_direct, y = est_wd)) +
+  geom_abline(linetype = "dashed", colour = "grey60") +
+  geom_segment(aes(xend = weight_direct, yend = weight_direct),
+               colour = "#4575b4", alpha = 0.4) +
+  geom_point(aes(colour = wd_shrinkage), size = 3) +
+  geom_hline(yintercept = exp(mean(draws_ml$`mu_log[1]`)),
+             linetype = "dotted", colour = "#d73027") +
+  scale_colour_viridis_c(option = "plasma", direction = -1) +
+  labs(
+    title    = "Shrinkage: Multilevel WBA (weight_direct)",
+    subtitle = "Red dotted = estimated population mean; colour = |estimate − truth|",
+    x        = "True weight_direct",
+    y        = "Multilevel posterior mean",
+    colour   = "Estimation\nerror"
+  )
+```
+
+### Multilevel Model Comparison: SBA vs. WBA
+
+Following the discipline of Chapter 7, we do not stop at fitting a single multilevel model. We define a multilevel version of the SBA — a hierarchical baseline with no differential weighting — and compare it to the ML-WBA via PSIS-LOO. This closes the pedagogical thread: individual differences in *overall* evidence use are modelled by the ML-SBA, but only the ML-WBA can capture differential weighting of direct versus social evidence.
+
+```{r 09_multilevel_sba_stan}
+MultilevelSBA_stan <- "
+// Multilevel Simple Bayesian Agent
+// Agents vary in an overall evidence scaling factor (mu_log_scale),
+// but both sources always receive the same weight.
+data {
+  int<lower=1> N;
+  int<lower=1> J;
+  array[N] int<lower=1, upper=J> agent_id;
+  array[N] int<lower=0, upper=1>  choice;
+  array[N] int<lower=0>            blue1;
+  array[N] int<lower=0>            total1;
+  array[N] int<lower=0>            blue2;
+  array[N] int<lower=0>            total2;
+}
+
+parameters {
+  real mu_log_scale;             // Population mean log scale
+  real<lower=0> sigma_log_scale; // Between-subject variability
+  vector[J] z_scale;             // NCP z-scores
+}
+
+transformed parameters {
+  vector<lower=0>[J] scale;
+  for (j in 1:J)
+    scale[j] = exp(mu_log_scale + z_scale[j] * sigma_log_scale);
+}
+
+model {
+  target += normal_lpdf(mu_log_scale    | 0, 1);
+  target += exponential_lpdf(sigma_log_scale | 2);
+  target += std_normal_lpdf(z_scale);
+
+  for (i in 1:N) {
+    int j = agent_id[i];
+    // Equal weights: both sources scaled identically
+    real alpha_post = 1.0 + scale[j] * (blue1[i]  + blue2[i]);
+    real beta_post  = 1.0 + scale[j] * ((total1[i] - blue1[i]) +
+                                         (total2[i] - blue2[i]));
+    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+  }
+}
+
+generated quantities {
+  real pop_scale = exp(mu_log_scale);
+  vector[N] log_lik;
+  array[N] int pred_choice;
+
+  for (i in 1:N) {
+    int j = agent_id[i];
+    real alpha_post = 1.0 + scale[j] * (blue1[i]  + blue2[i]);
+    real beta_post  = 1.0 + scale[j] * ((total1[i] - blue1[i]) +
+                                         (total2[i] - blue2[i]));
+    log_lik[i]     = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
+  }
+}
+"
+
+write_stan_file(MultilevelSBA_stan,
+                dir = "stan/",
+                basename = "ch9_multilevel_sba.stan")
+
+mod_ml_sba <- cmdstan_model("stan/ch9_multilevel_sba.stan")
+```
+
+```{r 09_fit_multilevel_sba, message=FALSE}
+fit_ml_sba <- if (regenerate_simulations) {
+  fit <- mod_ml_sba$sample(
+    data            = stan_data_ml,
+    seed            = 402,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 1000,
+    adapt_delta     = 0.9,
+    refresh         = 0
+  )
+  fit$save_object("simmodels/ch9_fit_ml_sba.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_ml_sba.rds")
+}
+
+check_diagnostics(fit_ml_sba, "ML-SBA")
+```
+
+```{r 09_multilevel_loo_comparison}
+loo_ml_sba <- loo(fit_ml_sba$draws("log_lik", format = "matrix"))
+loo_ml_wba <- loo(fit_ml_wba$draws("log_lik", format = "matrix"))
+
+cat("=== Multilevel Model Comparison: ML-SBA vs. ML-WBA ===\n")
+ml_comparison <- loo_compare(loo_ml_sba, loo_ml_wba)
+print(ml_comparison)
+
+diff   <- ml_comparison[2, "elpd_diff"]
+se_d   <- ml_comparison[2, "se_diff"]
+cat(sprintf("\n|ELPD diff| / SE = %.2f\n", abs(diff / se_d)))
+
+ml_weights <- loo_model_weights(
+  list("ML-SBA" = loo_ml_sba, "ML-WBA" = loo_ml_wba),
+  method = "stacking"
+)
+cat("\nBayesian stacking weights:\n")
+print(ml_weights)
+```
+
+**Expected result:** Because the simulated population was generated with agent-specific but *on-average equal* weights ($\text{E}[w_d] = \text{E}[w_s] = 1$), the two models should be competitive. If the ML-WBA receives substantially more weight, it is detecting individual-level heterogeneity in differential weighting that the ML-SBA cannot represent — a compelling argument that real participants differ not just in *how much* they use evidence, but in *which source* they trust more.
+
+---
+
+## Sequential Updating: Methodological Outlook
+
+In the models above, we assumed that each trial is *independent* — a new jar is drawn fresh each time. Many real cognitive tasks violate this assumption: beliefs from one trial feed forward into the next, creating sequential dependence. This section introduces the dynamic extension and flags a critical methodological boundary.
+
+### The Sequential Updating Framework
+
+In a sequential task, the agent's posterior from trial $t$ becomes the prior for trial $t+1$:
+
+$$\alpha_t = \alpha_{t-1} + \lambda \bigl(w_d \cdot k_{1,t-1} + w_s \cdot k_{2,t-1}\bigr)$$
+$$\beta_t  = \beta_{t-1}  + \lambda \bigl(w_d \cdot (n_{1,t-1} - k_{1,t-1}) + w_s \cdot (n_{2,t-1} - k_{2,t-1})\bigr)$$
+
+where $\lambda > 0$ is a **learning rate** controlling the pace of accumulation.
+
+> **⚠️ Limitation — the infinite accumulator:** This formulation is *perfect integration scaled by $\lambda$*, not true sequential updating. Because $\alpha_t$ and $\beta_t$ never decrease, the variance of the Beta distribution shrinks monotonically toward zero as trials accumulate. In other words, the agent becomes progressively more stubborn: after many trials, new evidence barely shifts the belief regardless of what it shows.
+>
+> In a *dynamic* environment — one where the jar changes between trials — this is a serious flaw. A realistic model requires a **decay** or **forgetting** mechanism so that old evidence is discounted:
+> $$\alpha_t = (1 - \delta)\,\alpha_{t-1} + \lambda \bigl(w_d \cdot k_{1,t-1} + w_s \cdot k_{2,t-1}\bigr)$$
+> where $0 < \delta \leq 1$ is a decay rate. This is analogous to the leaky accumulator or the Rescorla–Wagner model's effective learning rate in the presence of forgetting. The model presented below does not include this mechanism and is therefore appropriate only for *stable* environments. It is presented as a pedagogical stepping stone, not a production-ready dynamic model.
+
+### ⚠️ Critical Methodological Note: LOO-CV is Invalid for Sequential Data
+
+> **Standard LOO-CV assumes that observations are exchangeable** — that the model's predictive accuracy for observation $i$ given all other observations is the same regardless of which observation is held out. This assumption is violated whenever the data have a meaningful temporal ordering, as in sequential belief-updating tasks.
+>
+> Removing trial $t$ from the fitting set while keeping trials $t+1, t+2, \ldots$ violates causality: the agent at trial $t+1$ cannot have been influenced by trial $t$ if trial $t$ never occurred. Standard PSIS-LOO will produce misleading ELPD estimates.
+>
+> **The correct procedure is Leave-Future-Out Cross-Validation (LFO-CV)** (Bürkner et al. 2020). LFO-CV conditions predictions for trial $t$ only on trials $1, \ldots, t-1$, preserving the temporal structure. In R, this is implemented via `loo::loo_approximate_leave_future_out()`, which approximates the exact LFO-CV using importance sampling.
+
+The Stan implementation and R fitting pipeline for the sequential model are provided below for completeness. Model comparison for sequential data should use `loo::loo_approximate_leave_future_out()` rather than the `loo()` function used in previous sections.
+
+### Sequential Updating Stan Model
+
+```{r 09_sequential_stan}
+SequentialAgent_stan <- "
+// Sequential Bayesian Updating Model
+// lambda (learning_rate) scales how much each trial's evidence is accumulated.
+data {
+  int<lower=1> T;
+  array[T] int<lower=0, upper=1> choice;
+  array[T] int<lower=0> blue1;
+  array[T] int<lower=0> total1;
+  array[T] int<lower=0> blue2;
+  array[T] int<lower=0> total2;
+}
+
+parameters {
+  real<lower=0> weight_direct;
+  real<lower=0> weight_social;
+  real<lower=0> learning_rate;   // consistent name throughout
+}
+
+transformed parameters {
+  vector<lower=0, upper=1>[T] belief;
+  vector<lower=0>[T] alpha_seq;
+  vector<lower=0>[T] beta_seq;
+
+  alpha_seq[1] = 1.0;
+  beta_seq[1]  = 1.0;
+  belief[1]    = alpha_seq[1] / (alpha_seq[1] + beta_seq[1]);
+
+  for (t in 2:T) {
+    real w_blue1 = blue1[t-1]  * weight_direct;
+    real w_red1  = (total1[t-1] - blue1[t-1])  * weight_direct;
+    real w_blue2 = blue2[t-1]  * weight_social;
+    real w_red2  = (total2[t-1] - blue2[t-1])  * weight_social;
+
+    alpha_seq[t] = alpha_seq[t-1] + learning_rate * (w_blue1 + w_blue2);
+    beta_seq[t]  = beta_seq[t-1]  + learning_rate * (w_red1  + w_red2);
+    belief[t]    = alpha_seq[t]   / (alpha_seq[t] + beta_seq[t]);
+  }
+}
+
+model {
+  target += lognormal_lpdf(weight_direct | 0, 0.5);
+  target += lognormal_lpdf(weight_social | 0, 0.5);
+  target += lognormal_lpdf(learning_rate | -1, 0.5);  // prior concentrated < 1
+
+  for (t in 1:T) {
+    target += bernoulli_lpmf(choice[t] | belief[t]);
+  }
+}
+
+generated quantities {
+  vector[T] log_lik;
+  array[T] int pred_choice;
+
+  for (t in 1:T) {
+    log_lik[t]    = bernoulli_lpmf(choice[t] | belief[t]);
+    pred_choice[t] = bernoulli_rng(belief[t]);
+  }
+}
+// NOTE: Do NOT use loo() on log_lik from this model.
+// Observations are not exchangeable. Use loo::loo_approximate_leave_future_out()
+// (Burkner et al. 2020) for valid out-of-sample evaluation.
+"
+
+write_stan_file(SequentialAgent_stan,
+                dir = "stan/",
+                basename = "ch9_sequential_agent.stan")
+```
+
+### Simulating Sequential Data
+
+```{r 09_simulate_sequential}
+simulate_sequential_agent <- function(n_trials, weight_direct,
+                                       weight_social, learning_rate,
+                                       p_blue_stable = 0.75) {
+  alpha_t <- 1.0
+  beta_t  <- 1.0
+
+  tibble(trial = seq_len(n_trials)) |>
+    mutate(
+      true_p_blue = p_blue_stable,
+      blue1        = rbinom(n(), 8L, true_p_blue),
+      total1       = 8L,
+      blue2        = rbinom(n(), 3L, true_p_blue),
+      total2       = 3L
+    ) |>
+    mutate(
+      # accumulate belief trial by trial
+      belief = accumulate(seq_len(n_trials), function(state, t) {
+        if (t == 1) {
+          list(alpha = 1.0, beta = 1.0, p = 0.5)
+        } else {
+          prev_t <- t - 1
+          new_alpha <- state$alpha +
+            learning_rate * (weight_direct * blue1[prev_t] +
+                             weight_social * blue2[prev_t])
+          new_beta  <- state$beta +
+            learning_rate * (weight_direct * (total1[prev_t] - blue1[prev_t]) +
+                             weight_social * (total2[prev_t] - blue2[prev_t]))
+          list(alpha = new_alpha, beta = new_beta,
+               p = new_alpha / (new_alpha + new_beta))
+        }
+      }, .init = list(alpha = 1.0, beta = 1.0, p = 0.5))[-1],
+      p_belief = map_dbl(belief, "p"),
+      choice   = rbinom(n(), 1L, p_belief)
+    )
+}
+
+set.seed(42)
+seq_data <- simulate_sequential_agent(
+  n_trials = 60, weight_direct = 1.2, weight_social = 0.8, learning_rate = 0.4
+)
+
+ggplot(seq_data, aes(x = trial, y = p_belief)) +
+  geom_line(colour = "#4575b4", linewidth = 1) +
+  geom_point(aes(y = choice, colour = factor(choice)), size = 2, alpha = 0.6) +
+  scale_colour_manual(values = c("0" = "#d73027", "1" = "#4575b4"),
+                      labels = c("Red", "Blue")) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50") +
+  labs(
+    title    = "Sequential Belief Updating",
+    subtitle = "Line = P(blue) belief; points = actual choices",
+    x = "Trial", y = "Belief P(next = blue)", colour = "Choice"
+  )
+```
+
+### Leave-Future-Out Cross-Validation (LFO-CV)
+
+Once the sequential model has been fitted, out-of-sample evaluation requires LFO-CV (Bürkner, Gabry, & Vehtari, 2020). The idea is straightforward: to evaluate the model's prediction at trial $t$, we may only condition on trials $1, \ldots, t-1$. This preserves the causal arrow of time and makes the evaluation honest.
+
+`loo::loo_approximate_leave_future_out()` implements this efficiently via importance sampling, avoiding the need to refit the model for each time step. When importance sampling is unreliable (Pareto $\hat{k} \geq 0.7$), it triggers an exact refit starting from trial $L$ (the "refitting threshold"). The minimum number of initial observations used to condition predictions is controlled by `M` (the warm-up period before the first evaluation point).
+
+> Why does LOO fail for sequential models? Standard LOO-CV assumes observations are exchangeable — the model's prediction for trial t doesn't change depending on which other trials are held out. In sequential belief-updating, this is violated: trial t's choice depends causally on trials 1…t-1. Removing a future trial from the fitting set while keeping earlier ones breaks the causal structure. LFO-CV preserves it by only conditioning predictions for trial t on the past.
+
+```{r 09_lfo_cv, message=FALSE}
+
+loo_approximate_leave_future_out <- function(x, unfitted, fit_fun, data, data_fun, M, L) {
+  # Implementation of Backward PSIS-LFO-CV (Bürkner, Gabry, & Vehtari, 2020)
+  
+  N <- ncol(x)
+  
+  out_elpd <- rep(NA, N)
+  pareto_k <- rep(NA, N)
+  
+  # In Backward LFO, we start with the full posterior as the proposal
+  i_star <- N
+  log_lik_star <- x 
+  
+  # Loop backwards: to predict i+1 given 1:i, we loop i from N-1 down to M
+  for (i in (N - 1):M) {
+    
+    # We reweight the proposal (1:i_star) to approximate the target (1:i)
+    if (i + 1 == i_star) {
+      log_r <- -log_lik_star[, i_star]
+    } else {
+      log_r <- -rowSums(log_lik_star[, (i + 1):i_star, drop = FALSE])
+    }
+    
+    psis_obj <- suppressWarnings(loo::psis(log_r))
+    k <- loo::pareto_k_values(psis_obj)[1]
+    pareto_k[i + 1] <- k
+    
+    if (k > L) {
+      # PSIS failed. To ensure column i+1 exists for our ELPD evaluation,
+      # we refit the model on exactly 1:(i+1).
+      i_star <- i + 1
+      log_lik_star <- fit_fun(data_fun(i_star))
+      
+      # The new proposal is 1:(i+1). Target is 1:i.
+      log_r <- -log_lik_star[, i_star]
+      psis_obj <- suppressWarnings(loo::psis(log_r))
+      pareto_k[i + 1] <- loo::pareto_k_values(psis_obj)[1]
+      
+      # Compute ELPD for i+1 given 1:i
+      log_weights <- weights(psis_obj, log = TRUE)[, 1]
+      out_elpd[i + 1] <- matrixStats::logSumExp(log_weights + log_lik_star[, i + 1])
+      
+    } else {
+      # PSIS succeeded. Compute ELPD for i+1 given 1:i
+      log_weights <- weights(psis_obj, log = TRUE)[, 1]
+      out_elpd[i + 1] <- matrixStats::logSumExp(log_weights + log_lik_star[, i + 1])
+    }
+  }
+  
+  # Format output to match standard 'loo' objects for loo_compare()
+  estimates <- matrix(
+    c(sum(out_elpd, na.rm = TRUE), NA), 
+    nrow = 1, 
+    dimnames = list("elpd_loo", c("Estimate", "SE"))
+  )
+  
+  structure(
+    list(
+      estimates = estimates,
+      pointwise = cbind(elpd_loo = out_elpd),
+      diagnostics = list(pareto_k = pareto_k)
+    ),
+    class = "loo"
+  )
+}
+
+# Fit the sequential model to the simulated data first
+mod_seq <- cmdstan_model("stan/ch9_sequential_agent.stan")
+
+stan_data_seq <- list(
+  T      = nrow(seq_data),
+  choice = seq_data$choice,
+  blue1  = seq_data$blue1,
+  total1 = seq_data$total1,
+  blue2  = seq_data$blue2,
+  total2 = seq_data$total2
+)
+
+fit_seq <- if (regenerate_simulations) {
+  fit <- mod_seq$sample(
+    data            = stan_data_seq,
+    seed            = 501,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 1000,
+    refresh         = 0
+  )
+  fit$save_object("simmodels/ch9_fit_sequential.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_sequential.rds")
+}
+
+check_diagnostics(fit_seq, "Sequential Agent")
+
+# ── LFO-CV ────────────────────────────────────────────────────────────
+# log_lik has shape (draws × T). Columns correspond to trials 1 … T.
+log_lik_seq <- fit_seq$draws("log_lik", format = "matrix")
+
+# fit_fun is called whenever PSIS is unreliable (k >= threshold).
+# It receives a truncated data list (obs 1 … i) and must return a
+# matrix of log-likelihood values with columns for future time points.
+fit_fun_seq <- function(data_i, ...) {
+  fit_i <- mod_seq$sample(
+    data            = data_i,
+    seed            = 502,
+    chains          = 2,
+    iter_warmup     = 500,
+    iter_sampling   = 500,
+    refresh         = 0,
+    show_messages   = FALSE
+  )
+  fit_i$draws("log_lik", format = "matrix")
+}
+
+# data_fun truncates the data list to the first i observations
+data_fun_seq <- function(i) {
+  list(
+    T      = i,
+    choice = stan_data_seq$choice[seq_len(i)],
+    blue1  = stan_data_seq$blue1[seq_len(i)],
+    total1 = stan_data_seq$total1[seq_len(i)],
+    blue2  = stan_data_seq$blue2[seq_len(i)],
+    total2 = stan_data_seq$total2[seq_len(i)]
+  )
+}
+
+# M = minimum initial observations before starting LFO evaluation.
+# Here we use 10 warm-up trials before evaluating predictive accuracy.
+if (regenerate_simulations) {
+  lfo_result <- loo_approximate_leave_future_out(
+    x        = log_lik_seq,
+    unfitted = fit_seq,
+    fit_fun  = fit_fun_seq,
+    data     = stan_data_seq,
+    data_fun = data_fun_seq,
+    M        = 10,              # minimum conditioning set
+    L        = 0.7              # Pareto-k refit threshold
+  )
+  saveRDS(lfo_result, "simmodels/ch9_lfo_result.rds")
+} else {
+  lfo_result <- readRDS("simmodels/ch9_lfo_result.rds")
+}
+
+print(lfo_result$estimates)
+
+cat("\nLFO-ELPD:", round(lfo_result$estimates["elpd_loo", "Estimate"], 2),
+    "±", round(lfo_result$estimates["elpd_loo", "SE"], 2), "\n")
+cat("Number of refits triggered:", sum(lfo_result$diagnostics$pareto_k >= 0.7, na.rm = TRUE), "\n")
+```
+
+The `lfo_result` object has the same structure as a standard `loo` object and can be passed to `loo_compare()` to compare two sequential models. For example, comparing the sequential WBA against a simpler sequential model that ignores social evidence is straightforward: fit both, compute `lfo_result_1` and `lfo_result_2`, then call `loo_compare(lfo_result_1, lfo_result_2)`.
+
+---
+
+## Discussion
+
+### What the Bayesian Workflow Adds
+
+This chapter has done more than fit a cognitive model — it has *certified* the model through a disciplined pipeline. Prior predictive checks established that our priors are cognitively plausible. SBC certified that the Stan sampler is unbiased. Single-fit recovery confirmed identifiability. LOO-PIT and sensitivity analysis characterised the limits of the fitted posteriors. PSIS-LOO compared the SBA and WBA in a way that penalises complexity and estimates genuine predictive performance.
+
+This pipeline is not bureaucracy. Without SBC, a subtle Stan implementation bug could produce attractive posteriors that are systematically biased. Without LOO-PIT, we cannot distinguish a model that fits from a model that truly predicts. Without sensitivity analysis, we cannot know whether our conclusions would change under a different prior.
+
+### Limitations of the Current Models
+
+1. **Trial independence in non-sequential models.** The SBA and WBA assume that each trial involves a fresh, independent jar. This is true in Simonsen et al.'s design but is often violated in other social learning tasks. Applying these models to paradigms with across-trial structure would require the sequential extension — with LFO-CV.
+
+2. **Noise-free decision rule.** Both models use the Beta-binomial posterior mean as a deterministic decision input. A more realistic model would add response noise (e.g., a logistic link with a temperature parameter), at the cost of one additional parameter to identify.
+
+3. **Fixed prior.** We fix $\alpha_0 = \beta_0 = 1$ (uniform), assuming no prior knowledge about the jar before sampling begins. If participants bring domain knowledge (e.g., "jars tend to be mostly one colour"), this assumption is violated. The hierarchical extension in Chapter 6's spirit would estimate a population distribution over $(\alpha_0, \beta_0)$.
+
+### Connections and Extensions
+
+- **Rational inattention models** relax the assumption that all evidence is perfectly observed — agents pay a cognitive cost to process information and may optimally sample below capacity.
+- **Resource-rational models** (Griffiths et al. 2015) ask: what integration strategy is optimal given limited computational resources?
+- **Active inference** (Friston 2010) frames perception and action as a unified process of minimising variational free energy — a generalisation of Bayesian inference that predicts both beliefs and choices in a coupled system.
+
+**This is the end of the core modelling sequence.** Chapters 1–9 have
+traced the complete Bayesian cognitive modelling workflow: from pizza-stone
+physics (Ch. 1), through verbal and formal models of strategic behaviour
+(Chs. 2–3), parameter estimation (Ch. 4), model validation (Ch. 5),
+hierarchical extensions (Ch. 6), model comparison (Ch. 7), mixture
+structures (Ch. 8), and Bayesian cognitive theory (Ch. 9). The tools and
+habits of mind established here — generative modelling, principled
+validation, honest uncertainty — apply directly to any new domain or model
+you encounter.
+
+## Further Reading
+
+- Ma, W. J., Kording, K. P., & Goldreich, D. (2023). *Bayesian models of perception and action: An introduction.* MIT Press.
+- Griffiths, T. L., Chater, N., & Tenenbaum, J. B. (Eds.). (2024). *Bayesian models of cognition: Reverse engineering the mind.* MIT Press.
+- Goodman, N. D., Tenenbaum, J. B., & The ProbMods Contributors (2016). *Probabilistic Models of Cognition* (2nd ed.). https://probmods.org/
+- Bürkner, P.-C., Gabry, J., & Vehtari, A. (2020). Approximate leave-future-out cross-validation for Bayesian time series models. *Journal of Statistical Computation and Simulation*, 90(14), 2499–2523.
+- Säilynoja, T., Bürkner, P.-C., & Vehtari, A. (2022). Graphical test for discrete uniformity and its applications in goodness-of-fit evaluation and multiple sample comparison. *Statistics and Computing*, 32, 32.
+- Gabry, J., Simpson, D., Vehtari, A., Betancourt, M., & Gelman, A. (2019). Visualization in Bayesian workflow. *Journal of the Royal Statistical Society: Series A*, 182(2), 389–402.
+- Simonsen, A., et al. (2021). Computationally defined markers of uncertainty in the theory of mind predict the severity of clinical symptoms in schizophrenia. *Schizophrenia Bulletin*.

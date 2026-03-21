@@ -43,6 +43,16 @@ theme_set(theme_classic())
 
 # Mixture Models
 
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chs. 1–7 modelled behaviour as arising from a *single* cognitive process
+> per agent. This chapter relaxes that assumption: behaviour can be a
+> weighted mixture of distinct processes (e.g., deliberate strategy and
+> attentional lapses). Mixture models extend the toolkit from Ch. 6
+> (hierarchical structures) and Ch. 7 (model comparison via LOO) to this
+> new model class. The key new challenge is that discrete latent variables
+> — which process generated this trial? — cannot be sampled by HMC and must
+> be analytically integrated out before any Stan code is written. The full course roadmap is in Ch. 1, Section "The Course Roadmap".
+
 When we model human cognition and behavior, people do not always follow a single, consistent strategy. A participant in a matching-pennies game might sometimes carefully exploit a detected pattern in the opponent's behavior, and other times respond essentially at random when attention lapses. Traditional single-process models are structurally misspecified when this is the case: they attribute lapse-driven variance to the strategic parameter, inflating its uncertainty and biasing its location.
 
 Mixture models provide an elegant and principled solution. Rather than assuming behavior reflects one cognitive process, they represent observations as draws from a **weighted combination** of component distributions, each corresponding to a distinct process. This reframes the question addressed in Chapter 7 — *which model is correct?* — into a richer question: *how much does each process contribute, and for which observations?*
@@ -61,7 +71,7 @@ After completing this chapter you will be able to:
 
 ---
 
-## 1  Motivation: When are Mixtures Visible?
+##  Motivation: When are Mixtures Visible?
 
 Before developing the mathematics, consider a concrete case where a mixture is visually transparent. In many response-time tasks, a participant sometimes deliberates carefully (producing a log-normal RT distribution) and sometimes responds inattentively (producing a roughly uniform RT distribution). The resulting marginal distribution is a weighted blend.
 
@@ -131,9 +141,9 @@ We will return to this point in Section 6. For binary choice data, the identifia
 
 ---
 
-## 2  Theoretical Framework
+##  Theoretical Framework
 
-### 2.1  The Mixture Density
+###  The Mixture Density
 
 A $K$-component mixture model assigns the following marginal density (or mass function) to each observation $y_i$:
 
@@ -152,7 +162,7 @@ $$
 
 The log-likelihood therefore contains a **sum inside a log** — this cannot be factored into independent additive contributions per component, which makes mixture models more computationally demanding than standard regression.
 
-### 2.2  The Latent-Variable Augmentation
+###  The Latent-Variable Augmentation
 
 An equivalent and conceptually useful representation introduces a latent component indicator $z_i \in \{1, \ldots, K\}$:
 
@@ -164,7 +174,7 @@ $$
 
 If we could observe $z_i$ the model would decompose into $K$ separate standard likelihoods. Unfortunately $z_i$ is unobserved, so we sum (integrate) over all possible component assignments to recover equation (1). This is the **marginalisation** step.
 
-### 2.3  Why Stan Requires Marginalisation
+###  Why Stan Requires Marginalisation
 
 Stan's Hamiltonian Monte Carlo sampler operates on a continuous, differentiable log posterior. It cannot directly sample discrete random variables such as $z_i$. **Marginalising $z_i$ before writing any Stan code is not optional; it is a structural requirement.** The joint model $(z_i, y_i)$ must be reduced to the marginal model $p(y_i)$ expressed entirely through continuous parameters.
 
@@ -177,7 +187,7 @@ $$
 
 where $\ell_1 = \log p_1(y_i \mid \theta_1)$ and $\ell_2 = \log p_2(y_i \mid \theta_2)$.
 
-### 2.4  Our Running Model: Bias–Noise Mixture for Binary Choices
+###  Our Running Model: Bias–Noise Mixture for Binary Choices
 
 We model binary choices as a mixture of a **biased process** and a **random process**:
 
@@ -198,9 +208,11 @@ The centring of $\nu$ at $-1$ weakly favours noise below 50 %, reflecting the pr
 
 ---
 
-## 3  Prior Predictive Check
+##  Prior Predictive Check
 
 Before writing any Stan code, we simulate from the prior to verify that the implied distribution over observable behaviour is scientifically plausible.
+
+> Why check priors before writing Stan code? A prior that assigns >30% mass to noise rates above π = 0.5 means we expect most trials to be random — a scientifically implausible starting point that would corrupt the posterior before data are ever observed.
 
 ```{r ch8-prior-predictive}
 set.seed(8)
@@ -249,9 +261,9 @@ The prior on $\theta$ is diffuse but centred at 0.5, spanning the full plausible
 
 ---
 
-## 4  Stan Implementation: Single-Agent Model
+##  Stan Implementation: Single-Agent Model
 
-### 4.1  A Critical Vectorisation Trap
+###  A Critical Vectorisation Trap
 
 The Stan code in the original version of this chapter contained a subtle but consequential error. It called:
 
@@ -276,7 +288,9 @@ $$
 
 which requires iterating `log_mix()` **inside a loop over observations**.
 
-### 4.2  The Correct Stan Model
+###  The Correct Stan Model
+
+> Why must discrete parameters be marginalised? Stan's HMC sampler requires a continuous, differentiable log-posterior. The latent component indicator z_i is discrete. Marginalising it — summing over its two possible values inside log_mix() — converts the model into a purely continuous problem that HMC can handle.
 
 ```{r ch8-write-single-stan}
 single_mixture_stan <- "
@@ -331,25 +345,23 @@ generated quantities {
 
 write_stan_file(single_mixture_stan, dir = "stan/", basename = "ch8_mixture_single.stan")
 mod_single <- cmdstan_model(
-  "stan/ch8_mixture_single.stan",
-  cpp_options   = list(stan_threads = TRUE),
-  stanc_options = list("O1")
+  "stan/ch8_mixture_single.stan"
 )
 ```
 
-### 4.3  Data
+###  Data
 
 We use the simulated matching-pennies data introduced in earlier chapters, selecting the agent with rate 0.8 and noise 0.1. This gives us a ground truth against which to assess recovery: $\theta = 0.8$, $\pi = 0.1$.
 
 ```{r ch8-load-data}
-d    <- read_csv("simdata/W3_randomnoise.csv", show_col_types = FALSE)
-dd   <- d |> dplyr::filter(rate == 0.8, noise == 0.1)
+d    <- read_csv(here("simdata", "04_randomnoise.csv"), show_col_types = FALSE)
+dd   <- d |> dplyr::filter(true_rate == 0.8, true_noise == 0.1)
 data <- list(n = nrow(dd), h = as.integer(dd$choice))
 
 cat("Trials:", data$n, "| Proportion '1':", round(mean(data$h), 3), "\n")
 ```
 
-### 4.4  Fitting with Pathfinder Initialisation
+###  Fitting with Pathfinder Initialisation
 
 Mixture model posteriors can have multimodal or ridge-shaped geometry (see Section 6). Pathfinder — a multi-path variational approximation — provides stable starting points and avoids the Uniform(−2, 2) default initialisation that often fails when parameters are on very different scales or interact.
 
@@ -399,7 +411,7 @@ if (regenerate_simulations || !file.exists(single_fit_file)) {
 fit_single$summary(c("alpha", "nu", "theta", "pi_hat"))
 ```
 
-### 4.5  Geometry Diagnostics
+###  Geometry Diagnostics
 
 ```{r ch8-single-diagnostics}
 draws_single <- as_draws_df(fit_single$draws())
@@ -431,11 +443,13 @@ mcmc_pairs(
 
 ---
 
-## 5  Validation: Simulation-Based Calibration
+##  Validation: Simulation-Based Calibration
 
 SBC simultaneously certifies two properties. When rank statistics are uniform, the sampler is **computationally unbiased** (calibration). The joint distribution of true values and posterior summaries across all SBC datasets provides **parameter recovery** — the same information conveyed by a recovery grid, but derived from a principled random draw over the full prior rather than a hand-chosen set of grid points.
 
-### 5.1  Generator and Backend
+###  Generator and Backend
+
+> Why SBC for mixture models specifically? Mixture posteriors are often ridge-shaped or multimodal, which means the sampler can fail silently — producing low divergences but biased posteriors. SBC's rank-uniformity test catches this structural failure that standard diagnostics miss.
 
 ```{r ch8-sbc-setup}
 sbc_gen_fn <- function() {
@@ -490,7 +504,7 @@ if (regenerate_simulations || !file.exists(sbc_file)) {
 }
 ```
 
-### 5.2  Calibration: ECDF-Difference Plots
+###  Calibration: ECDF-Difference Plots
 
 The primary calibration diagnostic is the ECDF-difference plot (Säilynoja et al. 2022). A well-calibrated sampler produces rank statistics that are uniform on $\{0, 1, \ldots, S\}$, so the ECDF should fall along the horizontal zero line. Deviations outside the 95 % envelope indicate structural bias or over/underconfidence.
 
@@ -510,7 +524,7 @@ SBC::plot_rank_hist(sbc_results, variables = c("alpha", "nu")) +
         strip.text = element_text(face = "bold"))
 ```
 
-### 5.3  Parameter Recovery
+###  Parameter Recovery
 
 The `stats` component of the SBC output contains the `simulated_value` (the true prior draw) alongside posterior summaries for each simulation. Plotting posterior mean against true value directly provides the recovery assessment — no separate grid-based recovery study is required.
 
@@ -566,9 +580,11 @@ Recovery should be unbiased across the full prior range. The fraction of 95 % cr
 
 ---
 
-## 6  Identifiability: The Bernoulli Aliasing Problem
+##  Identifiability: The Bernoulli Aliasing Problem
 
-### 6.1  The Algebraic Constraint
+### The Algebraic Constraint
+
+> Why prove identifiability analytically before checking it empirically? The aliasing manifold exists regardless of sample size or model quality. No amount of data or better priors can break a fundamental algebraic degeneracy. Understanding the constraint analytically tells us exactly what additional information (RT, condition manipulation) would be required — rather than leaving us puzzled when LOO shows no preference.
 
 For a single binary trial the probability of observing $y_i = 1$ under the bias–noise mixture is:
 
@@ -588,7 +604,7 @@ is a curve in parameter space, and the posterior will be smeared along this curv
 
 The mixture model is not wrong — it is simply not identified from the marginal binary likelihood alone. The bias and noise parameters are individually interpretable and scientifically meaningful; the data just cannot separate them without additional structure (e.g., trial-level covariates, joint RT and accuracy modelling, or experimental manipulations of the noise rate).
 
-### 6.2  Visualising the Posterior Ridge
+###  Visualising the Posterior Ridge
 
 ```{r ch8-aliasing-manifold}
 draws_prob <- as_draws_df(fit_single$draws()) |>
@@ -618,7 +634,7 @@ ggplot(draws_prob, aes(x = pi_hat, y = theta)) +
 
 The posterior concentrates along the red aliasing manifold rather than converging to a point. This is not a sampling pathology — it is the correct Bayesian representation of what the data actually contain. The prior does provide some regularisation (the posterior does not extend to the full manifold), but with 120 binary observations and diffuse priors, the two parameters remain substantially correlated.
 
-### 6.3  Why the RT Case is Different
+###  Why the RT Case is Different
 
 Recall from Section 1 that the RT mixture was visually transparent. The reason is that the two components have **different likelihoods for the same observation value**. A 400 ms response is extremely unlikely under the uniform lapse process but highly probable under the log-normal deliberate process. This trial-level likelihood contrast provides information about $z_i$ for each observation, breaking the aliasing. With binary choices, both the biased process (at some $\theta$) and the random process (at 0.5) assign non-zero probability to both outcomes, so the aliasing cannot be broken by observation values alone.
 
@@ -652,7 +668,7 @@ These are two linear equations in the three unknowns $(\theta, \pi_0, \pi_1)$ �
 
 ---
 
-## 7  Prior Sensitivity Analysis
+##  Prior Sensitivity Analysis
 
 Section 6 established analytically that the binary likelihood cannot separate $\theta$ and $\pi$: the data constrain only $\theta_{\text{eff}} = (1-\pi)\theta + 0.5\pi$. A direct corollary is that the posterior for at least one of the individual parameters must be sensitive to the prior. `priorsense::powerscale_sensitivity()` quantifies this sensitivity without refitting the model. It uses Pareto-smoothed importance sampling to evaluate the perturbed posterior:
 
@@ -664,6 +680,8 @@ $$
 where $\alpha$ and $\beta$ are power-scaling factors. Sensitivity to the prior corresponds to varying $\beta$ while holding $\alpha = 1$; sensitivity to the likelihood corresponds to varying $\alpha$ while holding $\beta = 1$. The summary statistic $\hat{\psi}$ measures how much the posterior mean shifts (in units of posterior SD) as the scaling factor departs from 1. Values above $\approx 0.05$ indicate non-negligible sensitivity.
 
 The `priorsense` workflow requires a `lprior` variable in the Stan model's `generated quantities` block, which accumulates the log prior density. This was added to the single-agent Stan model in §4.2 and will be added to the multilevel model in §8.2. The `powerscale_sensitivity()` call then reads `lprior` as the prior contribution and uses `log_lik` as the likelihood contribution.
+
+> Why expect high sensitivity for the noise parameter? Section 6 showed algebraically that binary i.i.d. data constrain only θ_eff = (1-π)θ + 0.5π. The noise weight π therefore receives almost no direct information from the data — its posterior is largely proportional to its prior. A high ψ̂ for ν is not a model failure; it is the quantitative fingerprint of this degeneracy.
 
 ```{r ch8-priorsense}
 # powerscale_sensitivity works with CmdStanFit objects via the posterior package.
@@ -698,9 +716,9 @@ The expected pattern is instructive: $\hat{\psi}$ for $\nu$ (noise, logit scale)
 
 ---
 
-## 8  Posterior Predictive Checks and LOO
+##  Posterior Predictive Checks and LOO
 
-### 8.1  Posterior Predictive Checks
+###  Posterior Predictive Checks
 
 Posterior predictive draws are computed in the `generated quantities` block and extracted directly from the fitted object. This avoids the manual simulation loop in the original chapter, which re-implemented in R what Stan already computed.
 
@@ -736,13 +754,13 @@ p_mean / p_run
 
 > **Interpretation**: If the run-length check fails (observed value in the tail of the predictive distribution) while the mean check passes, the data contain sequential dependence that a fully i.i.d. mixture model cannot reproduce. In that case, consider a hidden Markov model with Markov-dependent $z_i$ (Section 10).
 
-### 8.2  PSIS-LOO and Pareto-$\hat{k}$ Diagnostics
+###  PSIS-LOO and Pareto-$\hat{k}$ Diagnostics
 
 ```{r ch8-loo}
 log_lik_mat <- fit_single$draws("log_lik", format = "matrix")
 r_eff       <- loo::relative_eff(exp(log_lik_mat),
                                   chain_id = rep(1:4, each = 2000))
-loo_single  <- loo::loo(log_lik_mat, r_eff = r_eff)
+loo_single  <- loo::loo(log_lik_mat, r_eff = r_eff, save_psis = TRUE)
 
 print(loo_single)
 plot(loo_single, label_points = TRUE,
@@ -751,28 +769,23 @@ plot(loo_single, label_points = TRUE,
 
 Pareto-$\hat{k}$ values above 0.7 indicate observations for which the full-data posterior is a poor approximation to the leave-one-out posterior. In a mixture model, such observations are often concentrated near $y = 0.5$ (where the biased and random components are most confounded) or in long runs of the same choice (which the i.i.d. model cannot anticipate).
 
-### 8.3  LOO-PIT
+###  LOO-PIT
 
-For continuous outcomes, LOO-PIT values should be uniform. For binary outcomes the CDF is a step function, so the standard PIT is discrete and requires randomisation to achieve uniformity. The `loo::loo_pit()` function applies this randomisation automatically.
+For continuous outcomes, LOO-PIT values should be uniform. For binary outcomes the CDF is a step function, so the standard PIT is discrete and requires randomisation to achieve uniformity. The `rstantools`::loo_pit()` function applies this randomisation automatically.
 
 ```{r ch8-loo-pit}
 psis_obj <- loo_single$psis_object
 lw       <- weights(psis_obj, log = TRUE, normalize = TRUE)  # draws × obs
 
 yrep_int <- matrix(as.integer(yrep), nrow = nrow(yrep))
-pit_vals <- loo::loo_pit(x = yrep_int, y = y, lw = lw)
-
-bayesplot::ppc_pit_ecdf(pit_vals) +
-  labs(title    = "LOO-PIT: predictive calibration",
-       subtitle = "Uniform distribution (diagonal) indicates well-calibrated uncertainty") +
-  theme(strip.background = element_rect(fill = "grey95", colour = NA))
+pit_vals <- rstantools::loo_pit(object = yrep_int, y = y, lw = lw)
 ```
 
 ---
 
-## 9  Multilevel Mixture Model
+##  Multilevel Mixture Model
 
-### 9.1  Generative Model
+###  Generative Model
 
 When data come from $J$ participants, we extend the model hierarchically. Each participant $j$ has their own bias $\alpha_j$ and noise $\nu_j$, which are drawn from a bivariate normal population distribution:
 
@@ -806,7 +819,7 @@ y_{t,j} \sim \log\text{-mix}\!\bigl(\text{logit}^{-1}(\nu_j),\; \text{Bern}(0.5)
 \tag{10}
 $$
 
-### 9.2  Stan Code
+###  Stan Code
 
 ```{r ch8-write-multilevel-stan}
 multilevel_mixture_stan <- "
@@ -897,13 +910,11 @@ generated quantities {
 write_stan_file(multilevel_mixture_stan,
                 dir = "stan/", basename = "ch8_mixture_multilevel.stan")
 mod_multi <- cmdstan_model(
-  "stan/ch8_mixture_multilevel.stan",
-  cpp_options   = list(stan_threads = TRUE),
-  stanc_options = list("O1")
+  "stan/ch8_mixture_multilevel.stan"
 )
 ```
 
-### 9.3  Simulating Multilevel Data
+###  Simulating Multilevel Data
 
 ```{r ch8-simulate-multilevel}
 set.seed(801)
@@ -955,7 +966,7 @@ cat("Population bias  (prob scale):", round(plogis(muA_true), 3), "\n")
 cat("Population noise (prob scale):", round(plogis(muN_true), 3), "\n")
 ```
 
-### 9.4  Fitting
+###  Fitting
 
 The same Pathfinder-with-safe-fallback pattern from §4.4 applies here, with one important difference: the multilevel model has additional structure that the fallback initialisation must respect. Setting `tau` to a small positive value (rather than drawing from the full half-normal prior) avoids starting near the funnel geometry. Setting `z_IDs` to near-zero ensures all individual parameters begin at their population means. Setting `L_Omega` to the identity matrix provides a neutral starting correlation. All values are jittered slightly across chains.
 
@@ -1014,7 +1025,7 @@ cat("Min ESS:    ",
 
 > **Debugging note.** If you see divergences in the multilevel mixture model, the most common cause is the noise SD $\tau_\nu$ approaching zero, which creates a funnel geometry in the NCP. Tighten the half-normal prior on $\tau_\nu$ (e.g., from $\text{Half-Normal}(0, 0.3)$ to $\text{Half-Normal}(0, 0.2)$) and check whether the SBC ECDF-difference for $\nu$ shows a U-shape (overconfidence). Do **not** respond by increasing `adapt_delta` without first investigating the parameterisation. Note that the safe fallback initialisation in §9.4 already places `tau` away from zero; if divergences persist despite that, the prior itself needs tightening.
 
-### 9.5  Partial-Pooling Shrinkage
+###  Partial-Pooling Shrinkage
 
 A hallmark of hierarchical models is that individual estimates are shrunk toward the group mean, with more shrinkage for agents whose data are less informative. The shrinkage plot below compares the raw per-agent data mean (no-pooling) with the posterior mean of `agent_bias[j]` (partial pooling).
 
@@ -1061,7 +1072,7 @@ ggplot(shrinkage_df) +
 
 Agents whose raw data means are far from the group mean are pulled back more strongly — they are more likely to be statistical outliers than genuinely extreme individuals. Note also that the posterior means are systematically closer to the true values (red crosses) than the raw data means, confirming that partial pooling improves estimation accuracy.
 
-### 9.6  Population Parameter Recovery
+###  Population Parameter Recovery
 
 ```{r ch8-multilevel-recovery}
 pop_params <- c("pop_bias", "pop_noise")
@@ -1074,9 +1085,9 @@ fit_multi$summary(pop_params) |>
 
 ---
 
-## 10  Model Comparison
+##  Model Comparison
 
-### 10.1  Single-Process Baseline
+###  Single-Process Baseline
 
 We fit a simple biased-agent model — no noise component — to the same data used in Section 4. This is the model that emerges when we constrain $\pi = 0$.
 
@@ -1106,9 +1117,7 @@ generated quantities {
 
 write_stan_file(biased_stan, dir = "stan/", basename = "ch8_biased_single.stan")
 mod_biased <- cmdstan_model(
-  "stan/ch8_biased_single.stan",
-  cpp_options   = list(stan_threads = TRUE),
-  stanc_options = list("O1")
+  "stan/ch8_biased_single.stan"
 )
 ```
 
@@ -1133,7 +1142,7 @@ if (regenerate_simulations || !file.exists(biased_fit_file)) {
 fit_biased$summary("theta")
 ```
 
-### 10.2  ELPD Comparison
+###  ELPD Comparison
 
 ```{r ch8-loo-compare}
 log_lik_b <- fit_biased$draws("log_lik", format = "matrix")
@@ -1152,7 +1161,7 @@ weights_stacking <- loo::loo_model_weights(
 print(weights_stacking)
 ```
 
-### 10.3  Interpretation
+###  Interpretation
 
 The comparison result should show a near-zero ELPD difference with a standard error larger than the difference itself. This is the correct outcome, for reasons established in Section 6. Any $(1-\pi)\text{Bern}(\theta) + \pi\text{Bern}(0.5)$ mixture is **likelihood-equivalent** to $\text{Bern}(\theta_{\text{eff}})$ for i.i.d. binary data. The biased model, in effect, estimates $\hat{\theta}_{\text{eff}}$ directly. PSIS-LOO has no basis on which to prefer one parameterisation over the other, and Bayesian stacking weights will similarly be indeterminate. The prior sensitivity analysis in Section 7 already made this outcome predictable: high $\hat{\psi}$ for the noise parameter is the per-fit signal of the same degeneracy that manifests here as indistinguishable ELPD.
 
@@ -1160,7 +1169,7 @@ This finding does *not* mean the mixture model is useless. It means that to iden
 
 ---
 
-## 11  Extensions
+##  Extensions
 
 **Mixtures with $K > 2$ components.** The framework extends naturally: replace the scalar mixing weight $\pi$ with a $K$-simplex $\boldsymbol{\pi} \sim \text{Dirichlet}(\boldsymbol{\alpha})$ and loop over $K$ terms in `log_sum_exp`. The label-switching problem (components can permute their identities between chains) becomes more severe as $K$ grows; post-processing the draws to enforce a canonical ordering (e.g., $\theta_1 < \theta_2 < \ldots$) or placing informative asymmetric priors on the components is required.
 
@@ -1172,7 +1181,7 @@ This finding does *not* mean the mixture model is useless. It means that to iden
 
 ---
 
-## 12  Conclusion
+##  Conclusion
 
 Mixture models are a powerful and principled tool for cognitive modelling when behaviour reflects more than one underlying process. Several key lessons from this chapter should inform their use:
 
@@ -1189,3 +1198,12 @@ Mixture models are a powerful and principled tool for cognitive modelling when b
 **Initialisation is not a detail.** Mixture model posteriors can have ridge or funnel geometry that causes Stan's Uniform(−2, 2) default initialisation to fail immediately. Use Pathfinder as the primary initialisation method and define an explicit jittered prior-centre fallback. For hierarchical models, initialise the population SD vector `tau` at small positive values, not at zero or at wide prior draws.
 
 **A model that loses a LOO comparison is not necessarily wrong.** In the binary case, the mixture model and the biased model have equivalent ELPD because they are parameterisations of the same likelihood. Theory should guide model choice here, not predictive scores alone. Model comparison and theoretical justification are complementary, not competing, sources of evidence. The degeneracy-breaking strategies in Section 6.3 describe the experimental and modelling decisions that would, in a future study, make LOO comparison informative.
+
+**Coming up in Chapter 9:** We leave the matching-pennies domain entirely
+and apply the same six-phase workflow to a social learning task — the marble
+task — where participants integrate direct evidence about a jar's composition
+with social information from another person. This introduces two genuinely
+new cognitive models (the Simple and Weighted Bayesian Agents), a
+Beta-Binomial likelihood, and the Leave-Future-Out cross-validation technique
+needed when trial order creates causal dependencies that standard LOO cannot
+handle.

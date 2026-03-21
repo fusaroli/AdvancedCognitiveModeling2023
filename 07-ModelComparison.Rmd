@@ -40,9 +40,43 @@ pacman::p_load(
 
 theme_set(theme_classic())
 plan(sequential)
+
+# Load the validated memory model, LOO score, and reversal schedule from Ch. 6.
+# These were saved by the final chunk of Ch. 6.
+ch6_exports_file <- here::here("simmodels", "06_memory_exports_for_ch7.rds")
+
+if (file.exists(ch6_exports_file)) {
+  ch6_exports       <- readRDS(ch6_exports_file)
+  opponent_reversal <- ch6_exports$reversal_schedule  # 240-trial binary vector
+  loo_memory_ch6    <- ch6_exports$loo_memory          # LOO from Ch. 6 memory fit
+  cat("Ch. 6 exports loaded.\n")
+  cat("  Reversal schedule:", length(opponent_reversal), "trials\n")
+  cat("  Ch. 6 memory ELPD:",
+      round(loo_memory_ch6$estimates["elpd_loo", "Estimate"], 1), "\n")
+} else {
+  warning(paste(
+    "Ch. 6 exports not found at", ch6_exports_file,
+    "\nFalling back to a freshly generated reversal schedule.",
+    "\nRun Ch. 6 first to ensure consistency across chapters."
+  ))
+  # Reproducible fallback so Ch. 7 can knit independently
+  set.seed(2025)
+  opponent_reversal <- c(rbinom(120, 1, 0.8), rbinom(120, 1, 0.2))
+  loo_memory_ch6    <- NULL
+}
 ```
 
 # Deciding Between Competing Theories: Model Comparison
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chs. 1–6 built models, validated them, and scaled them to populations.
+> Every model passed a six-phase quality battery before fitting real data.
+> This chapter asks the next question: when two validated models both fit
+> the data, which one better *predicts* data it has never seen? The answer
+> uses PSIS-LOO cross-validation and requires the validated fits from Ch. 6.
+> The reversal learning design introduced in Ch. 5 and used in Ch. 6 is
+> essential here too — it is the design that makes the two models
+> distinguishable in the first place.
 
 By Chapter 6 we had a working Bayesian workflow: specify a generative model, validate it with SBC and parameter recovery, fit it to data, and diagnose the posterior geometry, both in the case of single agent and hierarchical models. We now face a different question: we rarely have only one possible model of the cognitive processes underlying the observed behaviors.
 
@@ -121,8 +155,8 @@ ggplot(df_fit, aes(x = x, y = y)) +
   geom_point(size = 2, alpha = 0.8) +
   geom_line(data = pred_df, aes(y = y_pred, color = model), linewidth = 1) +
   scale_color_brewer(palette = "Set1", name = "Model") +
-  labs(title    = "The Overfitting Trap",
-       subtitle = "More parameters -> lower training error -> worse generalization",
+  labs(title    = "The Overfitting Trap: In-Sample Fit Favours Complexity",
+       subtitle = "Degree-10 polynomial fits training data perfectly but would fail on new data. Degree-2 (true DGP) generalizes best.",
        x = "Predictor", y = "Outcome") +
   theme(legend.position = "bottom")
 ```
@@ -265,6 +299,15 @@ However, we should be careful. If the model's estimate would barely change when 
 
 This combination of LOO cross-validation with Pareto-Smoothed Importance Sampling is called **PSIS-LOO** (Vehtari, Gelman & Gabry, 2017), and it is our primary tool for model comparison, so we'll go through it step by step.
 
+> *Why learn the mechanics before using `loo()`?* The `loo()` function is
+> one line of R. But knowing what it is doing — reweighting posterior draws
+> to approximate leave-one-out predictions, then checking whether those
+> weights are stable via the Pareto tail — lets you diagnose failures and
+> interpret the Pareto-$\hat{k}$ diagnostic as a *cognitive* signal (which
+> observations is the model surprised by?) rather than just a warning light.
+> The under-the-hood demonstration on the next page is worth reading once
+> carefully; after that, `loo()` will never be a black box.
+
 To really understand what the `loo()` function will do for us later, let's look under the hood. We can simulate the PSIS-LOO process directly using the `loo` package's internal engine. We will generate 1,000 simulated log-likelihood values, inject some extreme outliers to simulate a "shocked" model, and feed them directly into the actual `loo::psis()` algorithm. 
 
 We can then extract the smoothed weights and compare them to the raw weights to see exactly how the algorithm protects us from extreme MCMC draws.
@@ -371,38 +414,50 @@ But first let's get to the thick of it and start simulating data.
 
 ## Simulation Setup for Model Recovery
 
-We simulate two populations of agents playing against an opponent. However, we cannot use the constant 70%-right opponent from Chapter 6. **Why?** If a memory agent tracks a constant 70% rate, its internal memory signal quickly settles into a flat line. Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a biased agent with a fixed probability. 
+We simulate two populations of agents playing against a shared opponent using the **reversal design** first validated in Ch. 5 and used throughout Ch. 6: the opponent plays 80% right for the first half of the session, then switches to 20% right for the second half. We use the exact sequence loaded from Ch. 6 above (`opponent_reversal`), taking the first 120 trials (60 + 60) for this chapter's shorter sessions.
 
-To break this near-unidentifiability, we use a **reversal design**: the opponent plays 80%-right for the first 60 trials, then abruptly switches to 20%-right for the remaining 60 trials. Memory agents will drastically shift their behavior at trial 61, while biased agents will not, making the two models theoretically separable. 
+Why this design? If the opponent plays a constant bias, the memory agent's internal running average quickly settles near that value and stays flat.
+Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a biased agent — both produce a fixed right-leaning rate. The reversal forces the memory signal to change sign at trial 61: memory agents reverse their behavior while biased agents do not. This contrast is what makes the two models theoretically separable, and why Ch. 5 discovered that a constant-bias design made `bias` and `beta` unidentifiable.
 
-*Note on Recovery Failure:* We simulate a population with a strong memory sensitivity ($\mu_\beta = 1.5$). If we instead simulated a population with very weak memory ($\mu_\beta = 0.3$), model recovery would likely fail. The behavioral difference would be so subtle that the rigid Biased model would win the ELPD comparison by default due to its lower complexity penalty.
+*Note on recovery failure:* We simulate a population with strong memory sensitivity ($\mu_\beta = 1.5$). With weak memory ($\mu_\beta \approx 0.3$), the behavioral difference would be subtle enough that the simpler biased model would win the ELPD comparison by default due to its lower complexity penalty — a correct finding, not a method failure.
 
-The key insight for model recovery is that we now fit *both* models to *both* datasets, giving us a 2x2 matrix of fits:
+The key insight for model recovery is that we fit *both* models to *both* datasets, giving a 2×2 matrix of fits:
 
-* **Biased model on biased data** --- the correctly-specified model.
-* **Memory model on biased data** --- the over-specified model. It has an extra parameter ($\beta$) it does not need.
-* **Biased model on memory data** --- the under-specified model. It lacks the flexibility to capture the reversal.
-* **Memory model on memory data** --- the correctly-specified model.
+* **Biased model on biased data** — the correctly-specified model.
 
-We will see PSIS-LOO at work step by step and assess whether it is doing its job: it should prefer the correct model in each column of this matrix. This is model recovery: the analogue of parameter recovery but one level of abstraction higher - instead of asking "can we recover the right parameter values?", we ask "can we identify the right model?"
+* **Memory model on biased data** — the over-specified model; it has an extra parameter ($\beta$) it does not need.
+
+* **Biased model on memory data** — the under-specified model; it lacks the flexibility to capture the reversal.
+
+* **Memory model on memory data** — the correctly-specified model.
+
+PSIS-LOO should prefer the correct model in each column. This is **model recovery**: the analogue of parameter recovery one level higher — instead of asking "can we recover the right parameter values?", we ask "can we identify the right model?"
 
 ```{r 07-simulation-functions}
 
 simulate_model_recovery_data <- function(
-  n_agents      = 50,  n_trials      = 120,
-  mu_theta      = 1.0, sigma_theta   = 0.5,
-  mu_alpha      = 0.0, mu_beta       = 1.5,
-  sigma_alpha   = 0.3, sigma_beta    = 0.5,
-  rho           = 0.3, 
-  seed          = 42
+  n_agents         = 50,  n_trials      = 120,
+  mu_theta         = 1.0, sigma_theta   = 0.5,
+  mu_alpha         = 0.0, mu_beta       = 1.5,
+  sigma_alpha      = 0.3, sigma_beta    = 0.5,
+  rho              = 0.3,
+  opponent_choices = NULL,   
+  seed             = 42
 ) {
   set.seed(seed)
 
-  # Hardcoded reversal block design: 80% right for t 1:60, 20% right for t 61:120
-  opp_choices <- c(
-    rbinom(60, 1, 0.8),
-    rbinom(n_trials - 60, 1, 0.2)
-  )
+  # Reversal block design: 80% right for t 1:60, 20% right for t 61:120.
+  # If a fixed sequence is supplied (from Ch. 6), use it directly so that
+  # all chapters share the same opponent history.
+  if (!is.null(opponent_choices)) {
+    stopifnot(length(opponent_choices) >= n_trials)
+    opp_choices <- opponent_choices[seq_len(n_trials)]
+  } else {
+    opp_choices <- c(
+      rbinom(60, 1, 0.8),
+      rbinom(n_trials - 60, 1, 0.2)
+    )
+  }
   
   # Perfect unweighted memory (cumulative average)
   opp_rate_prev    <- numeric(n_trials)
@@ -460,7 +515,9 @@ simulate_model_recovery_data <- function(
 sim_data_path <- here::here("simdata", "ch7_model_recovery_data.rds")
 
 if (regenerate_simulations || !file.exists(sim_data_path)) {
-  sim_data <- simulate_model_recovery_data()
+  sim_data <- simulate_model_recovery_data(
+    opponent_choices = opponent_reversal   # Use Ch. 6 reversal schedule
+  )
   saveRDS(sim_data, sim_data_path)
 } else {
   sim_data <- readRDS(sim_data_path)
@@ -498,7 +555,7 @@ bind_rows(d_biased, d_memory) |>
   scale_color_brewer(palette = "Set1", guide = "none") +
   scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
   labs(title    = "Cumulative Choice Rates: Biased vs. Memory Agents",
-       subtitle = "Both play against a 70%-right opponent. Can you tell them apart by eye?",
+       subtitle = "Both populations play the reversal design (80% right → 20% right at trial 61). Memory agents shift; biased agents don't.",
        x = "Trial", y = "Cumulative proportion 'right'")
 ```
 
@@ -597,6 +654,15 @@ cat("Both NCP models compiled.\n")
 
 ## Fitting the Four Model-Data Combinations
 
+> *Why fit both models to both datasets?* Fitting only the true model to its
+> own data tells us the model works — but it cannot tell us whether ELPD
+> actually discriminates. For model comparison to be meaningful, the wrong
+> model must score *worse* than the right one. Fitting all four combinations
+> gives us a 2×2 confusion matrix: if PSIS-LOO correctly selects the
+> generating model in each column, the method has recovered the truth. If it
+> selects the wrong model, that is scientifically informative too — it tells
+> us the experimental design is not discriminative enough at this sample size.
+
 We now fit all four combinations. This is the computationally expensive step, but it only needs to be run once --- thereafter, results are loaded from disk. The `fit_or_load()` helper encapsulates this logic.
 
 ```{r 07-fit-helpers}
@@ -666,7 +732,12 @@ map_dfr(names(fits), function(label) {
     Min_ESS_bulk = round(min(post_summary$ess_bulk, na.rm = TRUE), 0)
   )
 }) |>
-  knitr::kable(caption = "Required: Divergences=0, R-hat<1.01, ESS>400.")
+  knitr::kable(caption = paste(
+    "Pre-comparison diagnostics. Required: Divergences = 0, R-hat < 1.01, ESS > 400.",
+    "Misspecified fits (Memory->Biased, Biased->Memory) may show slightly worse ESS",
+    "because the model is searching for structure that does not exist in the data.",
+    "This is informative: severe degradation here would itself be evidence against the model."
+  ))
 ```
 
 ## Computing PSIS-LOO
@@ -1473,13 +1544,12 @@ The ECDF difference plot is a centered version of the usual ECDF: instead of plo
 
 The Shapley coloring tells us exactly which observations are responsible. Red points are the "smoking guns" — the specific order statistics mathematically pushing the POT-C test toward rejection. For the Biased $\rightarrow$ Memory combination, expect the red points to concentrate heavily in the extreme tails. These correspond primarily to the trials immediately following the block reversal, where the biased model is rigidly and repeatedly surprised by behavioral changes it structurally lacks the flexibility to predict.
 
-### Connecting LOO-PIT to the Cognitive Theory [OBS THIS NEEDS TO BE DOUBLE CHECKED AS IT WAS WRITTEN ON A PREVIOUS RUN WITH SLIGHTLY DIFFERENT MODELS]
+### Connecting LOO-PIT to the Cognitive Theory 
 
-LOO-PIT is not just a statistical formality. It is a diagnostic that tells you whether your *cognitive theory* is adequate.
+Consider what happens when we fit the biased model to memory data. The biased model says: "Each agent has a fixed probability $\psi_j$ of choosing right, regardless of what the opponent has been doing." When memory agents play against the reversal design, their trial-level choice probabilities are anything but fixed. In the first block (trials 1–60), as the running opponent rate climbs toward 0.8, memory agents increasingly track it and choose right more often. At the reversal (trial 61), the opponent flips to 20% right: the memory signal inverts, and memory agents start choosing left.
+The biased model cannot represent either the rise or the reversal — it is committed to a single probability $\psi_j$ that tries to average across both phases.
 
-Consider what happens when we fit the biased model to memory data. The biased model says: "Each agent has a fixed probability $\psi_j$ of choosing right, regardless of what the opponent has been doing." When memory agents play against a 70%-right opponent, their trial-level choice probabilities are anything but fixed. Early in the game, when the running rate is near 0.5, they choose approximately at random. Later, when the running rate has stabilized near 0.7, they choose right much more often - their memory sensitivity parameter $\beta_j$ magnifies the signal into a strong directional prediction.
-
-The biased model tries to accommodate all of this with a single average probability. On any given late trial where the memory signal is extreme and the agent strongly tracks it, the biased model's constant prediction is far from the truth. The result is LOO-PIT values concentrated in the tails: the model is repeatedly surprised because it does not have the flexibility to predict what it needs to predict. This is the overconfidence signature - not overconfidence in the sense of arrogance, but in the sense of being too rigid, making narrow predictions that are frequently wrong.
+The predictive failure is asymmetric. In the first block the biased model may do tolerably: its fixed $\psi_j$ roughly matches the early-session average. But immediately after the reversal, memory agents start choosing left while the biased model is still confidently predicting right. On those trials the biased model assigns high probability to "right" and the agent chooses "left" — exactly the kind of systematic surprise that drives LOO-PIT values into the tails and produces a large Pareto-$\hat{k}$. This is the overconfidence signature — not overconfidence in the sense of arrogance, but in the sense of structural rigidity: the model makes narrow, committed predictions that the reversal repeatedly proves wrong.
 
 ### Agent-Level Calibration: A Transparent Complement
 
@@ -1518,6 +1588,18 @@ bind_rows(
 This plot answers a different question from LOO-PIT: not "is the model's predictive *uncertainty* correct?" but "is the model getting the agent-level *means* right?" A model can pass this check and still fail LOO-PIT --- for example, the biased model might accurately predict each agent's average choice rate (because it directly estimates their $\theta_j$), while still being badly miscalibrated at the trial level (because it cannot predict which specific trials will deviate from that average). Both checks are necessary for a complete picture.
 
 ## Formal Model Comparison
+
+> *Why ELPD/LOO rather than Bayes Factors?* Bayes Factors compare the
+> marginal likelihood of the data under each model — an elegant idea, but
+> one that requires integrating over the *entire prior*. For hierarchical
+> models, this integral is computationally intractable and the result is
+> exquisitely sensitive to the exact width of every prior. PSIS-LOO avoids
+> this by focusing entirely on predictive accuracy for held-out observations
+> — a criterion that is robust to prior choices and provides the Pareto-$\hat{k}$
+> as a built-in reliability diagnostic. The trade-off is philosophical: LOO
+> measures pragmatic predictive utility, not the probability that a model is
+> true. For most applied cognitive modeling questions, pragmatic predictive
+> utility is what we actually care about.
 
 ### Reading `loo_compare()` Correctly
 
@@ -1559,7 +1641,21 @@ cat(sprintf("\n|elpd_diff|/SE = %.1f  ->  %s\n", z_m,
   ifelse(z_m>4,"Clear preference.",ifelse(z_m>2,"Weak preference.","Inconclusive."))))
 ```
 
-So for biased data, it's hard to discriminate the models: the memory model is slightly worse, but not decisively so. For memory data, the memory model is much better: the biased model is decisively worse. This is a successful recovery: the method correctly identifies the true generating model in each case.
+Reading the output with the Z-score rule ($|\text{elpd\_diff}|/\text{se\_diff}$):
+
+- **Biased data:** The memory model is slightly worse, but the ratio is
+  likely below 2 — *inconclusive*. This is the correct scientific answer:
+  when data come from a purely biased agent, a memory model with $\beta \approx 0$
+  produces indistinguishable predictions. The PSIS-LOO score is not broken;
+  it is honestly reporting that the simpler model is sufficient here.
+- **Memory data:** The biased model is decisively worse, with a ratio well
+  above 4 — *clear preference*. The reversal at trial 61 produces behavioral
+  changes that the biased model cannot track, and PSIS-LOO detects this.
+
+This is **successful model recovery**: the method correctly identifies the
+true generating model in the column where detection is possible, and honestly
+reports uncertainty in the column where the models overlap. Both outcomes are
+scientifically valid.
 
 ### Pointwise ELPD Differences: Where Does the Advantage Come From?
 
@@ -1652,6 +1748,10 @@ ggplot(elpd_matrix, aes(x=Data, y=Model, fill=ELPD)) +
 ```
 
 Each column of this matrix answers a different scientific question. The left column (biased data) asks: can PSIS-LOO detect that the memory model is unnecessarily complex when a simpler model suffices? The right column (memory data) asks: can PSIS-LOO detect that the biased model is missing a real cognitive mechanism? Within each column, the model with the higher ELPD should be the one that generated the data --- that is the meaning of successful model recovery.
+
+For context, the Ch. 6 memory model (fitted to the full 50-agent reversal dataset with 80–240 trials per agent) had
+`r if (!is.null(loo_memory_ch6)) paste0("ELPD = ", round(loo_memory_ch6$estimates["elpd_loo","Estimate"], 1), " (SE = ", round(loo_memory_ch6$estimates["elpd_loo","SE"], 1), ")") else "ELPD = [load Ch. 6 exports to see this value]"`.
+The Ch. 7 memory-on-memory fit uses a shorter, fixed-length session (120 trials vs. 80–240), so its absolute ELPD is not directly comparable — but the sign and direction of all comparisons should be consistent.
 
 ```{r 07-final-summary-table}
 final_table <- tibble(
@@ -1751,8 +1851,9 @@ ggplot(power_grid, aes(x = factor(N_Trials), y = factor(N_Participants), fill = 
                                               Memory = "Memory Model Recovery (F1)"))) +
   scale_fill_viridis_c(option = "mako", direction = -1, limits = c(0, 1), 
                        labels = scales::percent) +
-  labs(title = "Model Recovery Power: Trials vs. Participants",
-       subtitle = "F1 Score mapping the reliability of model selection across experimental designs",
+       labs(title = "Model Recovery Power Analysis: Trials × Participants",
+       subtitle = paste0("F1 > 80% (white cells) = reliably discriminable design. ",
+                         "Memory is harder to detect than Biased — it needs both more trials AND more participants."),
        x = "Number of Trials per Participant (N)",
        y = "Number of Participants (J)",
        fill = "F1 Score") +
@@ -2106,6 +2207,37 @@ This limitation of internal test sets is one reason why cognitive scientists oft
 **A better predictive score does not mean a better mechanistic explanation.** Two models can achieve identical ELPD while making diametrically opposite claims about the cognitive mechanism generating the data. If the biased model and the memory model achieve similar predictive performance, that does not mean the two theories are equivalent --- it means the data at hand cannot distinguish them. The correct scientific response is to design experiments targeting the mechanistic difference: conditions where the two models predict qualitatively different behavior.
 
 **The "wrong model wins" scenario is real.** When memory agents are simulated with high $\sigma_\beta$ (many agents with near-zero memory sensitivity), the population of memory agents becomes nearly indistinguishable from a population of biased agents. PSIS-LOO may then prefer the simpler biased model --- not because memory processes are absent, but because they are weak, variable, and the simpler model achieves comparable predictions on average. This is actually a *correct* finding: it tells you that the empirical conditions were not sufficiently discriminative, not that the method is broken. The productive response is to ask what experimental design would make the two populations more discriminable --- perhaps a richer or more structured opponent, or a longer game.
+
+## Conclusion: Model Comparison as Scientific Reasoning
+
+This chapter developed a complete pipeline for comparing validated cognitive
+models:
+
+1. **PSIS-LOO** approximates leave-one-out cross-validation from a single
+   fit, with Pareto-$\hat{k}$ flagging both numerical unreliability and
+   cognitively interesting observations.
+2. **Agent-level K-fold CV** provides an honest test of generalization to
+   new participants — answering the question PSIS-LOO cannot.
+3. **LOO-PIT + POT-C** checks whether the model's predictive *uncertainty*
+   is calibrated, not just its mean predictions.
+4. **`loo_compare()`** produces a Z-score-interpretable ranking; below 2
+   means inconclusive, not that the method failed.
+5. **Bayesian stacking** finds the optimal predictive mixture and provides
+   a continuous measure of model evidence.
+6. **Model SBC** tests the full comparison pipeline's calibration across
+   the prior space.
+
+Two design lessons cut across all of these tools:
+- The **reversal design** (validated in Ch. 5, extended in Ch. 6) was
+  essential — a constant-bias opponent makes the biased and memory models
+  statistically inseparable, and no amount of data fixes a confounded design.
+- **All models must pass their individual quality checks before comparison**.
+  Comparing a well-fitted model against one with divergences is not a fair
+  scientific test.
+
+Chapter 8 introduces a new model type — mixture models — that extends the
+toolkit beyond single-process accounts and applies the same PSIS-LOO
+machinery to a qualitatively different identifiability problem.
 
 ## References
 

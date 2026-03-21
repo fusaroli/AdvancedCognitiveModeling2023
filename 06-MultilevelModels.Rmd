@@ -814,7 +814,7 @@ backend_cp <- SBC_backend_cmdstan_sample(
 )
 
 if (regenerate_simulations || !file.exists(sbc_cp_path)) {
-  
+  future::plan(future::sequential)
   sbc_datasets_cp <- generate_datasets(generator_cp, 200)
   sbc_results_cp  <- compute_SBC(datasets = sbc_datasets_cp, backend = backend_cp,
   keep_fits = FALSE)
@@ -830,7 +830,7 @@ if (regenerate_simulations || !file.exists(sbc_cp_path)) {
 }
 
 # Visualize
-plot_rank_overlay(sbc_results_cp, variables = c("mu_theta", "sigma_theta")) +
+plot_rank_hist(sbc_results_cp, variables = c("mu_theta", "sigma_theta")) +
   labs(
     title    = "SBC Rank Histograms: Centered Parameterization",
     subtitle = "Healthy = bars flat within grey band. U-shape = overconfident. Here, U-shapes reveal the funnel pathology."
@@ -838,8 +838,8 @@ plot_rank_overlay(sbc_results_cp, variables = c("mu_theta", "sigma_theta")) +
 
 plot_ecdf_diff(sbc_results_cp, variables = c("mu_theta", "sigma_theta")) +
   labs(
-    title = "SBC ECDF Difference: Centered Parameterization",
-    subtitle = "Deviation from the diagonal indicates miscalibration. The rank histograms\nare underpowered at N=200 for subtle distortions; divergence rates below are more sensitive."
+    title    = "SBC ECDF Difference: Centered Parameterization",
+    subtitle = "Healthy = blue line stays near zero. Excursions here correlate with the divergence failures shown below."
   )
 
 # 1. Extract the lightweight stats dataframe from the SBC object
@@ -999,6 +999,16 @@ Here we see a funnel. As sigma goes to zero, theta_logit[1] can only have one va
 
 ### Non-Centered Parameterization (NCP) as the Solution
 
+> *Why does a coordinate transform fix a geometry problem?* Neal's Funnel
+> is not a flaw in the model — it is a flaw in the *space the sampler
+> must navigate*. In the CP, individual parameters $\theta_j$ live in a
+> space whose width is controlled by $\sigma_\theta$: as $\sigma_\theta
+> \to 0$ the space collapses. In the NCP, we sample standardized offsets
+> $z_j \sim N(0,1)$ whose geometry is always the same — the funnel
+> disappears because the sampler no longer navigates the narrowing space
+> directly. The parameters $\theta_j$ are reconstructed *after* sampling,
+> not during it.
+
 We have reached a critical juncture in our Bayesian workflow. We showed  computationally (via SBC and diagnostic pairs plots) that the Centered Parameterization (CP) creates a pathological geometry—Neal’s Funnel—that makes it difficult for the NUTS sampler to efficiently traverse the posterior space when data is sparse or population variance is small.
 When the model is misbehaving, sometimes we need to reconsider our theory and/or our data. Yet, in this case, we can do something to the math underlying the model to topologically transform the posterior space the model is sampling: a coordinate transformation known as the Non-Centered Parameterization (NCP).
 
@@ -1140,7 +1150,16 @@ fit_ncp_path <- here::here("simmodels", "ch6_fit_ncp.rds")
 }
 ```
 
-We'll skip the step-by-step model quality checks (bad!) to focus on two indices of performance: 1) the time it takes to fit (it should have improved) and 2) SBC, the part that was creating issues for the CP parameterization.
+> **Why we skip the full diagnostic battery here:** The NCP model is not
+> our production model for this dataset — it is a *pedagogical fix*. We
+> introduced the CP model specifically to watch it fail via SBC, and the
+> NCP to demonstrate the geometric solution. Running the full six-phase
+> battery (prior predictive, posterior predictive, prior-posterior update,
+> sensitivity, recovery, SBC) on both parameterizations would be
+> instructive but redundant for this chapter's purpose. When you apply
+> the NCP to your *own* data, run all six phases. Here we focus on the
+> two diagnostics that directly reveal the CP's failure and the NCP's fix:
+> sampling efficiency and the SBC rank histograms.
 
 ```{r 06_Time_NCP_Model}
 # Timing and ESS comparison 
@@ -1182,8 +1201,14 @@ backend_ncp <- SBC_backend_cmdstan_sample(
 
 if (regenerate_simulations || !file.exists(sbc_ncp_path)) {
   future::plan(future::sequential) # to avoid ram issues
-  # Reuse the exact same universes as the CP SBC for a controlled comparison
-  sbc_results_ncp <- compute_SBC(datasets = sbc_datasets_cp, backend = backend_ncp)
+  
+  # Add keep_fits = FALSE right here
+  sbc_results_ncp <- compute_SBC(
+    datasets = sbc_datasets_cp, 
+    backend = backend_ncp, 
+    keep_fits = FALSE
+  )
+  
   saveRDS(sbc_results_ncp, sbc_ncp_path)
 } else {
   sbc_results_ncp <- readRDS(sbc_ncp_path)
@@ -1449,7 +1474,8 @@ Because typical cognitive tasks (like our Matching Pennies game) involve relativ
 
 ## The Epistemic Showdown: Visualizing Shrinkage
 
-We have theorized about the dangers of ignoring population structure (Complete Pooling) and the dangers of ignoring noise in small samples (No Pooling). In a rigorous Bayesian workflow, we do not rely on intuition; we compute the alternatives and visualize the geometric differences.We will quickly define and fit the two extreme models using our strictly typed stan_data_centered. N.B. we should technically assess in detail all the models, but we are skipping that for brevity. The point is to visualize the shrinkage dynamics of our mathematically robust NCP model against these two extremes.
+We have theorized about the dangers of ignoring population structure (Complete Pooling) and the dangers of ignoring noise in small samples (No Pooling). In a rigorous Bayesian workflow, we do not rely on intuition; we compute the alternatives and visualize the geometric differences.We will quickly define and fit the two extreme models using our strictly typed stan_data_centered. 
+The complete and no-pooling models are included here solely as visual contrasts — they serve as the "wrong answer" endpoints that make the partial pooling solution legible. A full diagnostic battery on these two models would be redundant: complete pooling is trivially identifiable (one parameter, well-conditioned), and no-pooling is structurally identical to J independent Ch. 5 models we already validated. The NCP model, which actually matters, passed its full battery above.
 
 ### The Complete Pooling Model (Underfitting)
 
@@ -1618,7 +1644,8 @@ ggplot(comparison_df) +
     )
   ) +
   labs(
-    title = "The Epistemic Compromise: Visualizing Bayesian Shrinkage",
+    title = "Bayesian Shrinkage: Partial Pooling vs. the Extremes",
+    subtitle = "Arrows show shrinkage from No Pooling → Partial Pooling. Longest arrows = fewest trials. Partial pooling lands closest to truth (black solid line).",
     x = "Agents (Sorted by No-Pooling Estimate)",
     y = "Estimated Bias Parameter (Logit Scale)",
     size = "Trial Count (N_j)"
@@ -1663,6 +1690,8 @@ $$h_{ij} \sim \text{Bernoulli}(\text{logit}^{-1}(\alpha_j + \beta_j \cdot \text{
 $$m_{ij} = \frac{1}{i-1}\sum_{k=1}^{i-1} o_{kj}$$
 
 There are now two individual-level parameters per agent: $\alpha_j$, the baseline directional bias, and $\beta_j$, the sensitivity to opponent history. They need not vary independently across the population. An agent who has a strong directional tendency might also track the opponent more aggressively — or might not. Fitting two separate univariate hierarchical models forecloses this question before the data can answer it. We model the parameters jointly.
+
+**Experimental design: the reversal paradigm.** In Ch. 5 we discovered that fitting the memory model to a *constant-bias* opponent produces a strong positive correlation between `bias` and `beta` in the posterior — both parameters explain the same rightward tendency and cannot be told apart. The reversal learning design (opponent plays 80% right for trials 1–120, then 20% right for trials 121–240) breaks this confound: in the second phase, a pure-bias agent continues right while a memory agent flips left, providing the discriminating contrast the two-parameter model needs. We therefore use the reversal schedule saved in Ch. 5 as the shared opponent sequence for all J agents here.
 
 #### The Bivariate Population Distribution
 
@@ -1812,7 +1841,12 @@ In accordance with the rigorous Bayesian workflow, the simulation function is de
 #' @param sigma_alpha Numeric, population SD of alpha. NULL draws from prior.
 #' @param sigma_beta Numeric, population SD of beta. NULL draws from prior.
 #' @param rho Numeric, population correlation alpha-beta. NULL draws from LKJ(2).
-#' @param opponent_rate Numeric, true probability of opponent choosing "right".
+#' @param opponent_choices Integer vector of length >= max(n_trials_max).
+#'   If provided, every agent plays a consecutive prefix of this fixed
+#'   sequence (realistic: all participants face the same opponent).
+#'   If NULL, generates independent Bernoulli draws using opponent_rate.
+#' @param opponent_rate Numeric in (0,1). Used only when opponent_choices
+#'   is NULL. Default 0.7.
 #' @param seed Integer, for exact computational reproducibility.
 #'
 #' @return A tidy tibble containing both latent parameters and observed choices.
@@ -1825,7 +1859,8 @@ simulate_hierarchical_memory <- function(
   sigma_alpha   = NULL,
   sigma_beta    = NULL,
   rho           = NULL,
-  opponent_rate = 0.7,
+  opponent_choices = NULL,
+  opponent_rate    = 0.7,
   seed          = NULL
 ) {
   if (!is.null(seed)) set.seed(seed)
@@ -1856,7 +1891,14 @@ simulate_hierarchical_memory <- function(
     alpha_j <- indiv_params[j, 1]
     beta_j  <- indiv_params[j, 2]
 
-    opp_choices <- rbinom(n_t, 1, opponent_rate)
+    if (!is.null(opponent_choices)) {
+      # Shared reversal schedule: agent plays the first n_t steps of the
+      # fixed sequence. Agents who leave early see only the first phase.
+      stopifnot(length(opponent_choices) >= n_t)
+      opp_choices <- opponent_choices[seq_len(n_t)]
+    } else {
+      opp_choices <- rbinom(n_t, 1, opponent_rate)
+    }
 
     # Pre-compute running opponent rate BEFORE each trial (strict t-1 history).
     # Trial 1 has no history: initialize to 0.5 (uninformative).
@@ -1943,21 +1985,41 @@ prep_stan_data_memory <- function(sim_data) {
   )
 }
 
-# Execute the preparation on a specifically generated universe for recovery
+# --- Load the reversal learning schedule from Ch. 5 ---
+# This 240-trial sequence (80% right → reversal → 20% right) was validated
+# in Ch. 5 to cleanly identify bias and beta. All agents play the same
+# opponent schedule, with variable trial counts (80–240 trials).
+reversal_obj      <- readRDS(here("simdata", "05_reversal_data.rds"))
+opponent_reversal <- reversal_obj$opponent_choices  # 240-element integer vector
+
+cat("Loaded reversal schedule from Ch. 5:",
+    length(opponent_reversal), "trials |",
+    sum(opponent_reversal[1:120]), "right in phase 1 |",
+    sum(opponent_reversal[121:240]), "right in phase 2\n")
+
+# --- Generate hierarchical memory data using the reversal schedule ---
 sim_data_memory <- simulate_hierarchical_memory(
-  n_agents      = 50,
-  n_trials_min  = 20,
-  n_trials_max  = 120,
-  mu_alpha      =  0.0,  # No systematic directional baseline
-  mu_beta       =  1.5,  # Moderate positive memory tracking
-  sigma_alpha   =  0.3,
-  sigma_beta    =  0.5,
-  rho           =  0.3,  # Mild positive correlation
-  opponent_rate =  0.7,
-  seed          = 1981
+  n_agents         = 50,
+  n_trials_min     = 80,    # Minimum: agents see at least the first phase
+  n_trials_max     = 240,   # Maximum: agents complete both phases
+  mu_alpha         =  0.0,  # No systematic directional baseline
+  mu_beta          =  1.5,  # Moderate positive memory tracking
+  sigma_alpha      =  0.3,
+  sigma_beta       =  0.5,
+  rho              =  0.3,  # Mild positive correlation
+  opponent_choices = opponent_reversal,  # <-- reversal schedule from Ch. 5
+  seed             = 1981
 )
 
 stan_data_memory <- prep_stan_data_memory(sim_data_memory)
+
+cat(sprintf(
+  "Hierarchical memory data: %d agents, %d total trials, %d–%d trials per agent\n",
+  stan_data_memory$J,
+  stan_data_memory$N,
+  min(sim_data_memory$n_trials),
+  max(sim_data_memory$n_trials)
+))
 ```
 
 #### Stan Model: Hierarchical Memory Agent (NCP)
@@ -2355,10 +2417,15 @@ Parameter recovery on a single dataset is anecdotal. We must prove that the samp
 ```{r 06-memory-sbc}
 sbc_memory_path <- here::here("simmodels", "ch6_sbc_memory.rds")
 
-generate_sbc_dataset_memory <- function(n_agents = 50, n_trials_min = 20, n_trials_max = 120) {
-  sim  <- simulate_hierarchical_memory(n_agents = n_agents,
-                                        n_trials_min = n_trials_min,
-                                        n_trials_max = n_trials_max)
+generate_sbc_dataset_memory <- function(n_agents = 50, n_trials_min = 80, n_trials_max = 240) {
+  # Use the same reversal schedule as the main fit.
+  # opponent_reversal is available in the chapter environment from Edit 6.16.
+  sim  <- simulate_hierarchical_memory(
+    n_agents         = n_agents,
+    n_trials_min     = n_trials_min,
+    n_trials_max     = n_trials_max,
+    opponent_choices = opponent_reversal
+  )
   hp   <- attr(sim, "hyperparameters")
 
   list(
@@ -2514,3 +2581,32 @@ loo_memory <- loo(fit_memory$draws("log_lik", format = "matrix"))
 print(loo_memory)
 ```
 
+```{r 06-save-for-ch7}
+# Save everything Ch. 7 needs for model comparison.
+# Ch. 7 will load this object to avoid refitting.
+ch6_exports_file <- here("simmodels", "06_memory_exports_for_ch7.rds")
+
+saveRDS(
+  list(
+    fit_memory       = fit_memory,        # Fitted CmdStanR object
+    loo_memory       = loo_memory,        # Pre-computed LOO score
+    stan_data_memory = stan_data_memory,  # Stan data list (reversal design)
+    sim_data_memory  = sim_data_memory,   # Full trial-level tibble
+    reversal_schedule = opponent_reversal # 240-trial opponent sequence
+  ),
+  ch6_exports_file
+)
+
+cat("Ch. 6 exports saved to:", ch6_exports_file, "\n")
+cat("Load in Ch. 7 with: readRDS(here('simmodels', '06_memory_exports_for_ch7.rds'))\n")
+```
+
+## Conclusion: From One Agent to a Population
+
+This chapter extended the Bayesian modeling workflow to multiple participants. The core ideas are:
+
+- **Partial pooling** is not a compromise — it is the statistically correct way to combine information across individuals with unequal data, and it provably outperforms both extremes (as the shrinkage plot showed).
+- **Centered vs. non-centered parameterization** is a geometric choice, not a philosophical one. CP fails when population variance is small (Neal's Funnel); NCP fixes the global geometry but can be locally inefficient when data are very informative. SBC revealed which regime we are in.
+- **The reversal learning design** is essential for the memory model. A constant-bias opponent makes `bias` and `beta` statistically inseparable; the reversal schedule provides the contrast that identifies them.
+
+**Coming up in Chapter 7:** We have now validated two models — the hierarchical biased agent and the hierarchical memory agent — and computed LOO scores for both. Chapter 7 introduces model comparison: given that both models have passed validation, which one better predicts held-out data? The answer will use the LOO scores and the `loo_compare()` function from the `loo` package.

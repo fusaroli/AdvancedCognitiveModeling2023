@@ -296,7 +296,8 @@ lognormal_model <- brm(
   iter = mc_settings$iter,
   seed = mc_settings$seed, # Use the same seed for comparison if desired
   backend = mc_settings$backend,
-  file = lognormal_model_path # Use relative path
+  file = lognormal_model_path, # Use relative path
+  file_refit = "on_change"
 )
 
 # Generate predictions
@@ -390,8 +391,8 @@ I have seen worse models in my time, but they do seem to have important issues:
 
 * The lognormal mixed-effects model is completely off.
 
-Further, the lognormal model produce some divergences, which is often a sign that they are not well suited to the data.
-I would argue that the core issue is that neither model incorporates our knowledge of heat transfer physics, which suggests an exponential approach to equilibrium temperature. This limitation motivates our next section, where we'll develop a physics-based model.
+Further, the lognormal model produce some divergences. In a Bayesian workflow, divergences indicate that the Hamiltonian Monte Carlo sampler is exploring pathological posterior geometry. Because purely statistical models lack mechanistic asymptotes, they explore parameter spaces that lead to mathematically unstable extrapolations.
+The core issue is that neither model incorporates our knowledge of heat transfer physics: e.g the flame temperature limiting the temperature the stone can reach and the exponential approach to equilibrium temperature. This limitation motivates our next section, where we'll develop a physics-based model.
 
 ## Part 3: Understanding the Physics Model
 
@@ -447,7 +448,7 @@ For practical reasons, we combine physical parameters into a single coefficient,
 
 $$HOT = \frac{hA}{mc_p}$$
 Giving our working equation:
-$$T = T_{\infty} + (T_i - T_{\infty})\exp(-HOT * t)$$
+$$T = T_{\infty} + (T_i - T_{\infty})\exp(-HOT \cdot t)$$
 
 This equation retains the essential physics while providing a practical model for analyzing our experimental data. The HOT coefficient encapsulates the combined effects of heat transfer efficiency, stone geometry, and material properties into a single parameter that determines how quickly the stone approaches the flame temperature.
 
@@ -466,7 +467,7 @@ stan_data <- list(
   rater = as.numeric(factor(data %>% 
                            filter(!is.na(Temperature)) %>% 
                            pull(Rater))),
-  Ti = c(100, 100, 100),  # Initial temperature estimates
+  Ti = c(15.1, 14.5, 12.9),  # Initial temperature estimates
   Tinf = 450              # Flame temperature estimate
 )
 ```
@@ -509,7 +510,32 @@ writeLines(stan_code, stan_model_path)
 # Compile and fit the Stan model using the relative path
 # Compilation happens once; subsequent runs load the compiled object if unchanged.
 mod <- cmdstan_model("models/pizza_physics_model.stan")
+```
+### Prior Predictive Check
+Before fitting our model to empirical data, we must ensure our priors generate physically plausible heating curves (Simulation Validation). If our `normal(0.005, 0.005)` prior on `HOT` is appropriate, simulated temperatures should gradually approach $T_{\infty}$ without exceeding it or dropping below absolute zero.
 
+```{r, 01 prior predictive}
+# Simulate HOT parameters from the prior
+set.seed(123)
+prior_hot <- rnorm(100, mean = 0.005, sd = 0.005)
+prior_hot <- prior_hot[prior_hot > 0] # Truncate at 0 as per Stan lower=0 bound
+
+# Simulate curves
+time_seq <- seq(0, max(stan_data$time), length.out = 100)
+prior_preds <- expand_grid(sim_id = 1:length(prior_hot), time = time_seq) %>%
+  mutate(
+    hot = prior_hot[sim_id],
+    temp = stan_data$Tinf + (15.0 - stan_data$Tinf) * exp(-hot * time)
+  )
+
+ggplot(prior_preds, aes(x = time/60, y = temp, group = sim_id)) +
+  geom_line(alpha = 0.2, color = "blue") +
+  labs(title = "Prior Predictive Check: Heating Curves",
+       x = "Time (minutes)", y = "Temperature (°C)") +
+  theme_bw()
+```
+
+```{r, 01 fitting the model}
 fit <- mod$sample(
   data = stan_data,
   seed = 123,
