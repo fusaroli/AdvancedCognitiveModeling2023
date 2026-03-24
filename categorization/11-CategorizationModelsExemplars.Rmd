@@ -1,0 +1,1883 @@
+---
+title: "11 — The Generalized Context Model"
+output:
+  html_document:
+    mathjax: default
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+date: "2025-04-28"
+---
+
+```{r, W11 load packages, include=FALSE}
+# Set to TRUE to run computationally intensive simulations/fits.
+# Set to FALSE to load pre-computed results.
+regenerate_simulations <- FALSE
+run_intensive_checks   <- FALSE   # controls recovery/SBC chunks
+
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(
+  tidyverse,    # data manipulation and visualization
+  future,       # parallel processing setup
+  purrr,        # functional programming tools
+  furrr,        # parallel functional programming
+  patchwork,    # combining plots
+  cmdstanr,     # interface to Stan
+  posterior,    # tidy posterior arrays
+  tidybayes,    # tidy extraction of draws
+  bayesplot,    # Bayesian visualization
+  loo,          # LOO-CV model comparison
+  SBC,          # Simulation-Based Calibration (ECDF-diff plots)
+  priorsense,   # prior sensitivity via power-scaling
+  MCMCpack      # rdirichlet
+)
+
+theme_set(theme_classic())
+
+# Prior hyperparameters for sensitivity c
+LOG_C_PRIOR_MEAN <- log(2)   # prior median c = 2
+LOG_C_PRIOR_SD   <- 1.0      # covers c ≈ 0.27–14.8 at ±2 SD
+
+# Create output directories
+for (d in c("stan", "simdata", "simmodels")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+```
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chapters 1–10 built the complete inference toolkit: parameter estimation (Ch. 4),
+> the six-phase validation pipeline (Ch. 5), hierarchical models (Ch. 6), model
+> comparison via LOO (Ch. 7), mixture models with discrete marginalization (Ch. 8),
+> and hierarchical Bayesian cognition (Ch. 9–10). This chapter applies the full
+> toolkit to *categorization* — asking not only what parameters describe a
+> participant's behavior, but which *cognitive architecture* best accounts for how
+> people learn to assign objects to kinds. We begin with the exemplar approach: the
+> Generalized Context Model (GCM). It is implemented here as both a single-subject
+> and a multilevel Bayesian model, validated with the same six-phase battery
+> introduced in Ch. 5, and compared against alternative architectures in Ch. 15.
+> An important caveat that Ch. 7 did not face: the GCM is **path-dependent** — the
+> likelihood at trial $t$ depends on the full sequence of stimuli on trials
+> $1, \ldots, t-1$ through the exemplar memory store. Standard LOO-CV is therefore
+> invalid here, and we introduce leave-future-out cross-validation (LFO-CV,
+> Bürkner et al. 2020) as the correct alternative.
+
+# Introduction to Categorization Models
+
+## The Fundamental Problem of Categorization
+
+Categorization is one of the most fundamental cognitive abilities that humans possess. From early childhood, we learn to organize the world around us into meaningful categories: distinguishing food from non-food, safe from dangerous, or one letter from another. This process of assigning objects to categories is complex, involving perception, memory, attention, and decision-making.
+How do humans learn categories and make categorization decisions? This seemingly simple question has generated decades of research and theoretical debate in cognitive science. The answer matters not only for understanding human cognition but also for developing artificial intelligence systems, designing educational interventions, and understanding cognitive disorders that affect categorization abilities.
+
+## Why Model Categorization?
+
+Computational models offer a powerful way to formalize theories about categorization. By implementing these theories as computer algorithms, we can:
+
+* Explore the consequences of different theoretical assumptions
+* Make precise predictions about human behavior in categorization tasks
+* Test competing theories against empirical data
+
+In this chapter, we will explore three major approaches to modeling categorization:
+
+* **Exemplar models** — which propose that categories are represented by storing individual examples
+* **Prototype models** — which suggest categories are represented by an abstract "average" or central tendency
+* **Rule-based models** — which posit that categories are represented by explicit rules or decision boundaries
+
+Each approach captures different aspects of human categorization and has generated substantial empirical research. We'll implement computational versions of each model type, allowing us to compare their behavior and predictions.
+
+## Historical Development of Categorization Models
+
+The computational modeling of categorization has a rich history in cognitive psychology:
+
+### Early Views: The Classical Approach
+
+Early theories of categorization followed what is now called the classical view, where categories were defined by necessary and sufficient features. In this view, category membership is an all-or-nothing affair: an object either satisfies the criteria or it doesn't. While intuitive, this approach struggled to explain many aspects of human categorization, such as:
+
+* Graded category membership (some members seem "more typical" than others)
+* Unclear boundaries between categories
+* Context-dependent categorization
+* Family resemblance structures (where no single feature is necessary)
+
+### The Prototype Revolution
+
+In the 1970s, Eleanor Rosch's pioneering work on prototypes challenged the classical view. She demonstrated that categories appear to be organized around central tendencies or "prototypes," with membership determined by similarity to these prototypes. Objects closer to the prototype are categorized more quickly and consistently.
+Prototype models formalize this idea by representing categories as their central tendency in a psychological feature space. New items are classified based on their similarity to these prototypes.
+
+### The Exemplar Alternative
+
+In the late 1970s and 1980s, researchers like Douglas Medin and Robert Nosofsky proposed that rather than abstracting prototypes, people might store individual exemplars of categories and make judgments based on similarity to these stored examples.
+
+The Generalized Context Model (GCM), developed by Nosofsky, became the standard exemplar model. It proposes that categorization decisions are based on the **summed** similarity of a new stimulus to all stored exemplars of each category, weighted by attention to different stimulus dimensions.
+
+### Rule-Based Models
+
+While similarity-based approaches (both prototype and exemplar) gained prominence, other researchers argued that people sometimes use explicit rules for categorization. Rule-based models propose that categorization involves applying decision rules that partition the stimulus space.
+Models like Bayesian particle filters, multinomial trees, COVIS (COmpetition between Verbal and Implicit Systems) and RULEX (RULe-plus-EXception) formalize these ideas, suggesting that rule learning and application form a core part of human categorization, particularly for well-defined categories.
+
+### Hybrid Approaches
+
+More recent work has focused on hybrid models that incorporate elements of multiple approaches. Models like SUSTAIN (Supervised and Unsupervised STratified Adaptive Incremental Network) and ATRIUM (Attention to Rules and Instances in a Unified Model) propose that humans can flexibly switch between strategies or that different systems operate in parallel.
+
+## The Three Model Classes: Core Assumptions and Predictions
+
+Let's examine the core assumptions of the three model classes we'll be implementing:
+
+### Exemplar Models: Individual Instances as Category Representations
+
+**Core Assumption**: Categories are represented by storing individual examples (exemplars) in memory.
+
+**Key Features**:
+
+* No abstraction: All encountered exemplars are stored
+* Categorization involves computing similarity to all stored exemplars
+* Similarity is often modeled using an exponential decay function of distance
+* Different dimensions can receive different attention weights
+* Memory effects (recency, frequency) can influence categorization
+
+**Predictions**:
+
+* Sensitivity to specific training examples
+* Better handling of exceptions and atypical category members
+* Categorization of new items depends on their similarity to specific remembered examples
+* Learning can be incremental, one example at a time
+
+### Prototype Models: Categories as Central Tendencies
+
+**Core Assumption**: Categories are represented by their central tendencies or prototypes.
+
+**Key Features**:
+
+* Abstraction: Information about individual examples is integrated into a summary representation
+* Only the prototype (and possibly variance information) is stored for each category
+* Categorization involves computing similarity to category prototypes
+* Can be updated incrementally (as in Kalman filter approaches)
+
+**Predictions**:
+
+* The most typical (average) category members will be categorized most easily
+* Less sensitivity to specific examples
+* More efficient in terms of memory requirements
+* May struggle with categories that have complex structures (e.g., non-linear boundaries)
+
+### Rule-Based Models: Categories as Decision Boundaries
+
+**Core Assumption**: Categories are represented by explicit rules that specify the necessary and sufficient conditions for category membership.
+
+**Key Features**:
+
+* Rules partition the stimulus space into regions corresponding to different categories
+* Rules can be simple (single dimension) or complex (combining multiple dimensions)
+* Focus is on relevant dimensions while irrelevant dimensions are ignored
+* Rule selection often involves hypothesis testing
+
+**Predictions**:
+
+* Sharp category boundaries
+* Fast decisions once rules are learned
+* Selective attention to rule-relevant dimensions
+* Less sensitivity to similarity once rules are established
+
+## Our Implementation Approach
+
+We'll implement three models representing each major theoretical approach:
+
+* **Generalized Context Model (GCM)** — A canonical exemplar model where categorization is based on summed similarity to all stored examples
+* **Kalman Filter Prototype Model** — A dynamic prototype model that incrementally updates category representations
+* **Bayesian Particle Filter for Rules** — A rule-based model that maintains a distribution over potential categorization rules
+
+Each implementation follows a similar structure: core model function, Stan implementation for parameter estimation, simulation framework, parameter recovery, and model comparison.
+
+Let's begin with the Generalized Context Model.
+
+---
+
+# The Generalized Context Model (GCM)
+
+## Mathematical Foundations and Cognitive Principles
+
+The Generalized Context Model (GCM), developed by Robert Nosofsky in the 1980s, represents one of the most influential exemplar-based approaches to categorization. Unlike models that abstract category information into prototypes or rules, the GCM proposes that people store individual exemplars in memory and make categorization decisions based on similarity to these stored examples.
+
+### Core Assumptions of the GCM
+
+* **Memory for Instances**: Every encountered example is stored in memory with its category label.
+* **Similarity Computation**: Categorization decisions are based on computing the similarity between a new stimulus and all stored exemplars.
+* **Selective Attention**: Attention can be distributed differently across stimulus dimensions, effectively stretching or shrinking the psychological space.
+* **Choice Probability**: The probability of assigning a stimulus to a category is proportional to its summed similarity to exemplars of that category.
+
+### Mathematical Formulation
+
+**1. Distance Calculation**
+
+The psychological distance between two stimuli in a multidimensional space is:
+
+$$d_{ij} = \left[ \sum_{m=1}^{M} w_m |x_{im} - x_{jm}|^r \right]^{\frac{1}{r}}$$
+
+Where $x_{im}$ is the value of stimulus $i$ on dimension $m$, $w_m$ is the attention weight for dimension $m$ (with $\sum_m w_m = 1$), and $r$ determines the distance metric. We use the city-block metric ($r = 1$), appropriate for separable stimulus dimensions:
+
+```{r, 11 distance formula}
+# City-block distance (r = 1), attention-weighted
+distance <- function(vect1, vect2, w) {
+  sum(w * abs(vect1 - vect2))
+}
+```
+
+**2. Similarity Computation**
+
+Similarity is an exponentially decreasing function of distance:
+
+$$\eta_{ij} = e^{-c \cdot d_{ij}}$$
+
+where $c > 0$ is the sensitivity parameter. Higher $c$ means similarity drops more steeply with distance (less generalization); lower $c$ means more gradual decay (more generalization).
+
+```{r, 11 similarity formula}
+# Exponential similarity kernel
+similarity <- function(dist_val, c) {
+  exp(-c * dist_val)
+}
+```
+
+Let's visualize how similarity changes with distance for different values of $c$:
+
+```{r, 11 visualizing effects of sensitivity}
+dd <- expand_grid(
+  distance  = seq(0, 6, by = 0.1),
+  c         = c(0.3, 0.7, 1.5, 3.0, 6.0, 10.0)
+) |>
+  mutate(
+    sim     = similarity(distance, c),
+    c_label = factor(c)
+  )
+
+ggplot(dd, aes(x = distance, y = sim, color = c_label, group = c_label)) +
+  geom_line(linewidth = 1) +
+  scale_color_viridis_d(option = "plasma", name = "Sensitivity (c)") +
+  labs(
+    title    = "Effect of Sensitivity Parameter (c) on Similarity",
+    subtitle = "c is on the natural (original) scale; prior places most mass on c ∈ (0.3, 15)",
+    x        = "Psychological Distance",
+    y        = "Similarity"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+From this visualization: low $c$ (≈ 0.3) means similarity remains high even for distant stimuli — the model generalizes broadly. High $c$ (≈ 10) means similarity collapses rapidly — the model treats only near-identical stimuli as similar.
+
+**3. Category Response Probability**
+
+The probability of assigning stimulus $i$ to category A is based on summed similarity (Nosofsky 1986):
+
+$$P(A|i) = \frac{\beta \sum_{j \in A} \eta_{ij}}{\beta \sum_{j \in A} \eta_{ij} + (1-\beta) \sum_{k \in B} \eta_{ik}}$$
+
+Where $\sum_{j \in A} \eta_{ij}$ is the summed similarity to all exemplars of category A, $\sum_{k \in B} \eta_{ik}$ is the summed similarity to all exemplars of category B, and $\beta \in (0,1)$ is a response bias for category A. Note that we use the **sum** of similarities throughout — in both the R simulation and the Stan likelihood — consistent with the original GCM formulation.
+
+### The GCM Agent Implementation (R Simulation)
+
+With distance and similarity functions in place, we implement an agent that observes stimuli, stores them into categories according to feedback, and compares new stimuli to stored exemplars.
+
+The agent operates in two modes:
+
+* *Cold start*: If no exemplars from one or both categories have yet been observed, the agent responds at the bias probability.
+* *Similarity-based choice*: Otherwise, it calculates summed similarity to each category's exemplars and makes a probabilistic choice.
+
+```{r, 11 generative GCM model}
+# Generative GCM model function
+# Uses log_c (unconstrained) to match the Stan parameterization exactly.
+# Internally computes c = exp(log_c).
+gcm_simulate <- function(w,          # attention weights (sums to 1)
+                         log_c,      # log sensitivity (unconstrained)
+                         bias,       # response bias towards category 1
+                         obs,        # matrix of stimulus features (trials x features)
+                         cat_feedback, # true category labels (0 or 1)
+                         quiet = TRUE) {
+  c_val    <- exp(log_c)   # derive sensitivity on original scale
+  ntrials  <- nrow(obs)
+  nfeatures <- ncol(obs)
+
+  prob_cat1    <- numeric(ntrials)
+  sim_response <- numeric(ntrials)
+
+  memory_obs <- matrix(NA_real_, nrow = 0, ncol = nfeatures)
+  memory_cat <- numeric(0)
+
+  for (i in seq_len(ntrials)) {
+    if (!quiet && i %% 20 == 0) cat("Simulating trial:", i, "\n")
+
+    current_stim <- as.numeric(obs[i, ])
+    n_mem        <- nrow(memory_obs)
+    has_cat0     <- any(memory_cat == 0)
+    has_cat1     <- any(memory_cat == 1)
+
+    if (n_mem == 0 || !has_cat0 || !has_cat1) {
+      prob_cat1[i] <- bias
+    } else {
+      # Compute similarity from current stimulus to every stored exemplar
+      sims <- vapply(seq_len(n_mem), function(e) {
+        similarity(distance(current_stim, memory_obs[e, ], w), c_val)
+      }, numeric(1))
+
+      # Sum (not mean) similarity per category — matches original GCM formulation
+      s1  <- sum(sims[memory_cat == 1])
+      s0  <- sum(sims[memory_cat == 0])
+      num <- bias * s1
+      den <- num + (1 - bias) * s0
+
+      prob_cat1[i] <- if (den > 1e-9) num / den else bias
+      prob_cat1[i] <- pmax(1e-9, pmin(1 - 1e-9, prob_cat1[i]))
+    }
+
+    sim_response[i] <- rbinom(1, 1, prob_cat1[i])
+
+    # Update memory
+    memory_obs <- rbind(memory_obs, current_stim)
+    memory_cat <- c(memory_cat, cat_feedback[i])
+  }
+
+  tibble(prob_cat1 = prob_cat1, sim_response = sim_response)
+}
+```
+
+This implementation captures the core cognitive processes proposed by the GCM: storing exemplars, computing similarity, weighting by attention, and making probabilistic choices based on relative summed similarity.
+
+---
+
+## Experimental Setup: Kruschke (1993)
+
+To understand how the GCM behaves, we simulate performance on a categorization task from Kruschke (1993): 8 stimuli varying on two continuous dimensions (height and position), assigned to two categories. Participants complete 8 blocks of 8 trials each (64 trials total), receiving feedback after each choice.
+
+```{r, 11 GCM experimental setup}
+stimulus_info <- tibble(
+  stimulus      = c(5, 3, 7, 1, 8, 2, 6, 4),
+  height        = c(1, 1, 2, 2, 3, 3, 4, 4),
+  position      = c(2, 3, 1, 4, 1, 4, 2, 3),
+  category_true = c(0, 0, 1, 0, 1, 0, 1, 1)
+)
+
+ggplot(stimulus_info, aes(x = position, y = height,
+                          color = factor(category_true), label = stimulus)) +
+  geom_point(size = 5) +
+  geom_text(nudge_y = 0.18) +
+  scale_color_manual(values = c("0" = "#0072B2", "1" = "#D55E00"), name = "Category") +
+  labs(title = "Kruschke (1993) Stimulus Structure", x = "Position", y = "Height") +
+  coord_fixed()
+
+n_blocks          <- 8
+n_stim_per_block  <- nrow(stimulus_info)
+total_trials      <- n_blocks * n_stim_per_block
+```
+
+Notice that the categories are not linearly separable: no single threshold on height or position perfectly partitions the stimuli.
+
+---
+
+## Per-Subject Schedule Generation
+
+In a real experiment each participant sees the stimuli in an **independently randomized** order. Because the GCM is path-dependent — the memory state at trial $t$ depends on the exact ordering of trials $1, \ldots, t-1$ — using the same ordering for every simulated agent is a modeling error: it calibrates the inference engine on a single memory trajectory rather than the distribution of trajectories the model will encounter in real data. We therefore generate a distinct randomized schedule for each subject using a deterministic, reproducible seed.
+
+```{r, 11 per-subject schedule}
+# Generate one randomized experiment schedule for one subject.
+# Returns a tibble with trial_within_subject, block, stimulus_id, height,
+# position, and category_feedback. The trial_within_subject column is the
+# critical within-subject temporal index used for sorting data before Stan.
+make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
+  set.seed(seed)
+  n_stim <- nrow(stimulus_info)
+
+  sequence <- unlist(lapply(seq_len(n_blocks), function(b) {
+    sample(stimulus_info$stimulus, n_stim, replace = FALSE)
+  }))
+
+  tibble(
+    trial_within_subject = seq_along(sequence),
+    block                = rep(seq_len(n_blocks), each = n_stim),
+    stimulus_id          = sequence
+  ) |>
+    left_join(stimulus_info, by = c("stimulus_id" = "stimulus")) |>
+    rename(category_feedback = category_true) |>
+    dplyr::select(trial_within_subject, block, stimulus_id,
+                  height, position, category_feedback)
+}
+```
+
+This function is the sole source of randomized trial sequences throughout the chapter. All other code receives a schedule produced by `make_subject_schedule`.
+
+---
+
+## Simulating Behavior with the GCM
+
+We simulate agents with different parameter settings. `simulate_gcm_agent` wraps `gcm_simulate` by generating the agent's own randomized schedule from a subject-specific seed:
+
+```{r, 11 GCM response simulations}
+simulate_gcm_agent <- function(agent_id, w_true, log_c_true, bias_true,
+                               stimulus_info, n_blocks, subject_seed) {
+  schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  obs      <- schedule |> dplyr::select(height, position)
+  feedback <- schedule$category_feedback
+
+  sim_results <- gcm_simulate(
+    w = w_true, log_c = log_c_true, bias = bias_true,
+    obs = obs, cat_feedback = feedback, quiet = TRUE
+  )
+
+  schedule |>
+    mutate(
+      agent_id   = agent_id,
+      w1_true    = w_true[1],
+      w2_true    = w_true[2],
+      log_c_true = log_c_true,
+      c_true     = exp(log_c_true),
+      bias_true  = bias_true,
+      prob_cat1  = sim_results$prob_cat1,
+      sim_response = sim_results$sim_response,
+      correct    = as.integer(category_feedback == sim_response)
+    ) |>
+    group_by(agent_id) |>
+    mutate(performance = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+
+# Parameter grid on the log_c scale
+# (log_c = log(1) = 0 corresponds to moderate generalization;
+#  log_c = log(4) ≈ 1.39 to high specificity)
+param_grid <- expand_grid(
+  w_setting    = list(c(0.5, 0.5), c(0.1, 0.9), c(0.9, 0.1)),
+  log_c_setting = c(log(0.5), log(1.0), log(2.0), log(4.0)),
+  bias_setting  = 0.5
+) |>
+  mutate(
+    setting_id  = row_number(),
+    w_label     = map_chr(w_setting, ~paste(round(.x, 1), collapse = ",")),
+    c_label     = paste0("c≈", round(exp(log_c_setting), 1)),
+    label       = paste0("w=(", w_label, "), ", c_label)
+  )
+
+n_agents_per_setting <- 5
+
+simulation_plan <- param_grid |>
+  uncount(n_agents_per_setting) |>
+  mutate(agent_id = row_number())
+
+plan(multisession, workers = max(1, availableCores() - 1))
+
+if (regenerate_simulations) {
+  simulated_responses <- future_pmap_dfr(
+    list(
+      agent_id     = simulation_plan$agent_id,
+      w_true       = simulation_plan$w_setting,
+      log_c_true   = simulation_plan$log_c_setting,
+      bias_true    = simulation_plan$bias_setting
+    ),
+    simulate_gcm_agent,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    subject_seed  = simulation_plan$agent_id,  # unique seed per agent
+    .options = furrr_options(seed = TRUE)
+  )
+  write_csv(simulated_responses, "simdata/W11_gcm_simulated_responses.csv")
+  cat("Simulation complete. Results saved.\n")
+} else {
+  if (file.exists("simdata/W11_gcm_simulated_responses.csv")) {
+    simulated_responses <- read_csv("simdata/W11_gcm_simulated_responses.csv",
+                                    show_col_types = FALSE)
+    cat("Loaded existing simulation results.\n")
+  } else {
+    stop("Simulation file not found. Set regenerate_simulations = TRUE.")
+  }
+}
+
+plan(sequential)
+```
+
+Let's visualize how different parameter settings affect learning:
+
+```{r, 11 visualize parameter effects}
+simulated_responses_labeled <- simulated_responses |>
+  mutate(
+    w_label = paste0("w=(", round(w1_true, 1), ",", round(w2_true, 1), ")"),
+    c_label = paste0("c≈", round(c_true, 1))
+  )
+
+# Effect of sensitivity (c) on learning curves
+p_c_effect <- ggplot(
+  simulated_responses_labeled,
+  aes(x = trial_within_subject, y = performance,
+      color = factor(round(c_true, 1)),
+      group = interaction(agent_id, round(c_true, 1)))
+) +
+  stat_summary(fun = mean, geom = "line",
+               aes(group = factor(round(c_true, 1))), linewidth = 1.2) +
+  facet_wrap(~w_label) +
+  scale_color_viridis_d(option = "plasma", name = "Sensitivity (c)") +
+  labs(
+    title    = "Effect of Sensitivity (c) on GCM Learning",
+    subtitle = "Mean across simulated agents",
+    x = "Trial", y = "Cumulative Accuracy"
+  ) +
+  theme(legend.position = "bottom")
+
+# Effect of attention weights on learning curves
+p_w_effect <- ggplot(
+  simulated_responses_labeled,
+  aes(x = trial_within_subject, y = performance,
+      color = w_label, group = interaction(agent_id, w_label))
+) +
+  stat_summary(fun = mean, geom = "line", aes(group = w_label), linewidth = 1.2) +
+  facet_wrap(~c_label) +
+  scale_color_brewer(palette = "Set1", name = "Attention Weights") +
+  labs(
+    title    = "Effect of Attention Weights (w) on GCM Learning",
+    subtitle = "Mean across simulated agents",
+    x = "Trial", y = "Cumulative Accuracy"
+  ) +
+  theme(legend.position = "bottom")
+
+p_c_effect
+p_w_effect
+```
+
+From these plots we observe:
+
+* **Attention weights matter**: For this category structure, equal weights `w=(0.5,0.5)` generally lead to the best performance, especially at higher sensitivity values — both dimensions are informative.
+* **Sensitivity affects the learning trajectory**: Too low a $c$ value produces overgeneralization and slow learning; too high a value produces rapid forgetting-by-distance that can hurt accuracy when weights are skewed.
+* **Parameters interact**: The effect of sensitivity $c$ depends on attention weights. For equal weights, higher $c$ is beneficial up to a point. With skewed weights, a different $c$ may be optimal.
+
+**Demonstrating path-dependence:** Because each agent receives a unique stimulus order, agents with identical parameters can follow divergent learning curves in early trials — the cold-start trajectory and the specific sequence of exemplars stored in memory differs. This is exactly the diversity of trajectories that real data presents, and it is why per-subject randomization in the simulation matters for realistic model validation.
+
+---
+
+## Prior Predictive Check
+
+Before fitting a single data point, we ask: do the priors generate only *scientifically plausible* categorization curves? If the prior predictive distribution includes trajectories with performance well below chance throughout the entire experiment, the prior is implying behaviour that no cognitive model would predict. The prior predictive check is a mandatory step in the six-phase validation pipeline.
+
+We draw $S = 500$ parameter vectors directly from the priors encoded in the Stan model:
+
+- $w \sim \text{Dirichlet}(1, 1)$ — uniform over the simplex
+- $\log c \sim \text{Normal}(\log 2, 1)$ — implies $c \in (0.27, 14.8)$ at $\pm 2$ SD
+- $\text{bias} \sim \text{Beta}(1, 1)$ — uniform over $(0, 1)$
+
+```{r, 11 prior predictive check}
+n_prior_samples <- 500
+set.seed(42)
+
+prior_draws <- tibble(
+  sample_id = seq_len(n_prior_samples),
+  log_c     = rnorm(n_prior_samples, LOG_C_PRIOR_MEAN, LOG_C_PRIOR_SD),
+  w1        = runif(n_prior_samples),   # Dirichlet(1,1) marginal = Uniform(0,1)
+  bias      = rbeta(n_prior_samples, 1, 1)
+) |>
+  mutate(c_true = exp(log_c), w2 = 1 - w1)
+
+# Use a single fixed schedule for the prior predictive illustration
+# (we are checking the parameter space, not order sensitivity)
+ppc_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 999)
+
+prior_pred_curves <- pmap_dfr(
+  list(
+    sample_id = prior_draws$sample_id,
+    log_c     = prior_draws$log_c,
+    w1        = prior_draws$w1,
+    bias      = prior_draws$bias
+  ),
+  function(sample_id, log_c, w1, bias) {
+    sim <- gcm_simulate(
+      w = c(w1, 1 - w1), log_c = log_c, bias = bias,
+      obs         = ppc_schedule |> dplyr::select(height, position),
+      cat_feedback = ppc_schedule$category_feedback
+    )
+    tibble(
+      sample_id   = sample_id,
+      trial       = seq_len(nrow(ppc_schedule)),
+      correct     = as.integer(sim$sim_response == ppc_schedule$category_feedback)
+    ) |>
+      mutate(cum_acc = cumsum(correct) / row_number())
+  }
+)
+
+prior_pred_summary <- prior_pred_curves |>
+  group_by(trial) |>
+  summarise(
+    q05 = quantile(cum_acc, 0.05),
+    q25 = quantile(cum_acc, 0.25),
+    q50 = median(cum_acc),
+    q75 = quantile(cum_acc, 0.75),
+    q95 = quantile(cum_acc, 0.95),
+    .groups = "drop"
+  )
+
+ggplot(prior_pred_summary, aes(x = trial)) +
+  geom_ribbon(aes(ymin = q05, ymax = q95), fill = "#56B4E9", alpha = 0.20) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#56B4E9", alpha = 0.40) +
+  geom_line(aes(y = q50), color = "#0072B2", linewidth = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title    = "Prior Predictive Check: GCM Learning Curves",
+    subtitle = "Ribbons: 50% and 90% prior predictive intervals; line: median\nPriors: log(c) ~ Normal(log 2, 1),  w ~ Dirichlet(1,1),  bias ~ Beta(1,1)",
+    x = "Trial", y = "Cumulative Accuracy"
+  )
+```
+
+The prior predictive envelope covers the full plausible range: chance performance (≈ 0.5) for uninformative parameter draws, and accuracy approaching 1.0 for high-sensitivity agents with well-directed attention. No draws push accuracy below chance across the experiment — the prior does not imply impossible or absurd behavior. This is the standard we require before proceeding to inference.
+
+---
+
+## Implementing the GCM in Stan for Parameter Estimation
+
+While simulating the GCM helps understand its behavior, we ultimately want to estimate its parameters ($w$, $c$, $\beta$) from observed categorization data. We implement the GCM in Stan for Bayesian parameter estimation.
+
+```{r, 11 gcm stan model}
+gcm_single_stan <- "
+// Generalized Context Model — Single Subject
+// Parameterization:
+//   w      : attention weights (simplex)
+//   log_c  : log sensitivity (unconstrained); c = exp(log_c)
+//   bias   : response bias towards category 1 (0–1)
+// All three are identified by the likelihood; see prior predictive above.
+
+data {
+  int<lower=1> ntrials;
+  int<lower=1> nfeatures;
+  array[ntrials] int<lower=0, upper=1> y;
+  array[ntrials, nfeatures] real obs;
+  array[ntrials] int<lower=0, upper=1> cat_feedback;
+
+  // Prior hyperparameters (passed as data for flexibility)
+  vector[nfeatures] w_prior_alpha;
+  real log_c_prior_mean;
+  real<lower=0> log_c_prior_sd;
+  real<lower=0> bias_prior_alpha;
+  real<lower=0> bias_prior_beta;
+}
+
+parameters {
+  simplex[nfeatures] w;
+  real log_c;
+  real<lower=0, upper=1> bias;
+}
+
+transformed parameters {
+  real<lower=0> c = exp(log_c);   // back-transform to original scale
+}
+
+model {
+  target += dirichlet_lpdf(w    | w_prior_alpha);
+  target += normal_lpdf(log_c  | log_c_prior_mean, log_c_prior_sd);
+  target += beta_lpdf(bias     | bias_prior_alpha, bias_prior_beta);
+
+  {
+    array[ntrials, nfeatures] real memory_obs;
+    array[ntrials] int memory_cat;
+    int n_mem = 0;
+
+    for (i in 1:ntrials) {
+      real prob_cat1;
+      int has_cat0 = 0;
+      int has_cat1 = 0;
+
+      for (k in 1:n_mem) {
+        if (memory_cat[k] == 0) has_cat0 = 1;
+        if (memory_cat[k] == 1) has_cat1 = 1;
+      }
+
+      if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
+        prob_cat1 = bias;
+      } else {
+        vector[n_mem] sims;
+        for (e in 1:n_mem) {
+          real d = 0;
+          for (f in 1:nfeatures)
+            d += w[f] * abs(obs[i, f] - memory_obs[e, f]);
+          sims[e] = exp(-c * d);
+        }
+        real s1 = 0;
+        real s0 = 0;
+        for (e in 1:n_mem) {
+          if (memory_cat[e] == 1) s1 += sims[e];
+          else                    s0 += sims[e];
+        }
+        real num = bias * s1;
+        real den = num + (1 - bias) * s0;
+        prob_cat1 = (den > 1e-9) ? num / den : bias;
+        prob_cat1 = fmax(1e-9, fmin(1 - 1e-9, prob_cat1));
+      }
+
+      target += bernoulli_lpmf(y[i] | prob_cat1);
+
+      // Memory update
+      n_mem += 1;
+      for (f in 1:nfeatures) memory_obs[n_mem, f] = obs[i, f];
+      memory_cat[n_mem] = cat_feedback[i];
+    }
+  }
+}
+
+// log_lik is computed here so that cmdstanr's $generate_quantities()
+// can re-evaluate it cheaply on existing draws without re-running MCMC.
+// This is especially useful when computing LOO on new data or when
+// adding quantities after the initial sampling run.
+generated quantities {
+  vector[ntrials] log_lik;
+  {
+    array[ntrials, nfeatures] real memory_obs;
+    array[ntrials] int memory_cat;
+    int n_mem = 0;
+
+    for (i in 1:ntrials) {
+      real prob_cat1;
+      int has_cat0 = 0;
+      int has_cat1 = 0;
+
+      for (k in 1:n_mem) {
+        if (memory_cat[k] == 0) has_cat0 = 1;
+        if (memory_cat[k] == 1) has_cat1 = 1;
+      }
+
+      if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
+        prob_cat1 = bias;
+      } else {
+        vector[n_mem] sims;
+        for (e in 1:n_mem) {
+          real d = 0;
+          for (f in 1:nfeatures)
+            d += w[f] * abs(obs[i, f] - memory_obs[e, f]);
+          sims[e] = exp(-c * d);
+        }
+        real s1 = 0;
+        real s0 = 0;
+        for (e in 1:n_mem) {
+          if (memory_cat[e] == 1) s1 += sims[e];
+          else                    s0 += sims[e];
+        }
+        real num = bias * s1;
+        real den = num + (1 - bias) * s0;
+        prob_cat1 = (den > 1e-9) ? num / den : bias;
+        prob_cat1 = fmax(1e-9, fmin(1 - 1e-9, prob_cat1));
+      }
+
+      log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1);
+
+      n_mem += 1;
+      for (f in 1:nfeatures) memory_obs[n_mem, f] = obs[i, f];
+      memory_cat[n_mem] = cat_feedback[i];
+    }
+  }
+}
+"
+
+stan_file_gcm_single <- "stan/W11_gcm_single.stan"
+write_stan_file(gcm_single_stan, dir = "stan/", basename = "W11_gcm_single.stan")
+mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
+```
+
+Key aspects of the Stan implementation:
+
+* **Parameters block**: `w` as a simplex (enforcing $\sum w_m = 1$), `log_c` as an unconstrained real, and `bias` constrained to $(0,1)$. The sensitivity $c$ on the natural scale is derived in `transformed parameters` as `exp(log_c)` — a standard log-normal reparameterization that is both constraint-free and geometrically well-behaved.
+* **Model block**: specifies priors, then implements the trial-by-trial likelihood using a local block for memory management. The memory counter `n_mem` is a plain local integer that resets at the start of each fit — no global state.
+* **Generated quantities**: the `log_lik` vector is computed here for LOO. Using `$generate_quantities()` on existing draws (see below) avoids re-running MCMC when you want to add or modify posterior predictive quantities.
+
+> **A note on `reduce_sum` and parallelization**: The GCM's inner loop cannot be parallelized with `reduce_sum`. Stan's `reduce_sum` function requires that each slice's log-density contribution be conditionally independent of all other slices given the parameters. In the GCM, trial $t$'s contribution to `target` depends on the memory state accumulated from trials $1, \ldots, t-1$ — a strict sequential dependence. Forcing `reduce_sum` here would produce incorrect results. The correct approach for large datasets is to precompute the $n_\text{stim} \times n_\text{stim}$ matrix of feature differences in R (there are only 8 unique stimuli in the Kruschke task, giving a $8 \times 8 \times 2$ tensor) and pass it to Stan, eliminating redundant absolute-value computations from the inner loop. We do not implement this optimization here, as the 64-trial Kruschke task is fast enough without it.
+
+### Fitting the Single-Subject GCM
+
+We use Pathfinder (multi-path variational inference) to find stable starting values before HMC, as mandated for nonlinear cognitive models with constrained parameter spaces.
+
+```{r, 11 fitting gcm stan model}
+# Select one simulated agent: w ≈ (0.1, 0.9), c ≈ 1
+agent_to_fit <- simulated_responses |>
+  filter(
+    round(w1_true, 1) == 0.1,
+    abs(log_c_true - log(1.0)) == min(abs(log_c_true - log(1.0)))
+  ) |>
+  filter(agent_id == min(agent_id)) |>
+  slice(1:total_trials)
+
+stopifnot(nrow(agent_to_fit) == total_trials)
+
+gcm_data_single <- list(
+  ntrials          = nrow(agent_to_fit),
+  nfeatures        = 2,
+  y                = agent_to_fit$sim_response,
+  obs              = as.matrix(agent_to_fit[, c("height", "position")]),
+  cat_feedback     = agent_to_fit$category_feedback,
+  w_prior_alpha    = c(1, 1),
+  log_c_prior_mean = LOG_C_PRIOR_MEAN,
+  log_c_prior_sd   = LOG_C_PRIOR_SD,
+  bias_prior_alpha = 1,
+  bias_prior_beta  = 1
+)
+
+fit_filepath_single <- "simmodels/W11_gcm_single_fit.rds"
+if (regenerate_simulations) {
+  # Pathfinder for stable initialisation (mandated for nonlinear cognitive models)
+  pf_single <- mod_gcm_single$pathfinder(
+    data      = gcm_data_single,
+    seed      = 123,
+    num_paths = 4,
+    refresh   = 0
+  )
+
+  fit_gcm_single <- mod_gcm_single$sample(
+    data            = gcm_data_single,
+    init            = pf_single,
+    seed            = 123,
+    chains          = 4,
+    parallel_chains = min(4, availableCores()),
+    iter_warmup     = 1000,
+    iter_sampling   = 1500,
+    refresh         = 300,
+    adapt_delta     = 0.9
+  )
+  fit_gcm_single$save_object(fit_filepath_single)
+  cat("Single-agent model fitted and saved.\n")
+} else {
+  if (file.exists(fit_filepath_single)) {
+    fit_gcm_single <- readRDS(fit_filepath_single)
+    cat("Loaded existing single-agent fit.\n")
+  } else {
+    cat("Fit file not found. Set regenerate_simulations = TRUE.\n")
+    fit_gcm_single <- NULL
+  }
+}
+
+if (!is.null(fit_gcm_single)) {
+  fit_gcm_single$cmdstan_diagnose()
+  param_summary <- fit_gcm_single$summary(variables = c("w", "log_c", "c", "bias"))
+  print(param_summary)
+
+  true_w1    <- agent_to_fit$w1_true[1]
+  true_log_c <- agent_to_fit$log_c_true[1]
+  true_c     <- agent_to_fit$c_true[1]
+  true_bias  <- agent_to_fit$bias_true[1]
+  cat("\nTrue parameters:\n",
+      " w1 =", true_w1, " w2 =", 1 - true_w1, "\n",
+      " log_c =", round(true_log_c, 3), "  c =", round(true_c, 3), "\n",
+      " bias =", true_bias, "\n")
+
+  draws_df <- as_draws_df(fit_gcm_single$draws(variables = c("w", "log_c", "c", "bias")))
+
+  p_w1 <- ggplot(draws_df, aes(x = `w[1]`)) +
+    geom_histogram(aes(y = after_stat(density)), fill = "steelblue", alpha = 0.7, bins = 30) +
+    geom_vline(xintercept = true_w1, color = "red", linetype = "dashed") +
+    labs(title = "Posterior: w[1]")
+
+  p_w2 <- ggplot(draws_df, aes(x = `w[2]`)) +
+    geom_histogram(aes(y = after_stat(density)), fill = "steelblue", alpha = 0.7, bins = 30) +
+    geom_vline(xintercept = 1 - true_w1, color = "red", linetype = "dashed") +
+    labs(title = "Posterior: w[2]")
+
+  p_logc <- ggplot(draws_df, aes(x = log_c)) +
+    geom_histogram(aes(y = after_stat(density)), fill = "darkgreen", alpha = 0.7, bins = 30) +
+    geom_vline(xintercept = true_log_c, color = "red", linetype = "dashed") +
+    labs(title = "Posterior: log(c)")
+
+  p_c <- ggplot(draws_df, aes(x = c)) +
+    geom_histogram(aes(y = after_stat(density)), fill = "lightgreen", alpha = 0.7, bins = 30) +
+    geom_vline(xintercept = true_c, color = "red", linetype = "dashed") +
+    labs(title = "Posterior: c (natural scale)")
+
+  p_bias <- ggplot(draws_df, aes(x = bias)) +
+    geom_histogram(aes(y = after_stat(density)), fill = "salmon", alpha = 0.7, bins = 30) +
+    geom_vline(xintercept = true_bias, color = "red", linetype = "dashed") +
+    labs(title = "Posterior: bias")
+
+  print((p_w1 | p_w2) / (p_logc | p_c | p_bias))
+}
+```
+
+The posterior distributions should be centered near the true parameter values (red dashed lines). A reasonable single-fit recovery is a necessary but not sufficient condition for a valid model — the extensive recovery and SBC below provide stronger evidence.
+
+### LOO and the LFO-CV Caveat
+
+Model assessment requires a measure of predictive accuracy on held-out data. We compute PSIS-LOO and inspect the Pareto-$\hat{k}$ diagnostics:
+
+```{r, 11 loo single subject}
+if (!is.null(fit_gcm_single)) {
+  # log_lik is already in the draws from the generated quantities block.
+  # $generate_quantities() can be used to re-evaluate this block on new data
+  # without re-running MCMC — useful for out-of-sample prediction.
+  log_lik_mat <- fit_gcm_single$draws("log_lik", format = "matrix")
+  loo_gcm_single <- loo::loo(log_lik_mat, cores = 4)
+  print(loo_gcm_single)
+
+  # Pareto-k plot: points above 0.7 require moment-matching before LOO is reliable
+  plot(loo_gcm_single, label_points = TRUE,
+       main = "PSIS-LOO Pareto-k diagnostics: Single-subject GCM")
+}
+```
+
+> **⚠️ Why standard LOO is invalid for sequential models — and what to use instead**
+>
+> Standard PSIS-LOO estimates the expected log predictive density (ELPD) for
+> leave-one-out cross-validation under the assumption that observations are
+> **conditionally exchangeable** given the parameters. In the GCM, this
+> assumption is violated: leaving out observation $t$ also conceptually removes
+> the memory trace that observation $t$ contributed to trials $t+1, \ldots, T$.
+> The LOO predictive distribution at trial $t$ therefore conditions on a
+> memory state that is different from the one used during training — it is not
+> the distribution we would encounter in a new experiment.
+>
+> For sequential models where the likelihood at trial $t$ depends on all previous
+> observations, the correct cross-validation scheme is **leave-future-out
+> cross-validation (LFO-CV)**, which leaves out a contiguous block of future
+> trials and refits the model on the past (Bürkner, Gabry, & Vehtari 2020). The
+> `loo` package provides an efficient approximation:
+>
+> ```r
+> # LFO-CV (computationally intensive; shown for reference)
+> # Requires a function that returns log p(y_t | y_{1:t-1}, theta) for each t
+> lfo_gcm <- loo::loo_approximate_posterior(
+>   log_p   = log_lik_mat,   # N_draws x N_trials
+>   log_g   = log_lik_mat,
+>   cores   = 4
+> )
+> # For the full LFO-CV implementation, see Bürkner et al. (2020) and the
+> # online supplement to this chapter.
+> ```
+>
+> We report the standard LOO here for comparability with prototype and rule-based
+> models, and note in Ch. 15 (model comparison) that all ELPD differences should
+> be interpreted cautiously and confirmed with LFO-CV.
+
+### LOO Probability Integral Transform (LOO-PIT)
+
+The LOO-PIT checks whether the posterior predictive distribution is well-calibrated for each observation:
+
+```{r, 11 loo pit single}
+if (!is.null(fit_gcm_single)) {
+  # For binary outcomes, LOO-PIT is computed from the LOO predictive CDF
+  # evaluated at the observed response. bayesplot provides a convenient wrapper.
+  y_obs <- gcm_data_single$y
+  yrep  <- posterior_predict(fit_gcm_single)   # if using brms/tidybayes
+
+  # Direct approach using loo's pit values:
+  pit_vals <- loo::loo_pit(
+    y    = y_obs,
+    yrep = t(fit_gcm_single$draws("log_lik", format = "matrix")),
+    lw   = weights(loo_gcm_single$psis_object)
+  )
+  bayesplot::ppc_loo_pit_overlay(
+    y    = y_obs,
+    yrep = matrix(rbinom(length(y_obs) * 100, 1, 0.5),
+                  nrow = 100),   # placeholder; use actual posterior predictive draws
+    lw   = weights(loo_gcm_single$psis_object)
+  )
+}
+```
+
+### Prior Sensitivity Analysis
+
+Following the workflow established in Ch. 8, we check how sensitive the posterior is to scaling of the prior and likelihood using `priorsense`:
+
+```{r, 11 prior sensitivity single}
+if (!is.null(fit_gcm_single)) {
+  ps <- priorsense::powerscale_sensitivity(fit_gcm_single)
+  print(ps)
+  priorsense::powerscale_plot_dens(ps, variables = c("log_c", "w[1]", "bias"))
+}
+```
+
+Posterior sensitivity above 0.05 on any parameter indicates that the prior and likelihood are not pulling strongly in the same direction — a useful flag for prior revision if theoretically motivated.
+
+---
+
+### Key Parameters and Their Cognitive Interpretations
+
+The GCM has three primary parameters in this formulation:
+
+1. **Attention Weights ($w$)**: A simplex vector determining the relative importance of each stimulus dimension in similarity calculations. Higher weight = more attention to that dimension. Cognitively represents selective attention processes.
+
+2. **Sensitivity Parameter ($c$)**: A positive scalar determining how rapidly similarity decays with psychological distance. Higher $c$ = faster decay, less generalization, higher specificity. Lower $c$ = slower decay, more generalization. We parameterize as $\log c$ in Stan to keep the parameter on an unconstrained scale while preserving the positivity constraint through exponentiation. Cognitively represents perceptual discriminability, memory specificity, or the width of the generalization gradient.
+
+3. **Response Bias ($\beta$)**: A scalar in $(0,1)$ representing a baseline preference for one category independent of stimulus similarity. $\text{bias} = 0.5$ indicates unbiased responding; deviations reflect asymmetric response tendencies or unequal base rates.
+
+---
+
+# Multilevel Generalized Context Model (GCM)
+
+## The Need for a Multilevel Approach
+
+Human categorization behavior exhibits both common patterns across individuals and significant individual differences. Some people learn faster, attend to different features, or generalize more broadly than others. Fitting separate GCMs to each participant ignores shared patterns across people, while fitting a single GCM to pooled data ignores individual differences and produces a statistically misspecified model.
+
+The multilevel (hierarchical) approach bridges this gap. It assumes that individual participant parameters are drawn from overarching group-level distributions, allowing us to:
+
+* Estimate parameters for each individual, informed by the group trend (partial pooling).
+* Estimate the population distributions themselves (e.g., the average sensitivity and variability around it).
+* Model correlations between parameters across individuals.
+
+### Motivation: Visualizing Individual Differences
+
+Before developing the multilevel model, let's demonstrate why it is needed. We fit the single-subject model to several agents separately and examine the spread of their posteriors:
+
+```{r, 11 motivate multilevel, eval=run_intensive_checks}
+# Fit the single-subject model to 6 agents with equal attention weights
+# to see how much c and bias vary across individuals
+
+agents_for_demo <- simulated_responses |>
+  filter(round(w1_true, 1) == 0.5) |>
+  distinct(agent_id, log_c_true) |>
+  slice_head(n = 6)
+
+demo_fits <- pmap(
+  list(
+    agent_id = agents_for_demo$agent_id
+  ),
+  function(agent_id) {
+    agent_dat <- simulated_responses |> filter(agent_id == !!agent_id)
+    dat <- list(
+      ntrials          = nrow(agent_dat),
+      nfeatures        = 2,
+      y                = agent_dat$sim_response,
+      obs              = as.matrix(agent_dat[, c("height", "position")]),
+      cat_feedback     = agent_dat$category_feedback,
+      w_prior_alpha    = c(1, 1),
+      log_c_prior_mean = LOG_C_PRIOR_MEAN,
+      log_c_prior_sd   = LOG_C_PRIOR_SD,
+      bias_prior_alpha = 1,
+      bias_prior_beta  = 1
+    )
+    pf <- mod_gcm_single$pathfinder(data = dat, seed = agent_id,
+                                    num_paths = 4, refresh = 0)
+    fit <- mod_gcm_single$sample(data = dat, init = pf, seed = agent_id,
+                                  chains = 2, parallel_chains = 2,
+                                  iter_warmup = 800, iter_sampling = 1000,
+                                  refresh = 0, adapt_delta = 0.9)
+    list(agent_id = agent_id, fit = fit)
+  }
+)
+
+# Extract posterior means for c and bias from each fit
+demo_estimates <- map_dfr(demo_fits, function(x) {
+  x$fit$summary(variables = c("c", "bias")) |>
+    dplyr::select(variable, mean, q5, q95) |>
+    mutate(agent_id = x$agent_id)
+})
+
+# Plot the posterior means with credible intervals
+ggplot(demo_estimates, aes(x = factor(agent_id), y = mean,
+                           ymin = q5, ymax = q95, color = variable)) +
+  geom_pointrange(position = position_dodge(0.4)) +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(
+    title = "Individual Posterior Estimates: 6 Agents Fitted Separately",
+    subtitle = "Points: posterior mean; ranges: 90% CrI. Substantial spread motivates the multilevel approach.",
+    x = "Agent", y = "Estimated Value"
+  ) +
+  theme(legend.position = "none")
+```
+
+The spread in posterior means across agents — even though all were generated from the same population distribution — illustrates the individual variability that a multilevel model is designed to characterize. Complete pooling (one fit to all agents) would attribute this variance to noise; no pooling (separate fits) would treat it as fully reliable. The multilevel model achieves principled partial pooling.
+
+## Mathematical Formulation of the Multilevel GCM
+
+**Population-level distributions:**
+
+$$\log c_j \sim \text{Normal}(\mu_{\log c}, \sigma_{\log c})$$
+$$w_j \sim \text{Dirichlet}(\kappa \cdot \omega)$$
+$$\text{logit}(\beta_j) \sim \text{Normal}(\mu_{\text{logit}\,\beta}, \sigma_{\text{logit}\,\beta})$$
+
+where $\omega$ is the population mean simplex and $\kappa > 0$ controls how tightly individual weights cluster around $\omega$. The logit-normal hierarchy for bias is mathematically correct and numerically stable: $\text{logit}(\beta_j)$ is unconstrained, and the individual bias is recovered as $\beta_j = \text{logistic}(\mu_{\text{logit}\,\beta} + \sigma_{\text{logit}\,\beta} \cdot z_j)$ with $z_j \sim \text{Normal}(0, 1)$.
+
+**Individual-level parameters:** Each participant $j$ has their own $\log c_j$, $w_j$, and $\beta_j$, derived from the non-centred parameterizations above for $\log c$ and $\text{logit}(\beta)$.
+
+**Likelihood:** The GCM likelihood for participant $j$ uses $c_j = e^{\log c_j}$, $w_j$, and $\beta_j$.
+
+### Simulating Data for the Multilevel GCM
+
+```{r, 11 simulate hierarchical weights}
+# Visualize the Dirichlet concentration parameter kappa
+simulate_hierarchical_dirichlet <- function(pop_weights, kappa, n_agents) {
+  n_features <- length(pop_weights)
+  alpha_params <- pmax(1e-6, kappa * pop_weights)
+  ind_weights  <- MCMCpack::rdirichlet(n_agents, alpha_params)
+
+  as_tibble(ind_weights) |>
+    setNames(paste0("w", seq_len(n_features))) |>
+    mutate(agent_id = seq_len(n_agents), kappa_true = kappa) |>
+    pivot_longer(starts_with("w"), names_to = "weight_dim",
+                 values_to = "weight_value", names_prefix = "w") |>
+    mutate(weight_dim = as.integer(weight_dim))
+}
+
+bind_rows(
+  simulate_hierarchical_dirichlet(c(0.5, 0.5), kappa = 50, n_agents = 20) |>
+    mutate(kappa_level = "High (50)", pop_mean = "Equal (0.5, 0.5)"),
+  simulate_hierarchical_dirichlet(c(0.8, 0.2), kappa = 50, n_agents = 20) |>
+    mutate(kappa_level = "High (50)", pop_mean = "Skewed (0.8, 0.2)"),
+  simulate_hierarchical_dirichlet(c(0.5, 0.5), kappa =  5, n_agents = 20) |>
+    mutate(kappa_level = "Low (5)",  pop_mean = "Equal (0.5, 0.5)"),
+  simulate_hierarchical_dirichlet(c(0.8, 0.2), kappa =  5, n_agents = 20) |>
+    mutate(kappa_level = "Low (5)",  pop_mean = "Skewed (0.8, 0.2)")
+) |>
+  ggplot(aes(x = factor(weight_dim), y = weight_value,
+             group = agent_id, color = factor(agent_id))) +
+  geom_line(linetype = "dashed", alpha = 0.5) +
+  geom_point(alpha = 0.8) +
+  facet_grid(kappa_level ~ pop_mean) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(title = "Simulated Individual Attention Weights: Effect of Kappa",
+       x = "Dimension", y = "Attention Weight") +
+  theme(legend.position = "none")
+```
+
+High $\kappa$ means individual weights cluster tightly around the population mean; low $\kappa$ means substantial individual variation.
+
+```{r, 11 simulate multilevel data}
+simulate_multilevel_gcm <- function(n_subjects, stimulus_info, n_blocks,
+                                    base_seed,
+                                    pop_w, kappa,
+                                    pop_log_c_mean, pop_log_c_sd,
+                                    pop_logit_bias_mean, pop_logit_bias_sd) {
+  n_features   <- length(pop_w)
+  alpha_params <- pmax(1e-9, kappa * pop_w)
+
+  # Sample individual parameters
+  ind_w             <- MCMCpack::rdirichlet(n_subjects, alpha_params)
+  ind_log_c         <- rnorm(n_subjects, pop_log_c_mean, pop_log_c_sd)
+  ind_c             <- exp(ind_log_c)
+  ind_logit_bias    <- rnorm(n_subjects, pop_logit_bias_mean, pop_logit_bias_sd)
+  ind_bias          <- plogis(ind_logit_bias)
+
+  true_params <- tibble(
+    agent_id        = seq_len(n_subjects),
+    log_c_true      = ind_log_c,
+    c_true          = ind_c,
+    logit_bias_true = ind_logit_bias,
+    bias_true       = ind_bias
+  )
+  for (f in seq_len(n_features))
+    true_params[[paste0("w", f, "_true")]] <- ind_w[, f]
+
+  # Simulate responses — each agent gets a unique, reproducible seed
+  all_agent_data <- vector("list", n_subjects)
+  for (j in seq_len(n_subjects)) {
+    subject_seed <- base_seed * 1000 + j    # deterministic, unique per agent
+    all_agent_data[[j]] <- simulate_gcm_agent(
+      agent_id      = j,
+      w_true        = as.numeric(ind_w[j, ]),
+      log_c_true    = ind_log_c[j],
+      bias_true     = ind_bias[j],
+      stimulus_info = stimulus_info,
+      n_blocks      = n_blocks,
+      subject_seed  = subject_seed
+    )
+  }
+
+  list(data = bind_rows(all_agent_data), true_params = true_params)
+}
+
+# Population parameters for simulation
+n_subjects_sim <- 20
+pop_params_sim <- list(
+  pop_w              = c(0.8, 0.2),
+  kappa              = 10,
+  pop_log_c_mean     = log(1.5),
+  pop_log_c_sd       = 0.5,
+  pop_logit_bias_mean = 0,     # median bias = 0.5
+  pop_logit_bias_sd  = 0.3
+)
+
+sim_file_ml        <- "simdata/W11_gcm_multilevel_sim_data.csv"
+true_params_file_ml <- "simdata/W11_gcm_multilevel_true_params.csv"
+
+if (regenerate_simulations) {
+  set.seed(42)
+  multilevel_sim_output <- simulate_multilevel_gcm(
+    n_subjects           = n_subjects_sim,
+    stimulus_info        = stimulus_info,
+    n_blocks             = n_blocks,
+    base_seed            = 42,
+    pop_w                = pop_params_sim$pop_w,
+    kappa                = pop_params_sim$kappa,
+    pop_log_c_mean       = pop_params_sim$pop_log_c_mean,
+    pop_log_c_sd         = pop_params_sim$pop_log_c_sd,
+    pop_logit_bias_mean  = pop_params_sim$pop_logit_bias_mean,
+    pop_logit_bias_sd    = pop_params_sim$pop_logit_bias_sd
+  )
+  multilevel_sim_data   <- multilevel_sim_output$data
+  multilevel_true_params <- multilevel_sim_output$true_params
+  write_csv(multilevel_sim_data,    sim_file_ml)
+  write_csv(multilevel_true_params, true_params_file_ml)
+  cat("Multilevel simulation complete. Results saved.\n")
+} else {
+  if (file.exists(sim_file_ml) && file.exists(true_params_file_ml)) {
+    multilevel_sim_data    <- read_csv(sim_file_ml, show_col_types = FALSE)
+    multilevel_true_params <- read_csv(true_params_file_ml, show_col_types = FALSE)
+    cat("Loaded existing multilevel simulation results.\n")
+  } else {
+    stop("Multilevel simulation files not found. Set regenerate_simulations = TRUE.")
+  }
+}
+
+# Learning curves for the simulated group
+ggplot(multilevel_sim_data,
+       aes(x = trial_within_subject, y = performance, group = agent_id)) +
+  geom_line(alpha = 0.25, color = "grey40") +
+  stat_summary(fun = mean, geom = "line", aes(group = 1),
+               color = "#D55E00", linewidth = 1.5) +
+  labs(
+    title    = "Simulated Learning Curves: Multilevel GCM",
+    subtitle = "Grey lines: individual agents; orange: group mean",
+    x = "Trial", y = "Cumulative Accuracy"
+  ) +
+  ylim(0, 1)
+```
+
+The spread in individual learning trajectories reflects both parameter heterogeneity across agents *and* the diversity of memory trajectories arising from independently randomized stimulus orders — two sources of variability that are correctly separated only when each agent has its own stimulus ordering.
+
+### Implementing the Multilevel GCM in Stan
+
+The key advances over the single-subject model are:
+
+* **Population distributions** for $\log c$, attention weights, and bias.
+* **Non-centred parameterizations** for $\log c$ and $\text{logit}(\beta)$, which improves HMC geometry by de-correlating individual deviations from group-level parameters.
+* **Subject-indexed loop structure** with `subj_start[j]`/`subj_end[j]` slices, which is both correct for arbitrary data orderings and correct when subjects have different numbers of trials.
+
+```{r, 11 multilevel GCM in Stan}
+gcm_ml_stan <- "
+// Generalized Context Model — Multilevel
+// New in this version relative to the single-subject model:
+//   1. log_c parameterization with logit-normal hierarchy for bias
+//   2. Subject-indexed loop: outer over subjects, inner over each subject's
+//      contiguous slice [subj_start[j]:subj_end[j]] of the sorted array.
+//      n_mem is a LOCAL variable — it resets for each subject automatically.
+//      This eliminates the n_memory[s] array and the subj_id dispatch loop.
+//   3. max_trials_per_subject replaces N_trials for memory array sizing.
+
+data {
+  int<lower=1> N_total;
+  int<lower=1> N_subjects;
+  int<lower=1> N_features;
+  int<lower=1> max_trials_per_subject;
+
+  // Subject slice indices (data must be sorted by subj_id, then trial_within_subject)
+  array[N_subjects] int<lower=1, upper=N_total> subj_start;
+  array[N_subjects] int<lower=1, upper=N_total> subj_end;
+
+  array[N_total] int<lower=0, upper=1> y;
+  array[N_total, N_features] real obs;
+  array[N_total] int<lower=0, upper=1> cat_feedback;
+
+  // Prior hyperparameters
+  vector[N_features] pop_w_prior_alpha;
+  real pop_log_c_mean_prior_mean;
+  real<lower=0> pop_log_c_mean_prior_sd;
+  real<lower=0> pop_log_c_sd_prior_rate;
+  real<lower=0> kappa_prior_rate;
+  real<lower=0> pop_logit_bias_sd_prior_rate;
+}
+
+parameters {
+  // Population
+  simplex[N_features] pop_w;
+  real<lower=0> kappa;
+  real pop_log_c_mean;
+  real<lower=0> pop_log_c_sd;
+  real pop_logit_bias_mean;
+  real<lower=0> pop_logit_bias_sd;
+
+  // Non-centred individual deviations
+  vector[N_subjects] z_log_c;
+  vector[N_subjects] z_logit_bias;
+
+  // Individual weights (centred; prior encoded in model block)
+  array[N_subjects] simplex[N_features] subj_w;
+}
+
+transformed parameters {
+  vector[N_subjects] subj_log_c;
+  vector<lower=0>[N_subjects] subj_c;
+  vector<lower=0, upper=1>[N_subjects] subj_bias;
+
+  for (j in 1:N_subjects) {
+    subj_log_c[j] = pop_log_c_mean + z_log_c[j] * pop_log_c_sd;
+    subj_c[j]     = exp(subj_log_c[j]);
+    subj_bias[j]  = inv_logit(pop_logit_bias_mean + z_logit_bias[j] * pop_logit_bias_sd);
+  }
+}
+
+model {
+  // Population priors
+  target += dirichlet_lpdf(pop_w         | pop_w_prior_alpha);
+  target += exponential_lpdf(kappa       | kappa_prior_rate);
+  target += normal_lpdf(pop_log_c_mean   | pop_log_c_mean_prior_mean,
+                                           pop_log_c_mean_prior_sd);
+  target += exponential_lpdf(pop_log_c_sd | pop_log_c_sd_prior_rate);
+  target += normal_lpdf(pop_logit_bias_mean | 0, 1.5);
+  target += exponential_lpdf(pop_logit_bias_sd | pop_logit_bias_sd_prior_rate);
+
+  // Non-centred individual deviations ~ Normal(0,1)
+  target += std_normal_lpdf(z_log_c);
+  target += std_normal_lpdf(z_logit_bias);
+
+  // Hierarchical Dirichlet prior for individual weights
+  for (j in 1:N_subjects) {
+    vector[N_features] alpha = kappa * pop_w;
+    for (f in 1:N_features) alpha[f] = fmax(1e-9, alpha[f]);
+    target += dirichlet_lpdf(subj_w[j] | alpha);
+  }
+
+  {
+    // Memory arrays: N_subjects x max_trials_per_subject x N_features
+    array[N_subjects, max_trials_per_subject, N_features] real memory_obs;
+    array[N_subjects, max_trials_per_subject] int memory_cat;
+
+    for (j in 1:N_subjects) {
+      // n_mem is LOCAL: resets to 0 automatically for each subject j.
+      // No global n_memory[s] array; no subj_id dispatch needed.
+      int n_mem = 0;
+
+      for (i in subj_start[j]:subj_end[j]) {
+        real prob_cat1;
+        int has_cat0 = 0;
+        int has_cat1 = 0;
+
+        for (k in 1:n_mem) {
+          if (memory_cat[j, k] == 0) has_cat0 = 1;
+          if (memory_cat[j, k] == 1) has_cat1 = 1;
+        }
+
+        if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
+          prob_cat1 = subj_bias[j];
+        } else {
+          vector[n_mem] sims;
+          for (e in 1:n_mem) {
+            real d = 0;
+            for (f in 1:N_features)
+              d += subj_w[j][f] * abs(obs[i, f] - memory_obs[j, e, f]);
+            sims[e] = exp(-subj_c[j] * d);
+          }
+          real s1 = 0;
+          real s0 = 0;
+          for (e in 1:n_mem) {
+            if (memory_cat[j, e] == 1) s1 += sims[e];
+            else                       s0 += sims[e];
+          }
+          real num = subj_bias[j] * s1;
+          real den = num + (1 - subj_bias[j]) * s0;
+          prob_cat1 = (den > 1e-9) ? num / den : subj_bias[j];
+          prob_cat1 = fmax(1e-9, fmin(1 - 1e-9, prob_cat1));
+        }
+
+        target += bernoulli_lpmf(y[i] | prob_cat1);
+
+        n_mem += 1;
+        for (f in 1:N_features) memory_obs[j, n_mem, f] = obs[i, f];
+        memory_cat[j, n_mem] = cat_feedback[i];
+      }
+    }
+  }
+}
+
+generated quantities {
+  vector[N_total] log_lik;
+  {
+    array[N_subjects, max_trials_per_subject, N_features] real memory_obs;
+    array[N_subjects, max_trials_per_subject] int memory_cat;
+
+    for (j in 1:N_subjects) {
+      int n_mem = 0;
+
+      for (i in subj_start[j]:subj_end[j]) {
+        real prob_cat1;
+        int has_cat0 = 0;
+        int has_cat1 = 0;
+
+        for (k in 1:n_mem) {
+          if (memory_cat[j, k] == 0) has_cat0 = 1;
+          if (memory_cat[j, k] == 1) has_cat1 = 1;
+        }
+
+        if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
+          prob_cat1 = subj_bias[j];
+        } else {
+          vector[n_mem] sims;
+          for (e in 1:n_mem) {
+            real d = 0;
+            for (f in 1:N_features)
+              d += subj_w[j][f] * abs(obs[i, f] - memory_obs[j, e, f]);
+            sims[e] = exp(-subj_c[j] * d);
+          }
+          real s1 = 0;
+          real s0 = 0;
+          for (e in 1:n_mem) {
+            if (memory_cat[j, e] == 1) s1 += sims[e];
+            else                       s0 += sims[e];
+          }
+          real num = subj_bias[j] * s1;
+          real den = num + (1 - subj_bias[j]) * s0;
+          prob_cat1 = (den > 1e-9) ? num / den : subj_bias[j];
+          prob_cat1 = fmax(1e-9, fmin(1 - 1e-9, prob_cat1));
+        }
+
+        log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1);
+
+        n_mem += 1;
+        for (f in 1:N_features) memory_obs[j, n_mem, f] = obs[i, f];
+        memory_cat[j, n_mem] = cat_feedback[i];
+      }
+    }
+  }
+}
+"
+
+stan_file_gcm_ml <- "stan/W11_gcm_ml.stan"
+write_stan_file(gcm_ml_stan, dir = "stan/", basename = "W11_gcm_ml.stan")
+mod_gcm_ml <- cmdstan_model(stan_file_gcm_ml)
+```
+
+### Fitting the Multilevel GCM
+
+The data preparation step requires a mandatory `arrange()` before constructing the Stan list. This ensures that the contiguous slice assumption — that all rows for subject $j$ appear in indices `subj_start[j]` through `subj_end[j]` in the order they were observed — holds exactly. Without this sort, any interleaving of subjects by `bind_rows` would write trial $t$ of subject $j_2$ into subject $j_1$'s memory slot, silently corrupting both subjects' memory states.
+
+```{r, 11 fit gcm ML}
+# CRITICAL: sort by (subj_id_stan, trial_within_subject) before Stan.
+# This is the safety guarantee that makes the subject-indexed loop correct.
+gcm_ml_data_sorted <- multilevel_sim_data |>
+  mutate(subj_id_stan = as.integer(factor(agent_id))) |>
+  arrange(subj_id_stan, trial_within_subject)
+
+# Precompute the subject start/end row indices from the sorted data
+subj_bounds <- gcm_ml_data_sorted |>
+  mutate(row_idx = row_number()) |>
+  group_by(subj_id_stan) |>
+  summarise(
+    subj_start = min(row_idx),
+    subj_end   = max(row_idx),
+    .groups    = "drop"
+  ) |>
+  arrange(subj_id_stan)
+
+n_subjects_in_data    <- max(gcm_ml_data_sorted$subj_id_stan)
+max_trials_per_subj   <- max(subj_bounds$subj_end - subj_bounds$subj_start + 1)
+
+gcm_ml_data <- list(
+  N_total                  = nrow(gcm_ml_data_sorted),
+  N_subjects               = n_subjects_in_data,
+  N_features               = 2,
+  max_trials_per_subject   = max_trials_per_subj,
+  subj_start               = subj_bounds$subj_start,
+  subj_end                 = subj_bounds$subj_end,
+  y                        = gcm_ml_data_sorted$sim_response,
+  obs                      = as.matrix(gcm_ml_data_sorted[, c("height", "position")]),
+  cat_feedback             = gcm_ml_data_sorted$category_feedback,
+  # Priors
+  pop_w_prior_alpha          = c(1, 1),
+  pop_log_c_mean_prior_mean  = LOG_C_PRIOR_MEAN,
+  pop_log_c_mean_prior_sd    = 1.0,
+  pop_log_c_sd_prior_rate    = 1.0,
+  kappa_prior_rate           = 0.1,
+  pop_logit_bias_sd_prior_rate = 2.0
+)
+
+fit_filepath_ml <- "simmodels/W11_gcm_ml_fit.rds"
+if (regenerate_simulations) {
+  pf_ml <- mod_gcm_ml$pathfinder(
+    data      = gcm_ml_data,
+    seed      = 42,
+    num_paths = 4,
+    refresh   = 0
+  )
+
+  fit_gcm_ml <- mod_gcm_ml$sample(
+    data            = gcm_ml_data,
+    init            = pf_ml,
+    chains          = 4,
+    parallel_chains = min(4, availableCores()),
+    iter_warmup     = 1500,
+    iter_sampling   = 1500,
+    refresh         = 200,
+    adapt_delta     = 0.95,
+    max_treedepth   = 12
+  )
+  fit_gcm_ml$save_object(fit_filepath_ml)
+  cat("Multilevel GCM fitted and saved.\n")
+} else {
+  if (file.exists(fit_filepath_ml)) {
+    fit_gcm_ml <- readRDS(fit_filepath_ml)
+    cat("Loaded existing multilevel GCM fit.\n")
+  } else {
+    cat("Multilevel fit file not found. Set regenerate_simulations = TRUE.\n")
+    fit_gcm_ml <- NULL
+  }
+}
+
+if (!is.null(fit_gcm_ml)) {
+  fit_gcm_ml$cmdstan_diagnose()
+
+  pop_vars <- c("pop_w", "kappa",
+                "pop_log_c_mean", "pop_log_c_sd",
+                "pop_logit_bias_mean", "pop_logit_bias_sd")
+  pop_summary <- fit_gcm_ml$summary(variables = pop_vars)
+  print("Population Parameter Summary:")
+  print(pop_summary)
+
+  cat("\nTrue population parameters used for simulation:\n")
+  print(pop_params_sim)
+
+  draws_ml <- as_draws_df(fit_gcm_ml$draws(variables = pop_vars))
+
+  p_pop_w1  <- ggplot(draws_ml, aes(x = `pop_w[1]`)) +
+    geom_histogram(fill = "#56B4E9", alpha = 0.8, bins = 30) +
+    geom_vline(xintercept = pop_params_sim$pop_w[1], color = "red", linetype = "dashed") +
+    labs(title = "Pop w[1]")
+
+  p_pop_w2  <- ggplot(draws_ml, aes(x = `pop_w[2]`)) +
+    geom_histogram(fill = "#56B4E9", alpha = 0.8, bins = 30) +
+    geom_vline(xintercept = pop_params_sim$pop_w[2], color = "red", linetype = "dashed") +
+    labs(title = "Pop w[2]")
+
+  p_kappa   <- ggplot(draws_ml, aes(x = kappa)) +
+    geom_histogram(fill = "#E69F00", alpha = 0.8, bins = 30) +
+    geom_vline(xintercept = pop_params_sim$kappa, color = "red", linetype = "dashed") +
+    labs(title = "Kappa")
+
+  p_logcm   <- ggplot(draws_ml, aes(x = pop_log_c_mean)) +
+    geom_histogram(fill = "#009E73", alpha = 0.8, bins = 30) +
+    geom_vline(xintercept = pop_params_sim$pop_log_c_mean, color = "red", linetype = "dashed") +
+    labs(title = "Pop log(c) mean")
+
+  p_logcsd  <- ggplot(draws_ml, aes(x = pop_log_c_sd)) +
+    geom_histogram(fill = "#009E73", alpha = 0.8, bins = 30) +
+    geom_vline(xintercept = pop_params_sim$pop_log_c_sd, color = "red", linetype = "dashed") +
+    labs(title = "Pop log(c) SD")
+
+  p_biasm   <- ggplot(draws_ml, aes(x = pop_logit_bias_mean)) +
+    geom_histogram(fill = "#CC79A7", alpha = 0.8, bins = 30) +
+    geom_vline(xintercept = pop_params_sim$pop_logit_bias_mean, color = "red", linetype = "dashed") +
+    labs(title = "Pop logit(bias) mean")
+
+  print((p_pop_w1 | p_pop_w2 | p_kappa) / (p_logcm | p_logcsd | p_biasm))
+
+  # Individual parameter recovery: sensitivity c
+  subj_c_summary <- fit_gcm_ml$summary(variables = "subj_c") |>
+    mutate(agent_id = readr::parse_number(
+      stringr::str_extract(variable, "\\[\\d+\\]")
+    )) |>
+    left_join(multilevel_true_params |> dplyr::select(agent_id, c_true), by = "agent_id")
+
+  p_recov_c <- ggplot(subj_c_summary, aes(x = c_true, y = mean)) +
+    geom_point(alpha = 0.7) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    geom_smooth(method = lm, color = "#0072B2", linewidth = 0.7, se = TRUE) +
+    labs(title = "Individual Recovery: Sensitivity c",
+         x = "True c", y = "Estimated c (posterior mean)") +
+    coord_cartesian(xlim = c(0, 8), ylim = c(0, 8))
+
+  # Individual attention weight recovery
+  subj_w_summary <- fit_gcm_ml$summary(variables = "subj_w") |>
+    mutate(
+      agent_id = readr::parse_number(stringr::str_extract(variable, "\\[\\d+")),
+      feature  = readr::parse_number(stringr::str_extract(variable, ",\\d+"))
+    )
+
+  true_w_long <- multilevel_true_params |>
+    dplyr::select(agent_id, w1_true, w2_true) |>
+    pivot_longer(c(w1_true, w2_true),
+                 names_to = "feature", values_to = "w_true",
+                 names_pattern = "w(\\d+)_true") |>
+    mutate(feature = as.integer(feature))
+
+  recovery_w <- true_w_long |>
+    left_join(subj_w_summary |> dplyr::select(agent_id, feature, mean),
+              by = c("agent_id", "feature"))
+
+  p_recov_w <- ggplot(recovery_w, aes(x = w_true, y = mean, color = factor(feature))) +
+    geom_point(alpha = 0.7) +
+    geom_abline(intercept = 0, slope = 1, color = "grey30", linetype = "dashed") +
+    scale_color_manual(values = c("1" = "#0072B2", "2" = "#D55E00"),
+                       name = "Dimension") +
+    labs(title = "Individual Recovery: Attention Weights",
+         x = "True w", y = "Estimated w (posterior mean)") +
+    coord_fixed(xlim = c(0, 1), ylim = c(0, 1))
+
+  print(p_recov_c | p_recov_w)
+}
+```
+
+The initial multilevel fit allows us to examine estimated population distributions and check individual parameter recovery. A more rigorous validation requires the extensive recovery and SBC analyses below.
+
+---
+
+## Extensive Parameter Recovery for the Multilevel GCM
+
+As established in Chapter 5, a single recovery check is a weak sanity test. An extensive recovery study assesses reliability across a *range* of true population parameters, asking whether the model can identify the generating structure across the full plausible space of experimental designs. The procedure: (1) define a grid of true population parameters, (2) simulate multiple datasets per grid point (each with its own per-subject seeds), (3) fit the multilevel Stan model, (4) compare estimated against true values.
+
+```{r, 11 extensive recovery setup, eval=run_intensive_checks}
+param_grid_ml <- expand_grid(
+  pop_log_c_mean = c(log(1.0), log(1.5), log(2.5)),
+  pop_log_c_sd   = c(0.3, 0.7),
+  pop_w1         = c(0.2, 0.35, 0.5),
+  kappa          = c(5, 20)
+) |>
+  mutate(
+    pop_w  = map(pop_w1, ~c(.x, 1 - .x)),
+    grid_id = row_number()
+  )
+
+n_sims_per_grid  <- 5    # increase to 50–100 for publication-quality recovery
+n_subjects_recov <- 15
+
+run_recovery_iteration <- function(grid_id, pop_log_c_mean, pop_log_c_sd,
+                                   pop_w, kappa, sim_iteration) {
+  cat("Grid", grid_id, "Iter", sim_iteration, "\n")
+
+  sim_out <- tryCatch(
+    simulate_multilevel_gcm(
+      n_subjects          = n_subjects_recov,
+      stimulus_info       = stimulus_info,
+      n_blocks            = n_blocks,
+      base_seed           = grid_id * 100 + sim_iteration,
+      pop_w               = pop_w,
+      kappa               = kappa,
+      pop_log_c_mean      = pop_log_c_mean,
+      pop_log_c_sd        = pop_log_c_sd,
+      pop_logit_bias_mean = 0,
+      pop_logit_bias_sd   = 0.3
+    ),
+    error = function(e) { cat("Simulation error:", e$message, "\n"); NULL }
+  )
+  if (is.null(sim_out)) return(NULL)
+
+  sim_dat  <- sim_out$data
+  sim_true <- sim_out$true_params
+
+  # Sort and compute bounds
+  sorted_dat <- sim_dat |>
+    mutate(subj_id_stan = as.integer(factor(agent_id))) |>
+    arrange(subj_id_stan, trial_within_subject)
+
+  bounds <- sorted_dat |>
+    mutate(row_idx = row_number()) |>
+    group_by(subj_id_stan) |>
+    summarise(subj_start = min(row_idx), subj_end = max(row_idx), .groups = "drop") |>
+    arrange(subj_id_stan)
+
+  stan_dat <- list(
+    N_total                  = nrow(sorted_dat),
+    N_subjects               = n_subjects_recov,
+    N_features               = 2,
+    max_trials_per_subject   = max(bounds$subj_end - bounds$subj_start + 1),
+    subj_start               = bounds$subj_start,
+    subj_end                 = bounds$subj_end,
+    y                        = sorted_dat$sim_response,
+    obs                      = as.matrix(sorted_dat[, c("height", "position")]),
+    cat_feedback             = sorted_dat$category_feedback,
+    pop_w_prior_alpha          = c(1, 1),
+    pop_log_c_mean_prior_mean  = LOG_C_PRIOR_MEAN,
+    pop_log_c_mean_prior_sd    = 1.0,
+    pop_log_c_sd_prior_rate    = 1.0,
+    kappa_prior_rate           = 0.1,
+    pop_logit_bias_sd_prior_rate = 2.0
+  )
+
+  pf_r <- tryCatch(
+    mod_gcm_ml$pathfinder(data = stan_dat, num_paths = 4, refresh = 0,
+                           seed = grid_id * 100 + sim_iteration),
+    error = function(e) NULL
+  )
+  init_r <- if (!is.null(pf_r)) pf_r else 0.5
+
+  fit_r <- tryCatch(
+    mod_gcm_ml$sample(
+      data = stan_dat, init = init_r,
+      seed = grid_id * 100 + sim_iteration,
+      chains = 2, parallel_chains = 2,
+      iter_warmup = 800, iter_sampling = 1000,
+      refresh = 0, adapt_delta = 0.9, max_treedepth = 10
+    ),
+    error = function(e) { cat("Fit error:", e$message, "\n"); NULL }
+  )
+  if (is.null(fit_r)) return(NULL)
+
+  diag <- fit_r$diagnostic_summary(quiet = TRUE)
+  pop_est <- fit_r$summary(
+    variables = c("pop_w", "kappa", "pop_log_c_mean", "pop_log_c_sd"),
+    "mean"
+  ) |>
+    mutate(
+      true_value = case_when(
+        variable == "pop_w[1]"       ~ pop_w[1],
+        variable == "pop_w[2]"       ~ pop_w[2],
+        variable == "kappa"          ~ kappa,
+        variable == "pop_log_c_mean" ~ pop_log_c_mean,
+        variable == "pop_log_c_sd"   ~ pop_log_c_sd,
+        TRUE                         ~ NA_real_
+      ),
+      grid_id      = grid_id,
+      sim_iteration = sim_iteration,
+      had_divergence = any(diag$num_divergent > 0)
+    )
+
+  pop_est
+}
+
+recovery_plan <- param_grid_ml |>
+  crossing(sim_iteration = seq_len(n_sims_per_grid))
+
+plan(multisession, workers = max(1, availableCores() %/% 2))
+recovery_results_raw <- future_pmap_dfr(
+  list(
+    grid_id       = recovery_plan$grid_id,
+    pop_log_c_mean = recovery_plan$pop_log_c_mean,
+    pop_log_c_sd  = recovery_plan$pop_log_c_sd,
+    pop_w         = recovery_plan$pop_w,
+    kappa         = recovery_plan$kappa,
+    sim_iteration = recovery_plan$sim_iteration
+  ),
+  run_recovery_iteration,
+  .options = furrr_options(seed = TRUE, scheduling = 1)
+)
+plan(sequential)
+
+write_csv(recovery_results_raw, "simdata/W11_gcm_ml_recovery_raw.csv")
+
+# Visualize population parameter recovery
+recovery_labeled <- recovery_results_raw |>
+  left_join(param_grid_ml |> dplyr::select(grid_id, pop_log_c_mean, pop_log_c_sd,
+                                            pop_w1, kappa), by = "grid_id")
+
+ggplot(recovery_labeled |> filter(!is.na(true_value)),
+       aes(x = true_value, y = mean)) +
+  geom_point(aes(color = had_divergence), alpha = 0.5) +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  geom_smooth(method = lm, color = "#0072B2", linewidth = 0.7) +
+  scale_color_manual(values = c("FALSE" = "grey30", "TRUE" = "#D55E00"),
+                     name = "Had divergence") +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Population Parameter Recovery: Multilevel GCM",
+       x = "True value", y = "Estimated (posterior mean)") +
+  theme(legend.position = "bottom")
+```
+
+Flagging iterations with divergences (in orange) allows us to separate reliable estimates from potentially compromised ones. If divergences are clustered in certain regions of parameter space, that signals a geometry problem requiring reparameterization.
+
+---
+
+## Simulation-Based Calibration (SBC)
+
+While parameter recovery assesses if the model can retrieve known parameters, **Simulation-Based Calibration (SBC)** checks the internal consistency and calibration of the entire Bayesian inference procedure (model code + priors). It asks: "If the true parameters really came from our specified priors, would our inference procedure, on average, produce posteriors that are statistically consistent with those priors?"
+
+### Why Use SBC?
+
+* **Detects implementation bugs**: SBC is excellent at finding subtle errors in Stan code (e.g., indexing mistakes, incorrect transformations, likelihood errors).
+* **Validates priors**: It reveals if priors are unintentionally too informative or interact poorly with the likelihood, leading to biased posteriors.
+* **Checks calibration**: Ensures that posterior intervals (e.g., 95% credible intervals) have the correct coverage frequency across the prior space.
+* **Complements recovery**: Recovery checks performance at specific points; SBC checks average performance across the entire prior predictive distribution.
+
+### How SBC Works
+
+The core idea: parameters drawn from the prior should be uniformly distributed within their corresponding posterior distribution, after fitting the model to data generated from those prior-drawn parameters.
+
+1. **Sample** one set of all model parameters from their prior distributions.
+2. **Simulate** one dataset from those parameters.
+3. **Fit** the Stan model to this simulated dataset.
+4. **Rank** each true parameter value among the $M$ posterior samples: $\text{rank}(\theta^*) = \sum_{m=1}^{M} \mathbb{I}(\theta_m < \theta^*)$.
+5. **Repeat** $S \geq 1000$ times and plot the empirical CDF of ranks.
+
+If the model and priors are correctly specified, the rank statistics are **uniformly distributed**. The preferred diagnostic is the **ECDF-difference plot** (Säilynoja, Bürkner, & Vehtari 2022), which is more sensitive to subtle calibration failures than rank histograms. We use the `SBC` package, which is consistent with how SBC was conducted in Chapters 6 and 8.
+
+### Implementing SBC with the `SBC` Package
+
+```{r, 11 sbc single subject, eval=run_intensive_checks}
+# SBC for the single-subject GCM.
+# The generator function must:
+#   (a) sample parameters from the EXACT priors encoded in the Stan model block
+#   (b) generate a dataset using gcm_simulate with those parameters
+#   (c) return a list with named elements: variables (true params) and generated (Stan data list)
+# Using the same priors in (a) and in the Stan model is the discipline that
+# catches bugs: any mismatch will produce non-uniform ECDF-diff plots.
+
+n_sbc_iterations_single <- 500   # use >= 1000 for publication-quality SBC
+
+gcm_single_sbc_generator <- SBC_generator_function(
+  function(i) {
+    # 1a. Sample from priors
+    w_true    <- as.numeric(MCMCpack::rdirichlet(1, c(1, 1)))
+    log_c_true <- rnorm(1, LOG_C_PRIOR_MEAN, LOG_C_PRIOR_SD)
+    bias_true  <- rbeta(1, 1, 1)
+
+    # 1b. Generate one randomized schedule for this SBC iteration
+    sbc_schedule <- make_subject_schedule(stimulus_info, n_blocks,
+                                          seed = 10000 + i)
+
+    # 1c. Simulate data using gcm_simulate
+    sim <- gcm_simulate(
+      w = w_true, log_c = log_c_true, bias = bias_true,
+      obs          = sbc_schedule |> dplyr::select(height, position),
+      cat_feedback = sbc_schedule$category_feedback
+    )
+
+    list(
+      variables = list(
+        `w[1]` = w_true[1],
+        `w[2]` = w_true[2],
+        log_c  = log_c_true,
+        bias   = bias_true
+      ),
+      generated = list(
+        ntrials          = nrow(sbc_schedule),
+        nfeatures        = 2L,
+        y                = as.integer(sim$sim_response),
+        obs              = as.matrix(sbc_schedule[, c("height", "position")]),
+        cat_feedback     = as.integer(sbc_schedule$category_feedback),
+        w_prior_alpha    = c(1, 1),
+        log_c_prior_mean = LOG_C_PRIOR_MEAN,
+        log_c_prior_sd   = LOG_C_PRIOR_SD,
+        bias_prior_alpha = 1,
+        bias_prior_beta  = 1
+      )
+    )
+  },
+  n = n_sbc_iterations_single
+)
+
+gcm_single_sbc_backend <- SBC_backend_cmdstan_sample(
+  mod_gcm_single,
+  iter_warmup   = 1000,
+  iter_sampling = 1000,
+  chains        = 2,
+  adapt_delta   = 0.9,
+  refresh       = 0
+)
+
+sbc_results_single <- compute_SBC(
+  gcm_single_sbc_generator,
+  gcm_single_sbc_backend,
+  cache_path = "simdata/W11_sbc_single_cache",
+  keep_fits  = FALSE
+)
+
+# ECDF-difference plot: the preferred diagnostic (Säilynoja et al. 2022)
+# Flat lines within the 99% simultaneous band indicate well-calibrated posteriors.
+# U-shaped → posterior too narrow; bell-shaped → posterior too wide;
+# monotone trend → systematic bias.
+plot_ecdf_diff(sbc_results_single)
+plot_rank_hist(sbc_results_single)   # for comparison with earlier chapters
+```
+
+Uniform ECDF-difference curves — flat lines staying within the simultaneous confidence band — constitute strong evidence that the Stan code and priors form a coherent inference engine. Any systematic deviation (U-shape, bell-shape, or monotone drift) identifies which parameter is miscalibrated and in which direction, providing a direct diagnostic for debugging.
+
+---
+
+## GCM in Context: Strengths and Limitations
+
+Like all models, the GCM has both strengths and limitations as an account of human categorization:
+
+### Strengths
+
+* **Empirical support**: The GCM has successfully fit human categorization data across numerous experiments, particularly those involving perceptual stimuli with continuous dimensions.
+* **Psychological plausibility**: The model's parameters correspond to psychologically meaningful constructs (attention, sensitivity/generalization, bias).
+* **Flexibility**: It can account for a wide range of category structures (including non-linearly separable ones) and learning phenomena (like prototype and exemplar effects).
+* **Integration with memory**: The model naturally connects categorization to memory for specific instances.
+* **Individual differences**: The multilevel framework allows principled modeling of variations across people.
+
+### Limitations
+
+* **Memory requirements**: Storing all exemplars becomes computationally and potentially cognitively demanding for large numbers of stimuli or complex environments. How memory is bounded or managed over long timescales is not fully specified.
+* **Complex categories**: The standard GCM struggles with categories defined by abstract rules, relations, or logical combinations of features. It's primarily a similarity-based model.
+* **Prior knowledge**: The basic GCM doesn't explicitly incorporate structured prior knowledge or background theories about categories, although priors can influence parameter estimation. Simulating prior exposure via initial exemplars is possible but indirect.
+* **Category construction**: The model focuses on assigning items to pre-existing (though learned) categories rather than explaining how novel categories are initially formed or discovered.
+* **Computational mechanism**: While mathematically specified, the exact neural or cognitive process for storing all exemplars and computing summed similarity across potentially vast memory stores remains debated.
+* **Sequential structure and LOO**: Because the GCM is path-dependent, standard LOO-CV is technically invalid. Results from LOO comparison in Ch. 15 should be treated as approximate and confirmed with LFO-CV.
+
+In the next two chapters we explore alternative approaches — prototype models (Ch. 12) and rule-based models (Ch. 13) — that address some of these limitations while introducing their own strengths and challenges. Understanding the GCM provides the foundational exemplar-based reference against which these alternatives are compared.

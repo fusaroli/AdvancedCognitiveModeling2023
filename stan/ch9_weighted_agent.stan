@@ -1,6 +1,7 @@
 
 // Weighted Bayesian Agent.
 // w_direct, w_social >= 0 scale the effective count of each evidence source.
+// Jeffreys prior pseudo-counts (0.5) consistent with SBA and PBA.
 data {
   int<lower=1> N;
   array[N] int<lower=0, upper=1> choice;
@@ -24,10 +25,10 @@ model {
 
   profile("likelihood") {
     for (i in 1:N) {
-      real alpha_post = 1.0
+      real alpha_post = 0.5
                       + weight_direct * blue1[i]
                       + weight_social * blue2[i];
-      real beta_post  = 1.0
+      real beta_post  = 0.5
                       + weight_direct * (total1[i] - blue1[i])
                       + weight_social * (total2[i] - blue2[i]);
       target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -46,10 +47,10 @@ generated quantities {
 
   for (i in 1:N) {
     // Posterior predictions
-    real alpha_post = 1.0
+    real alpha_post = 0.5
                     + weight_direct * blue1[i]
                     + weight_social * blue2[i];
-    real beta_post  = 1.0
+    real beta_post  = 0.5
                     + weight_direct * (total1[i] - blue1[i])
                     + weight_social * (total2[i] - blue2[i]);
 
@@ -57,8 +58,8 @@ generated quantities {
     posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
 
     // Prior predictions using sampled prior weights
-    real ap = 1.0 + wd_prior * blue1[i] + ws_prior * blue2[i];
-    real bp = 1.0 + wd_prior * (total1[i] - blue1[i])
+    real ap = 0.5 + wd_prior * blue1[i] + ws_prior * blue2[i];
+    real bp = 0.5 + wd_prior * (total1[i] - blue1[i])
                   + ws_prior * (total2[i] - blue2[i]);
     prior_pred[i] = beta_binomial_rng(1, ap, bp);
   }

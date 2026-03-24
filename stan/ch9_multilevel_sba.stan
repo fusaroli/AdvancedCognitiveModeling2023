@@ -32,9 +32,9 @@ model {
 
   for (i in 1:N) {
     int j = agent_id[i];
-    // Equal weights: both sources scaled identically
-    real alpha_post = 1.0 + scale[j] * (blue1[i]  + blue2[i]);
-    real beta_post  = 1.0 + scale[j] * ((total1[i] - blue1[i]) +
+    // Equal weights: both sources scaled identically; Jeffreys prior pseudo-count
+    real alpha_post = 0.5 + scale[j] * (blue1[i]  + blue2[i]);
+    real beta_post  = 0.5 + scale[j] * ((total1[i] - blue1[i]) +
                                          (total2[i] - blue2[i]));
     target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
   }
@@ -47,8 +47,8 @@ generated quantities {
 
   for (i in 1:N) {
     int j = agent_id[i];
-    real alpha_post = 1.0 + scale[j] * (blue1[i]  + blue2[i]);
-    real beta_post  = 1.0 + scale[j] * ((total1[i] - blue1[i]) +
+    real alpha_post = 0.5 + scale[j] * (blue1[i]  + blue2[i]);
+    real beta_post  = 0.5 + scale[j] * ((total1[i] - blue1[i]) +
                                          (total2[i] - blue2[i]));
     log_lik[i]     = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
     pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);

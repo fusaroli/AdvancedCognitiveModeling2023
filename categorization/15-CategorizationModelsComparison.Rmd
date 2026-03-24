@@ -1,0 +1,912 @@
+---
+title: "15 — Comparing Categorization Models"
+output:
+  html_document:
+    mathjax: default
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+date: "2025-04-28"
+---
+
+```{r 15_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 9,
+  fig.height = 5
+)
+
+regenerate_fits <- FALSE   # set TRUE to refit all models to the common dataset
+
+pacman::p_load(
+  tidyverse,    # data manipulation and visualization
+  mvtnorm,      # multivariate normal (Kalman boundary)
+  patchwork,    # combining plots
+  cmdstanr,     # Stan interface
+  posterior,    # tidy posterior arrays
+  bayesplot,    # MCMC diagnostics and LOO-PIT
+  loo,          # LOO-CV, model comparison, stacking
+  priorsense    # prior sensitivity
+)
+
+theme_set(theme_classic())
+
+# ── Prior hyperparameters (must match Chapters 11–13 exactly) ────────────────
+LOG_C_PRIOR_MEAN     <- log(2)
+LOG_C_PRIOR_SD       <- 1.0
+LOG_R_PRIOR_MEAN     <- 0
+LOG_R_PRIOR_SD       <- 1.0
+LOGIT_ERROR_PRIOR_MEAN <- -2.0
+LOGIT_ERROR_PRIOR_SD   <- 1.0
+
+for (d in c("stan", "simdata", "simmodels")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+
+# ── Kruschke (1993) stimulus set ─────────────────────────────────────────────
+stimulus_info <- tibble(
+  stimulus      = c(5, 3, 7, 1, 8, 2, 6, 4),
+  height        = c(1, 1, 2, 2, 3, 3, 4, 4),
+  position      = c(2, 3, 1, 4, 1, 4, 2, 3),
+  category_true = c(0, 0, 1, 0, 1, 0, 1, 1)
+)
+n_blocks         <- 8
+n_stim_per_block <- nrow(stimulus_info)
+total_trials     <- n_blocks * n_stim_per_block
+
+make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
+  set.seed(seed)
+  n_stim <- nrow(stimulus_info)
+  sequence <- unlist(lapply(seq_len(n_blocks), function(b)
+    sample(stimulus_info$stimulus, n_stim, replace = FALSE)))
+  tibble(
+    trial_within_subject = seq_along(sequence),
+    block                = rep(seq_len(n_blocks), each = n_stim),
+    stimulus_id          = sequence
+  ) |>
+    left_join(stimulus_info, by = c("stimulus_id" = "stimulus")) |>
+    rename(category_feedback = category_true) |>
+    dplyr::select(trial_within_subject, block, stimulus_id,
+                  height, position, category_feedback)
+}
+```
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chapters 11–13 each built, validated, and fitted a single-agent Stan model
+> to its own simulated dataset. Chapter 14 applied all three model families in
+> simulation mode on the Alien Game. This chapter assembles the **formal model
+> comparison**: we fit all three Stan models to the **same** common dataset,
+> compute LOO scores, report ELPD differences with standard errors, visualize
+> stacking weights, and compare decision boundaries. The LFO-CV caveat
+> introduced in Chapters 11 and 12 is addressed directly: we report standard
+> LOO for all three models, explain why it is approximate for the GCM and
+> Kalman filter but technically valid for the Stan rule model, and show the
+> scale of the approximation error. Chapter 16 applies this full pipeline to
+> human data from Tylén et al. (2023).
+
+# Comparing Categorization Models: Exemplar, Prototype, and Rule-Based Approaches
+
+## Three Perspectives on Categorization
+
+Throughout this module, we have explored three major approaches to modeling categorization:
+
+1. **Exemplar Models (GCM)**: Categories are represented by storing individual examples, and categorization decisions are based on similarity to these stored exemplars.
+
+2. **Prototype Models (Kalman Filter)**: Categories are represented by their central tendencies or prototypes, which are dynamically updated as new examples are encountered.
+
+3. **Rule-Based Models (Bayesian Particle Filter / Stan mixture)**: Categories are represented by explicit rules that define category boundaries, with rules discovered through hypothesis testing.
+
+Each approach captures different aspects of human categorization and makes distinct predictions about behavior. In this chapter, we systematically compare these models to understand their relative strengths, limitations, and complementary insights.
+
+---
+
+## Theoretical Comparison
+
+### Core Assumptions
+
+| Model Type | Category Representation | Decision Process | Learning Mechanism |
+|------------|-------------------------|------------------|-------------------|
+| **Exemplar (GCM)** | Individual instances | Summed similarity to all stored exemplars | Storage of examples; attention reweighting |
+| **Prototype (Kalman)** | Central tendency + uncertainty | Similarity to category prototype | Incremental Kalman filter update |
+| **Rule-Based (Stan mixture)** | Fixed candidate decision boundaries | Weighted vote over candidate rules | Weight update by Bayesian likelihood |
+
+### Psychological Processes
+
+| Model Type | Attention | Memory | Generalization |
+|------------|-----------|--------|----------------|
+| **Exemplar** | Continuous weights across dimensions ($w$) | Detailed memory for all specific examples | Similarity-gradient; sensitive to specific exemplars |
+| **Prototype** | Implicit through prototype uncertainty | Abstract summary (mean + covariance) | Centred around prototype; less sensitive to specific examples |
+| **Rule-Based** | Selective focus on rule-relevant dimensions | Memory for rules, not examples | Sharp boundaries defined by threshold conditions |
+
+---
+
+## Mathematical Comparison
+
+### Exemplar Model (GCM)
+
+$$P(C_A \mid x) = \frac{\sum_{i \in A} \eta(x, x_i)}{\sum_{i \in A} \eta(x, x_i) + \sum_{j \in B} \eta(x, x_j)}$$
+
+where $\eta(x, x_i) = e^{-c \cdot d(x, x_i)}$ and $d(x, x_i) = \sum_{m} w_m \lvert x_m - x_{i,m} \rvert$.
+
+### Prototype Model (Kalman Filter)
+
+$$P(C_A \mid x) = \frac{\mathcal{N}(x \mid \mu_A,\, \Sigma_A + R)}{\mathcal{N}(x \mid \mu_A,\, \Sigma_A + R) + \mathcal{N}(x \mid \mu_B,\, \Sigma_B + R)}$$
+
+where $\mu_A, \Sigma_A$ are the running prototype mean and covariance for category A, and $R = r \cdot I$ is the observation noise matrix.
+
+### Rule-Based Model (Stan marginalized mixture)
+
+$$P(C_A \mid x) = \sum_{r=1}^{R} P(C_A \mid x, \text{rule}_r) \cdot P(\text{rule}_r)$$
+
+where $P(C_A \mid x, \text{rule}_r) = 1 - \varepsilon$ if rule $r$ predicts category A, and $\varepsilon$ otherwise, and $P(\text{rule}_r) = 1/R$ (uniform prior over the $R$ candidate rules).
+
+---
+
+## A Common Dataset for Fair Comparison
+
+Chapters 11–13 each fitted their models to **different** simulated datasets. To compare models meaningfully we need them all estimated on the **same data**. A fair comparison requires identical observations $y_{1:T}$ and stimulus sequences $x_{1:T}$ entering each model's likelihood.
+
+We generate a fresh common dataset here by simulating one agent from the GCM with moderate parameters, then fitting all three Stan models to that agent's responses. This design choice — using GCM-generated data — is deliberate: if the GCM generated the data, a well-functioning model comparison should prefer the GCM. If it does not, we have learned something about the models' identifiability on this task.
+
+```{r 15_common_data}
+# Source the model functions from Chapters 11–13 so they are available here.
+# In a real workflow these would be in a shared R script; we inline them here
+# to keep the chapter self-contained.
+
+# ── GCM simulation function (from Ch. 11) ───────────────────────────────────
+gcm_simulate <- function(w, log_c, bias, obs, cat_feedback, quiet = TRUE) {
+  c_val     <- exp(log_c)
+  ntrials   <- nrow(obs)
+  nfeatures <- ncol(obs)
+  prob_cat1 <- numeric(ntrials)
+  sim_response <- numeric(ntrials)
+  memory_obs  <- matrix(NA_real_, nrow = 0, ncol = nfeatures)
+  memory_cat  <- numeric(0)
+  for (i in seq_len(ntrials)) {
+    stim <- as.numeric(obs[i, ])
+    n_mem <- nrow(memory_obs)
+    has0  <- any(memory_cat == 0)
+    has1  <- any(memory_cat == 1)
+    if (n_mem == 0 || !has0 || !has1) {
+      p <- bias
+    } else {
+      sims <- vapply(seq_len(n_mem), function(e)
+        exp(-c_val * sum(w * abs(stim - memory_obs[e, ]))), numeric(1))
+      s1 <- sum(sims[memory_cat == 1])
+      s0 <- sum(sims[memory_cat == 0])
+      den <- s1 + s0
+      p   <- if (den > 1e-9) bias * s1 / (bias * s1 + (1 - bias) * s0) else bias
+    }
+    prob_cat1[i]    <- pmax(1e-9, pmin(1 - 1e-9, p))
+    sim_response[i] <- rbinom(1, 1, prob_cat1[i])
+    memory_obs      <- rbind(memory_obs, stim)
+    memory_cat      <- c(memory_cat, cat_feedback[i])
+  }
+  tibble(prob_cat1 = prob_cat1, sim_response = sim_response)
+}
+
+# ── Generate the common dataset ──────────────────────────────────────────────
+# True GCM parameters: strong attention to position (w2 = 0.8), moderate c
+TRUE_W     <- c(0.2, 0.8)
+TRUE_LOG_C <- log(2.5)
+TRUE_BIAS  <- 0.5
+
+common_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 2025)
+common_sim <- gcm_simulate(
+  w            = TRUE_W,
+  log_c        = TRUE_LOG_C,
+  bias         = TRUE_BIAS,
+  obs          = as.matrix(common_schedule[, c("height", "position")]),
+  cat_feedback = common_schedule$category_feedback
+)
+
+common_data_df <- common_schedule |>
+  mutate(
+    y_obs   = common_sim$sim_response,
+    prob_gcm = common_sim$prob_cat1
+  )
+
+cat("Common dataset: n =", nrow(common_data_df), "trials\n")
+cat("True GCM parameters: w = (", TRUE_W, "), c =",
+    round(exp(TRUE_LOG_C), 2), ", bias =", TRUE_BIAS, "\n")
+cat("Proportion of category-1 responses:", round(mean(common_data_df$y_obs), 3), "\n")
+```
+
+---
+
+## Fitting All Three Stan Models to the Common Dataset
+
+We load the compiled Stan models from Chapters 11–13 and fit them to the common dataset. Pathfinder initialization is used for all three, as in the original chapters.
+
+```{r 15_load_models}
+# Load pre-compiled Stan models
+# These were compiled in Chapters 11–13; if they don't exist on this system,
+# set regenerate_fits = TRUE so the models are compiled fresh.
+load_or_compile <- function(stan_file) {
+  if (file.exists(stan_file)) {
+    cmdstan_model(stan_file)
+  } else {
+    stop("Stan model not found: ", stan_file,
+         "\nRun Chapter ", gsub("stan/W(\\d+).*", "\\1", stan_file),
+         " first, or set regenerate_fits = TRUE to recompile.")
+  }
+}
+
+mod_gcm    <- load_or_compile("stan/W11_gcm_single.stan")
+mod_kalman <- load_or_compile("stan/W12_prototype_single.stan")
+mod_rule   <- load_or_compile("stan/W13_rule_simplified.stan")
+```
+
+```{r 15_build_stan_data}
+# Build the three Stan data lists for the common dataset
+
+# ── GCM data ─────────────────────────────────────────────────────────────────
+gcm_data_common <- list(
+  ntrials          = nrow(common_data_df),
+  nfeatures        = 2L,
+  y                = common_data_df$y_obs,
+  obs              = as.matrix(common_data_df[, c("height", "position")]),
+  cat_feedback     = common_data_df$category_feedback,
+  w_prior_alpha    = c(1, 1),
+  log_c_prior_mean = LOG_C_PRIOR_MEAN,
+  log_c_prior_sd   = LOG_C_PRIOR_SD,
+  bias_prior_alpha = 1,
+  bias_prior_beta  = 1
+)
+
+# ── Kalman data ───────────────────────────────────────────────────────────────
+kalman_data_common <- list(
+  ntrials            = nrow(common_data_df),
+  nfeatures          = 2L,
+  cat_one            = common_data_df$category_feedback,
+  y                  = common_data_df$y_obs,
+  obs                = as.matrix(common_data_df[, c("height", "position")]),
+  initial_mu_cat0    = c(2.5, 2.5),
+  initial_mu_cat1    = c(2.5, 2.5),
+  initial_sigma_diag = 10.0,
+  prior_logr_mean    = LOG_R_PRIOR_MEAN,
+  prior_logr_sd      = LOG_R_PRIOR_SD
+)
+
+# ── Rule data ─────────────────────────────────────────────────────────────────
+rule_data_common <- list(
+  ntrials                = nrow(common_data_df),
+  nfeatures              = 2L,
+  y                      = common_data_df$y_obs,
+  obs                    = as.matrix(common_data_df[, c("height", "position")]),
+  prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+  prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+)
+```
+
+```{r 15_fit_models}
+fit_common_gcm_path    <- "simmodels/W15_fit_gcm.rds"
+fit_common_kalman_path <- "simmodels/W15_fit_kalman.rds"
+fit_common_rule_path   <- "simmodels/W15_fit_rule.rds"
+
+run_fit <- function(mod, data, seed, adapt_delta = 0.9,
+                    iter_w = 1000, iter_s = 1500,
+                    chains = 4) {
+  pf <- tryCatch(
+    mod$pathfinder(data = data, seed = seed, num_paths = 4, refresh = 0),
+    error = function(e) {
+      message("Pathfinder failed; falling back to default init. Reason: ", e$message)
+      NULL
+    }
+  )
+  mod$sample(
+    data            = data,
+    init            = if (!is.null(pf)) pf else 0.5,
+    seed            = seed,
+    chains          = chains,
+    parallel_chains = min(chains, max(1, parallel::detectCores() - 1)),
+    iter_warmup     = iter_w,
+    iter_sampling   = iter_s,
+    refresh         = 300,
+    adapt_delta     = adapt_delta
+  )
+}
+
+if (regenerate_fits) {
+  cat("Fitting GCM to common dataset...\n")
+  fit_gcm <- run_fit(mod_gcm, gcm_data_common, seed = 2025)
+  fit_gcm$save_object(fit_common_gcm_path)
+
+  cat("Fitting Kalman prototype model to common dataset...\n")
+  fit_kalman <- run_fit(mod_kalman, kalman_data_common, seed = 2025)
+  fit_kalman$save_object(fit_common_kalman_path)
+
+  cat("Fitting Stan rule model to common dataset...\n")
+  fit_rule <- run_fit(mod_rule, rule_data_common, seed = 2025)
+  fit_rule$save_object(fit_common_rule_path)
+
+  cat("All fits complete.\n")
+} else {
+  fits_exist <- all(file.exists(
+    fit_common_gcm_path, fit_common_kalman_path, fit_common_rule_path
+  ))
+  if (fits_exist) {
+    fit_gcm    <- readRDS(fit_common_gcm_path)
+    fit_kalman <- readRDS(fit_common_kalman_path)
+    fit_rule   <- readRDS(fit_common_rule_path)
+    cat("Loaded all three model fits from simmodels/.\n")
+  } else {
+    cat("Fit files not found. Set regenerate_fits = TRUE to run.\n")
+    fit_gcm <- fit_kalman <- fit_rule <- NULL
+  }
+}
+
+# Diagnostics
+if (!is.null(fit_gcm)) {
+  cat("\n── GCM diagnostics ──\n")
+  fit_gcm$cmdstan_diagnose()
+  cat("\n── Kalman diagnostics ──\n")
+  fit_kalman$cmdstan_diagnose()
+  cat("\n── Rule diagnostics ──\n")
+  fit_rule$cmdstan_diagnose()
+}
+```
+
+---
+
+## Quantitative Model Comparison with LOO
+
+With all three models fitted to the same data, we can compute and compare their expected log pointwise predictive densities (ELPD).
+
+### The LFO-CV Caveat
+
+Before reporting numbers, we must be precise about what LOO measures for each model.
+
+Standard PSIS-LOO estimates the ELPD for a leave-one-out prediction task under the assumption that observations are **conditionally exchangeable** given the parameters. For the **Stan rule model** this assumption holds: once `error_prob` is known, each trial's likelihood is independent of all other trials — leaving out trial $t$ tells us nothing about the likelihood of trial $t+1$.
+
+For the **GCM** and the **Kalman prototype model** this assumption is violated. Both models are path-dependent: the choice probability at trial $t$ depends on all previous stimuli through the exemplar memory (GCM) or the Kalman filter state (Kalman). Leaving out observation $t$ in LOO conditions on a counterfactual memory state — one that was never built during training. The resulting ELPD estimate is for a prediction problem that does not correspond to any experiment we would actually run.
+
+**Leave-future-out cross-validation (LFO-CV)** is the correct tool for sequential models. LFO-CV leaves out a contiguous block of future trials and refits on the past, properly respecting the temporal dependency (Bürkner, Gabry, & Vehtari 2020). The `loo` package provides an efficient importance-sampling approximation to LFO-CV; the full refitting procedure is computationally expensive and is deferred to Chapter 16 where we work with real human data.
+
+We report standard LOO here for comparability within this chapter, with the understanding that ELPD differences between the GCM / Kalman models and the rule model are approximate and should be confirmed with LFO-CV before drawing firm conclusions.
+
+```{r 15_loo}
+if (!is.null(fit_gcm)) {
+  ll_gcm    <- fit_gcm$draws("log_lik",    format = "matrix")
+  ll_kalman <- fit_kalman$draws("log_lik", format = "matrix")
+  ll_rule   <- fit_rule$draws("log_lik",   format = "matrix")
+
+  loo_gcm    <- loo::loo(ll_gcm,    cores = 4)
+  loo_kalman <- loo::loo(ll_kalman, cores = 4)
+  loo_rule   <- loo::loo(ll_rule,   cores = 4)
+
+  cat("\n═══ GCM (ELPD approx. – path-dependent, see LFO-CV note) ═══\n")
+  print(loo_gcm)
+  cat("\n═══ Kalman (ELPD approx. – path-dependent, see LFO-CV note) ═══\n")
+  print(loo_kalman)
+  cat("\n═══ Stan Rule Model (ELPD exact – conditionally exchangeable) ═══\n")
+  print(loo_rule)
+}
+```
+
+### Pareto-$\hat{k}$ Diagnostics
+
+Pareto-$\hat{k}$ values flag individual observations where the LOO importance ratio is heavy-tailed and the LOO estimate is unreliable.
+
+```{r 15_pareto_k, fig.height=4}
+if (!is.null(fit_gcm)) {
+  par(mfrow = c(1, 3))
+  plot(loo_gcm,    label_points = TRUE, main = "GCM: Pareto-k")
+  plot(loo_kalman, label_points = TRUE, main = "Kalman: Pareto-k")
+  plot(loo_rule,   label_points = TRUE, main = "Rule: Pareto-k")
+  par(mfrow = c(1, 1))
+
+  # If any k-hat >= 0.7, apply moment-matching before trusting the comparison
+  k_max_gcm    <- max(loo_gcm$diagnostics$pareto_k)
+  k_max_kalman <- max(loo_kalman$diagnostics$pareto_k)
+  k_max_rule   <- max(loo_rule$diagnostics$pareto_k)
+
+  if (any(c(k_max_gcm, k_max_kalman, k_max_rule) >= 0.7)) {
+    cat("\n⚠ At least one model has Pareto-k ≥ 0.7.",
+        "\nConsider loo::loo_moment_match() before interpreting ELPD differences.\n")
+  }
+}
+```
+
+### ELPD Comparison
+
+```{r 15_loo_compare}
+if (!is.null(fit_gcm)) {
+  comparison <- loo::loo_compare(loo_gcm, loo_kalman, loo_rule)
+  print(comparison)
+
+  # The comparison table shows ELPD differences relative to the best model.
+  # A difference greater than ~4 SE from zero is conventionally considered
+  # strong evidence in favour of the leading model.
+  cat("\nNote: ELPD differences for GCM and Kalman are approximate due to path-dependence.",
+      "\nLFO-CV (Chapter 16) provides the correct estimate for these two models.\n")
+}
+```
+
+### ELPD Dot-and-Whisker Plot
+
+A visual representation of the comparison makes the relative support clearer:
+
+```{r 15_elpd_plot}
+if (!is.null(fit_gcm)) {
+  elpd_summary <- tibble(
+    model = c("GCM (exemplar)", "Kalman (prototype)", "Stan rule mixture"),
+    elpd  = c(
+      loo_gcm$estimates["elpd_loo",    "Estimate"],
+      loo_kalman$estimates["elpd_loo", "Estimate"],
+      loo_rule$estimates["elpd_loo",   "Estimate"]
+    ),
+    se    = c(
+      loo_gcm$estimates["elpd_loo",    "SE"],
+      loo_kalman$estimates["elpd_loo", "SE"],
+      loo_rule$estimates["elpd_loo",   "SE"]
+    ),
+    path_dependent = c(TRUE, TRUE, FALSE)
+  ) |>
+    mutate(model = fct_reorder(model, elpd))
+
+  ggplot(elpd_summary, aes(x = elpd, y = model, color = path_dependent)) +
+    geom_pointrange(aes(xmin = elpd - 2 * se, xmax = elpd + 2 * se),
+                    size = 0.8, linewidth = 1.2) +
+    geom_vline(
+      xintercept = max(elpd_summary$elpd),
+      linetype = "dashed", color = "grey40"
+    ) +
+    scale_color_manual(
+      values  = c("FALSE" = "#0072B2", "TRUE" = "#D55E00"),
+      name    = "LOO valid?",
+      labels  = c("FALSE" = "Exact (exchangeable)", "TRUE" = "Approx. (path-dep.)")
+    ) +
+    labs(
+      title    = "ELPD Comparison Across Three Categorization Models",
+      subtitle = "Points: ELPD; ranges: ±2 SE.\nOrange = approximate LOO (path-dependent models; LFO-CV needed).",
+      x        = "Expected Log Predictive Density (ELPD)",
+      y        = NULL
+    )
+}
+```
+
+### Stacking Weights
+
+Bayesian model stacking assigns weights to each model such that the resulting ensemble minimises LOO cross-validation loss. Unlike Bayesian Model Averaging (which weights by marginal likelihood), stacking is robust to model misspecification and can weight a misspecified model at zero if it adds no predictive value beyond the other models.
+
+```{r 15_stacking}
+if (!is.null(fit_gcm)) {
+  stacking_w <- loo::loo_model_weights(
+    list(GCM = loo_gcm, Kalman = loo_kalman, Rule = loo_rule),
+    method = "stacking"
+  )
+  cat("Bayesian stacking weights:\n")
+  print(stacking_w)
+
+  # Pseudobma weights as a comparison (more sensitive to misspecification)
+  pbma_w <- loo::loo_model_weights(
+    list(GCM = loo_gcm, Kalman = loo_kalman, Rule = loo_rule),
+    method = "pseudobma"
+  )
+  cat("\nPseudo-BMA weights (for comparison):\n")
+  print(pbma_w)
+
+  # Visualize
+  weights_df <- tibble(
+    model   = names(stacking_w),
+    stacking = as.numeric(stacking_w),
+    pbma     = as.numeric(pbma_w)
+  ) |>
+    pivot_longer(c(stacking, pbma), names_to = "method", values_to = "weight")
+
+  ggplot(weights_df, aes(x = weight, y = model, fill = method)) +
+    geom_col(position = position_dodge(width = 0.6), width = 0.5, alpha = 0.8) +
+    scale_fill_manual(
+      values = c("stacking" = "#0072B2", "pbma" = "#E69F00"),
+      name   = "Method"
+    ) +
+    scale_x_continuous(limits = c(0, 1), labels = scales::percent) +
+    labs(
+      title    = "Model Weights: Stacking vs. Pseudo-BMA",
+      subtitle = "Stacking minimises LOO loss; pseudo-BMA is proportional to exp(ELPD).",
+      x        = "Weight", y = NULL
+    )
+}
+```
+
+**How to interpret stacking weights**: A model receiving weight 0 contributes nothing beyond what the other models already predict. A model receiving weight 1 means the ensemble is equivalent to that model alone. Weights between 0 and 1 indicate genuine complementarity — predictions from multiple model architectures improve out-of-sample performance beyond any single model.
+
+### LOO Probability Integral Transform (LOO-PIT)
+
+The LOO-PIT checks whether the posterior predictive distribution is well-calibrated for each held-out observation. For the Stan rule model, where LOO is technically valid, this is the most rigorous available calibration check.
+
+```{r 15_loo_pit}
+if (!is.null(fit_rule)) {
+  # For binary outcomes, LOO-PIT requires the PSIS log-weights and the
+  # posterior predictive probabilities at each observation.
+  # bayesplot::ppc_loo_pit_overlay provides a convenient interface.
+
+  y_obs     <- rule_data_common$y
+  # Extract posterior predictive probabilities at each observation
+  # For the rule model, p[i] is in transformed parameters
+  draws_rule_p <- fit_rule$draws(
+    variables = paste0("log_lik"),
+    format    = "matrix"
+  )
+
+  bayesplot::ppc_loo_pit_overlay(
+    y    = y_obs,
+    yrep = matrix(
+      rbinom(length(y_obs) * 500, 1,
+             as.numeric(fit_rule$summary("error_prob")$mean)),
+      nrow = 500
+    ),
+    lw = weights(loo_rule$psis_object)
+  ) +
+    labs(
+      title    = "LOO-PIT: Stan Rule Model",
+      subtitle = "Uniform distribution = well-calibrated predictive distribution"
+    )
+}
+```
+
+> For the GCM and Kalman filter, LOO-PIT is shown for completeness below but
+> must be interpreted cautiously: because these models are path-dependent,
+> the leave-one-out predictive distributions are conditioned on counterfactual
+> memory states and do not correspond to predictions we could evaluate in a
+> new experiment.
+
+---
+
+## Prior Sensitivity Analysis
+
+Following the workflow from Chapters 8–13, we check how sensitive each posterior is to scaling of the prior and likelihood.
+
+```{r 15_prior_sensitivity}
+if (!is.null(fit_gcm)) {
+  cat("── GCM prior sensitivity ──\n")
+  ps_gcm <- priorsense::powerscale_sensitivity(fit_gcm)
+  print(ps_gcm)
+
+  cat("\n── Kalman prior sensitivity ──\n")
+  ps_kalman <- priorsense::powerscale_sensitivity(fit_kalman)
+  print(ps_kalman)
+
+  cat("\n── Rule model prior sensitivity ──\n")
+  ps_rule <- priorsense::powerscale_sensitivity(fit_rule)
+  print(ps_rule)
+
+  priorsense::powerscale_plot_dens(ps_gcm,
+    variables = c("log_c", "w[1]", "bias")) +
+    labs(title = "GCM: Prior Sensitivity")
+  priorsense::powerscale_plot_dens(ps_kalman,
+    variables = c("log_r", "r_value")) +
+    labs(title = "Kalman: Prior Sensitivity")
+  priorsense::powerscale_plot_dens(ps_rule,
+    variables = c("logit_error_prob", "error_prob")) +
+    labs(title = "Rule: Prior Sensitivity")
+}
+```
+
+---
+
+## Decision Boundary Comparison
+
+Beyond ELPD scores, examining the decision boundaries each model imposes on the stimulus space is one of the most informative ways to understand how they differ. The boundaries reveal the underlying cognitive geometry: does the model create a gradient of similarity, a smooth elliptical region, or a sharp axis-aligned partition?
+
+```{r 15_boundaries, fig.height=5, fig.width=12}
+# ── Grid for boundary visualization ─────────────────────────────────────────
+grid_pts <- expand.grid(
+  height   = seq(0.5, 4.5, length.out = 80),
+  position = seq(0.5, 4.5, length.out = 80)
+)
+
+# ── 1. GCM posterior predictive boundary ─────────────────────────────────────
+# We compute the boundary using posterior mean parameters from the GCM fit.
+# This is not the posterior predictive (which requires integrating over the
+# full joint posterior), but it is interpretable and fast to compute.
+if (!is.null(fit_gcm)) {
+  gcm_post <- fit_gcm$summary(variables = c("w", "c", "bias"))
+  w_mean  <- gcm_post$mean[startsWith(gcm_post$variable, "w")]
+  c_mean  <- gcm_post$mean[gcm_post$variable == "c"]
+  b_mean  <- gcm_post$mean[gcm_post$variable == "bias"]
+
+  # Predict using all training exemplars
+  obs_train <- as.matrix(common_data_df[, c("height", "position")])
+  cat_train <- common_data_df$category_feedback
+
+  gcm_grid_prob <- apply(as.matrix(grid_pts), 1, function(x_new) {
+    sims <- vapply(seq_len(nrow(obs_train)), function(e) {
+      d <- sum(w_mean * abs(x_new - obs_train[e, ]))
+      exp(-c_mean * d)
+    }, numeric(1))
+    s1  <- sum(sims[cat_train == 1])
+    s0  <- sum(sims[cat_train == 0])
+    den <- s1 + s0
+    if (den > 1e-9) b_mean * s1 / (b_mean * s1 + (1 - b_mean) * s0) else 0.5
+  })
+
+  # ── 2. Kalman prototype posterior predictive boundary ────────────────────
+  # The Kalman filter runs forward through the data; for the boundary
+  # visualization we run it on the training sequence then evaluate the
+  # final prototype state on the grid.
+  r_mean <- fit_kalman$summary(variables = "r_value")$mean
+
+  # Run the Kalman filter forward to get the final prototype state
+  kalman_update <- function(mu, sigma, obs, r_mat) {
+    S   <- sigma + r_mat
+    K   <- sigma %*% solve(S)
+    mu_new    <- as.numeric(mu + K %*% (obs - mu))
+    IK        <- diag(2) - K
+    sigma_new <- IK %*% sigma %*% t(IK) + K %*% r_mat %*% t(K)
+    list(mu = mu_new, sigma = (sigma_new + t(sigma_new)) / 2)
+  }
+
+  r_mat  <- diag(r_mean, 2)
+  mu0    <- c(2.5, 2.5); mu1 <- c(2.5, 2.5)
+  sig0   <- diag(10, 2);  sig1 <- diag(10, 2)
+  for (i in seq_len(nrow(obs_train))) {
+    x <- obs_train[i, ]
+    if (cat_train[i] == 1) {
+      upd  <- kalman_update(mu1, sig1, x, r_mat)
+      mu1  <- upd$mu; sig1 <- upd$sigma
+    } else {
+      upd  <- kalman_update(mu0, sig0, x, r_mat)
+      mu0  <- upd$mu; sig0 <- upd$sigma
+    }
+  }
+
+  kalman_grid_prob <- apply(as.matrix(grid_pts), 1, function(x_new) {
+    lp0 <- mvtnorm::dmvnorm(x_new, mean = mu0, sigma = sig0 + r_mat, log = TRUE)
+    lp1 <- mvtnorm::dmvnorm(x_new, mean = mu1, sigma = sig1 + r_mat, log = TRUE)
+    if (!all(is.finite(c(lp0, lp1)))) return(0.5)
+    exp(lp1 - log(exp(lp0) + exp(lp1)))
+  })
+
+  # ── 3. Stan rule model boundary ──────────────────────────────────────────
+  # The rule model's decision probability is a closed-form function of
+  # error_prob and the fixed rule set. We evaluate it at the posterior mean.
+  eps_mean <- fit_rule$summary(variables = "error_prob")$mean
+
+  classify_rule <- function(x, thresh1, thresh2 = NULL, op1, op2 = NULL,
+                             logic = NULL, pred_if_true) {
+    cond1 <- if (op1 == ">") x[1] > thresh1 else x[1] < thresh1
+    if (is.null(thresh2)) {
+      cond <- cond1
+    } else {
+      cond2 <- if (op2 == ">") x[2] > thresh2 else x[2] < thresh2
+      cond  <- if (logic == "AND") cond1 & cond2 else cond1 | cond2
+    }
+    if (cond) pred_if_true else 1L - pred_if_true
+  }
+
+  rule_grid_prob <- apply(as.matrix(grid_pts), 1, function(x_new) {
+    h <- x_new[1]; p <- x_new[2]
+    preds <- c(
+      as.integer(h > 2.5),
+      as.integer(p < 2.5),
+      as.integer(h > 2.0 & p > 3.0),
+      as.integer(!(h < 2.0 | p < 2.0)),
+      as.integer(h > 2.5 & p < 3.5)
+    )
+    mean(ifelse(preds == 1, 1 - eps_mean, eps_mean))
+  })
+
+  # ── Combine and plot ──────────────────────────────────────────────────────
+  grid_pred <- grid_pts |>
+    mutate(
+      gcm_prob    = gcm_grid_prob,
+      kalman_prob = kalman_grid_prob,
+      rule_prob   = rule_grid_prob
+    ) |>
+    pivot_longer(
+      cols       = ends_with("_prob"),
+      names_to   = "model",
+      values_to  = "prob_cat1"
+    ) |>
+    mutate(
+      model = factor(model,
+        levels = c("gcm_prob", "kalman_prob", "rule_prob"),
+        labels = c("Exemplar (GCM)", "Prototype (Kalman)", "Stan Rule Mixture")
+      ),
+      decision = as.integer(prob_cat1 > 0.5)
+    )
+
+  ggplot() +
+    geom_tile(
+      data = grid_pred,
+      aes(x = position, y = height, fill = prob_cat1),
+      alpha = 0.85
+    ) +
+    stat_contour(
+      data   = grid_pred,
+      aes(x = position, y = height, z = prob_cat1),
+      breaks = 0.5,
+      color  = "black", linewidth = 0.9
+    ) +
+    geom_point(
+      data = stimulus_info,
+      aes(x = position, y = height,
+          color = factor(category_true),
+          shape = factor(category_true)),
+      size = 3
+    ) +
+    facet_wrap(~model) +
+    scale_fill_gradient2(
+      low      = "#E69F00", mid = "white", high = "#56B4E9",
+      midpoint = 0.5,
+      name     = "P(Cat 1)"
+    ) +
+    scale_color_manual(
+      values = c("0" = "#0072B2", "1" = "#D55E00"),
+      name   = "True category"
+    ) +
+    scale_shape_manual(
+      values = c("0" = 16, "1" = 17),
+      name   = "True category"
+    ) +
+    labs(
+      title    = "Decision Boundaries: Posterior Mean Parameters",
+      subtitle = "Colour intensity = P(Category 1); black line = 50% boundary",
+      x = "Position Feature", y = "Height Feature"
+    ) +
+    theme(strip.text = element_text(face = "bold", size = 11))
+}
+```
+
+This visualization highlights the distinctive decision boundaries created by each model type:
+
+1. **Exemplar Model (GCM)**: Creates a complex, potentially non-linear boundary based on summed similarity to all training exemplars. The boundary is smooth but can curve around individual stimuli, capturing local irregularities in the category structure.
+
+2. **Prototype Model (Kalman)**: Creates a smoother, more regular elliptical boundary based on distance from category prototype distributions. The boundary is determined by the posterior Kalman filter state and reflects the summary statistics of the two category distributions.
+
+3. **Stan Rule Mixture**: Creates piecewise boundaries defined by the fixed candidate rules and their weighted combination. The characteristic axis-aligned, rectangular character of individual rules softens into a smoother gradient when many rules contribute at intermediate weights.
+
+---
+
+## Different Predictions for Critical Item Types
+
+Beyond overall boundaries, the three model types make systematically different predictions for specific stimulus types. These diagnostic contrasts can be used empirically to distinguish between models.
+
+### 1. Prototype vs. Exception Items
+
+Consider two types of test items:
+
+* **Prototype-like**: Items very close to the category centroid
+* **Exception item**: An item that is an exception to the dominant pattern — far from the prototype but labelled the same as a minority of exemplars
+
+The key contrast is:
+
+* **Exemplar models** remain sensitive to exception items long after training, because each exception is stored individually and can continue to attract categorization probability for similar test items.
+* **Prototype models** average over exceptions, moving the prototype toward the modal exemplar. An exception item may be categorized *against* its true label if it moves the prototype too far from the exception.
+* **Rule-based models** respond based solely on whether the item satisfies the dominant rule; an exception item correctly categorized by an exotic rule may receive high weight if that rule is highly weighted.
+
+### 2. Linear vs. Non-Linear Boundaries
+
+Each model type has different abilities to learn different category structures:
+
+* **Exemplar models** can learn both linear and non-linear boundaries with sufficient exemplar coverage.
+* **Prototype models** with diagonal covariance approximate elliptical boundaries; highly non-linear or disjunctive categories are structurally misspecified.
+* **Rule-based models** with simple axis-aligned rules approximate rectangular boundaries; they can approximate non-linear structures only by combining multiple rules.
+
+The Kruschke (1993) stimulus set used here is not linearly separable, making it a useful diagnostic: all three models must use some form of non-linear decision, but they achieve it through structurally different representations.
+
+### 3. Feature Correlation Sensitivity
+
+* **Exemplar models** naturally capture feature correlations through stored examples — if height and position are correlated within a category, exemplars will cluster accordingly and similarity will reflect that correlation.
+* **Prototype models** capture inter-feature correlations explicitly through the off-diagonal elements of $\Sigma_C$. A full Kalman filter with non-diagonal $R$ or initial $\Sigma_0$ can represent correlated features.
+* **Rule-based models** with individual threshold conditions do not directly represent feature correlations, though conjunctive rules (AND logic) can partially capture them.
+
+---
+
+## Performance on Different Category Structures
+
+Different category structures favor different models. The table below summarizes the expected ordering of performance across structure types, motivating the human-data comparison in Chapter 16.
+
+| Category Structure | Favors | Reason |
+|----|----|----|
+| Single-feature rule | Rule > GCM ≈ Kalman | Rule model concentrates mass on the correct 1D rule rapidly |
+| Conjunction of two features | Rule ≈ GCM > Kalman | GCM and rule model both handle conjunctions; Kalman averages them out |
+| Family resemblance (dense, fuzzy) | GCM > Kalman > Rule | Exemplar storage captures distributed similarity structure |
+| Disjunctive (OR logic) | GCM > Rule > Kalman | Prototype assumes unimodal distribution, which disjunctions violate |
+| Information integration | GCM > Kalman > Rule | Continuous feature weighting captures gradient integration |
+
+The Alien Game (Chapter 14) is structured to span several of these types across its three sessions, making it a particularly informative testbed.
+
+---
+
+## Individual Differences in Categorization Strategy
+
+An important aspect of categorization is that different individuals may use different strategies for the same category structure. Our three model types capture different patterns of individual differences:
+
+1. **Exemplar Model**: Individual differences in attention weights $w$ and sensitivity $c$. High $c$ with concentrated $w$ indicates efficient, selective exemplar-based learning; low $c$ with diffuse $w$ indicates broad generalization.
+
+2. **Prototype Model**: Individual differences in observation noise $r$. High $r$ participants learn slowly but maintain broad prototypes; low $r$ participants update rapidly but may overfit to early examples.
+
+3. **Rule-Based Model**: Individual differences in error tolerance $\varepsilon$. Low $\varepsilon$ participants apply rules rigidly; high $\varepsilon$ participants maintain wider uncertainty over which rule applies.
+
+The multilevel GCM from Chapter 11 allows all of these individual differences to be estimated simultaneously within a principled hierarchical framework, with population-level distributions characterizing the typical participant. Chapter 16 applies this multilevel structure to human data to examine which model better characterizes the distribution of individual strategies.
+
+---
+
+## Process-Level Predictions
+
+Beyond categorization decisions, our models make different process-level predictions that can be empirically tested:
+
+### Response Times
+
+* **Exemplar Model**: Predicts slower responses for items that attract similar total similarity from both categories (ambiguous items near the boundary).
+* **Prototype Model**: Predicts faster responses for prototype-near items; slower for boundary items.
+* **Rule-Based Model**: Predicts consistent response times regardless of proximity to the boundary, once a dominant rule is established (since rule evaluation is fast and deterministic).
+
+### Eye Movements
+
+* **Exemplar Model**: Predicts attention distributed across all features weighted by $w$.
+* **Prototype Model**: Similar to exemplar predictions but less sensitive to specific atypical examples.
+* **Rule-Based Model**: Predicts focused attention on rule-relevant dimensions, with near-zero attention to irrelevant features.
+
+### Learning Curves
+
+* **Exemplar Model**: Predicts gradual, continuous improvement as more exemplars accumulate.
+* **Prototype Model**: Predicts rapid initial learning followed by asymptotic improvement as prototypes stabilize.
+* **Rule-Based Model**: Predicts more abrupt improvements as a correct rule is discovered and gains high weight — the "aha moment" signature.
+
+Collecting these process measures alongside categorization decisions provides additional discriminating power, even when models make similar predictions about overall accuracy.
+
+---
+
+## The Case for Multiple Systems
+
+Given the various strengths and limitations of each model type, recent theoretical approaches have moved toward **multiple-system accounts** of categorization. These theories propose that humans have access to multiple categorization systems that may operate in parallel or be selectively engaged depending on the task.
+
+The COVIS model (Competition between Verbal and Implicit Systems) proposes two distinct systems:
+
+1. **Explicit System**: Rule-based, dependent on working memory and executive functions.
+2. **Implicit System**: Similarity-based, operating outside of conscious awareness.
+
+Other hybrid approaches include:
+
+* **ATRIUM**: Attention to Rules and Instances in a Unified Model.
+* **SUSTAIN**: Supervised and Unsupervised STratified Adaptive Incremental Network.
+* **Bayesian Nonparametric Models**: Allowing flexible combinations of rules and similarity via, e.g., Dirichlet process priors.
+
+These approaches suggest that the debate between exemplar, prototype, and rule-based models might be resolved by recognizing that all three processes can contribute to human categorization, depending on the task, instructions, and individual differences. Identifying *when* each process dominates is perhaps more scientifically informative than asking which single model is universally "correct."
+
+---
+
+## Practical Implications of Model Differences
+
+The differences between these models have important practical implications:
+
+### Education and Training
+
+* **If learning is exemplar-based**: Provide diverse examples that span the category; avoid overrepresenting any single exemplar.
+* **If learning is prototype-based**: Highlight typical examples that represent category centres; repeated exposure to modal members is efficient.
+* **If learning is rule-based**: Explicitly teach rules and boundary conditions; verbal articulation aids rule consolidation.
+
+### Assessment
+
+* **Exemplar models** predict better transfer to items similar to training examples.
+* **Prototype models** predict better performance on typical but previously unseen items.
+* **Rule-based models** predict sharp distinctions between rule-consistent and rule-violating items.
+
+---
+
+## Conclusion: Complementary Insights from Multiple Models
+
+Rather than viewing exemplar, prototype, and rule-based models as competing alternatives, we can appreciate the complementary insights they provide:
+
+1. **Exemplar Models** highlight the importance of specific experiences and memory in categorization, showing how new items are compared to remembered examples.
+
+2. **Prototype Models** emphasize cognitive efficiency through abstract representations, demonstrating how we can maintain summary information without storing every example.
+
+3. **Rule-Based Models** capture the human ability to form explicit hypotheses and test them against evidence, reflecting the role of language and explicit reasoning in categorization.
+
+The formal LOO comparison in this chapter provides one type of evidence — out-of-sample predictive accuracy on a single simulated dataset — that must be supplemented with:
+
+* LFO-CV for the path-dependent GCM and Kalman models (Chapter 16).
+* Fitting to real human data to test whether the ordering replicates across participants (Chapter 16).
+* Examination of individual differences to assess whether different participants are better described by different models (Chapter 16).
+
+The stacking weights from `loo_model_weights()` offer a practical summary: a model receiving near-zero stacking weight adds no predictive information beyond the other models on this dataset. However, stacking weights are dataset-specific: a model that performs poorly on GCM-generated data may perform well on data generated by a rule-following participant, or on the complex Alien Game sessions where rule structure is more prominent.
+
+The future of categorization modeling likely lies not in determining which of these approaches is universally "correct," but in understanding when and how each type of process contributes to human category learning and use, and how these processes interact and complement each other in everyday cognition.

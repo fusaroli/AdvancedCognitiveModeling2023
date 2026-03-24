@@ -933,7 +933,7 @@ agent_estimates <- fit_m_on_m$draws("indiv_params") |>
   median_hdi(value, .width = 0.90) |>
   # Format as "Median [Lower, Upper]"
   mutate(estimate_label = sprintf("%.2f [%.2f, %.2f]", value, .lower, .upper)) |>
-  select(agent_id, metric, estimate_label) |>
+  dplyr::select(agent_id, metric, estimate_label) |>
   pivot_wider(names_from = metric, values_from = estimate_label, names_prefix = "est_")
 
 # 2. Extract true parameters and compute true probabilities
@@ -961,7 +961,7 @@ k_annotated |>
   left_join(agent_truths, by = "agent_id") |>
   left_join(agent_estimates, by = "agent_id") |>
   # Select columns in a logical display order
-  select(
+  dplyr::select(
     agent_id, n_high_k, max_k, 
     starts_with("true_alpha"), starts_with("est_alpha"),
     starts_with("true_beta"), starts_with("est_beta"),
@@ -1346,7 +1346,7 @@ Conveniently, $\hat{p}_{\text{loo}}$ is already reported in our `loo()` output. 
 
 ```{r 07-p-loo-ratio}
 complexity_table <- pareto_k_table |>
-  select(Combination, N, p_hat_loo, ratio) |>
+  dplyr::select(Combination, N, p_hat_loo, ratio) |>
   mutate(visual_ok = ifelse(ratio < 0.05,
     "Standard visual acceptable",
     "Formal test recommended (POT-C)"))
@@ -1837,7 +1837,7 @@ power_grid <- expand_grid(
     F1_Biased = 2 * (Precision_Biased * Recall_Biased) / (Precision_Biased + Recall_Biased)
   ) |>
   mutate(across(starts_with("F1"), ~pmin(0.99, round(.x, 2)))) |>
-  select(N_Trials, N_Participants, F1_Memory, F1_Biased) |>
+  dplyr::select(N_Trials, N_Participants, F1_Memory, F1_Biased) |>
   pivot_longer(cols = starts_with("F1"), names_to = "Model", 
                names_prefix = "F1_", values_to = "F1_Score")
 

@@ -1,0 +1,1235 @@
+---
+title: "13 — Rule-Based Models: Learning Explicit Criteria"
+output:
+  html_document:
+    mathjax: default
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+date: "2025-04-28"
+---
+
+```{r, 13_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 5
+)
+
+# Set to TRUE to rerun simulations and Stan fits.
+# FALSE loads pre-computed results from 'simdata/'.
+regenerate_simulations <- FALSE
+run_intensive_checks   <- FALSE
+
+pacman::p_load(
+  tidyverse,   # data manipulation and visualization
+  patchwork,   # combining plots
+  cmdstanr,    # Stan interface
+  posterior,   # tidy posterior arrays
+  tidybayes,   # tidy extraction of draws
+  bayesplot,   # MCMC diagnostic plots
+  loo,         # LOO-CV
+  SBC,         # Simulation-Based Calibration
+  priorsense,  # prior sensitivity
+  future,      # parallel processing
+  furrr        # parallel functional programming
+)
+
+theme_set(theme_classic())
+
+# Prior hyperparameter for logit(error_prob)
+# logit(0.05) ≈ -2.94 ; Normal(-2, 1) puts most mass below error_prob = 0.27
+LOGIT_ERROR_PRIOR_MEAN <- -2.0
+LOGIT_ERROR_PRIOR_SD   <- 1.0
+
+for (d in c("stan", "simdata", "simmodels")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+
+# ── Kruschke (1993) stimulus set ─────────────────────────────────────────────
+# Identical to Ch. 11 and Ch. 12; redefined here for standalone use.
+stimulus_info <- tibble(
+  stimulus      = c(5, 3, 7, 1, 8, 2, 6, 4),
+  height        = c(1, 1, 2, 2, 3, 3, 4, 4),
+  position      = c(2, 3, 1, 4, 1, 4, 2, 3),
+  category_true = c(0, 0, 1, 0, 1, 0, 1, 1)
+)
+
+n_blocks         <- 8
+n_stim_per_block <- nrow(stimulus_info)
+total_trials     <- n_blocks * n_stim_per_block
+
+# Feature ranges for threshold sampling (min and max of each feature)
+feature_range <- list(
+  height   = range(stimulus_info$height),
+  position = range(stimulus_info$position)
+)
+
+# ── Per-subject schedule helper ───────────────────────────────────────────────
+# Identical to Ch. 11 and Ch. 12; redefined here for standalone use.
+make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
+  set.seed(seed)
+  n_stim <- nrow(stimulus_info)
+  sequence <- unlist(lapply(seq_len(n_blocks), function(b) {
+    sample(stimulus_info$stimulus, n_stim, replace = FALSE)
+  }))
+  tibble(
+    trial_within_subject = seq_along(sequence),
+    block                = rep(seq_len(n_blocks), each = n_stim),
+    stimulus_id          = sequence
+  ) |>
+    left_join(stimulus_info, by = c("stimulus_id" = "stimulus")) |>
+    rename(category_feedback = category_true) |>
+    dplyr::select(trial_within_subject, block, stimulus_id,
+                  height, position, category_feedback)
+}
+
+plan(multisession, workers = max(1, availableCores() - 1))
+```
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chapters 11 and 12 implemented similarity-based accounts of categorization:
+> the GCM stores individual exemplars and decides by summed similarity, while
+> the Kalman filter prototype model tracks running category averages. Both
+> update continuously. This chapter takes a third route: **rule-based
+> categorization**, where learners maintain and update discrete hypotheses about
+> which logical criterion defines the category boundary. We implement this using
+> a Bayesian particle filter — itself a sequential Monte Carlo method that
+> maintains a weighted distribution over candidate rules. Because the rule space
+> is discrete and combinatorial, **Stan cannot be used for the particle filter
+> itself**: HMC requires a continuous, differentiable log-density, which a
+> distribution over discrete symbolic rules does not provide. We explain this
+> architectural constraint explicitly and then introduce a complementary Stan
+> model — a marginalized mixture over a fixed candidate rule set — that *can* be
+> fitted with HMC and validated with the full six-phase pipeline.
+
+# Rule-Based Models of Categorization
+
+## Theoretical Foundations
+
+In the previous chapters, we explored models based on similarity. Exemplar models compute similarity to stored instances, while prototype models compute similarity to category averages. However, humans sometimes categorize using explicit criteria or rules. Think about definitions like "a square is a shape with four equal sides and four right angles" or simple diagnostic rules like "if the animal has feathers, it's a bird."
+
+Rule-based models propose that categorization often involves learning and applying such explicit rules that define category membership by partitioning the feature space.
+
+### Core Assumptions of Rule-Based Models
+
+1. **Explicit Rules**: Categories are represented by rules specifying conditions for membership (e.g., "Height > 2.5 AND Position < 3.0").
+
+2. **Rule Testing**: Learning involves generating, testing, weighting and refining candidate rules based on feedback.
+
+3. **Selective Attention**: Rules typically focus attention on specific, relevant features mentioned in the rule, ignoring irrelevant ones.
+
+4. **Deterministic Boundaries**: Simple rules often create sharp, axis-aligned boundaries in the feature space.
+
+5. **Verbal Representation**: Rules are often easily verbalizable (e.g., "If height > 2.5, then Category A"), and might actually become easier to learn and represent through verbalization.
+
+### Rules vs. Similarity-Based Approaches
+
+The distinction between rule-based and similarity-based approaches lies not just in the computational details, but in fundamental assumptions about how the mind represents categories:
+
+| Aspect | Rule-Based Models | Similarity-Based Models |
+|--------|------------------|------------------------|
+| **Representation** | Explicit decision criteria | Stored examples or prototypes |
+| **Decision Process** | Rule application | Similarity computation |
+| **Feature Use** | Selective (focus on rule-relevant features) | Holistic (all features might contribute) |
+| **Category Boundaries** | Sharp and often axis-aligned | Fuzzy and sensitive to overall similarity |
+| **Individual Differences** | Different rules | Different attention weights |
+| **Generalization Pattern** | Rectangle-like regions | Similarity-gradient regions |
+
+### Representing and Evaluating Rules
+
+How can we represent a rule computationally? For our 2D stimuli (height, position), a simple rule might involve one or both dimensions and a threshold.
+
+Example Rule: "If Height > 3.5, then predict Category 1, otherwise Category 0."
+
+We can represent this rule in R as a list:
+
+```{r, 13 rule representation}
+# Example: a simple 1D rule
+rule_example_1d <- list(
+  dimensions        = 1,
+  thresholds        = 3.5,
+  operations        = ">",
+  prediction_if_true = 1
+)
+
+# Example: a 2D rule (Height > 2 AND Position < 3 => Cat 0)
+rule_example_2d <- list(
+  dimensions        = c(1, 2),
+  thresholds        = c(2.0, 3.0),
+  operations        = c(">", "<"),
+  logic             = "AND",
+  prediction_if_true = 0
+)
+```
+
+Now, a function to evaluate a given rule against a stimulus:
+
+```{r, 13 evaluate rule}
+# Evaluate a rule for a given stimulus.
+# Returns the category prediction (0 or 1).
+evaluate_rule <- function(rule, stimulus) {
+
+  eval_cond <- function(dim_idx, thresh, op) {
+    switch(op,
+           ">" = stimulus[dim_idx] > thresh,
+           "<" = stimulus[dim_idx] < thresh,
+           stop("Invalid operation in rule"))
+  }
+
+  if (length(rule$dimensions) == 1) {
+    condition_met <- eval_cond(rule$dimensions[1], rule$thresholds[1], rule$operations[1])
+
+  } else if (length(rule$dimensions) == 2) {
+    c1 <- eval_cond(rule$dimensions[1], rule$thresholds[1], rule$operations[1])
+    c2 <- eval_cond(rule$dimensions[2], rule$thresholds[2], rule$operations[2])
+    condition_met <- if (rule$logic == "AND") c1 & c2
+                     else if (rule$logic == "OR") c1 | c2
+                     else stop("Invalid logic in 2D rule")
+  } else {
+    stop("Rule dimension count not supported (only 1 or 2)")
+  }
+
+  ifelse(condition_met, rule$prediction_if_true, 1L - rule$prediction_if_true)
+}
+
+# --- Test ---
+test_stimulus <- c(2.5, 3.8)
+cat("Rule 1 Prediction:", evaluate_rule(rule_example_1d, test_stimulus),
+    "(Expected: 0 — Height 2.5 is not > 3.5)\n")
+cat("Rule 2 Prediction:", evaluate_rule(rule_example_2d, test_stimulus),
+    "(Expected: 1 — Height > 2 TRUE, Position < 3 FALSE; AND => FALSE => predicts 1)\n")
+```
+
+---
+
+## The Challenge: Searching the Space of Rules
+
+Evaluating a given rule is easy. The hard part of rule-based learning is finding the right rule. The number of possible rules (combinations of dimensions, thresholds, operations, logic) is vast. How can a learner efficiently search this space?
+
+Unlike exemplar and prototype models, where the representation is straightforward, rule-based models need mechanisms for:
+
+1. Generating candidate rules
+2. Testing rules against observed data
+3. Switching between rules when necessary
+4. Maintaining uncertainty about which rule is correct
+
+---
+
+## The Bayesian Particle Filter: Tracking Rule Hypotheses
+
+The Bayesian particle filter provides an elegant solution to these challenges. Originally developed for tracking physical objects, particle filters have been adapted to model how humans track and update hypotheses. In our context, each "particle" represents a possible categorization rule, and the filter maintains and updates a distribution over these rules.
+
+The core idea:
+
+1. **Particles = Rules**: Each particle is a specific candidate rule.
+
+2. **Weights = Belief**: Each particle has a weight $w_i$ representing the probability that this specific rule is the "true" rule. Initially, all weights are equal ($1/N$).
+
+3. **Update Weights**: When a new stimulus and its correct category are observed, we update the weights. Rules that correctly predict the category get their weights increased; rules that predict incorrectly get their weights decreased. The amount of change depends on how likely the observation was under that rule.
+
+4. **Resample**: Over time, many particles accumulate near-zero weight ("particle degeneracy"). To focus computational effort, we periodically resample: draw $N$ new particles with probability proportional to their weights. High-weight particles are likely to be selected multiple times; low-weight particles are likely to be dropped. After resampling, weights are reset to $1/N$.
+
+### Why the Particle Filter Cannot Live in Stan
+
+Before implementing, it is worth explaining a constraint that distinguishes this chapter from Chapters 11 and 12: **the particle filter itself cannot be implemented in Stan**.
+
+Stan's HMC sampler requires a continuous, differentiable log posterior density. Individual rule particles are discrete, symbolic structures — lists containing integers, operators, and real-valued thresholds. The *space* of all possible rules is a combinatorial set of structured objects: there is no natural notion of a gradient with respect to "which logical operator appears in condition 1" or "which dimension is used." This is exactly the class of discrete latent variables that must be integrated out analytically before any Stan code is written (the same principle we applied to mixture components in Chapter 8).
+
+For the particle filter, this analytical marginalization is not feasible in closed form over a combinatorial rule space: the set of possible rules is large, their interactions non-trivial, and no conjugate structure simplifies the integral. The particle filter therefore lives entirely in R, where it acts as its own approximate Bayesian inference engine via sequential Monte Carlo. This is a legitimate and well-studied approach — it is just not HMC.
+
+Later in this chapter we introduce a *complementary* Stan model: a marginalized mixture over a **fixed, enumerated** set of candidate rules. This model *can* be fitted with HMC (discrete rules are enumerated and marginalized analytically, leaving only a single continuous parameter to sample), and it admits the full validation pipeline. The two models serve different purposes: the particle filter models the dynamic learning *process*; the Stan mixture model estimates population-level noise parameters and supports rigorous LOO model comparison.
+
+### Step 1: Generating Initial Rule Particles
+
+```{r, 13 generate rules}
+# Generate a single random rule.
+generate_random_rule <- function(n_features,
+                                 max_dims     = 2,
+                                 feature_range = list(c(0, 5), c(0, 5))) {
+  num_dims   <- sample(seq_len(max_dims), 1)
+  dims_used  <- sort(sample(seq_len(n_features), size = num_dims, replace = FALSE))
+
+  thresholds <- numeric(num_dims)
+  operations <- character(num_dims)
+  for (k in seq_len(num_dims)) {
+    di           <- dims_used[k]
+    thresholds[k] <- runif(1, feature_range[[di]][1], feature_range[[di]][2])
+    operations[k] <- sample(c(">", "<"), 1)
+  }
+
+  list(
+    dimensions        = dims_used,
+    thresholds        = thresholds,
+    operations        = operations,
+    logic             = if (num_dims == 2) sample(c("AND", "OR"), 1) else NA,
+    prediction_if_true = sample(0:1, 1)
+  )
+}
+
+# Initialize N particles with equal weights.
+initialize_particles <- function(n_particles, n_features,
+                                  max_dims = 2,
+                                  feature_range = list(c(0, 5), c(0, 5))) {
+  particles <- vector("list", n_particles)
+  for (i in seq_len(n_particles))
+    particles[[i]] <- generate_random_rule(n_features, max_dims, feature_range)
+  list(particles = particles, weights = rep(1 / n_particles, n_particles))
+}
+
+# --- Example ---
+n_particles_example <- 5
+n_features_example  <- 2
+initial_system <- initialize_particles(n_particles_example, n_features_example)
+cat(paste("Initialized", n_particles_example, "particles. Example rule 1:\n"))
+print(initial_system$particles[[1]])
+cat("Initial weights:", initial_system$weights, "\n")
+```
+
+### Step 2: Updating Particle Weights
+
+When we observe a stimulus $\vec{x}$ and its true category $y$, we update weight $w_i$ for each particle $i$. We introduce a small $\varepsilon$ (`error_prob`) to allow for occasional noise or misapplication:
+
+$$P(y \mid \vec{x}, \text{rule}_i) = \begin{cases} 1 - \varepsilon & \text{if rule}_i \text{ predicts } y \\ \varepsilon & \text{otherwise} \end{cases}$$
+
+The updated weight is $w_i' \propto w_i \times P(y \mid \vec{x}, \text{rule}_i)$, then renormalized.
+
+```{r, 13 update weights}
+update_weights <- function(particles, weights, stimulus, true_category,
+                           error_prob = 0.05) {
+  n <- length(particles)
+  new_w <- numeric(n)
+  for (i in seq_len(n)) {
+    pred      <- evaluate_rule(particles[[i]], stimulus)
+    likelihood <- if (pred == true_category) 1 - error_prob else error_prob
+    new_w[i]  <- weights[i] * likelihood
+  }
+  total <- sum(new_w)
+  if (total > 1e-9) new_w / total else rep(1 / n, n)
+}
+
+# --- Example ---
+cat("\n--- Example Weight Update ---\n")
+updated_w <- update_weights(
+  initial_system$particles, initial_system$weights,
+  stimulus = c(4, 3), true_category = 1, error_prob = 0.1
+)
+preds <- sapply(initial_system$particles, evaluate_rule, stimulus = c(4, 3))
+cat("Rule predictions for stimulus [4, 3]:", preds, "\n")
+cat("Weights BEFORE:", round(initial_system$weights, 3), "\n")
+cat("Weights AFTER: ", round(updated_w, 3), "\n")
+```
+
+### Step 3: Resampling Particles
+
+If we only update weights, eventually most weights become near zero and only a few particles dominate — **particle degeneracy**. Resampling revitalizes the particle set by drawing $N$ new particles with probability proportional to weights, then resetting all weights to $1/N$.
+
+A common heuristic is to resample when the **Effective Sample Size** (ESS) drops below a threshold (e.g., $N/2$). ESS is estimated as $1 / \sum_i w_i^2$. Low ESS indicates high degeneracy.
+
+> **A note on ESS here vs. ESS in MCMC diagnostics.** ESS appears in two distinct
+> contexts in this module. In Chapters 4–10 it measures how many effectively
+> independent posterior draws an MCMC chain produces. Here it measures how many
+> particles are effectively contributing to the filter's approximation, given
+> their weights. Both are measures of statistical efficiency under a sampling
+> procedure; the underlying intuition is the same but the contexts are different.
+
+```{r, 13 resample particles}
+resample_particles <- function(particles, weights) {
+  n          <- length(particles)
+  idx        <- sample.int(n, size = n, replace = TRUE, prob = weights)
+  new_p      <- particles[idx]
+  new_w      <- rep(1 / n, n)
+  list(particles = new_p, weights = new_w)
+}
+
+# --- Example ---
+cat("\n--- Example Resampling ---\n")
+skewed_w <- c(0.01, 0.60, 0.02, 0.35, 0.02)
+cat("Weights BEFORE resampling:", skewed_w, "\n")
+rs <- resample_particles(initial_system$particles, skewed_w)
+cat("Weights AFTER resampling: ", rs$weights, "\n")
+```
+
+### Step 4: Making Predictions
+
+The particle filter makes a categorization decision for a new stimulus $\vec{x}$ via a weighted vote across all particles:
+
+$$P(\text{Choose Cat 1} \mid \vec{x}) = \sum_{i=1}^{N} w_i \times P(\text{Cat 1} \mid \vec{x}, \text{rule}_i)$$
+
+where $P(\text{Cat 1} \mid \vec{x}, \text{rule}_i) = 1 - \varepsilon$ if rule $i$ predicts category 1, and $\varepsilon$ otherwise.
+
+### Putting it Together: The Particle Filter Agent
+
+```{r, 13 particle filter agent}
+# Full particle filter agent.
+# Returns a tibble of prob_cat1 and sim_response for each trial.
+rule_particle_filter <- function(n_particles,
+                                 error_prob,
+                                 obs,
+                                 cat_one,
+                                 max_dims                  = 2,
+                                 resample_threshold_factor = 0.5,
+                                 quiet                     = TRUE) {
+  n_trials   <- nrow(obs)
+  n_features <- ncol(obs)
+  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+
+  ps       <- initialize_particles(n_particles, n_features, max_dims, fr)
+  particles <- ps$particles
+  weights   <- ps$weights
+
+  response_probs <- numeric(n_trials)
+
+  for (i in seq_len(n_trials)) {
+    if (!quiet && i %% 20 == 0) cat("Trial", i, "\n")
+
+    stim <- as.numeric(obs[i, ])
+
+    # ── Prediction ────────────────────────────────────────────────────────────
+    preds        <- sapply(particles, evaluate_rule, stimulus = stim)
+    p_cat1_rules <- ifelse(preds == 1, 1 - error_prob, error_prob)
+    p            <- sum(weights * p_cat1_rules)
+    response_probs[i] <- pmax(1e-9, pmin(1 - 1e-9, p))
+
+    # ── Weight update ─────────────────────────────────────────────────────────
+    weights <- update_weights(particles, weights, stim, cat_one[i], error_prob)
+
+    # ── Resample if ESS is low ────────────────────────────────────────────────
+    ess <- 1 / sum(weights^2)
+    if (ess < n_particles * resample_threshold_factor) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+
+  tibble(prob_cat1 = response_probs,
+         sim_response = rbinom(n_trials, 1, response_probs))
+}
+
+cat("Particle filter agent function defined.\n")
+```
+
+This implementation captures the core cognitive processes hypothesized by rule-based models: hypothesis generation, testing against evidence, belief updating, and adaptive focusing of the hypothesis set.
+
+---
+
+## Simulating Categorization Behavior
+
+Let's simulate how this rule-based model performs on the Kruschke (1993) task. Each agent receives its **own independently randomized stimulus order**, consistent with the path-dependence design from Chapters 11 and 12.
+
+```{r, 13 simulate rule responses}
+# Wrapper: generates per-agent schedule then calls rule_particle_filter.
+simulate_rule_agent <- function(agent_id, n_particles, max_dims, error_prob,
+                                stimulus_info, n_blocks, subject_seed) {
+  schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  obs      <- as.matrix(schedule[, c("height", "position")])
+  cat_one  <- schedule$category_feedback
+
+  result <- rule_particle_filter(
+    n_particles               = n_particles,
+    error_prob                = error_prob,
+    obs                       = obs,
+    cat_one                   = cat_one,
+    max_dims                  = max_dims,
+    resample_threshold_factor = 0.5,
+    quiet                     = TRUE
+  )
+
+  schedule |>
+    mutate(
+      agent_id    = agent_id,
+      n_particles = n_particles,
+      max_dims    = max_dims,
+      error_prob  = error_prob,
+      prob_cat1   = result$prob_cat1,
+      sim_response = result$sim_response,
+      correct     = as.integer(category_feedback == sim_response)
+    ) |>
+    group_by(agent_id, n_particles, max_dims, error_prob) |>
+    mutate(performance = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+
+param_df_rules <- expand_grid(
+  agent_id    = 1:10,
+  n_particles = c(50, 200),
+  max_dims    = c(1, 2),
+  error_prob  = c(0.05, 0.2)
+) |>
+  mutate(subject_seed = agent_id)   # unique, reproducible seed per agent
+
+rule_sim_file <- file.path("simdata", "W13_rule_simulated_responses.csv")
+
+if (regenerate_simulations || !file.exists(rule_sim_file)) {
+  cat("Regenerating rule-based simulations...\n")
+  rule_responses <- future_pmap_dfr(
+    list(
+      agent_id    = param_df_rules$agent_id,
+      n_particles = param_df_rules$n_particles,
+      max_dims    = param_df_rules$max_dims,
+      error_prob  = param_df_rules$error_prob,
+      subject_seed = param_df_rules$subject_seed
+    ),
+    simulate_rule_agent,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    .options = furrr_options(seed = TRUE)
+  )
+  write_csv(rule_responses, rule_sim_file)
+  cat("Simulations saved.\n")
+} else {
+  rule_responses <- read_csv(rule_sim_file, show_col_types = FALSE)
+  cat("Simulations loaded.\n")
+}
+
+ggplot(rule_responses,
+       aes(x = trial_within_subject, y = performance,
+           color = factor(n_particles))) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.15,
+               aes(fill = factor(n_particles)), linetype = 0) +
+  facet_grid(
+    max_dims ~ error_prob,
+    labeller = labeller(
+      max_dims   = function(x) paste("Max Dims:", x),
+      error_prob = function(x) paste("Error Prob:", x)
+    )
+  ) +
+  scale_color_viridis_d(option = "plasma", name = "N Particles") +
+  scale_fill_viridis_d(option = "plasma", name = "N Particles") +
+  labs(
+    title    = "Rule-Based Model Learning Performance",
+    subtitle = "Facets show effect of max rule dimensions and error probability",
+    x = "Trial", y = "Cumulative Accuracy (Mean ± SE)"
+  ) +
+  ylim(0.4, 1.0)
+```
+
+**Simulation Interpretation**: This visualization shows how model performance is affected by:
+
+* **Number of Particles**: More particles allow better exploration of the rule space, potentially leading to faster learning or higher final accuracy, though gains may diminish.
+* **Maximum Rule Dimensions**: Allowing 2D rules (`max_dims = 2`) may be necessary if the true category boundary requires integrating information across dimensions.
+* **Error Probability**: A higher `error_prob` makes the model more tolerant of imperfect rules, which can be helpful in noisy environments but may prevent convergence on a precise rule if one exists.
+
+### Visualizing Rule Learning Over Time
+
+A key feature of rule-based models is the explicit nature of the hypotheses. We can track which rules the particle filter believes are most likely at different points during learning.
+
+```{r, 13 track rule learning}
+track_rule_learning <- function(n_particles, error_prob, obs, cat_one,
+                                max_dims                  = 2,
+                                top_k                     = 1,
+                                resample_threshold_factor = 0.5) {
+  n_trials  <- nrow(obs)
+  n_features <- ncol(obs)
+  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+
+  ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
+  particles <- ps$particles
+  weights   <- ps$weights
+
+  format_rule_info <- function(rule) {
+    list(
+      dimension1  = if (length(rule$dimensions) >= 1) rule$dimensions[1] else NA_integer_,
+      operation1  = if (length(rule$operations)  >= 1) rule$operations[1]  else NA_character_,
+      threshold1  = if (length(rule$thresholds)  >= 1) rule$thresholds[1]  else NA_real_,
+      dimension2  = if (length(rule$dimensions) >= 2) rule$dimensions[2] else NA_integer_,
+      operation2  = if (length(rule$operations)  >= 2) rule$operations[2]  else NA_character_,
+      threshold2  = if (length(rule$thresholds)  >= 2) rule$thresholds[2]  else NA_real_,
+      logic       = if (!is.na(rule$logic)) rule$logic else "N/A",
+      prediction  = rule$prediction_if_true
+    )
+  }
+
+  history <- vector("list", n_trials)
+  for (i in seq_len(n_trials)) {
+    stim <- as.numeric(obs[i, ])
+    top_idx <- order(weights, decreasing = TRUE)[seq_len(min(top_k, n_particles))]
+    history[[i]] <- map_dfr(top_idx, ~{
+      tibble(trial = i, rank = which(top_idx == .x),
+             weight = weights[.x], !!!format_rule_info(particles[[.x]]))
+    })
+
+    weights <- update_weights(particles, weights, stim, cat_one[i], error_prob)
+    ess     <- 1 / sum(weights^2)
+    if (ess < n_particles * resample_threshold_factor) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+  bind_rows(history)
+}
+
+# Run tracking with a fixed seed-1 schedule for reproducibility
+track_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 1)
+
+rule_tracking_data <- track_rule_learning(
+  n_particles = 100,
+  error_prob  = 0.1,
+  obs         = as.matrix(track_schedule[, c("height", "position")]),
+  cat_one     = track_schedule$category_feedback,
+  max_dims    = 2,
+  top_k       = 1
+)
+
+# Format rule text for plotting
+rule_to_text <- function(rule_row) {
+  dim_names <- c("Height", "Position")
+  if (is.na(rule_row$dimension2)) {
+    sprintf("IF %s %s %.1f THEN Cat %d",
+            dim_names[rule_row$dimension1], rule_row$operation1,
+            rule_row$threshold1, rule_row$prediction)
+  } else {
+    sprintf("IF %s %s %.1f %s %s %s %.1f THEN Cat %d",
+            dim_names[rule_row$dimension1], rule_row$operation1, rule_row$threshold1,
+            rule_row$logic,
+            dim_names[rule_row$dimension2], rule_row$operation2, rule_row$threshold2,
+            rule_row$prediction)
+  }
+}
+
+rule_tracking_plot_data <- rule_tracking_data |>
+  filter(rank == 1) |>
+  rowwise() |>
+  mutate(rule_text = rule_to_text(cur_data())) |>
+  ungroup() |>
+  mutate(rule_block = consecutive_id(rule_text))
+
+ggplot(rule_tracking_plot_data, aes(x = trial, y = weight)) +
+  geom_line(aes(group = 1), color = "#0072B2") +
+  geom_point(color = "#0072B2", size = 1.5) +
+  geom_text(
+    data = rule_tracking_plot_data |> distinct(rule_block, .keep_all = TRUE),
+    aes(label = rule_text),
+    hjust = 0, vjust = -0.5, size = 3, check_overlap = TRUE
+  ) +
+  scale_y_continuous(limits = c(0, 1), name = "Weight (Probability) of Top Rule") +
+  scale_x_continuous(limits = c(0, total_trials + 5)) +
+  labs(
+    title    = "Evolution of the Top Rule Hypothesis Over Time",
+    subtitle = "Line shows the probability assigned to the single best rule at each trial.",
+    x = "Trial"
+  )
+```
+
+**Rule Evolution Interpretation**: This plot shows how the model's belief (weight) in its single best rule hypothesis changes over trials. Periods of high weight indicate the model has converged on a dominant rule; sharp drops followed by a new label indicate a hypothesis switch as the previous rule accumulated too many prediction errors.
+
+### Visualizing the Decision Boundary
+
+Rule-based models typically create axis-aligned, rectangular decision boundaries. Let's visualize the boundary created by the final, most probable rule found by the particle filter.
+
+```{r, 13 decision boundary}
+get_final_rule_predictions <- function(n_particles, error_prob,
+                                       obs_train, cat_one_train,
+                                       grid_points, max_dims = 2) {
+  n_features <- ncol(obs_train)
+  fr         <- list(range(obs_train[, 1]), range(obs_train[, 2]))
+
+  ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
+  particles <- ps$particles
+  weights   <- ps$weights
+
+  for (i in seq_len(nrow(obs_train))) {
+    stim    <- as.numeric(obs_train[i, ])
+    weights <- update_weights(particles, weights, stim, cat_one_train[i], error_prob)
+    ess     <- 1 / sum(weights^2)
+    if (ess < n_particles * 0.5) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+
+  apply(as.matrix(grid_points), 1, function(pt) {
+    preds <- sapply(particles, evaluate_rule, stimulus = pt)
+    sum(weights * ifelse(preds == 1, 1 - error_prob, error_prob))
+  })
+}
+
+grid_pts <- expand.grid(
+  height   = seq(min(stimulus_info$height)   - 0.5,
+                 max(stimulus_info$height)   + 0.5, length.out = 50),
+  position = seq(min(stimulus_info$position) - 0.5,
+                 max(stimulus_info$position) + 0.5, length.out = 50)
+)
+
+# Use the same track_schedule for boundary visualization
+boundary_preds <- get_final_rule_predictions(
+  n_particles   = 200,
+  error_prob    = 0.1,
+  obs_train     = as.matrix(track_schedule[, c("height", "position")]),
+  cat_one_train = track_schedule$category_feedback,
+  grid_points   = grid_pts[, c("height", "position")],
+  max_dims      = 2
+)
+
+grid_decision_data <- grid_pts |>
+  mutate(
+    rule_prob_cat1 = boundary_preds,
+    rule_decision  = as.integer(rule_prob_cat1 > 0.5)
+  )
+
+ggplot() +
+  geom_tile(data = grid_decision_data,
+            aes(x = position, y = height, fill = factor(rule_decision)),
+            alpha = 0.4) +
+  stat_contour(data = grid_decision_data,
+               aes(x = position, y = height, z = rule_prob_cat1),
+               breaks = 0.5, color = "black", linewidth = 0.8) +
+  geom_point(data = stimulus_info,
+             aes(x = position, y = height,
+                 color = factor(category_true), shape = factor(category_true)),
+             size = 3) +
+  scale_fill_manual(values  = c("0" = "#E69F00", "1" = "#56B4E9"),
+                    name    = "Predicted Cat") +
+  scale_color_manual(values = c("0" = "#0072B2", "1" = "#D55E00"),
+                     name    = "True Category") +
+  scale_shape_manual(values = c("0" = 16, "1" = 17), name = "True Category") +
+  labs(
+    title    = "Rule-Based Model Decision Boundary (Particle Filter)",
+    subtitle = "Weighted average of final particle set (N=200, error=0.1)",
+    x = "Position Feature", y = "Height Feature"
+  ) +
+  coord_cartesian(
+    xlim = range(grid_decision_data$position),
+    ylim = range(grid_decision_data$height)
+  )
+```
+
+**Boundary Interpretation**: The background color shows the predicted category for each point in the feature space, based on the weighted vote of the final rule particles. The black contour marks the 50% threshold. Notice the characteristic axis-aligned, rectangular character of the boundary regions — a direct consequence of the threshold-based rule structure — in contrast to the smooth, curved boundaries that would emerge from similarity-based models.
+
+---
+
+## Beyond Selection: Enhancing the Particle Filter for Rule Discovery
+
+The Bayesian particle filter, as implemented above, provides a powerful framework for modeling how learners evaluate competing rule hypotheses. By maintaining a weighted set of particles and using resampling, it efficiently focuses on rules that best explain observed data.
+
+However, a critical point: the basic filter primarily acts as a **rule selection** mechanism rather than a **rule generation** engine. It excels at identifying the most promising rules from an *initially provided set*. If the truly optimal rule is complex or unusual and not present in the initial random pool, the basic resampling step (which only duplicates existing rules) cannot discover it. 
+
+To create a model that more actively explores and discovers better rules during learning, the basic particle filter can be augmented with additional mechanisms:
+
+1. **Mutation/Perturbation**: Introduce small, random variations to rules after resampling — slightly adjust a threshold, flip a comparison operator, or change the dimension used in a condition. This allows fine-tuning and local exploration around currently successful rules.
+
+2. **Recombination/Crossover**: Combine elements from two successful "parent" rules to create new "child" rules — for example, the first condition of Parent A with the second condition of Parent B. This allows synthesizing features discovered independently by different rules.
+
+3. **Targeted Rule Generation**: Generate new rules specifically designed to address stimuli consistently misclassified by the current particle set, or focus on features prevalent in high-weight rules.
+
+4. **Complexity Adjustment**: Probabilistically add a condition to a successful 1D rule to explore whether a 2D rule performs better, or simplify a poorly performing 2D rule into its constituent 1D components.
+
+Incorporating such exploration mechanisms transforms the particle filter from a pure selection device into a more adaptive **rule discovery system** capable of generating and testing rules that were not part of the initial random set. We do not implement these extensions here, but they represent a natural direction for more cognitively realistic models of rule learning.
+
+---
+
+## The Stan Rule Model: Marginalizing Over a Fixed Candidate Set
+
+### Why a separate Stan model?
+
+The particle filter cannot be directly validated with SBC or LOO because it is not a probabilistic Stan model — it is a self-contained sequential Monte Carlo algorithm. To apply the full validation pipeline and produce calibrated posterior estimates and LOO scores for model comparison in Chapter 15, we need a Stan model.
+
+The approach: **enumerate a fixed set of candidate rules and marginalize over them analytically**. This is identical in structure to the finite mixture models of Chapter 8, where discrete latent variables (mixture components) were summed out before any Stan code was written. Here the discrete latent variable is "which rule is the agent following." The marginalized likelihood for trial $i$ is:
+
+$$p(y_i \mid x_i, \varepsilon) = \sum_{r=1}^{R} p(\text{rule} = r) \cdot p(y_i \mid x_i, \text{rule}_r, \varepsilon)$$
+
+with a uniform prior over rules $p(\text{rule} = r) = 1/R$, implemented with `log_sum_exp` in Stan. Only the single continuous parameter $\varepsilon$ needs to be sampled.
+
+We parameterize $\varepsilon$ on the logit scale — $\text{logit}(\varepsilon) \sim \text{Normal}(-2, 1)$ — which is unconstrained, avoids the boundary artifacts that afflict bounded parameters in HMC, and places prior mass primarily on low error rates (prior median $\varepsilon \approx 0.12$). This is the same philosophy as `log_c` in Chapter 11.
+
+The fixed rule set is chosen to cover the main boundary structures visible in the Kruschke stimulus layout. For fitting to real data, this set would be expanded to cover all relevant candidate rules for that task. Adding rules costs nothing at inference time (they are summed out analytically) but increases the model's expressive power.
+
+### Prior Predictive Check
+
+Before fitting any data we verify that the prior on `logit_error_prob` generates only scientifically plausible categorization curves:
+
+```{r, 13 prior predictive check}
+n_ppc_samples <- 500
+set.seed(42)
+
+ppc_logit_eps <- rnorm(n_ppc_samples, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+ppc_eps       <- plogis(ppc_logit_eps)
+ppc_sched     <- make_subject_schedule(stimulus_info, n_blocks, seed = 999)
+
+prior_pred_curves <- map_dfr(seq_len(n_ppc_samples), function(s) {
+  sim <- rule_particle_filter(
+    n_particles = 50,
+    error_prob  = ppc_eps[s],
+    obs         = as.matrix(ppc_sched[, c("height", "position")]),
+    cat_one     = ppc_sched$category_feedback,
+    max_dims    = 2,
+    quiet       = TRUE
+  )
+  tibble(
+    sample_id = s,
+    trial     = seq_len(nrow(ppc_sched)),
+    correct   = as.integer(sim$sim_response == ppc_sched$category_feedback)
+  ) |>
+    mutate(cum_acc = cumsum(correct) / row_number())
+})
+
+ppc_summary <- prior_pred_curves |>
+  group_by(trial) |>
+  summarise(
+    q05 = quantile(cum_acc, 0.05), q25 = quantile(cum_acc, 0.25),
+    q50 = median(cum_acc),
+    q75 = quantile(cum_acc, 0.75), q95 = quantile(cum_acc, 0.95),
+    .groups = "drop"
+  )
+
+ggplot(ppc_summary, aes(x = trial)) +
+  geom_ribbon(aes(ymin = q05, ymax = q95), fill = "#E69F00", alpha = 0.20) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#E69F00", alpha = 0.40) +
+  geom_line(aes(y = q50), color = "#B07D00", linewidth = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title    = "Prior Predictive Check: Rule-Based Model",
+    subtitle = "Ribbons: 50% and 90% prior predictive intervals\nPrior: logit(error_prob) ~ Normal(-2, 1)",
+    x = "Trial", y = "Cumulative Accuracy"
+  )
+```
+
+The prior predictive envelope ranges from near-chance performance (high `error_prob` draws, rules provide little signal) to near-perfect accuracy (low `error_prob` draws, rules are applied cleanly). No draws produce systematically below-chance behavior — the prior does not imply impossible or absurd behavior.
+
+### Stan Model
+
+```{r, 13 stan rule model}
+rule_simplified_stan <- "
+// Rule-Based Model: Marginalized Mixture over Fixed Candidate Rules
+// Architecture (identical in principle to Ch. 8 mixture models):
+//   - Discrete latent variable = which rule the agent follows
+//   - Marginalized analytically with log_sum_exp over a fixed rule set
+//   - Only continuous parameter: logit_error_prob (unconstrained)
+//   - error_prob = inv_logit(logit_error_prob)
+//
+// No sequential learning in this model: it treats all trials as conditionally
+// exchangeable given error_prob and the rule mixture. This is a structural
+// simplification relative to the particle filter — the filter models the
+// dynamic learning process; this model estimates the noise parameter that
+// best explains the final (or average) choice pattern.
+//
+// Adding more candidate rules costs nothing at inference time (they are summed
+// out), but increases expressive power. The 5 rules below cover the main
+// decision structures visible in the Kruschke stimulus layout.
+
+data {
+  int<lower=1> ntrials;
+  int<lower=1> nfeatures;                       // must be 2 for this rule set
+  array[ntrials] int<lower=0, upper=1> y;       // observed choices
+  array[ntrials, nfeatures] real obs;           // obs[,1]=Height, obs[,2]=Position
+
+  // Prior hyperparameters (passed as data for transparency)
+  real prior_logit_error_mean;
+  real<lower=0> prior_logit_error_sd;
+}
+
+parameters {
+  real logit_error_prob;   // unconstrained; error_prob = inv_logit(logit_error_prob)
+}
+
+transformed parameters {
+  real<lower=0, upper=1> error_prob = inv_logit(logit_error_prob);
+}
+
+model {
+  target += normal_lpdf(logit_error_prob | prior_logit_error_mean, prior_logit_error_sd);
+
+  for (i in 1:ntrials) {
+    real h = obs[i, 1];   // height
+    real p = obs[i, 2];   // position
+
+    // ── Fixed candidate rule predictions ─────────────────────────────────────
+    // Rule 1: Height > 2.5 => Cat 1
+    int pred1 = h > 2.5 ? 1 : 0;
+    // Rule 2: Position < 2.5 => Cat 1
+    int pred2 = p < 2.5 ? 1 : 0;
+    // Rule 3: Height > 2.0 AND Position > 3.0 => Cat 1
+    int pred3 = (h > 2.0 && p > 3.0) ? 1 : 0;
+    // Rule 4: Height < 2.0 OR Position < 2.0 => Cat 0 (i.e., NOT either extreme)
+    int pred4 = (h < 2.0 || p < 2.0) ? 0 : 1;
+    // Rule 5: Height > 2.5 AND Position < 3.5 => Cat 1
+    int pred5 = (h > 2.5 && p < 3.5) ? 1 : 0;
+
+    int R = 5;   // number of candidate rules (equal prior weight: log(1/R))
+
+    // ── Marginalized likelihood: log_sum_exp over all rules ──────────────────
+    vector[R] lp;
+    lp[1] = bernoulli_lpmf(y[i] | pred1 == 1 ? 1 - error_prob : error_prob);
+    lp[2] = bernoulli_lpmf(y[i] | pred2 == 1 ? 1 - error_prob : error_prob);
+    lp[3] = bernoulli_lpmf(y[i] | pred3 == 1 ? 1 - error_prob : error_prob);
+    lp[4] = bernoulli_lpmf(y[i] | pred4 == 1 ? 1 - error_prob : error_prob);
+    lp[5] = bernoulli_lpmf(y[i] | pred5 == 1 ? 1 - error_prob : error_prob);
+
+    target += log_sum_exp(lp) - log(R);
+  }
+}
+
+generated quantities {
+  // p[i] can be reconstructed from logit_error_prob and obs inside generated quantities
+  // without needing any sequential loop — unlike the GCM or Kalman filter.
+  // log_lik[i] simply re-evaluates the same marginalized likelihood expression.
+  vector[ntrials] log_lik;
+  for (i in 1:ntrials) {
+    real h = obs[i, 1];
+    real p = obs[i, 2];
+
+    int pred1 = h > 2.5 ? 1 : 0;
+    int pred2 = p < 2.5 ? 1 : 0;
+    int pred3 = (h > 2.0 && p > 3.0) ? 1 : 0;
+    int pred4 = (h < 2.0 || p < 2.0) ? 0 : 1;
+    int pred5 = (h > 2.5 && p < 3.5) ? 1 : 0;
+
+    vector[5] lp;
+    lp[1] = bernoulli_lpmf(y[i] | pred1 == 1 ? 1 - error_prob : error_prob);
+    lp[2] = bernoulli_lpmf(y[i] | pred2 == 1 ? 1 - error_prob : error_prob);
+    lp[3] = bernoulli_lpmf(y[i] | pred3 == 1 ? 1 - error_prob : error_prob);
+    lp[4] = bernoulli_lpmf(y[i] | pred4 == 1 ? 1 - error_prob : error_prob);
+    lp[5] = bernoulli_lpmf(y[i] | pred5 == 1 ? 1 - error_prob : error_prob);
+
+    log_lik[i] = log_sum_exp(lp) - log(5);
+  }
+}
+"
+
+stan_file_rule <- "stan/W13_rule_simplified.stan"
+write_stan_file(rule_simplified_stan, dir = "stan/",
+                basename = "W13_rule_simplified.stan")
+mod_rule_stan <- cmdstan_model(stan_file_rule)
+cat("Stan rule model compiled successfully.\n")
+```
+
+**Key aspects of the Stan implementation:**
+
+* **Parameters block**: A single scalar `logit_error_prob` (unconstrained). The constraint `error_prob ∈ (0,1)` is enforced implicitly by `inv_logit`.
+* **Model block**: Prior on `logit_error_prob` then the marginalized mixture likelihood — `log_sum_exp` over rule-specific Bernoulli log-likelihoods, minus `log(R)` for the uniform rule prior. This is exactly the pattern from Chapter 8's mixture models.
+* **Generated quantities**: `log_lik[i]` re-evaluates the same marginalized expression — no sequential state, no memory, just a closed-form sum. This is a genuine computational advantage of the fixed-rule-set approach.
+
+### Fitting the Stan Model
+
+```{r, 13 fit stan rule model}
+# Simulate responses from one particle filter agent to use as 'observed' data
+fit_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 42)
+fit_sim <- rule_particle_filter(
+  n_particles = 200,
+  error_prob  = 0.1,
+  obs         = as.matrix(fit_schedule[, c("height", "position")]),
+  cat_one     = fit_schedule$category_feedback,
+  max_dims    = 2,
+  quiet       = TRUE
+)
+
+rule_data_single <- list(
+  ntrials                 = nrow(fit_schedule),
+  nfeatures               = 2L,
+  y                       = as.integer(fit_sim$sim_response),
+  obs                     = as.matrix(fit_schedule[, c("height", "position")]),
+  prior_logit_error_mean  = LOGIT_ERROR_PRIOR_MEAN,
+  prior_logit_error_sd    = LOGIT_ERROR_PRIOR_SD
+)
+
+fit_filepath_rule <- "simmodels/W13_rule_single_fit.rds"
+if (regenerate_simulations) {
+  # Pathfinder initialization: the logit-error landscape can be multimodal
+  # when several rules provide similar fit, making stable initialization important
+  pf_rule <- mod_rule_stan$pathfinder(
+    data      = rule_data_single,
+    seed      = 42,
+    num_paths = 4,
+    refresh   = 0
+  )
+
+  fit_rule_stan <- mod_rule_stan$sample(
+    data            = rule_data_single,
+    init            = pf_rule,
+    seed            = 42,
+    chains          = 4,
+    parallel_chains = min(4, availableCores()),
+    iter_warmup     = 1000,
+    iter_sampling   = 1500,
+    refresh         = 300,
+    adapt_delta     = 0.9
+  )
+  fit_rule_stan$save_object(fit_filepath_rule)
+  cat("Stan rule model fitted and saved.\n")
+} else {
+  if (file.exists(fit_filepath_rule)) {
+    fit_rule_stan <- readRDS(fit_filepath_rule)
+    cat("Loaded existing Stan rule model fit.\n")
+  } else {
+    cat("Fit file not found. Set regenerate_simulations = TRUE.\n")
+    fit_rule_stan <- NULL
+  }
+}
+
+if (!is.null(fit_rule_stan)) {
+  fit_rule_stan$cmdstan_diagnose()
+  param_summary <- fit_rule_stan$summary(
+    variables = c("logit_error_prob", "error_prob")
+  )
+  print(param_summary)
+
+  draws_df <- as_draws_df(
+    fit_rule_stan$draws(variables = c("logit_error_prob", "error_prob"))
+  )
+
+  p_logit_eps <- ggplot(draws_df, aes(x = logit_error_prob)) +
+    geom_histogram(aes(y = after_stat(density)),
+                   fill = "#E69F00", alpha = 0.7, bins = 30) +
+    geom_vline(xintercept = qlogis(0.1), color = "red", linetype = "dashed") +
+    labs(title = "Posterior: logit(error_prob)",
+         subtitle = "Red: true logit(0.1) used for simulation")
+
+  p_eps <- ggplot(draws_df, aes(x = error_prob)) +
+    geom_histogram(aes(y = after_stat(density)),
+                   fill = "#56B4E9", alpha = 0.7, bins = 30) +
+    geom_vline(xintercept = 0.1, color = "red", linetype = "dashed") +
+    labs(title = "Posterior: error_prob (natural scale)",
+         subtitle = "Red: true value = 0.1")
+
+  print(p_logit_eps | p_eps)
+}
+```
+
+### LOO and the Exchangeability Caveat
+
+```{r, 13 loo rule}
+if (!is.null(fit_rule_stan)) {
+  log_lik_mat <- fit_rule_stan$draws("log_lik", format = "matrix")
+  loo_rule    <- loo::loo(log_lik_mat, cores = 4)
+  print(loo_rule)
+  plot(loo_rule, label_points = TRUE,
+       main = "PSIS-LOO Pareto-k: Stan Rule Model")
+}
+```
+
+> **⚠️ A different kind of exchangeability caveat for this model.** The GCM
+> and Kalman filter models in Chapters 11 and 12 are path-dependent: the
+> likelihood at trial $t$ depends on all previous trials through the memory or
+> filter state. The Stan rule model here is *not* path-dependent — all trials
+> are conditionally independent given `error_prob` and the rule mixture. For
+> this model, standard LOO-CV is technically valid, because leaving out trial
+> $t$ does not affect the likelihood of any other trial.
+>
+> However, there is a different concern: the fixed rule set was defined by
+> looking at the stimulus layout, which means the candidate rules are not
+> truly prior to the data in a strict epistemological sense. LOO scores for
+> this model should be interpreted as conditional on the chosen rule set,
+> not as absolute measures of predictive adequacy.
+
+### Prior Sensitivity Analysis
+
+```{r, 13 prior sensitivity}
+if (!is.null(fit_rule_stan)) {
+  ps <- priorsense::powerscale_sensitivity(fit_rule_stan)
+  print(ps)
+  priorsense::powerscale_plot_dens(ps, variables = c("logit_error_prob", "error_prob"))
+}
+```
+
+---
+
+## Parameter Recovery: Can We Retrieve error_prob?
+
+We test recovery systematically across the plausible range of `error_prob`, with multiple independent datasets per true value, each with its own randomized stimulus schedule.
+
+```{r, 13 parameter recovery}
+run_rule_recovery <- function(true_error_prob, iteration,
+                              stimulus_info, n_blocks) {
+  subject_seed <- iteration * 1000 + round(true_error_prob * 1000)
+  sched        <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+
+  sim <- rule_particle_filter(
+    n_particles = 150,
+    error_prob  = true_error_prob,
+    obs         = as.matrix(sched[, c("height", "position")]),
+    cat_one     = sched$category_feedback,
+    max_dims    = 2,
+    quiet       = TRUE
+  )
+
+  stan_dat <- list(
+    ntrials                = nrow(sched),
+    nfeatures              = 2L,
+    y                      = as.integer(sim$sim_response),
+    obs                    = as.matrix(sched[, c("height", "position")]),
+    prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+    prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+  )
+
+  pf <- tryCatch(
+    mod_rule_stan$pathfinder(data = stan_dat, num_paths = 4,
+                              refresh = 0, seed = subject_seed),
+    error = function(e) NULL
+  )
+  init_val <- if (!is.null(pf)) pf else 0.5
+
+  fit <- tryCatch(
+    mod_rule_stan$sample(
+      data = stan_dat, init = init_val,
+      seed = subject_seed, chains = 2, parallel_chains = 2,
+      iter_warmup = 800, iter_sampling = 1000,
+      refresh = 0, adapt_delta = 0.9
+    ),
+    error = function(e) { cat("Fit error:", e$message, "\n"); NULL }
+  )
+  if (is.null(fit)) return(NULL)
+
+  draws_eps <- fit$draws("error_prob", format = "df")
+  tibble(
+    true_error_prob   = true_error_prob,
+    iteration         = iteration,
+    estimated_eps_mean = mean(draws_eps$error_prob),
+    est_lower_95      = quantile(draws_eps$error_prob, 0.025),
+    est_upper_95      = quantile(draws_eps$error_prob, 0.975),
+    had_divergence    = any(fit$diagnostic_summary(quiet = TRUE)$num_divergent > 0)
+  )
+}
+
+eps_values_to_test <- c(0.05, 0.1, 0.15, 0.2, 0.3)
+n_recovery_iters   <- 5   # increase to 20–50 for publication-quality recovery
+
+recovery_file_rule <- "simdata/W13_rule_recovery_results.rds"
+if (regenerate_simulations || !file.exists(recovery_file_rule)) {
+  cat("Running parameter recovery for rule model...\n")
+  recovery_plan <- expand_grid(
+    true_error_prob = eps_values_to_test,
+    iteration       = seq_len(n_recovery_iters)
+  )
+  rule_recovery_results <- future_pmap_dfr(
+    list(true_error_prob = recovery_plan$true_error_prob,
+         iteration       = recovery_plan$iteration),
+    run_rule_recovery,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    .options = furrr_options(seed = TRUE)
+  )
+  saveRDS(rule_recovery_results, recovery_file_rule)
+  cat("Recovery complete and saved.\n")
+} else {
+  rule_recovery_results <- readRDS(recovery_file_rule)
+  cat("Recovery results loaded.\n")
+}
+
+ggplot(rule_recovery_results,
+       aes(x = true_error_prob, y = estimated_eps_mean)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(ymin = est_lower_95, ymax = est_upper_95,
+                    color = had_divergence),
+                width = 0.005, alpha = 0.7) +
+  geom_point(aes(color = had_divergence), size = 3) +
+  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00"),
+                     name = "Had divergence") +
+  labs(
+    title    = "Parameter Recovery: Rule Model (error_prob)",
+    subtitle = paste0("Points: posterior mean; bars: 95% CrI; n=",
+                      n_recovery_iters, " datasets per true value."),
+    x = "True error_prob", y = "Estimated error_prob"
+  )
+```
+
+**Discussion of Recovery Results**: Recovery of `error_prob` depends on whether the fixed rule set contains rules that actually match the stimulus structure well. If the true generative process (the particle filter) converges to a rule that is not in the Stan model's candidate set, the Stan model will compensate by inflating `error_prob` to absorb the systematic misclassifications. This means recovery may be good when the true rule is in the candidate set and poor when it is not — a structural limitation of the fixed-rule-set approach that is informative about the model's scope.
+
+---
+
+## Simulation-Based Calibration (SBC)
+
+SBC checks that the joint prior and likelihood form a calibrated inference engine. For the Stan rule model, this is straightforward since `logit_error_prob` is the only continuous parameter.
+
+One subtlety: the Stan model assumes a fixed rule set, while our prior predictive simulation uses the full particle filter. For a strict SBC the generator must use the same generative model as the Stan likelihood. Here we approximate by simulating data with the particle filter using `error_prob` drawn from the prior, then fitting the Stan model. This checks whether the Stan model's `error_prob` posterior is calibrated relative to the data-generating process — a practically meaningful check even if the generative and inferential models are not identical.
+
+```{r, 13 sbc rule model, eval=run_intensive_checks}
+n_sbc_iters_rule <- 500   # use >= 1000 for publication-quality SBC
+
+rule_sbc_generator <- SBC_generator_function(
+  function(i) {
+    # 1a. Draw true parameter from the prior
+    logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+    eps_true       <- plogis(logit_eps_true)
+
+    # 1b. Simulate one dataset — particle filter with per-iteration seed
+    sbc_sched <- make_subject_schedule(stimulus_info, n_blocks, seed = 30000 + i)
+    sim <- rule_particle_filter(
+      n_particles = 100,
+      error_prob  = eps_true,
+      obs         = as.matrix(sbc_sched[, c("height", "position")]),
+      cat_one     = sbc_sched$category_feedback,
+      max_dims    = 2,
+      quiet       = TRUE
+    )
+
+    list(
+      variables = list(logit_error_prob = logit_eps_true),
+      generated = list(
+        ntrials                = nrow(sbc_sched),
+        nfeatures              = 2L,
+        y                      = as.integer(sim$sim_response),
+        obs                    = as.matrix(sbc_sched[, c("height", "position")]),
+        prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+        prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+      )
+    )
+  },
+  n = n_sbc_iters_rule
+)
+
+rule_sbc_backend <- SBC_backend_cmdstan_sample(
+  mod_rule_stan,
+  iter_warmup   = 1000,
+  iter_sampling = 1000,
+  chains        = 2,
+  adapt_delta   = 0.9,
+  refresh       = 0
+)
+
+sbc_results_rule <- compute_SBC(
+  rule_sbc_generator,
+  rule_sbc_backend,
+  cache_path = "simdata/W13_sbc_rule_cache",
+  keep_fits  = FALSE
+)
+
+plot_ecdf_diff(sbc_results_rule)
+plot_rank_hist(sbc_results_rule)
+```
+
+As with the prototype model's SBC in Chapter 12, the single-parameter nature of this model makes the ECDF-difference plot the most sensitive available diagnostic. A flat line within the simultaneous confidence band confirms that the Stan model's posterior for `logit_error_prob` is correctly calibrated relative to the prior.
+
+---
+
+## Cognitive Insights from Rule-Based Models
+
+Rule-based models, particularly the particle filter implementation, offer several cognitive insights:
+
+* **Explicit Hypothesis Testing**: They model the process of generating, testing, and refining explicit hypotheses about category structure.
+* **Abrupt Learning**: Performance can change sharply when a highly effective rule is discovered and gains high weight — producing the "aha moment" learning curves sometimes observed in humans.
+* **Selective Attention**: Attention is modeled as selecting specific dimensions relevant to the current best rules, rather than continuous weighting across all dimensions.
+* **Verbalizability**: The explicit nature of rules often aligns with people's ability and tendency to verbalize their categorization strategies.
+* **Individual Differences**: Different individuals might converge on different (but potentially equally effective) rules, explaining variations in reported strategies.
+
+---
+
+## Strengths and Limitations
+
+**Strengths:**
+
+* Cognitive plausibility: aligns with introspection and verbal reports of using rules.
+* Efficiency for simple structures: very effective when categories are defined by simple, logical rules.
+* Sharp boundaries: naturally captures categories with clear-cut criteria.
+* Handles logic: easily incorporates AND, OR, and NOT operators.
+
+**Limitations:**
+
+* Family resemblance categories: struggles with categories defined by overall similarity where no single rule applies to all members.
+* Complex boundaries: requires very complex rules or many simple rules to approximate non-axis-aligned or curved boundaries.
+* Graded typicality: doesn't easily explain why some category members seem more typical than others.
+* Feature learning: standard models assume predefined features; they don't typically learn which features are relevant from raw input.
+* Stan model scope: the fixed-rule-set Stan model is only as good as the candidate rules it enumerates; poor rule coverage degrades both fit and recovery.
+
+## Conclusion: The Role of Rules
+
+Rule-based models offer a distinct perspective on categorization, emphasizing explicit criteria and logical operations rather than overall similarity. The Bayesian particle filter provides a sophisticated framework for modeling how learners might search the space of possible rules, maintain uncertainty, and update beliefs based on evidence. The complementary Stan model enables rigorous Bayesian inference and model comparison via LOO.
+
+While pure rule-based models may not account for all aspects of human categorization (especially for natural categories with fuzzy boundaries), they capture an important element of human cognition, particularly in domains involving definitions, instruction, or well-defined criteria. Often, human behavior might reflect a blend or interplay between rule-based and similarity-based processing — a topic explored in hybrid models (like COVIS or RULEX) and addressed directly in the next chapter, where we compare all three model classes against each other on the same dataset.

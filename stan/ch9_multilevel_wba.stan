@@ -55,10 +55,10 @@ model {
   // Likelihood
   for (i in 1:N) {
     int j = agent_id[i];
-    real alpha_post = 1.0
+    real alpha_post = 0.5
                     + weight_direct[j] * blue1[i]
                     + weight_social[j] * blue2[i];
-    real beta_post  = 1.0
+    real beta_post  = 0.5
                     + weight_direct[j] * (total1[i] - blue1[i])
                     + weight_social[j] * (total2[i] - blue2[i]);
     target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
@@ -78,10 +78,10 @@ generated quantities {
 
   for (i in 1:N) {
     int j = agent_id[i];
-    real alpha_post = 1.0
+    real alpha_post = 0.5
                     + weight_direct[j] * blue1[i]
                     + weight_social[j] * blue2[i];
-    real beta_post  = 1.0
+    real beta_post  = 0.5
                     + weight_direct[j] * (total1[i] - blue1[i])
                     + weight_social[j] * (total2[i] - blue2[i]);
 

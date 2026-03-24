@@ -564,7 +564,7 @@ draws_df <- as_draws_df(draws_cp)
 
 # Reshape for ggplot
 pp_update_data <- draws_df |> 
-  select(
+  dplyr::select(
     mu_posterior = mu_theta, mu_prior = mu_theta_prior,
     sigma_posterior = sigma_theta, sigma_prior = sigma_theta_prior
   ) |> 
@@ -911,7 +911,7 @@ divergence_profile <- posterior::as_draws_df(sbc_datasets_cp$variables) |>
   as_tibble() |> 
   mutate(sim_id = row_number()) |> 
   left_join(
-    diags_cp |> mutate(sim_id = row_number()) |> select(sim_id, n_divergent),
+    diags_cp |> mutate(sim_id = row_number()) |> dplyr::select(sim_id, n_divergent),
     by = "sim_id"
   ) |> 
   mutate(had_divergence = n_divergent > 0)
@@ -1281,7 +1281,7 @@ divergence_profile <- posterior::as_draws_df(sbc_datasets_cp$variables) |>
   as_tibble() |> 
   mutate(sim_id = row_number()) |> 
   left_join(
-    diags_ncp |> mutate(sim_id = row_number()) |> select(sim_id, n_divergent),
+    diags_ncp |> mutate(sim_id = row_number()) |> dplyr::select(sim_id, n_divergent),
     by = "sim_id"
   ) |> 
   mutate(had_divergence = n_divergent > 0)
@@ -1581,14 +1581,14 @@ true_mean_est <- mean(true_agent_params$theta_logit)
 
 # 4. Combine into a single dataframe, including the TRUE generative parameters
 comparison_df <- no_pool_summary |> 
-  select(agent_id, theta_no_pool) |> 
+  dplyr::select(agent_id, theta_no_pool) |> 
   left_join(
-    partial_pool_summary |> select(agent_id, theta_partial_pool), 
+    partial_pool_summary |> dplyr::select(agent_id, theta_partial_pool), 
     by = "agent_id"
   ) |> 
   # Bring in the ground truth
   left_join(
-    true_agent_params |> select(agent_id, n_trials, theta_true = theta_logit),
+    true_agent_params |> dplyr::select(agent_id, n_trials, theta_true = theta_logit),
     by = "agent_id"
   ) |> 
   # Sort agents by their No Pooling estimate for a cleaner visual curve
@@ -2269,7 +2269,7 @@ true_pop_mem <- tibble(
 
 # Reshape: split on the underscore immediately before "posterior" or "prior"
 pp_update_mem <- draws_df_memory |>
-  select(
+  dplyr::select(
     mu_alpha_posterior  = mu_alpha,        mu_alpha_prior,
     mu_beta_posterior   = mu_beta,         mu_beta_prior,
     sigma_alpha_posterior = `sigma[1]`,    sigma_alpha_prior,
@@ -2354,8 +2354,8 @@ true_agent_params_mem <- sim_data_memory |>
   distinct(agent_id, n_trials, true_alpha, true_beta)
 
 recovery_mem_df <- true_agent_params_mem |>
-  left_join(recovery_alpha |> select(agent_id, alpha_est = median, alpha_q5 = q5, alpha_q95 = q95), by = "agent_id") |>
-  left_join(recovery_beta  |> select(agent_id, beta_est  = median, beta_q5  = q5, beta_q95  = q95),  by = "agent_id")
+  left_join(recovery_alpha |> dplyr::select(agent_id, alpha_est = median, alpha_q5 = q5, alpha_q95 = q95), by = "agent_id") |>
+  left_join(recovery_beta  |> dplyr::select(agent_id, beta_est  = median, beta_q5  = q5, beta_q95  = q95),  by = "agent_id")
 
 p_rec_alpha <- ggplot(recovery_mem_df, aes(x = true_alpha, y = alpha_est)) +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
@@ -2540,7 +2540,7 @@ posterior::as_draws_df(sbc_datasets_memory$variables) |>
   as_tibble() |>
   mutate(sim_id = row_number()) |>
   left_join(
-    diags_memory |> mutate(sim_id = row_number()) |> select(sim_id, n_divergent),
+    diags_memory |> mutate(sim_id = row_number()) |> dplyr::select(sim_id, n_divergent),
     by = "sim_id"
   ) |>
   mutate(had_divergence = n_divergent > 0) |>

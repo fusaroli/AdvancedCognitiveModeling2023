@@ -1,0 +1,803 @@
+---
+title: "14 — Categorization Models in Action: The Alien Game"
+output:
+  html_document:
+    mathjax: default
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+date: "2025-04-28"
+---
+
+```{r 14_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 10,
+  fig.height = 6
+)
+
+# Set to TRUE to rerun simulations.
+# FALSE loads pre-computed results from 'simdata/'.
+regenerate_simulations <- FALSE
+
+pacman::p_load(
+  tidyverse,   # data manipulation and visualization
+  mvtnorm,     # multivariate normal density (Kalman model)
+  patchwork,   # combining plots
+  future,      # parallel processing
+  furrr,       # parallel functional programming
+  MASS         # ginv pseudo-inverse fallback (Kalman update)
+)
+
+theme_set(theme_classic())
+
+for (d in c("simdata")) {
+  if (!dir.exists(d)) dir.create(d, recursive = TRUE)
+}
+
+plan(multisession, workers = max(1, availableCores() - 1))
+```
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chapters 11–13 developed the three model families from first principles on
+> the 2-feature, 8-stimulus Kruschke (1993) task, and validated each with
+> prior predictive checks, parameter recovery, and SBC. This chapter is a
+> **forward-simulation exercise**: we apply all three models — without fitting
+> — to a qualitatively more demanding task adapted from Tylén et al. (2023).
+> The Alien Game has five binary features, two independent categorization
+> decisions per trial ("Dangerous?" and "Nutritious?"), and three sessions of
+> increasing rule complexity. By running the models in simulation mode we can
+> see which architectural assumptions help or hurt as complexity grows, before
+> fitting to human data in Chapter 16. No Stan models appear in this chapter;
+> the full fitting and LOO comparison pipeline is deferred to Chapters 15–16.
+
+# Categorization Models in Action: The Alien Game
+
+This chapter simulates the three categorization models (Exemplar/GCM, Prototype/Kalman Filter, Rule-Based/Particle Filter) on a task adapted from Tylén et al. (2023). In this task, participants (or models) learn to categorize visually complex "alien" stimuli based on feedback.
+
+## Stimuli and Features
+
+The aliens vary along five binary features:
+
+* **f1 — Legs**: Slim (0) / Fat (1)
+* **f2 — Arms**: Downwards (0) / Upwards (1)
+* **f3 — Body Dots**: Absent (0) / Present (1)
+* **f4 — Eyes**: Normal (0) / On Stalks (1)
+* **f5 — Color**: Green (0) / Blue (1)
+
+Each alien stimulus is a 5-dimensional binary vector (e.g., `c(0, 1, 0, 1, 1)` means slim legs, arms up, no dots, eyes on stalks, blue color). There are $2^5 = 32$ unique aliens.
+
+## Categorization Dimensions and Task
+
+Participants must react to each alien on two independent binary categorizations:
+
+* **Dangerous**: Is the alien dangerous (1) or peaceful (0)?
+* **Nutritious**: Is the alien nutritious (1) or non-nutritious (0)?
+
+This results in four possible response combinations. The goal is to learn the underlying rules or patterns that determine each dimension based on the alien's features.
+
+## Experimental Sessions and Complexity
+
+The task involves three sessions with increasing rule complexity. Each session consists of three blocks where the 32 unique aliens are presented once per block in random order, with feedback provided after each choice.
+
+N.B. the article also discusses a test session where participants are presented with new aliens. This is not implemented here since the novelty is in how the features are visually represented, and that change is transparent to our models.
+
+## Category Rules per Session
+
+Based on Tylén et al. (2023):
+
+**Session 1 (Low Complexity):**
+
+* Dangerous = f1 (Fat Legs) == 1 AND f3 (Dots) == 1
+* Nutritious = f4 (Eyes on Stalks) == 1
+
+**Session 2 (Intermediate Complexity):**
+
+* Dangerous = f4 (Eyes on Stalks) == 1
+* Nutritious = At least 2 out of f1, f2, f3 are 1 (i.e., f1 + f2 + f3 ≥ 2)
+
+**Session 3 (High Complexity):**
+
+* Dangerous = f4 (Eyes on Stalks) == 1 AND f5 (Blue Color) == 1
+* Nutritious = (f2 + f3 == 2) OR (f1 == 1 AND (f4 + f5 ≥ 1) AND (f2 + f3 ≥ 1))
+
+## Modeling Goal
+
+We will simulate how the three categorization models learn the 'Dangerous' and 'Nutritious' categories across these three sessions. We are interested in comparing their learning trajectories (accuracy over trials) under different parameter assumptions — attention weights for the GCM, noise level for the Kalman filter, and rule complexity for the Particle Filter.
+
+---
+
+## Setup: Stimuli and True Category Labels
+
+```{r 14_stimuli}
+n_features       <- 5
+n_blocks         <- 3
+n_unique_stimuli <- 2^n_features   # 32
+n_total_trials   <- n_blocks * n_unique_stimuli   # 96 per session
+
+# All 32 binary stimulus combinations
+stimuli_features <- as.matrix(
+  expand.grid(replicate(n_features, c(0, 1), simplify = FALSE))
+)
+colnames(stimuli_features) <- paste0("f", seq_len(n_features))
+rownames(stimuli_features) <- apply(stimuli_features, 1, paste, collapse = "")
+
+# True category labels for each session
+get_true_categories <- function(features_matrix, session) {
+  f1 <- features_matrix[, 1]
+  f2 <- features_matrix[, 2]
+  f3 <- features_matrix[, 3]
+  f4 <- features_matrix[, 4]
+  f5 <- features_matrix[, 5]
+
+  if (session == 1) {
+    # Dangerous: Fat Legs (f1) AND Dots (f3)
+    # Nutritious: Eyes on Stalks (f4)
+    dangerous  <- as.integer(f1 == 1 & f3 == 1)
+    nutritious <- as.integer(f4 == 1)
+
+  } else if (session == 2) {
+    # Dangerous: Eyes on Stalks (f4)
+    # Nutritious: at least 2 of f1, f2, f3
+    dangerous  <- as.integer(f4 == 1)
+    nutritious <- as.integer((f1 + f2 + f3) >= 2)
+
+  } else if (session == 3) {
+    # Dangerous: Eyes (f4) AND Blue (f5)
+    # Nutritious: complex disjunction
+    dangerous  <- as.integer(f4 == 1 & f5 == 1)
+    nutritious <- as.integer(
+      (f2 + f3 == 2) | (f1 == 1 & ((f4 + f5) >= 1) & ((f2 + f3) >= 1))
+    )
+  } else {
+    stop("Invalid session number")
+  }
+
+  tibble(dangerous = dangerous, nutritious = nutritious)
+}
+
+# Build the full stimulus definition table (all sessions)
+all_stimuli_definitions <- map_dfr(1:3, function(s) {
+  cats <- get_true_categories(stimuli_features, session = s)
+  stimuli_features |>
+    as_tibble() |>
+    mutate(stimulus_id = rownames(stimuli_features), session = s) |>
+    bind_cols(cats)
+})
+
+cat("Example Stimuli Definitions (Session 1):\n")
+print(head(all_stimuli_definitions |> filter(session == 1)))
+```
+
+> **Bug fix note.** The original code had `f2 == 1 & f3 == 1` for Session 1
+> Dangerous, but the feature mapping and the optimal GCM attention weights
+> (which weight dimensions 1 and 3 only) both confirm the rule should use
+> **f1** (Fat Legs), not f2 (Arms). The corrected rule is `f1 == 1 & f3 == 1`.
+> Similarly, a comment typo in the Session 2 nutritious description said
+> "f1 + f4 + f3 ≥ 2"; the correct expression is **f1 + f2 + f3 ≥ 2**.
+
+---
+
+## Per-Agent Session Schedule Generation
+
+As established in Chapters 11–13, the three models are all **path-dependent**: the prediction at trial $t$ depends on the sequence of stimuli observed on trials $1, \ldots, t-1$ (through the GCM's exemplar memory, the Kalman filter's prototype state, or the particle filter's weight distribution). Using the same trial ordering for every simulated agent tests model behavior on a single trajectory rather than the distribution of trajectories that real participants experience. Each agent therefore receives its own independently randomized trial order, generated from a deterministic per-agent seed.
+
+```{r 14_schedule}
+# Generate one session schedule for one agent.
+# Returns a tibble with trial_within_subject, block, stimulus_id, f1–f5,
+# dangerous, nutritious. The trial_within_subject column is the within-session
+# temporal index, consistent with Chapters 11–13.
+create_session_trials <- function(session_num, stimuli_definitions, seed) {
+  set.seed(seed)
+  session_stimuli <- stimuli_definitions |> filter(session == session_num)
+  n_stim          <- nrow(session_stimuli)    # 32
+
+  trial_blocks <- map_dfr(seq_len(n_blocks), function(b) {
+    session_stimuli[sample(n_stim), ] |>
+      mutate(block = b, trial_in_block = seq_len(n_stim))
+  })
+
+  trial_blocks |>
+    mutate(trial_within_subject = seq_len(n()) ) |>
+    dplyr::select(session, block, trial_within_subject,
+                  stimulus_id, f1:f5, dangerous, nutritious)
+}
+```
+
+---
+
+## Model Implementations
+
+The three model functions below are adapted from Chapters 11–13 to handle five binary features and two independent decisions per trial. Each function accepts a pre-built `obs_matrix` and `category_feedback` vector for one decision dimension (dangerous or nutritious), and returns a vector of simulated binary responses.
+
+### 1. Exemplar Model (GCM)
+
+The GCM calculates summed similarity to stored exemplars for each category. It is called separately for the dangerous and nutritious decisions, since the two dimensions are learned independently.
+
+```{r 14_gcm}
+# ── GCM for one decision dimension ──────────────────────────────────────────
+# w                : attention weights (length n_features, sums to 1)
+# c                : sensitivity parameter (> 0, natural scale)
+# obs_matrix       : (trials × features) matrix
+# category_feedback: true labels (0 or 1) for this dimension
+# Returns: vector of simulated binary responses.
+gcm_single_decision <- function(w, c, obs_matrix, category_feedback,
+                                quiet = TRUE) {
+  n_trials   <- nrow(obs_matrix)
+  n_features <- ncol(obs_matrix)
+  response_probs       <- numeric(n_trials)
+  exemplars_features   <- matrix(NA_real_, nrow = 0, ncol = n_features)
+  exemplars_category   <- numeric(0)
+
+  for (i in seq_len(n_trials)) {
+    if (!quiet && i %% 20 == 0) cat("GCM Trial", i, "\n")
+
+    stim  <- obs_matrix[i, ]
+    n_seen <- nrow(exemplars_features)
+
+    if (n_seen == 0 || length(unique(exemplars_category)) < 2) {
+      prob_cat_1 <- 0.5
+    } else {
+      sims <- vapply(seq_len(n_seen), function(e) {
+        d <- sum(w * abs(stim - exemplars_features[e, ]))
+        exp(-c * d)
+      }, numeric(1))
+
+      s1 <- sum(sims[exemplars_category == 1])
+      s0 <- sum(sims[exemplars_category == 0])
+      denom <- s1 + s0
+      prob_cat_1 <- if (denom > 1e-9) s1 / denom else 0.5
+    }
+
+    response_probs[i] <- pmax(1e-9, pmin(1 - 1e-9, prob_cat_1))
+
+    exemplars_features  <- rbind(exemplars_features, stim)
+    exemplars_category  <- c(exemplars_category, category_feedback[i])
+  }
+
+  rbinom(n_trials, 1, response_probs)
+}
+
+cat("GCM function defined.\n")
+```
+
+### 2. Prototype Model (Kalman Filter)
+
+The Kalman filter tracks a running prototype (mean vector and covariance) for each category. Each decision dimension (dangerous, nutritious) gets its own pair of prototypes.
+
+```{r 14_kalman}
+# ── Multivariate Kalman update (identical to Ch. 12) ────────────────────────
+multivariate_kalman_update <- function(mu_prev, sigma_prev, observation, r_matrix) {
+  mu_prev     <- as.numeric(mu_prev)
+  observation <- as.numeric(observation)
+  sigma_prev  <- as.matrix(sigma_prev)
+  r_matrix    <- as.matrix(r_matrix)
+  n_dim       <- length(mu_prev)
+  I           <- diag(n_dim)
+
+  S     <- sigma_prev + r_matrix
+  S_inv <- tryCatch(solve(S), error = function(e) MASS::ginv(S))
+  K     <- sigma_prev %*% S_inv
+
+  mu_new    <- as.numeric(mu_prev + K %*% (observation - mu_prev))
+  IK        <- I - K
+  sigma_new <- IK %*% sigma_prev %*% t(IK) + K %*% r_matrix %*% t(K)
+  sigma_new <- (sigma_new + t(sigma_new)) / 2   # enforce symmetry
+
+  list(mu = mu_new, sigma = sigma_new)
+}
+
+# ── Kalman prototype agent for one decision dimension ────────────────────────
+# r_value           : observation noise variance (> 0, natural scale)
+# obs_matrix        : (trials × features) matrix
+# category_feedback : true labels (0 or 1) for this dimension
+# b                 : response bias (default 0.5 = unbiased)
+prototype_kalman_single_decision <- function(r_value, obs_matrix,
+                                             category_feedback,
+                                             initial_mu         = NULL,
+                                             initial_sigma_diag = 10.0,
+                                             b                  = 0.5,
+                                             quiet              = TRUE) {
+  n_trials   <- nrow(obs_matrix)
+  n_features <- ncol(obs_matrix)
+
+  mu_init <- if (is.null(initial_mu)) rep(0, n_features) else initial_mu
+  proto0  <- list(mu = mu_init, sigma = diag(initial_sigma_diag, n_features))
+  proto1  <- list(mu = mu_init, sigma = diag(initial_sigma_diag, n_features))
+  r_mat   <- diag(r_value, n_features)
+  response_probs <- numeric(n_trials)
+
+  log_sum_exp <- function(v) {
+    m <- max(v[is.finite(v)])
+    if (!is.finite(m)) return(-Inf)
+    m + log(sum(exp(v - m)))
+  }
+
+  for (i in seq_len(n_trials)) {
+    if (!quiet && i %% 20 == 0) cat("Kalman Trial", i, "\n")
+    x <- as.numeric(obs_matrix[i, ])
+
+    log_p0 <- tryCatch(
+      mvtnorm::dmvnorm(x, mean = proto0$mu,
+                       sigma = proto0$sigma + r_mat, log = TRUE),
+      error = function(e) -Inf
+    )
+    log_p1 <- tryCatch(
+      mvtnorm::dmvnorm(x, mean = proto1$mu,
+                       sigma = proto1$sigma + r_mat, log = TRUE),
+      error = function(e) -Inf
+    )
+    log_p0b <- log_p0 + log(1 - b)
+    log_p1b <- log_p1 + log(b)
+    lse     <- log_sum_exp(c(log_p0b, log_p1b))
+    prob1   <- if (is.finite(lse)) exp(log_p1b - lse) else b
+    response_probs[i] <- pmax(1e-9, pmin(1 - 1e-9, prob1))
+
+    # Update the prototype for the correct category
+    if (category_feedback[i] == 1) {
+      proto1 <- multivariate_kalman_update(proto1$mu, proto1$sigma, x, r_mat)
+    } else {
+      proto0 <- multivariate_kalman_update(proto0$mu, proto0$sigma, x, r_mat)
+    }
+  }
+
+  rbinom(n_trials, 1, response_probs)
+}
+
+cat("Kalman Prototype function defined.\n")
+```
+
+### 3. Rule-Based Model (Particle Filter)
+
+The particle filter maintains a weighted distribution over candidate rule hypotheses. For the five-feature alien task, thresholds are fixed at 0.5 (the midpoint of the binary feature range), so rules effectively test whether a feature equals 0 or 1.
+
+```{r 14_rules}
+# ── Rule evaluation ──────────────────────────────────────────────────────────
+# For invalid inputs (dimension index out of range) we return a random
+# prediction (0 or 1) rather than 0.5, which would be misinterpreted as a
+# probability by the downstream ifelse() check.
+evaluate_rule <- function(rule, stimulus) {
+  tryCatch({
+    eval_cond <- function(d, thresh, op) {
+      if (d > length(stimulus)) return(sample(0:1, 1))
+      switch(op, ">" = stimulus[d] > thresh, "<" = stimulus[d] < thresh, FALSE)
+    }
+
+    if (length(rule$dimensions) == 1) {
+      condition_met <- eval_cond(rule$dimensions[1], rule$thresholds[1], rule$operations[1])
+
+    } else if (length(rule$dimensions) == 2) {
+      c1 <- eval_cond(rule$dimensions[1], rule$thresholds[1], rule$operations[1])
+      c2 <- eval_cond(rule$dimensions[2], rule$thresholds[2], rule$operations[2])
+      logic         <- if (is.null(rule$logic) || is.na(rule$logic)) "AND" else rule$logic
+      condition_met <- switch(logic,
+                              "AND" = c1 & c2,
+                              "OR"  = c1 | c2,
+                              c1 & c2)
+    } else {
+      # More than 2 dimensions: AND across all conditions
+      results <- vapply(seq_along(rule$dimensions), function(k)
+        eval_cond(rule$dimensions[k], rule$thresholds[k], rule$operations[k]),
+        logical(1))
+      condition_met <- all(results)
+    }
+
+    ifelse(condition_met, rule$prediction_if_true, 1L - rule$prediction_if_true)
+  }, error = function(e) sample(0:1, 1))
+}
+
+# ── Rule generation ─────────────────────────────────────────────────────────
+# For binary features, the only meaningful threshold is 0.5 (midpoint between
+# 0 and 1). Operators > 0.5 and < 0.5 thus correspond to "feature == 1" and
+# "feature == 0" respectively.
+generate_random_rule <- function(n_features, max_dims = 3) {
+  num_dims   <- sample(seq_len(min(max_dims, n_features)), 1)
+  dims_used  <- sort(sample(seq_len(n_features), size = num_dims, replace = FALSE))
+  thresholds <- rep(0.5, num_dims)           # fixed midpoint for binary features
+  operations <- sample(c(">", "<"), num_dims, replace = TRUE)
+  list(
+    dimensions        = dims_used,
+    thresholds        = thresholds,
+    operations        = operations,
+    logic             = if (num_dims > 1) sample(c("AND", "OR"), 1) else NA,
+    prediction_if_true = sample(0:1, 1)
+  )
+}
+
+initialize_particles <- function(n_particles, n_features, max_dims) {
+  particles <- vector("list", n_particles)
+  for (i in seq_len(n_particles))
+    particles[[i]] <- generate_random_rule(n_features, max_dims)
+  list(particles = particles, weights = rep(1 / n_particles, n_particles))
+}
+
+update_weights <- function(particles, weights, stimulus, true_category, error_prob) {
+  n    <- length(particles)
+  likelihoods <- vapply(particles, function(p) {
+    pred <- evaluate_rule(p, stimulus)
+    if (pred == true_category) 1 - error_prob else error_prob
+  }, numeric(1))
+  new_w <- weights * likelihoods
+  total <- sum(new_w)
+  if (total > 1e-9) new_w / total else rep(1 / n, n)
+}
+
+resample_particles <- function(particles, weights) {
+  n   <- length(particles)
+  # If weights are invalid, reset to uniform on existing particles rather
+  # than trying to reinitialize from scratch with inferred dimensions.
+  if (any(is.na(weights)) || sum(weights) <= 0 || any(weights < 0)) {
+    return(list(particles = particles, weights = rep(1 / n, n)))
+  }
+  idx <- sample.int(n, size = n, replace = TRUE, prob = weights)
+  list(particles = particles[idx], weights = rep(1 / n, n))
+}
+
+# ── Particle filter agent for one decision dimension ────────────────────────
+rule_particle_filter_single_decision <- function(n_particles, max_dims,
+                                                 error_prob, obs_matrix,
+                                                 category_feedback,
+                                                 resample_threshold_factor = 0.5,
+                                                 quiet = TRUE) {
+  n_trials   <- nrow(obs_matrix)
+  n_features <- ncol(obs_matrix)
+
+  ps        <- initialize_particles(n_particles, n_features, max_dims)
+  particles <- ps$particles
+  weights   <- ps$weights
+  response_probs <- numeric(n_trials)
+
+  for (i in seq_len(n_trials)) {
+    if (!quiet && i %% 20 == 0) cat("Rule Trial", i, "\n")
+    stim <- as.numeric(obs_matrix[i, ])
+
+    preds  <- vapply(particles, evaluate_rule, stimulus = stim, numeric(1))
+    p1     <- sum(weights * ifelse(preds == 1, 1 - error_prob, error_prob))
+    response_probs[i] <- pmax(1e-9, pmin(1 - 1e-9, p1))
+
+    weights <- update_weights(particles, weights, stim, category_feedback[i], error_prob)
+
+    ess <- 1 / sum(weights^2)
+    if (!is.nan(ess) && ess < n_particles * resample_threshold_factor) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+
+  rbinom(n_trials, 1, response_probs)
+}
+
+cat("Rule Particle Filter function defined.\n")
+```
+
+---
+
+## Simulating the Models
+
+We now set up the simulation loop. For each session and each simulated agent, we run all three model families twice: once to learn the 'Dangerous' category and once for the 'Nutritious' category.
+
+Each agent receives its own independently randomized stimulus order per session. The seed is derived as `base_seed * 1000 + agent_id * 10 + session_num`, ensuring every (agent, session) combination is unique and reproducible.
+
+```{r 14_run_simulations}
+# ── Simulation parameters ────────────────────────────────────────────────────
+n_agents_per_setting <- 10
+gcm_c_value          <- 1.0    # fixed sensitivity
+
+kalman_r_values <- c(0.5, 1.0, 2.0)
+
+rule_params <- list(
+  simple  = list(n_particles = 50,  max_dims = 1, error_prob = 0.2),
+  medium  = list(n_particles = 150, max_dims = 2, error_prob = 0.1),
+  complex = list(n_particles = 250, max_dims = 3, error_prob = 0.05)
+)
+
+# Optimal GCM attention weights for each session.
+# These are derived from the ground truth rules: equal weight on the features
+# that are diagnostic for the rule, zero weight on others.
+gcm_optimal_weights <- list(
+  `1` = list(
+    dang = c(1/2, 0,   1/2, 0,   0),   # Session 1: f1 AND f3
+    nutr = c(0,   0,   0,   1,   0)    # Session 1: f4
+  ),
+  `2` = list(
+    dang = c(0,   0,   0,   1,   0),   # Session 2: f4
+    nutr = c(1/3, 1/3, 1/3, 0,   0)   # Session 2: f1+f2+f3 >= 2
+  ),
+  `3` = list(
+    dang = c(0,   0,   0,   1/2, 1/2), # Session 3: f4 AND f5
+    nutr = c(1/5, 1/5, 1/5, 1/5, 1/5) # Session 3: complex -- uniform as approx.
+  )
+)
+
+# ── Per-agent run function ───────────────────────────────────────────────────
+# Runs all three model families for one agent in one session.
+# Each agent gets its own randomized schedule for this session.
+run_agent_session <- function(agent_id, session_num,
+                              stimuli_definitions, base_seed) {
+  # Derive unique seed for this (agent, session) pair
+  agent_session_seed <- base_seed * 1000 + agent_id * 10 + session_num
+
+  # Generate this agent's independent session schedule
+  session_data <- create_session_trials(
+    session_num        = session_num,
+    stimuli_definitions = stimuli_definitions,
+    seed               = agent_session_seed
+  )
+
+  obs_matrix         <- as.matrix(session_data[, paste0("f", seq_len(n_features))])
+  feedback_dangerous <- session_data$dangerous
+  feedback_nutritious <- session_data$nutritious
+  results_list       <- list()
+  wts                <- gcm_optimal_weights[[as.character(session_num)]]
+  w_equal            <- rep(1 / n_features, n_features)
+
+  # ── GCM ──────────────────────────────────────────────────────────────────
+  results_list[["gcm_optimal"]] <- session_data |>
+    mutate(
+      agent = agent_id, model = "GCM", param = "Optimal",
+      sim_dangerous  = gcm_single_decision(wts$dang, gcm_c_value, obs_matrix, feedback_dangerous),
+      sim_nutritious = gcm_single_decision(wts$nutr, gcm_c_value, obs_matrix, feedback_nutritious)
+    )
+
+  results_list[["gcm_equal"]] <- session_data |>
+    mutate(
+      agent = agent_id, model = "GCM", param = "Equal",
+      sim_dangerous  = gcm_single_decision(w_equal, gcm_c_value, obs_matrix, feedback_dangerous),
+      sim_nutritious = gcm_single_decision(w_equal, gcm_c_value, obs_matrix, feedback_nutritious)
+    )
+
+  # ── Kalman ────────────────────────────────────────────────────────────────
+  for (r_val in kalman_r_values) {
+    lbl <- paste0("r=", r_val)
+    results_list[[paste0("kalman_", r_val)]] <- session_data |>
+      mutate(
+        agent = agent_id, model = "Kalman", param = lbl,
+        sim_dangerous  = prototype_kalman_single_decision(
+          r_val, obs_matrix, feedback_dangerous),
+        sim_nutritious = prototype_kalman_single_decision(
+          r_val, obs_matrix, feedback_nutritious)
+      )
+  }
+
+  # ── Rule particle filter ──────────────────────────────────────────────────
+  for (pname in names(rule_params)) {
+    rp <- rule_params[[pname]]
+    results_list[[paste0("rule_", pname)]] <- session_data |>
+      mutate(
+        agent = agent_id, model = "Rule", param = pname,
+        sim_dangerous  = rule_particle_filter_single_decision(
+          rp$n_particles, rp$max_dims, rp$error_prob, obs_matrix, feedback_dangerous),
+        sim_nutritious = rule_particle_filter_single_decision(
+          rp$n_particles, rp$max_dims, rp$error_prob, obs_matrix, feedback_nutritious)
+      )
+  }
+
+  bind_rows(results_list)
+}
+
+# ── Simulation grid ──────────────────────────────────────────────────────────
+simulation_grid <- expand_grid(
+  agent_id    = seq_len(n_agents_per_setting),
+  session_num = 1:3
+)
+
+sim_results_file <- file.path("simdata", "W14_alien_sim_results.rds")
+
+if (regenerate_simulations || !file.exists(sim_results_file)) {
+  cat("Running all simulations...\n")
+
+  all_simulation_results <- future_map2_dfr(
+    simulation_grid$agent_id,
+    simulation_grid$session_num,
+    run_agent_session,
+    stimuli_definitions = all_stimuli_definitions,
+    base_seed           = 42,
+    .options = furrr_options(seed = TRUE),
+    .progress = TRUE
+  )
+
+  saveRDS(all_simulation_results, sim_results_file)
+  cat("Simulations finished and saved to:", sim_results_file, "\n")
+} else {
+  cat("Loading existing simulation results from:", sim_results_file, "\n")
+  all_simulation_results <- readRDS(sim_results_file)
+  cat("Results loaded.\n")
+}
+
+cat("\nStructure of Simulation Results:\n")
+glimpse(all_simulation_results)
+```
+
+---
+
+## Visualizing Simulation Results
+
+We visualize learning curves (cumulative accuracy) for each model across the three sessions, separating the results for the 'Dangerous' and 'Nutritious' decisions.
+
+```{r 14_visualize}
+# ── Compute trial-level accuracy ──────────────────────────────────────────────
+performance_data <- all_simulation_results |>
+  mutate(
+    dangerous_correct  = as.integer(sim_dangerous  == dangerous),
+    nutritious_correct = as.integer(sim_nutritious == nutritious),
+    overall_correct    = as.integer(dangerous_correct == 1 & nutritious_correct == 1)
+  ) |>
+  group_by(session, agent, model, param) |>
+  arrange(trial_within_subject, .by_group = TRUE) |>
+  mutate(
+    cum_acc_dangerous  = cumsum(dangerous_correct)  / trial_within_subject,
+    cum_acc_nutritious = cumsum(nutritious_correct) / trial_within_subject,
+    cum_acc_overall    = cumsum(overall_correct)    / trial_within_subject
+  ) |>
+  ungroup() |>
+  mutate(model_param = paste0(model, " (", param, ")"))
+
+# ── Summary: separate decisions ───────────────────────────────────────────────
+perf_summary_sep <- performance_data |>
+  pivot_longer(
+    cols        = c(cum_acc_dangerous, cum_acc_nutritious),
+    names_to    = "decision_type",
+    values_to   = "accuracy",
+    names_prefix = "cum_acc_"
+  ) |>
+  group_by(session, model, param, model_param, decision_type, trial_within_subject) |>
+  summarise(
+    mean_acc = mean(accuracy, na.rm = TRUE),
+    se       = sd(accuracy, na.rm = TRUE) / sqrt(n()),
+    lo95     = mean_acc - 1.96 * se,
+    hi95     = mean_acc + 1.96 * se,
+    .groups  = "drop"
+  )
+
+# ── Summary: overall accuracy ─────────────────────────────────────────────────
+perf_summary_overall <- performance_data |>
+  group_by(session, model, param, model_param, trial_within_subject) |>
+  summarise(
+    mean_acc = mean(cum_acc_overall, na.rm = TRUE),
+    se       = sd(cum_acc_overall, na.rm = TRUE) / sqrt(n()),
+    lo95     = mean_acc - 1.96 * se,
+    hi95     = mean_acc + 1.96 * se,
+    .groups  = "drop"
+  )
+
+# ── Plot 1: Separate decisions ────────────────────────────────────────────────
+plot_separate <- ggplot(
+  perf_summary_sep,
+  aes(x = trial_within_subject, y = mean_acc,
+      color = model_param, fill = model_param)
+) +
+  geom_line(linewidth = 0.8) +
+  geom_ribbon(aes(ymin = lo95, ymax = hi95), alpha = 0.10, linetype = 0) +
+  facet_grid(
+    decision_type ~ session,
+    labeller = labeller(
+      session       = function(s) paste("Session", s),
+      decision_type = function(d) str_to_title(d)
+    )
+  ) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  scale_color_viridis_d(option = "turbo") +
+  scale_fill_viridis_d(option = "turbo") +
+  labs(
+    title    = "Simulated Learning Curves: Separate Decisions",
+    subtitle = "Accuracy for 'Dangerous' and 'Nutritious' decisions independently",
+    x        = "Trial (within session)",
+    y        = "Cumulative Accuracy (Mean ± 95% CI)",
+    color    = "Model (Parameter)",
+    fill     = "Model (Parameter)"
+  ) +
+  theme(
+    legend.position  = "bottom",
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    strip.text       = element_text(face = "bold")
+  ) +
+  guides(color = guide_legend(nrow = 3), fill = guide_legend(nrow = 3))
+
+# ── Plot 2: Overall accuracy ──────────────────────────────────────────────────
+plot_overall <- ggplot(
+  perf_summary_overall,
+  aes(x = trial_within_subject, y = mean_acc,
+      color = model_param, fill = model_param)
+) +
+  geom_line(linewidth = 0.8) +
+  geom_ribbon(aes(ymin = lo95, ymax = hi95), alpha = 0.10, linetype = 0) +
+  facet_grid(
+    . ~ session,
+    labeller = labeller(session = function(s) paste("Session", s))
+  ) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  scale_color_viridis_d(option = "turbo") +
+  scale_fill_viridis_d(option = "turbo") +
+  labs(
+    title    = "Simulated Learning Curves: Overall Accuracy",
+    subtitle = "Both 'Dangerous' and 'Nutritious' decisions must be correct",
+    x        = "Trial (within session)",
+    y        = "Cumulative Accuracy (Mean ± 95% CI)",
+    color    = "Model (Parameter)",
+    fill     = "Model (Parameter)"
+  ) +
+  theme(
+    legend.position  = "bottom",
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    strip.text       = element_text(face = "bold")
+  ) +
+  guides(color = guide_legend(nrow = 3), fill = guide_legend(nrow = 3))
+
+print(plot_separate)
+print(plot_overall)
+```
+
+---
+
+## Interpretation of Simulations
+
+Examine the learning curves plotted above. Consider the following for each model type:
+
+### GCM (Exemplar)
+
+How does performance differ between 'Equal' and 'Optimal' attention weights? Does optimal attention provide a significant advantage, especially in later sessions where rules become more complex?
+
+The optimal weights place all weight on the features diagnostic for the underlying rule, and zero weight on irrelevant features. For the GCM, this is equivalent to computing similarity in the relevant subspace only. In Session 1, where the dangerous rule uses f1 and f3, a model with `w = (1/2, 0, 1/2, 0, 0)` will correctly ignore arm position and color when assessing danger. The equal-weight model treats all five features as equally diagnostic, which dilutes the signal from the truly relevant features and tends to produce slower or lower asymptotic learning.
+
+Session 3 is particularly revealing: the nutritious rule is a complex disjunction over all five features, and the "optimal" weights for the GCM are set to uniform (since no single feature dominates). In this case, the GCM with equal and optimal weights should perform similarly, both relying on the full feature space to capture the disjunctive structure through exemplar storage.
+
+### Kalman Filter (Prototype)
+
+How does `r_value` (observation noise) affect learning speed and asymptotic accuracy across sessions?
+
+The Kalman filter's core challenge on this task is that several of the rules — especially the disjunctive Session 2 nutritious rule (at least 2 of 3 features active) and the complex Session 3 nutritious rule — do not map onto a unimodal category distribution in feature space. The prototype model's assumption of a single Gaussian prototype per category is structurally misspecified for these rules: the true category distribution for "at least 2 of 3 binary features" has multiple peaks (e.g., stimuli with f1=1,f2=1 and stimuli with f1=1,f3=1 are both nutritious but have different feature profiles). The prototype will average over these peaks, producing a prototype that does not correspond well to any actual nutritious alien.
+
+An intermediate `r_value` often achieves the best balance between responsiveness and robustness, but even the best-parameterized Kalman filter may plateau below the performance achievable by models whose representational structure matches the task's rule structure.
+
+### Rule Particle Filter
+
+How do the 'simple', 'medium', and 'complex' parameter settings affect performance across sessions?
+
+The rule model is architecturally well-matched to Session 1 (where the true categories are defined by simple AND-logic rules on one or two features) and Session 2 (where dangerous is a 1D rule). The 'simple' setting (max_dims = 1) will likely succeed on the Session 1 nutritious rule (f4 only) and Session 2 dangerous rule (f4 only), but will fail on any rule requiring feature conjunctions. The 'complex' setting (max_dims = 3) can express the relevant multi-feature rules, at the cost of slower initial search through a larger rule space.
+
+The 'complex' variant may show the characteristic sharp-improvement pattern of rule-based learning: broad uncertainty over many rules initially, then rapid concentration of weight on the correct rule once enough evidence accumulates. This produces learning curves with a distinctive "plateau then jump" shape, in contrast to the more gradual, monotonic learning curves of the GCM and Kalman filter.
+
+---
+
+## Observations from the Learning Curves
+
+Based on the visualizations, we can draw several conclusions:
+
+1. **Effect of Complexity (Sessions)**: Performance generally decreases or plateaus at a lower level as session complexity increases. This is visible for most model variants, reflecting the increased difficulty in identifying the underlying category structures.
+
+2. **GCM Performance**: The GCM with optimal weights typically outperforms the equal-weight GCM, especially in sessions 2 and 3. Even with optimal weights, the GCM may not reach perfect accuracy due to interference from similar but differently categorized exemplars. Its learning curve is often smooth and gradual — there is no discrete "discovery" event.
+
+3. **Kalman Filter Performance**: The model is sensitive to `r_value`. An intermediate value (e.g., `r = 1.0` or `r = 2.0`) often strikes a good balance. The Kalman filter is most likely to fall behind on disjunctive rules (Sessions 2 and 3 nutritious), where its single-prototype assumption is structurally mismatched to the task. Performance may plateau significantly below the theoretical maximum.
+
+4. **Rule Particle Filter Performance**: Highly dependent on `max_dims`. Allowing more complex rules is crucial in Sessions 2 and 3. Rule models can sometimes show sharper performance gains — the "aha moment" when the filter converges on the correct rule — but may also exhibit higher variance across agents because the search process is stochastic. With too few particles or too low an `error_prob`, the filter may not explore the rule space broadly enough to find the optimal rule efficiently.
+
+These forward simulations provide a baseline for understanding how different cognitive strategies fare on this task. Critically, the simulations isolate architectural differences between the models by holding parameters at fixed values. They do **not** tell us which model best describes actual human behavior — that requires fitting the models to individual participant data, which is the focus of Chapter 16.
+
+---
+
+## Next Steps
+
+These forward simulations serve several purposes in the broader workflow:
+
+1. **Qualitative plausibility**: Do the simulated learning curves look broadly like what human participants might produce? If a model predicts near-perfect performance from trial 1 under reasonable parameters, something is wrong.
+
+2. **Generating predictions**: Before looking at human data, we have clear predictions: the GCM should benefit strongly from attention focusing; the Kalman filter should struggle more with disjunctive rules; the rule model should show sharper learning curves in simple-rule sessions.
+
+3. **Identifying parameter sensitivity**: The simulation grid reveals how sensitive each model is to its parameters. Highly sensitive models require more precise parameter estimation; less sensitive models are more robust to mis-specification.
+
+The next chapter (Ch. 15) assembles the formal model comparison framework: LOO scores from the three Stan models fitted to simulated and real data, Bayesian stacking weights, and ELPD difference plots. Chapter 16 then fits all three models to human data from Tylén et al. (2023), examining individual differences in strategy use and the relationship between model comparison results and the qualitative patterns predicted here.
+
+> **A note on cross-validation for sequential models**: As established in
+> Chapters 11–13, the GCM and Kalman filter are path-dependent — the likelihood
+> at trial $t$ depends on the full history of previous observations. Standard
+> LOO-CV is therefore an approximation for these models. The rule-based Stan
+> model (Chapter 13), which marginalizes over a fixed candidate rule set, is the
+> exception: its trials are conditionally independent given `error_prob`, so
+> standard LOO is technically valid. For the GCM and Kalman models, all ELPD
+> comparisons in Chapter 15 should be treated as approximations, and confirmed
+> with leave-future-out cross-validation (LFO-CV) where computationally
+> feasible.

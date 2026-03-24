@@ -1,0 +1,225 @@
+---
+title: "17 — Conclusions: What We Have Built and Where It Points"
+output:
+  html_document:
+    mathjax: default
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+date: "2025-04-28"
+---
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> This is the end. There is no more code to run, no more Stan to compile.
+> The goal here is different: to step back from the individual techniques
+> and see the whole — what principles tie the chapters together, what the
+> categorization module established beyond the simpler decision-making
+> models, what open problems the work encountered without resolving, and
+> what the full arc from Chapter 4 to Chapter 16 means for anyone who
+> wants to do rigorous computational cognitive science.
+
+# Synthesizing the Journey
+
+This textbook has traced a single through-line: how to translate a verbal theory about human cognition into a generative probabilistic model, validate that model rigorously before trusting it, estimate its parameters from data, compare competing models honestly, and interpret the resulting estimates in cognitive terms. We began with the simplest possible agent — a biased coin-flipper — and ended with three structurally different accounts of how humans learn to categorize complex visual objects in a social setting. The tools stayed consistent; the cognitive ambition grew.
+
+It is worth taking stock of what was actually built, why the choices were made the way they were, and what problems remain genuinely open.
+
+---
+
+## The Six-Phase Validation Battery
+
+The most consequential single contribution of the methods chapters is the six-phase validation pipeline established in Chapter 5 and applied, in full or in part, to every subsequent model:
+
+1. **Mathematical formulation and Stan implementation** — write the generative model in mathematical notation before a line of code exists.
+2. **Prior predictive check** — simulate data from the prior alone; confirm that the prior implies only scientifically plausible outcomes.
+3. **Posterior predictive check** — after fitting, confirm the model can reproduce the qualitative features of the data it was trained on.
+4. **Prior-posterior update check** — verify that the data moved beliefs; a posterior indistinguishable from the prior means the data were uninformative.
+5. **Prior sensitivity analysis** — use `priorsense::powerscale_sensitivity()` to check whether scientific conclusions change when the prior is perturbed.
+6. **Parameter recovery and SBC** — simulate data from known parameters, fit the model, and check recovery; then run full Simulation-Based Calibration to confirm that posterior *intervals* are correctly calibrated across the entire prior space.
+
+Every phase has a distinct purpose. Phases 1–2 are pre-data checks: they catch structural errors in the model and implausible prior specifications before any empirical evidence is consumed. Phase 3 is a sanity check that the fitting procedure converged on something meaningful. Phases 4–5 assess the quality of inference — did we learn anything, and is that learning stable? Phase 6 is the deepest check: it asks whether the entire computational pipeline, from Stan code to prior specification, forms a coherent inference engine. A model that passes all six phases before human data is collected has earned the right to make scientific claims.
+
+This pipeline was applied to the biased-agent model (Ch. 5), the memory model (Ch. 5), the hierarchical memory model (Ch. 6), and all three Stan categorization models (Chs. 11–13). Each application found something: in Chapter 5 it revealed that the memory model's posterior was insensitive to the bias parameter under certain designs, motivating the reversal paradigm. In Chapter 11 it identified that the GCM's `generated_quantities` block required a full replication of the memory-update logic and that `$generate_quantities()` on existing draws was the correct architectural pattern. In Chapter 12 it demonstrated that the Kalman filter's single parameter could be recovered cleanly across the full prior range, providing confidence unusual for cognitive models.
+
+---
+
+## The Categorization Module: What Was Established
+
+The categorization module (Chs. 11–17) covered significantly more technical ground than the decision-making chapters, because it encountered four genuinely novel problems that the simpler models had not forced into view.
+
+### 1. Path-Dependence and the LFO-CV Problem
+
+Both the GCM and the Kalman filter are **sequential, path-dependent models**: the likelihood at trial $t$ is a function of the complete history of stimuli on trials $1, \ldots, t-1$. This is the defining feature that separates cognitive process models from i.i.d. regression models, and it creates a fundamental incompatibility with standard leave-one-out cross-validation. Standard PSIS-LOO conditions on a counterfactual memory state — one that was never built during training — and evaluates a prediction task that does not correspond to any experiment we would run.
+
+The correct tool is **leave-future-out cross-validation (LFO-CV)**, introduced for sequential models by Bürkner, Gabry, and Vehtari (2020). Chapter 9 introduced LFO-CV in the context of Bayesian social learning; Chapters 11–16 applied the same caveat to exemplar and prototype models. The practical resolution was: report standard LOO for comparability across models, flag GCM and Kalman ELPD values as approximate by colour-coding the ELPD plots, and point forward to LFO-CV as the confirmatory analysis. This asymmetry in LOO validity — the Stan rule model (Ch. 13) is exchangeable given its parameters, so its LOO is exact, while the GCM and Kalman filter require LFO-CV — is not a flaw in the analysis; it is a direct consequence of the models' different representational commitments.
+
+The broader lesson is worth stating precisely: **model comparison results are only as valid as the cross-validation scheme is appropriate for the model's statistical structure**. A model that is path-dependent requires a cross-validation scheme that respects temporal ordering. Ignoring this produces optimistic ELPD estimates that do not measure out-of-sample performance in any experiment we could run.
+
+### 2. Stimulus Ordering and the Per-Subject Randomization Fix
+
+The original code for Chapters 11–14 generated a single randomized stimulus sequence and passed it unchanged to every simulated agent. For path-dependent models this is a cognitive modeling error: the parameter recovery and SBC were testing inference on a *single* memory trajectory rather than the distribution of trajectories that real participants experience. Two agents with identical parameters but different stimulus orderings have different memory states at every trial after trial 1, and therefore different choice probabilities.
+
+The fix — `make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)` with a unique seed per agent, producing a `trial_within_subject` column as the within-session temporal index — is four lines of R. But the conceptual point it instantiates is important: **the generative model used for validation must match the experimental protocol that produces the real data**. In human experiments, stimulus order is randomized independently per participant. The simulation functions, parameter recovery loops, and SBC generators must respect this independence, or the inference engine is calibrated on a different distribution than the one it will encounter in practice.
+
+The mandatory `arrange(subj_id_stan, trial_within_subject)` before constructing the Stan data list, and the replacement of the global `n_memory[s]` array with a local `n_mem` counter inside an outer-over-subjects loop, are the downstream consequences of taking this principle seriously. The local counter cannot be corrupted by another subject's trials because it is scoped to a single subject's block; the sort guarantee means the contiguous-slice assumption in the Stan memory array is always satisfied.
+
+### 3. Discrete Inference and the Limits of HMC
+
+Chapter 13 encountered a hard constraint that the earlier chapters had not: the rule-based particle filter operates over a **discrete combinatorial space** of symbolic rules. Stan's HMC sampler requires a continuous, differentiable log posterior density. These requirements are incompatible: there is no gradient with respect to "which logical operator appears in the first condition of a two-feature rule." The particle filter therefore lives in R as a sequential Monte Carlo algorithm — a legitimate and well-studied form of approximate Bayesian inference, just not HMC.
+
+This is the same principle as discrete-parameter marginalization in Chapter 8's mixture models, but faced with an additional obstacle: for mixture models, the discrete sum was analytically tractable. For a combinatorial rule space, it is not. The solution was to separate the inference architecture: the particle filter handles the dynamic learning process; a complementary Stan model that **marginalizes over a fixed candidate rule set** handles parameter estimation and LOO comparison. This two-model architecture — a process model (particle filter) and an inference model (Stan mixture) — is a general pattern for cognitive models whose state spaces are discrete or symbolic.
+
+The technical implementation — `log_sum_exp(lp) - log(R)` in the Stan `model` block, referencing the same `lp` vector in `generated_quantities` without any sequential state — is clean precisely because the discrete latent variable (which rule) has been analytically eliminated. The resulting Stan model has a single continuous parameter, its `generated_quantities` block is three lines, and its SBC is the simplest in the module.
+
+### 4. The Common-Dataset Requirement for Fair Comparison
+
+Chapter 15 identified that Chapters 11–13 had each fitted their models to a different simulated dataset. Comparing LOO scores across different datasets is meaningless — the expected log predictive densities are from different probability spaces. The comparison chapter therefore generated a single common dataset from known GCM parameters and fitted all three Stan models to it. The deliberate design choice — using GCM-generated data — makes the comparison informative: a working model comparison pipeline should prefer the data-generating model. If it does not, the model comparison framework is revealing something about identifiability on this task, not making a methodological error.
+
+The stacking weights from `loo::loo_model_weights(method = "stacking")` are the preferred summary for multi-model comparison because stacking minimizes LOO cross-validation loss without assuming any one model is correct, can assign zero weight to a model that adds nothing beyond the others, and is robust to model misspecification in a way that Bayesian model averaging is not.
+
+---
+
+## The Cognitive Science: What Do the Three Models Actually Represent?
+
+Setting aside the technical apparatus, the three model architectures represent genuinely different cognitive theories, and the module's empirical program — running all three on the Alien Game, fitting them to human data — is a test of these theories.
+
+**The GCM** says categorization is memory for instances, mediated by selective attention. Its parameter $c$ is a generalization gradient: how far apart two stimuli can be before they stop activating each other's category labels. Its parameters $w$ are attention weights: how much each feature dimension contributes to the psychological distance computation. A high-$c$, sharply-focused-$w$ agent has learned that specific features matter and has developed sharp discrimination between similar stimuli. A low-$c$, diffuse-$w$ agent is still generalizing broadly. The multilevel GCM in Chapter 11 lets us ask: do different participants concentrate attention on the same features, or are there systematic individual differences in which dimensions they track?
+
+**The Kalman filter prototype model** says categorization is online estimation of category means. Its parameter $r$ is an observation noise level: how much it trusts each new example to represent the category's true central tendency. A small $r$ produces rapid updating, high sensitivity to early examples, and tight prototypes. A large $r$ produces slow, conservative updating. The Kalman filter is optimal given its assumptions — it produces the minimum-variance linear estimate of the prototype given the data — but its assumptions are binding: it assumes each category is well-represented by a single Gaussian distribution, and it will fail systematically on categories with disjunctive structure.
+
+**The particle filter / Stan rule model** says categorization is hypothesis testing. The learner maintains a distribution over possible rules, updates it after each trial using Bayesian likelihood weights, and responds by taking a weighted vote. Its parameter $\varepsilon$ is error tolerance: how often the learner applies rules incorrectly, or how noisy the labeling is. A small $\varepsilon$ learner rapidly commits to the best rule once it accumulates enough evidence; a large $\varepsilon$ learner maintains broader uncertainty and converges more slowly. Rule-based models naturally capture the "aha moment" pattern of learning — relatively flat performance until the correct rule is discovered, then rapid improvement — that the similarity-based models cannot produce.
+
+These three theories make **qualitatively different predictions** for specific stimulus types (prototype items vs. exceptions vs. rule-boundary crossers), for the shape of learning curves (gradual vs. abrupt), for response time patterns (boundary ambiguity vs. rule application speed), and for eye movement patterns (holistic feature weighting vs. selective attention vs. rule-relevant dimension fixation). The module's empirical program is a first step toward distinguishing these predictions; a fully discriminating study would collect all of these behavioral measures simultaneously.
+
+---
+
+## What the Module Did Not Resolve
+
+Intellectual honesty requires naming the open problems.
+
+**LFO-CV was introduced but not executed in full.** The correct cross-validation scheme for path-dependent cognitive models is LFO-CV, and the module introduced it clearly and pointed to the implementation. But actually running LFO-CV requires either refitting the model multiple times on truncated datasets or using the importance-sampling approximation in the `loo` package, both of which were flagged as computationally expensive and deferred. The model comparisons in Chapters 15–16 are therefore approximate for the GCM and Kalman models. This is a genuine limitation of the reported analyses, not a matter of convention.
+
+**The rule model's candidate set was fixed by hand.** The Stan rule model enumerates a small set of candidate rules chosen by inspecting the stimulus structure. This is not a general solution. For a task with five binary features there are hundreds of possible single- and two-feature rules; for continuous features the rule space is infinite. A principled approach would use a grammar over rules (a formal language defining the set of admissible rule structures) and place a prior over that grammar, producing a rule-space posterior that generalizes beyond hand-picked candidates. This direction connects to the broader program of program induction in computational cognitive science (Goodman et al. 2008; Piantadosi et al. 2012).
+
+**The two-decision structure of the Alien Game was handled pragmatically, not principally.** Fitting two independent models — one for dangerous, one for nutritious — to the same participant ignores any correlation between how they learn the two dimensions. A jointly-modeled participant who discovers the nutritious rule might attend to the relevant features more efficiently thereafter, which would be reflected in the dangerous learning curve. The independence assumption is a simplification that future work could relax with a bivariate multilevel model.
+
+**The individual vs. pair condition was described but not formally modeled.** The Tylén et al. (2023) study is specifically about how social interaction affects categorization learning. The analysis in Chapter 16 compared learning curves by condition, but did not specify a cognitive model of the dyadic interaction — how pairs share information, negotiate rules, or influence each other's attention. Building a formal model of dyadic categorization is an open and interesting problem.
+
+---
+
+## Technical Lessons That Transfer to Other Domains
+
+Several specific technical patterns developed in this module transfer directly to any sequential cognitive model:
+
+**Reparameterize bounded parameters.** Every bounded positive parameter in the module was estimated on the log scale (`log_c` for GCM sensitivity, `log_r` for Kalman noise), and every probability parameter on the logit scale (`logit_error_prob` for rule noise). This is not cosmetic. HMC's geometry is naturally suited to unconstrained parameters; the log and logit transforms remove boundaries and produce posteriors that HMC can explore without hard-wall reflections. The corresponding R/simulation code must use exactly the same parameterization — `exp(log_c)` to recover the natural-scale parameter — so that the data-generating model and the inference model share the same mathematical structure.
+
+**`$generate_quantities()` is not optional.** Replicating the full likelihood computation in the `generated_quantities` block is fragile, especially for models with internal state (like the GCM's exemplar memory). The correct pattern is to write `generated_quantities` to contain only quantities that can be computed cheaply from the already-sampled parameters, and use `$generate_quantities()` on existing draws when additional quantities are needed. For the Kalman filter this was natural: `p[i]` lives in `transformed_parameters` as a deterministic function of `log_r` and the data, so `log_lik[i] = bernoulli_lpmf(y[i] | p[i])` is three characters of new code.
+
+**The mandatory sort.** Any Stan model with a subject-indexed sequential loop — and this includes all multilevel GCM-like models where memory resets per subject — requires the data to arrive sorted by `(subject_id, trial_within_subject)`. The sort is not enforced by Stan; a wrongly-ordered array produces silently wrong results. The pattern `arrange(subj_id_stan, trial_within_subject)` before constructing the Stan data list, followed by `subj_start`/`subj_end` slice indices, is a reusable template for any multilevel sequential model.
+
+**Pathfinder before every `$sample()`.** The GCM has a constrained parameter space (simplex for $w$, positive for $c$, unit interval for $\beta$) and a nonlinear likelihood. Stan's default `init = "random"` on $[-2, 2]^n$ often starts in regions where the transformed parameters are implausible. Multi-path Pathfinder variational inference finds stable starting points without the cost of full MCMC, and its failure is diagnostically informative: a Pathfinder that cannot converge signals that the posterior geometry is genuinely problematic, warranting reparameterization rather than sampler tuning.
+
+---
+
+## Current Challenges in Computational Cognitive Science
+
+### Path-Dependence Is the Rule, Not the Exception
+
+The sequential structure that made Chapters 11–12 require LFO-CV rather than LOO is not specific to categorization. Any model where the cognitive state at trial $t$ depends on the history of trials $1, \ldots, t-1$ — reinforcement learning models, drift-diffusion models with learning, sequential Bayesian belief updating, associative learning networks — inherits the same cross-validation constraint. The appropriate use of LFO-CV is currently inconsistent in the published literature; most papers report some form of LOO or WAIC without checking whether their model's trial-level likelihoods are conditionally exchangeable. As sequential cognitive models become more common, this will become a more visible methodological gap.
+
+### Discrete Structure in Continuous Frameworks
+
+The rule model encountered a deep structural problem: the most psychologically natural representation of some cognitive processes — rules, schemas, hypotheses, strategies — is discrete and combinatorial, while the most powerful inference frameworks (HMC, variational inference with reparameterization gradients) require continuous differentiable models. The gap is bridged partly by analytic marginalization (when tractable), partly by sequential Monte Carlo (particle filters), and partly by neural-network-based amortized inference that can learn to do approximate posterior inference over structured spaces. None of these is fully satisfactory for all problems. Developing inference methods that work natively over combinatorial cognitive representations remains an active research frontier.
+
+### Identifiability Under Ecological Conditions
+
+The parameter recovery and SBC analyses in Chapters 11–13 assessed identifiability under controlled simulation conditions: known parameters, clean category structure, idealized randomization. Real experiments introduce factors that confound identifiability: response noise, lapses of attention, strategic behavior changes across sessions, individual differences in feature encoding, and category structures that place stimuli near the boundaries of multiple models' decision regions. A model that is identifiable in simulation may not be identifiable from a 64-trial Kruschke paradigm with realistic human noise levels. **Model identifiability is an empirical question about the joint distribution of the model, the data-generating process, and the experimental design**, not a fixed property of the model alone.
+
+---
+
+## Future Directions
+
+### The Bayesian Workflow Applied to Richer Models
+
+The six-phase validation pipeline developed here should be applied, not relaxed, as cognitive models grow more complex. SUSTAIN (Love et al. 2004), COVIS (Ashby & Maddox 1998), and more recent neural network accounts of categorization all have parameters that can be estimated, and all generate predictions that can be compared to human data with LOO. Applying the same prior predictive, SBC, and sensitivity checks to these richer models would reveal whether their additional parameters are identifiable and whether their predictions are calibrated. The machinery is available; the discipline of applying it consistently is the challenge.
+
+### Resource-Rational Models
+
+The three models in this module are all implicitly optimal within their own representational constraints: the GCM computes the exact summed similarity given its stored exemplars; the Kalman filter produces the minimum-variance linear estimate of the prototype; the particle filter implements sequential Bayesian updating given the prior over rules. None accounts for the cognitive *costs* of these computations — memory storage, attention, working memory load. Resource-rational analysis (Lieder & Griffiths 2020) extends these models by asking which approximations a computationally bounded agent should use to maximize expected utility under cognitive constraints. The result is a family of models that trade accuracy for efficiency in ways that may better capture human behavior under load, fatigue, or time pressure.
+
+### Neural Implementation and Reverse Engineering
+
+The cognitive models in this module are defined at the computational level (what problem is being solved) and the algorithmic level (how it is solved in terms of representations and processes). They say nothing about how the brain implements these computations. Connecting computational models to neural data — via neural network analogs of the GCM (Kumaran et al. 2016), Kalman-filter-like prediction error signals in dopaminergic circuits (Schultz 1997), or prefrontal rule representations (Miller & Cohen 2001) — is an active and productive research direction. The same Bayesian parameter estimation framework applies: neural data can be the observed data $y$, and the model's parameters can reflect both cognitive and neural quantities.
+
+### Amortized Inference
+
+For models with intractable likelihoods — or likelihoods that are too expensive to evaluate in Stan — **simulation-based inference** (Cranmer et al. 2020) offers a path forward. Rather than computing the likelihood explicitly, simulation-based inference trains a neural network to approximate the posterior given simulated data from the model. This approach is being applied to cognitive models (Fengler et al. 2021 for drift-diffusion models; Radev et al. 2020 for a general framework called BayesFlow), and it may eventually extend to rule-based models over combinatorial spaces where neither HMC nor standard particle filters scale.
+
+---
+
+## Practical Advice for the Computational Cognitive Scientist
+
+These recommendations distill the main methodological lessons:
+
+**Never fit to real data first.** The validation pipeline exists for a reason. A model that appears to fit human data but fails SBC is producing a confident but miscalibrated posterior. The six-phase battery is not bureaucracy; it is the minimum evidence that the inference engine is trustworthy.
+
+**The parameterization is part of the model.** Choosing to estimate $c$ vs. $\log c$ is not a cosmetic decision — it determines the geometry of the posterior, the behavior of HMC, the interpretation of the prior, and the coverage of the SBC. Always parameterize on the unconstrained scale and derive the constrained quantity in `transformed_parameters`.
+
+**Check whether your cross-validation scheme is appropriate for your model.** If your model has sequential dependencies, LOO-CV is approximate at best and misleading at worst. Ask: does leaving out observation $t$ change the likelihood of observation $t+1$? If yes, use LFO-CV.
+
+**Model comparison is scientific reasoning, not a competition.** A model that "loses" to another on ELPD has still taught you something: it told you what representational commitment is not required to explain the data. The most valuable comparisons are between models that embody different mechanistic claims and make different qualitative predictions, so that the comparison can distinguish theories rather than just rank goodness-of-fit.
+
+**Calibration is not the same as accuracy.** A model can achieve high average accuracy while being badly miscalibrated — confident when wrong, uncertain when right. LOO-PIT and SBC check calibration directly. A cognitive model that is well-calibrated is making honest epistemic claims about what can and cannot be inferred from the data; an uncalibrated model is misleading regardless of its ELPD.
+
+---
+
+## Final Reflection
+
+This textbook has moved between two registers throughout: the technical (how to implement, validate, and compare Bayesian cognitive models in Stan and R) and the scientific (what these models tell us about human cognition). These registers are not separable. A model whose code contains a bug — like the pseudocode placeholders in the original GCM `generated_quantities` block — cannot make valid scientific claims, regardless of how psychologically motivated its assumptions are. A model that is fitted with the wrong cross-validation scheme is not just making a statistical error; it is making a claim about out-of-sample predictive performance that it has not actually demonstrated. Rigor in the technical register is a precondition for validity in the scientific one.
+
+At the same time, the technical apparatus is in service of a scientific question. The question this module asked is: among three qualitatively different accounts of how humans represent categories — as stored instances, as running averages, or as hypothesis distributions — which account best predicts human categorization behavior on a task with increasing rule complexity? The answer, when the pipeline is correctly applied, is informative regardless of which model wins. If the GCM wins, we have evidence that specific exemplar memory shapes categorization even when rule-like structures are available. If the prototype model wins, we have evidence that abstraction is occurring rapidly enough to outperform the detailed memory of the GCM on this timescale. If the rule model wins, we have evidence that participants are maintaining explicit hypotheses and making discrete discoveries, consistent with the verbal reports and abrupt learning curves that motivate rule-based accounts.
+
+The categorization question is old — it has been debated since Rosch's prototype experiments in the 1970s and Nosofsky's GCM papers in the 1980s — but the methodological tools assembled in this textbook bring something new to it: a framework in which competing theories can be expressed as generative probabilistic models, fitted to the same human data, and compared by their ability to predict out-of-sample behavior. The result is not a final answer but a more disciplined form of the question.
+
+That, ultimately, is what computational cognitive modeling is for.
+
+---
+
+## References
+
+Ashby, F. G., & Maddox, W. T. (1998). Stimulus categorization. In A. A. J. Marley (Ed.), *Choice, Decision, and Measurement: Essays in Honor of R. Duncan Luce* (pp. 251–301). Lawrence Erlbaum.
+
+Bürkner, P.-C., Gabry, J., & Vehtari, A. (2020). Approximate leave-future-out cross-validation for Bayesian time series models. *Stat*, 9(1), e281. https://doi.org/10.1002/sta4.323
+
+Cranmer, K., Brehmer, J., & Louppe, G. (2020). The frontier of simulation-based inference. *Proceedings of the National Academy of Sciences*, 117(48), 30055–30062.
+
+Fengler, A., Govindarajan, L. N., Chen, T., & Frank, M. J. (2021). Likelihood approximation networks (LANs) for fast inference of simulation models in cognitive neuroscience. *eLife*, 10, e65074.
+
+Gabry, J., Simpson, D., Vehtari, A., Betancourt, M., & Gelman, A. (2019). Visualization in Bayesian workflow. *Journal of the Royal Statistical Society: Series A*, 182(2), 389–402.
+
+Goodman, N. D., Tenenbaum, J. B., Feldman, J., & Griffiths, T. L. (2008). A rational analysis of rule-based concept learning. *Cognitive Science*, 32(1), 108–154.
+
+Kumaran, D., Hassabis, D., & McClelland, J. L. (2016). What learning systems do intelligent agents need? Complementary learning systems theory updated. *Trends in Cognitive Sciences*, 20(7), 512–534.
+
+Lieder, F., & Griffiths, T. L. (2020). Resource-rational analysis: Understanding human cognition as the optimal use of limited computational resources. *Behavioral and Brain Sciences*, 43, e1.
+
+Love, B. C., Medin, D. L., & Gureckis, T. M. (2004). SUSTAIN: A network model of category learning. *Psychological Review*, 111(2), 309–332.
+
+Miller, E. K., & Cohen, J. D. (2001). An integrative theory of prefrontal cortex function. *Annual Review of Neuroscience*, 24(1), 167–202.
+
+Nosofsky, R. M. (1986). Attention, similarity, and the identification-categorization relationship. *Journal of Experimental Psychology: General*, 115(1), 39–57.
+
+Piantadosi, S. T., Tenenbaum, J. B., & Goodman, N. D. (2012). Bootstrapping in a language of thought: A formal model of numerical concept learning. *Cognition*, 123(2), 199–217.
+
+Radev, S. T., Mertens, U. K., Voss, A., Ardizzone, L., & Köthe, U. (2020). BayesFlow: Learning complex stochastic models with invertible neural networks. *IEEE Transactions on Neural Networks and Learning Systems*, 33(4), 1452–1466.
+
+Rosch, E. (1975). Cognitive representations of semantic categories. *Journal of Experimental Psychology: General*, 104(3), 192–233.
+
+Säilynoja, T., Bürkner, P.-C., & Vehtari, A. (2022). Graphical test for discrete uniformity and its applications in goodness-of-fit evaluation and multiple sample comparison. *Statistics and Computing*, 32(2), 32.
+
+Schultz, W. (1997). A neural substrate of prediction and reward. *Science*, 275(5306), 1593–1599.
+
+Tylén, K., Fusaroli, R., Smith, P., & Arnulf, J.-L. (2023). Language as a tool for categorization: Evidence from emergent communication across three levels of cognitive complexity. *Cognition*, 237, 105459.
+
+Vehtari, A., Gelman, A., Simpson, D., Carpenter, B., & Bürkner, P.-C. (2021). Rank-normalization, folding, and localization: An improved $\hat{R}$ for assessing convergence of MCMC. *Bayesian Analysis*, 16(2), 667–718.
