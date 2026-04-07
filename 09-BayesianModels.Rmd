@@ -2355,13 +2355,13 @@ p_elpd / p_weight +
 
 Notice the clear directionality of the classification:
 
-* In Scenario 1, the WBA generates the data, but it is effectively functioning as the 0-parameter SBA model. Both the PBA and WBA fit the data equally well, but LOO accurately applies a complexity penalty. The SBA "wins."
+* In the SBA-mimic scenario, the WBA generates the data, but it is effectively functioning as the 0-parameter SBA model. Both the PBA and WBA fit the data equally well, but LOO accurately applies a complexity penalty. The SBA "wins."
 
-* In Scenario 2, the WBA parameters ($\kappa = 1.0$) mean the agent is trading off evidence exactly as the 1-parameter PBA assumes. The PBA easily beats the SBA, but it also beats the true generating WBA, because the WBA's extra scale parameter isn't needed.
+* In the PBA-mimic scenario, the WBA parameters ($\kappa = 1.0$) mean the agent is trading off evidence exactly as the 1-parameter PBA assumes. The PBA easily beats the SBA, but it also beats the true generating WBA, because the WBA's extra scale parameter isn't needed.
 
-* In Scenario 3, the agent has a high total evidence sensitivity ($\kappa = 2.5$) and heavily overweights social evidence ($\rho = 0.2$). The simpler models cannot flex to capture this. The true WBA correctly captures the weight.
+* In Scenario 3, the agent has a high total evidence sensitivity ($\kappa = 2.5$) and heavily overweights social evidence ($\rho = 0.2$). The SBA cannot flex to capture this. However, both the PBA and the WBA get substantial weight, with PBA winning. 
 
-This is not a failure of model comparison; it is a successful identification of the simplest sufficient explanation. We want the procedure to misclassify complex models as simple models when the extra complexity isn t doing any predictive work.
+This is not ideal, but neither a failure of model comparison. It tells us that the WBA could still be likely, but - perhaps given its issues in reconstructing kappa, is not a better model than PBA. We should be aware of these issues.
 
 ### Visualizing Pointwise ELPD: Where the Advantage Lies
 
@@ -2674,54 +2674,21 @@ ggplot(calibration_binned, aes(x = bin_mid, y = observed, color = candidate)) +
 
 Even when the "wrong" model wins, its parameters may still capture the effective behavior of the true generating process. To check this, we compute a **model-averaged estimate** of the effective evidence weights ($w_d$, $w_s$) by weighting each candidate's posterior means by its stacking weight. If a wrongly-selected model is still behaviorally faithful, these averaged estimates should track the true values closely.
 ```{r 09_model_recovery_parameters, fig.width=10, fig.height=5}
-# Compute stacking-weighted (model-averaged) effective weights
+# 1. Determine the winning model, enforce factor levels, and extract ITS specific fitted parameters
 param_recovery <- recovery_results |>
   mutate(
-    avg_wd = weight_SBA * sba_wd + weight_PBA * pba_wd + weight_WBA * wba_wd,
-    avg_ws = weight_SBA * sba_ws + weight_PBA * pba_ws + weight_WBA * wba_ws,
+    # Identify the winner based on the highest weight
     winner = case_when(
       weight_SBA >= weight_PBA & weight_SBA >= weight_WBA ~ "SBA",
       weight_PBA >= weight_SBA & weight_PBA >= weight_WBA ~ "PBA",
       TRUE ~ "WBA"
     ),
-    correct = winner == true_model
-  )
-
-p_wd <- ggplot(param_recovery, aes(x = true_wd, y = avg_wd)) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
-  geom_point(aes(color = true_model, shape = correct), size = 2.5, alpha = 0.7) +
-  geom_smooth(method=lm, aes(color = true_model), se = FALSE, linetype = "dotted") +
-  scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 4),
-                     labels = c("TRUE" = "Correct", "FALSE" = "Wrong")) +
-  scale_color_brewer(palette = "Set2") +
-  labs(
-    title = expression("Recovery of " * w[d]),
-    x = expression("True " * w[d]),
-    y = expression("Model-Averaged " * hat(w)[d]),
-    color = "True Model", shape = "Recovery"
-  )
-
-p_ws <- ggplot(param_recovery, aes(x = true_ws, y = avg_ws)) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
-  geom_point(aes(color = true_model, shape = correct), size = 2.5, alpha = 0.7) +
-  geom_smooth(method=lm, aes(color = true_model), se = FALSE, linetype = "dotted") +
-  scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 4),
-                     labels = c("TRUE" = "Correct", "FALSE" = "Wrong")) +
-  scale_color_brewer(palette = "Set2") +
-  labs(
-    title = expression("Recovery of " * w[s]),
-    x = expression("True " * w[s]),
-    y = expression("Model-Averaged " * hat(w)[s]),
-    color = "True Model", shape = "Recovery"
-  )
-
-p_wd + p_ws + plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
-
-
-# 1. Extract the specific fitted parameters of the WINNING model
-diagnostic_data <- param_recovery |>
-  mutate(
+    # Enforce factor levels for consistent plotting order (SBA -> PBA -> WBA)
+    winner = factor(winner, levels = c("SBA", "PBA", "WBA")),
+    true_model = factor(true_model, levels = c("SBA", "PBA", "WBA")),
+    correct = winner == true_model,
+    
+    # Extract the actual parameters estimated by the WINNING model
     win_wd = case_when(
       winner == "SBA" ~ sba_wd, # Will likely be NA/0 if SBA is 0-parameter
       winner == "PBA" ~ pba_wd,
@@ -2734,9 +2701,50 @@ diagnostic_data <- param_recovery |>
     )
   )
 
-# 2. Plot A: True Parameter Space (Where do misclassifications happen?)
-p_true <- ggplot(diagnostic_data, aes(x = true_wd, y = true_ws)) +
-  # Reference line to spot if models confuse when wd == ws
+# ---------------------------------------------------------
+# VISUALIZATION 1: Winning Model Parameter Recovery
+# ---------------------------------------------------------
+
+p_wd <- ggplot(param_recovery, aes(x = true_wd, y = win_wd)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  geom_point(aes(color = true_model, shape = correct), size = 2.5, alpha = 0.7) +
+  geom_smooth(method=lm, aes(color = true_model), se = FALSE, linetype = "dotted") +
+  scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 4),
+                     labels = c("TRUE" = "Correct", "FALSE" = "Wrong")) +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = expression("Recovery of " * w[d]),
+    x = expression("True " * w[d]),
+    y = expression("Winning Model " * hat(w)[d]),
+    color = "True Model", shape = "Recovery"
+  )
+
+p_ws <- ggplot(param_recovery, aes(x = true_ws, y = win_ws)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  geom_point(aes(color = true_model, shape = correct), size = 2.5, alpha = 0.7) +
+  geom_smooth(method=lm, aes(color = true_model), se = FALSE, linetype = "dotted") +
+  scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 4),
+                     labels = c("TRUE" = "Correct", "FALSE" = "Wrong")) +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = expression("Recovery of " * w[s]),
+    x = expression("True " * w[s]),
+    y = expression("Winning Model " * hat(w)[s]),
+    color = "True Model", shape = "Recovery"
+  )
+
+# View Combined Recovery Plot
+p_recovery <- p_wd + p_ws + plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+p_recovery
+
+
+# ---------------------------------------------------------
+# VISUALIZATION 2: True vs. Fitted Parameter Spaces
+# ---------------------------------------------------------
+
+# Plot A: True Parameter Space (Where do misclassifications happen?)
+p_true <- ggplot(param_recovery, aes(x = true_wd, y = true_ws)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray60") + 
   geom_point(aes(color = winner, shape = correct), size = 2.5, alpha = 0.7) +
   facet_wrap(~ true_model, labeller = as_labeller(function(x) paste("True:", x))) +
@@ -2750,8 +2758,8 @@ p_true <- ggplot(diagnostic_data, aes(x = true_wd, y = true_ws)) +
     color = "Winning Model"
   )
 
-# 3. Plot B: Fitted Parameter Space (How do models mimic each other?)
-p_fit <- ggplot(diagnostic_data, aes(x = win_wd, y = win_ws)) +
+# Plot B: Fitted Parameter Space (How do models mimic each other?)
+p_fit <- ggplot(param_recovery, aes(x = win_wd, y = win_ws)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray60") +
   geom_point(aes(color = true_model, shape = correct), size = 2.5, alpha = 0.7) +
   facet_wrap(~ winner, labeller = as_labeller(function(x) paste("Winner:", x))) +
@@ -2765,13 +2773,84 @@ p_fit <- ggplot(diagnostic_data, aes(x = win_wd, y = win_ws)) +
     color = "True Model", shape = "Recovery"
   )
 
-# 4. Combine vertically so the facets don't get squished horizontally
-p_true / p_fit + 
+# View Combined Spaces Plot
+p_spaces <- p_true / p_fit + 
   plot_layout(guides = "collect") & 
   theme(legend.position = "bottom")
+p_spaces
+
+
+# ---------------------------------------------------------
+# VISUALIZATION 3: Parameter Shifting (Misclassifications)
+# ---------------------------------------------------------
+
+# Filter out correct recoveries to focus purely on the mapping of misclassifications
+misclassifications <- param_recovery |> 
+  filter(correct == FALSE)
+
+# Create the Vector Shift Plot
+p_shift <- ggplot(misclassifications) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray60") +
+  
+  # Draw arrows starting at the True params and pointing to the Fitted params
+  geom_segment(
+    aes(x = true_wd, y = true_ws, xend = win_wd, yend = win_ws, color = winner),
+    arrow = arrow(length = unit(0.15, "cm"), type = "closed"),
+    alpha = 0.6
+  ) +
+  
+  # Add a distinct black dot at the starting point (True parameters)
+  geom_point(
+    aes(x = true_wd, y = true_ws), 
+    color = "black", size = 1.2, shape = 16
+  ) +
+  
+  # Grid layout: Rows = True generating model, Columns = The wrong model that won
+  facet_grid(true_model ~ winner, drop = FALSE,
+             labeller = labeller(
+               true_model = function(x) paste("True:", x),
+               winner = function(x) paste("Winner:", x)
+             )) +
+  
+  # Match the colors you used previously
+  scale_color_manual(
+    values = c("SBA" = "#E41A1C", "PBA" = "#377EB8", "WBA" = "#4DAF4A"),
+    drop = FALSE
+  ) +
+  labs(
+    title = "Parameter Shifting During Model Misclassification",
+    subtitle = "Arrows trace from the True Parameters (black dots) to the Compensatory Fitted Parameters of the wrong model",
+    x = expression("Weight Delay (" * w[d] * ")"),
+    y = expression("Weight Social (" * w[s] * ")")
+  ) +
+  theme_bw() +
+  theme(legend.position = "none") 
+
+# View Shift Plot
+p_shift
 ```
 
-Points falling on the diagonal indicate that the model-averaged estimate matches the true generating value, regardless of which model "won." Crosses (×) mark simulations where the wrong model was selected; circles mark correct recoveries. If the crosses still hug the diagonal, it means even mis-identification is behaviorally benign — the winning model's parameters compensate to approximate the true data-generating weights.
+To thoroughly evaluate the reliability of our models, we conduct a three-stage parameter recovery and identifiability analysis. This pipeline not only tests whether we can recover the true generating parameters, but also maps the exact conditions under which models misclassify and how they compensate when they do. N.B. It's a work in progress, so I'm sure there are better ways, and I will hopefully develop better plots in the next course iterations. 
+
+1. Winning Model Parameter Recovery
+
+We first assess the accuracy of our parameter estimates by evaluating the actual weights inferred by whichever model "won" the selection process. The first pair of plots displays the recovery of the delay weight ($w_d$) and the social weight ($w_s$).
+*How to read it*: The x-axis represents the true data-generating parameter, while the y-axis represents the estimate generated by the winning model ($\hat{w}$). The dashed diagonal line indicates perfect recovery.
+*Interpretation*: Points falling tightly along the diagonal demonstrate robust parameter recovery. We distinguish between correct model recoveries (circles) and misclassifications (crosses). By plotting the parameters of the winning model, we can observe exactly what psychological weights would be reported in practice if we selected the best-fitting architecture for a given dataset. The dotted trend lines further reveal whether specific true models systematically under- or overestimate these weights across the parameter space.
+
+2. Mapping Model Identifiability (True vs. Fitted Space)
+
+Next, we investigate the geographical boundaries of model selection accuracy. Rather than just asking if a model failed, we ask where it failed.
+
+Plot A (Data Generating Space): This plot is faceted by the True Model. It illustrates which specific regions of the true parameter space cause the wrong model to win. For instance, we can observe if misclassifications cluster near the reference diagonal (where $w_d \approx w_s$), indicating that the models struggle to differentiate the underlying strategies when the weights are balanced.
+
+Plot B (Fitted Parameter Space): This plot is faceted by the Winning Model. It reveals the "imitation space"—the specific parameter ranges a model leverages when it inappropriately wins. By comparing these two spaces, we can see if models are relying on extreme or restricted parameter values to mimic a different generating architecture.
+
+3. Structural Mimicry and Compensatory Shifts
+
+To evaluate whether model misclassifications are behaviorally benign, we isolate the failed recovery trials and trace exactly how the parameter estimates shift when the wrong model is selected.
+*How to read it*: In this grid, rows represent the true generating model and columns represent the incorrectly selected "winning" model. Each arrow represents a single misclassified simulation: the black dot marks the true generating parameters, while the arrowhead points to the values estimated by the wrong winning model.
+*Interpretation*: We can directly observe structural mimicry. If the arrows are very short, or if they reliably project toward a specific parameter ratio (such as the diagonal), it indicates that the misidentification is relatively benign; the winning model achieves its higher fit by tuning its parameters to functionally approximate the true data-generating weights. Conversely, long, erratic arrows reveal regions where the wrong model fundamentally distorts the psychological interpretation of the data, pulling the estimates far from their true origins to force a statistical fit.
 
 ## Summary: What We Learned
 
@@ -3062,16 +3141,18 @@ The key design choices mirror Chapter 6:
   \node[det, below=1cm of indiv, xshift=-1.5cm] (wd) {$w_{d,j}$};
   \node[det, below=1cm of indiv, xshift=1.5cm] (ws) {$w_{s,j}$};
 
-  % Trial level
-  \node[obs, below=1.5cm of wd, xshift=-1cm] (k1) {$k_{1,i}$};
+  % Trial level inputs
+  \node[obs, below=1.5cm of wd, xshift=-1.5cm] (k1) {$k_{1,i}$};
   \node[obs, right=0.3cm of k1] (n1) {$n_{1,i}$};
-  \node[obs, below=1.5cm of ws, xshift=1cm] (k2) {$k_{2,i}$};
+  \node[obs, below=1.5cm of ws, xshift=1.5cm] (k2) {$k_{2,i}$};
   \node[obs, left=0.3cm of k2] (n2) {$n_{2,i}$};
 
-  \node[det, below=1.5cm of wd] (ap) {$\alpha_{post,i}$};
-  \node[det, below=1.5cm of ws] (bp) {$\beta_{post,i}$};
+  % Posterior parameters (shifted further down to prevent overlap)
+  \node[det, below=3cm of wd] (ap) {$\alpha_{post,i}$};
+  \node[det, below=3cm of ws] (bp) {$\beta_{post,i}$};
 
-  \node[obs, below=1cm of ap, xshift=1.5cm] (y) {$y_i$};
+  % Output
+  \node[obs, below=1.5cm of ap, xshift=1.5cm] (y) {$y_i$};
 
   % Edges
   \edge {mu, sigma, Omega} {indiv};
