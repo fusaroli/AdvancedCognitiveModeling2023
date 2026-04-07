@@ -1,10 +1,10 @@
 
-// Multilevel Weighted Bayesian Agent
-// Non-centred parameterisation on log scale.
-// Correlated random effects for (log_wd, log_ws) via LKJ prior.
+// Multilevel Weighted Bayesian Agent (reparameterised)
+// Population distribution on (logit(rho), log(kappa)).
+// Non-centred parameterisation with correlated random effects.
 data {
-  int<lower=1> N;
-  int<lower=1> J;
+  int<lower=1> N;                                // total observations
+  int<lower=1> J;                                // number of agents
   array[N] int<lower=1, upper=J> agent_id;
   array[N] int<lower=0, upper=1>  choice;
   array[N] int<lower=0>            blue1;
@@ -14,45 +14,38 @@ data {
 }
 
 parameters {
-  // Population means on log scale
-  vector[2] mu_log;                        // [mu_log_wd, mu_log_ws]
-
-  // Population SDs (between-subject variability)
-  vector<lower=0>[2] sigma_log;            // [sigma_log_wd, sigma_log_ws]
-
-  // Cholesky factor of the 2x2 correlation matrix (Chapter 6 style)
-  cholesky_factor_corr[2] L_Omega;
-
-  // Standardised individual deviations (NCP): 2 x J matrix
-  matrix[2, J] z;
+  vector[2] mu;                              // population means: (logit_rho, log_kappa)
+  vector<lower=0>[2] sigma;                  // population SDs
+  cholesky_factor_corr[2] L_Omega;           // Cholesky factor of correlation matrix
+  matrix[2, J] z;                            // standard normal deviates (NCP)
 }
 
 transformed parameters {
-  // Individual weights (positive via exp transform)
+  // Reconstruct individual parameters on natural scale
+  matrix[2, J] theta_raw = diag_pre_multiply(sigma, L_Omega) * z;
+  
+  vector<lower=0, upper=1>[J] rho;
+  vector<lower=0>[J] kappa;
   vector<lower=0>[J] weight_direct;
   vector<lower=0>[J] weight_social;
 
-  // Correlated NCP: theta_j = mu + diag(sigma) * L_Omega * z_j
-  matrix[2, J] theta = diag_pre_multiply(sigma_log, L_Omega) * z;
-
   for (j in 1:J) {
-    weight_direct[j] = exp(mu_log[1] + theta[1, j]);
-    weight_social[j] = exp(mu_log[2] + theta[2, j]);
+    rho[j]           = inv_logit(mu[1] + theta_raw[1, j]);
+    kappa[j]         = exp(mu[2] + theta_raw[2, j]);
+    weight_direct[j] = rho[j] * kappa[j];
+    weight_social[j] = (1.0 - rho[j]) * kappa[j];
   }
 }
 
 model {
-  // Population-level priors
-  target += normal_lpdf(mu_log    | 0, 1);
-  target += exponential_lpdf(sigma_log | 2);
-
-  // LKJ prior on correlations (eta=2: weakly regularising, consistent with Ch.6)
-  target += lkj_corr_cholesky_lpdf(L_Omega | 2);
-
-  // Non-centred individual effects
-  target += std_normal_lpdf(to_vector(z));
-
-  // Likelihood
+  // Population priors
+  target += normal_lpdf(mu[1] | 0, 1.5);       // logit_rho: weakly informative
+  target += normal_lpdf(mu[2] | log(2), 0.5);   // log_kappa: centered on SBA-like scaling
+  target += exponential_lpdf(sigma | 2);         // moderate shrinkage on SDs
+  target += lkj_corr_cholesky_lpdf(L_Omega | 2); // weakly regularise correlation
+  target += std_normal_lpdf(to_vector(z));        // NCP deviates
+  
+  // Likelihood (vectorised per trial)
   for (i in 1:N) {
     int j = agent_id[i];
     real alpha_post = 0.5
@@ -66,13 +59,11 @@ model {
 }
 
 generated quantities {
-  // Population-level parameters on natural scale
-  real pop_weight_direct = exp(mu_log[1]);
-  real pop_weight_social = exp(mu_log[2]);
-
-  // Recover the full correlation matrix for reporting
+  // Population summaries on natural scale
+  real pop_rho   = inv_logit(mu[1]);
+  real pop_kappa = exp(mu[2]);
   matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
-
+  
   vector[N] log_lik;
   array[N] int pred_choice;
 
@@ -84,7 +75,6 @@ generated quantities {
     real beta_post  = 0.5
                     + weight_direct[j] * (total1[i] - blue1[i])
                     + weight_social[j] * (total2[i] - blue2[i]);
-
     log_lik[i]     = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
     pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
   }

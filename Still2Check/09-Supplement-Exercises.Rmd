@@ -1,0 +1,905 @@
+---
+title: "09 Supplement — Extended Exercises"
+subtitle: "WBA-Softmax, Multilevel SBC, and Bidirectional Model Recovery"
+output: html_document
+date: "2025-03-10"
+---
+
+```{r sup_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = "center",
+  out.width  = "80%",
+  dpi        = 300
+)
+
+regenerate_simulations <- FALSE
+
+for (d in c("stan", "simdata", "simmodels", "figures")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+
+pacman::p_load(
+  tidyverse,
+  cmdstanr,
+  posterior,
+  bayesplot,
+  patchwork,
+  loo,
+  SBC,
+  furrr,
+  future
+)
+
+theme_set(theme_classic())
+plan(sequential)
+```
+
+# Extended Exercises for Chapter 9
+
+> **📍 Prerequisites:** These exercises depend on code objects defined in
+> the main Chapter 9. Run Chapter 9 first (or at minimum, compile the
+> Stan models and generate the simulated datasets used there). Each
+> exercise is self-contained once those objects exist.
+
+The main chapter deliberately scoped out three analyses to keep the
+narrative focused. Each of those analyses is a genuine validation step
+that the cheatsheet mandates, and each teaches something the main chapter
+does not. This supplement provides full implementations.
+
+---
+
+## Exercise 1: The Softmax Observation Model
+
+### Motivation
+
+Chapter 9 names the BetaBinomial observation model as a cognitive
+hypothesis — probability matching — and presents a table of
+alternatives. The most important alternative is the **softmax** (inverse
+temperature) model, which replaces the two-step BetaBinomial draw with a
+compressed logistic transformation of the posterior mean. This exercise
+builds that model, validates it via SBC, and uses LOO to compare it
+against the BetaBinomial WBA on the same simulated data.
+
+The distinction matters because:
+
+- The BetaBinomial propagates the agent's **full belief uncertainty**
+  into the response. An agent who is genuinely uncertain produces more
+  variable choices.
+- The softmax collapses the belief to a single number (the posterior
+  mean $\hat{\theta}$) and uses an inverse temperature $\phi$ to control
+  how deterministically the agent acts on that number. It discards
+  distributional information.
+
+If real participants are more deterministic than probability matching
+predicts, the WBA-BetaBinomial will show a hump-shaped LOO-PIT
+(overestimating variability), and the softmax model will improve LOO.
+
+### The WBA-Softmax Stan Model
+
+The belief-update mechanism is identical to the WBA. Only the
+observation model changes: instead of $y_i \sim \text{BetaBin}(1,
+\alpha_i, \beta_i)$, we compute $\hat{\theta}_i = \alpha_i / (\alpha_i
++ \beta_i)$ and pass it through a logistic link scaled by $\phi$:
+
+$$y_i \sim \text{Bernoulli}\!\left(\sigma\!\left(\phi \cdot
+\text{logit}(\hat{\theta}_i)\right)\right)$$
+
+At $\phi = 1$ the model is a logistic regression on the posterior mean.
+At $\phi \to \infty$ it approaches a threshold rule. At $\phi \to 0$ it
+approaches random responding.
+
+> **Identifiability caution.** The parameters $\kappa$ and $\phi$ are
+> partially confounded: increasing $\kappa$ makes the Beta posterior
+> mean more extreme (higher effective sample size), and increasing $\phi$
+> amplifies any departure from 0.5. Separating them requires trials
+> where the *shape* of the evidence (how ambiguous the posterior is)
+> matters independently of its *direction*. The 9 × 4 evidence grid
+> helps, but SBC may reveal wider calibration bands for $\kappa$ than
+> in the BetaBinomial WBA. This is expected and informative.
+
+```{r ex1_softmax_stan}
+WBA_Softmax_stan <- "
+// WBA with softmax observation model.
+// Same belief update as the BetaBinomial WBA (rho, kappa parameterisation).
+// Observation model: Bernoulli with logistic link on the posterior mean.
+// phi (inverse temperature) controls response determinism.
+data {
+  int<lower=1> N;
+  array[N] int<lower=0, upper=1> choice;
+  array[N] int<lower=0> blue1;
+  array[N] int<lower=0> total1;
+  array[N] int<lower=0> blue2;
+  array[N] int<lower=0> total2;
+}
+
+parameters {
+  real<lower=0, upper=1> rho;
+  real<lower=0>          kappa;
+  real<lower=0>          phi;   // inverse temperature
+}
+
+transformed parameters {
+  real<lower=0> weight_direct = rho * kappa;
+  real<lower=0> weight_social = (1.0 - rho) * kappa;
+}
+
+model {
+  // Priors — rho and kappa identical to the BetaBinomial WBA
+  target += beta_lpdf(rho   | 2, 2);
+  target += lognormal_lpdf(kappa | log(2), 0.5);
+  // phi: lognormal(0, 1) spans roughly [0.1, 7].
+  // phi < 0.5 = near-random; phi > 5 = near-deterministic.
+  target += lognormal_lpdf(phi   | 0, 1);
+
+  for (i in 1:N) {
+    real alpha_post = 0.5
+                    + weight_direct * blue1[i]
+                    + weight_social * blue2[i];
+    real beta_post  = 0.5
+                    + weight_direct * (total1[i] - blue1[i])
+                    + weight_social * (total2[i] - blue2[i]);
+    // Posterior mean of the Beta belief distribution
+    real theta_hat = alpha_post / (alpha_post + beta_post);
+    // Softmax observation model
+    target += bernoulli_logit_lpmf(choice[i] | phi * logit(theta_hat));
+  }
+}
+
+generated quantities {
+  vector[N] log_lik;
+  array[N] int posterior_pred;
+  array[N] int prior_pred;
+
+  real rho_pr   = beta_rng(2, 2);
+  real kappa_pr = lognormal_rng(log(2), 0.5);
+  real phi_pr   = lognormal_rng(0, 1);
+  real wd_pr    = rho_pr * kappa_pr;
+  real ws_pr    = (1.0 - rho_pr) * kappa_pr;
+
+  for (i in 1:N) {
+    real alpha_post = 0.5
+                    + weight_direct * blue1[i]
+                    + weight_social * blue2[i];
+    real beta_post  = 0.5
+                    + weight_direct * (total1[i] - blue1[i])
+                    + weight_social * (total2[i] - blue2[i]);
+    real theta_hat = alpha_post / (alpha_post + beta_post);
+
+    log_lik[i]        = bernoulli_logit_lpmf(choice[i] | phi * logit(theta_hat));
+    posterior_pred[i] = bernoulli_logit_rng(phi * logit(theta_hat));
+
+    // Prior predictive
+    real ap = 0.5 + wd_pr * blue1[i] + ws_pr * blue2[i];
+    real bp = 0.5 + wd_pr * (total1[i] - blue1[i])
+                  + ws_pr * (total2[i] - blue2[i]);
+    real th_pr = ap / (ap + bp);
+    prior_pred[i] = bernoulli_logit_rng(phi_pr * logit(th_pr));
+  }
+}
+"
+
+write_stan_file(WBA_Softmax_stan,
+                dir      = "stan/",
+                basename = "ch9_wba_softmax.stan")
+
+mod_softmax <- cmdstan_model("stan/ch9_wba_softmax.stan")
+```
+
+### SBC: WBA-Softmax
+
+```{r ex1_sbc_softmax, message=FALSE}
+n_sbc_softmax <- 500
+
+if (regenerate_simulations) {
+
+  sbc_gen_softmax <- SBC_generator_function(
+    function(N) {
+      rho_t   <- rbeta(1, 2, 2)
+      kappa_t <- rlnorm(1, log(2), 0.5)
+      phi_t   <- rlnorm(1, 0, 1)
+      wd <- rho_t * kappa_t
+      ws <- (1 - rho_t) * kappa_t
+
+      ev <- evidence_combinations |>
+        slice_sample(n = N, replace = TRUE)
+
+      alpha_p <- 0.5 + wd * ev$blue1 + ws * ev$blue2
+      beta_p  <- 0.5 + wd * (ev$total1 - ev$blue1) +
+                       ws * (ev$total2 - ev$blue2)
+      theta_hat <- alpha_p / (alpha_p + beta_p)
+      p_blue    <- plogis(phi_t * qlogis(theta_hat))
+      choices   <- rbinom(N, 1, p_blue)
+
+      list(
+        variables = list(rho = rho_t, kappa = kappa_t, phi = phi_t),
+        generated = list(
+          N      = N,
+          choice = choices,
+          blue1  = ev$blue1,
+          total1 = ev$total1,
+          blue2  = ev$blue2,
+          total2 = ev$total2
+        )
+      )
+    },
+    N = 180  # same order as the main chapter's single-agent datasets
+  )
+
+  sbc_ds_softmax <- generate_datasets(sbc_gen_softmax, n_sbc_softmax)
+
+  sbc_be_softmax <- SBC::SBC_backend_cmdstan_sample(
+    mod_softmax,
+    chains          = 2,
+    iter_warmup     = 500,
+    iter_sampling   = 500,
+    parallel_chains = 2,
+    refresh         = 0,
+    show_messages   = FALSE
+  )
+
+  sbc_res_softmax <- compute_SBC(sbc_ds_softmax, sbc_be_softmax,
+                                  keep_fits = FALSE)
+  saveRDS(sbc_res_softmax, "simmodels/ch9_sbc_softmax.rds")
+
+} else {
+  sbc_res_softmax <- readRDS("simmodels/ch9_sbc_softmax.rds")
+}
+
+SBC::plot_ecdf_diff(
+  sbc_res_softmax, variables = c("rho", "kappa", "phi")
+) +
+  labs(
+    title    = "SBC Calibration: WBA-Softmax",
+    subtitle = paste0(
+      n_sbc_softmax, " datasets. Compare kappa calibration bands to the ",
+      "BetaBinomial WBA — wider bands here indicate the kappa/phi confound."
+    )
+  )
+```
+
+**What to look for:** If $\kappa$ shows wider calibration bands than in
+the BetaBinomial WBA's SBC, that is the $\kappa$/$\phi$ confound at
+work. Increasing $\kappa$ concentrates the posterior mean toward the
+extremes; increasing $\phi$ amplifies that same posterior mean. The two
+operations have similar effects on the choice probability, making them
+hard to disentangle from binary data alone. This is not a model failure —
+it is an inherent limitation of the softmax parameterisation that the
+BetaBinomial avoids by propagating full distributional uncertainty.
+
+### Fitting and LOO Comparison
+
+```{r ex1_fit_softmax, message=FALSE}
+# Reuse the stan_data_self_focused from Chapter 9
+fit_softmax_self <- if (regenerate_simulations) {
+  fit <- mod_softmax$sample(
+    data            = stan_data_self_focused,
+    seed            = 701,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 1000,
+    refresh         = 0
+  )
+  fit$save_object("simmodels/ch9_fit_softmax_self.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_softmax_self.rds")
+}
+
+# Diagnostics
+fit_softmax_self$cmdstan_diagnose()
+
+fit_softmax_self$summary(variables = c("rho", "kappa", "phi")) |>
+  knitr::kable(digits = 3,
+               caption = "WBA-Softmax posteriors: Self-Focused agent data")
+```
+
+```{r ex1_loo_comparison}
+loo_softmax_self <- loo(fit_softmax_self$draws("log_lik", format = "matrix"))
+
+# The BetaBinomial WBA's LOO was computed in Chapter 9 as loo_weighted_self.
+# If running this supplement standalone, recompute it:
+# loo_weighted_self <- loo(fit_weighted_self_focused$draws("log_lik",
+#                          format = "matrix"))
+
+cat("=== Observation Model Comparison: BetaBinomial vs. Softmax ===\n")
+cat("(Both use the WBA belief-update with rho/kappa parameterisation)\n\n")
+
+obs_model_compare <- loo_compare(
+  list("WBA-BetaBin" = loo_weighted_self,
+       "WBA-Softmax" = loo_softmax_self)
+)
+print(obs_model_compare)
+
+diff_ratio <- abs(obs_model_compare[2, "elpd_diff"] /
+                  obs_model_compare[2, "se_diff"])
+cat(sprintf("\n|ELPD diff| / SE = %.2f\n", diff_ratio))
+
+obs_weights <- loo_model_weights(
+  list("WBA-BetaBin" = loo_weighted_self,
+       "WBA-Softmax" = loo_softmax_self),
+  method = "stacking"
+)
+cat("\nBayesian stacking weights:\n")
+print(obs_weights)
+```
+
+**Interpretation guidance:**
+
+- If the **BetaBinomial wins** (expected, since the simulated agents used
+  the BetaBinomial generative process): the probability-matching
+  hypothesis is supported by the data that were generated under it. The
+  softmax's extra parameter $\phi$ is not justified.
+
+- If the **Softmax wins** on simulated BetaBinomial data: this would be
+  surprising and would suggest a numerical issue or SBC calibration
+  failure worth investigating.
+
+- On **real human data**, the comparison has genuine empirical content.
+  If participants are more deterministic than probability matching
+  predicts, the softmax will improve LOO. The LOO-PIT from the
+  BetaBinomial model would show a characteristic hump shape (model
+  overestimates response variability), confirming the diagnosis.
+
+```{r ex1_phi_interpretation}
+# Visualise the posterior for phi — how deterministic is the agent?
+draws_sm <- as_draws_df(fit_softmax_self$draws("phi"))
+
+ggplot(draws_sm, aes(x = phi)) +
+  geom_histogram(bins = 50, fill = "#756bb1", alpha = 0.7) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "grey50") +
+  annotate("text", x = 0.3, y = Inf, label = "Near-random\n(probability matching)",
+           vjust = 1.5, hjust = 0, size = 3, colour = "grey40") +
+  annotate("text", x = 3.5, y = Inf, label = "Near-deterministic\n(maximising)",
+           vjust = 1.5, hjust = 0, size = 3, colour = "grey40") +
+  labs(
+    title    = "Posterior: Inverse Temperature (phi)",
+    subtitle = "phi = 1 approximates logistic probability matching.\nphi > 1 = more deterministic; phi < 1 = noisier.",
+    x        = expression(phi),
+    y        = "Posterior count"
+  )
+```
+
+---
+
+## Exercise 2: SBC for the Multilevel WBA and Sequential Model
+
+### Motivation
+
+The main chapter validates the single-level WBA and PBA via SBC but
+skips the multilevel WBA and the sequential model. The cheatsheet
+mandates that "empirical fitting must never occur before simulation
+validation." The multilevel WBA introduces correlated NCP random effects
+(Cholesky-factored), which can develop funnel geometry that single-level
+SBC cannot detect. The sequential model has a monotonically accumulating
+state variable that could produce gradient pathologies at long time
+horizons.
+
+### 2a: SBC for the Multilevel WBA
+
+The generator must simulate a full multi-agent dataset: draw population
+parameters from the prior, draw individual parameters from the
+population distribution, and generate choices for each agent.
+
+```{r ex2a_sbc_ml_wba, message=FALSE}
+n_sbc_ml <- 200  # multilevel SBC is expensive; 200 is a reasonable lower bound
+
+if (regenerate_simulations) {
+
+  J_sbc <- 20          # agents per SBC universe
+  n_per_comb_sbc <- 2  # repetitions per evidence combination per agent
+
+  sbc_gen_ml <- SBC_generator_function(
+    function(N_unused) {
+      # Draw population parameters from priors
+      mu_log    <- rnorm(2, 0, 1)
+      sigma_log <- rexp(2, 2)
+
+      # Draw LKJ(2) correlation via the Cholesky factor
+      # For 2x2, the off-diagonal element of L is Beta(2, 2)-distributed
+      # after appropriate transformation
+      l21       <- 2 * rbeta(1, 2, 2) - 1  # marginal on rho under LKJ(2)
+      L_Omega   <- matrix(c(1, l21, 0, sqrt(1 - l21^2)), 2, 2)
+      Sigma_chol <- diag(sigma_log) %*% L_Omega
+
+      # Draw individual z-scores and reconstruct
+      z <- matrix(rnorm(2 * J_sbc), nrow = 2)
+      theta <- Sigma_chol %*% z
+      log_wd <- mu_log[1] + theta[1, ]
+      log_ws <- mu_log[2] + theta[2, ]
+      wd_ind <- exp(log_wd)
+      ws_ind <- exp(log_ws)
+
+      # Simulate choices
+      ev_grid <- expand_grid(blue1 = 0:8, blue2 = 0:3,
+                              total1 = 8, total2 = 3)
+      sim_rows <- list()
+
+      for (j in seq_len(J_sbc)) {
+        ev_j <- ev_grid |> slice_sample(n = n_per_comb_sbc * nrow(ev_grid),
+                                         replace = TRUE)
+        alpha_p <- 0.5 + wd_ind[j] * ev_j$blue1 + ws_ind[j] * ev_j$blue2
+        beta_p  <- 0.5 + wd_ind[j] * (ev_j$total1 - ev_j$blue1) +
+                         ws_ind[j] * (ev_j$total2 - ev_j$blue2)
+        theta_draws <- rbeta(nrow(ev_j), alpha_p, beta_p)
+        choices     <- rbinom(nrow(ev_j), 1, theta_draws)
+
+        sim_rows[[j]] <- tibble(
+          agent_id = j,
+          choice   = choices,
+          blue1    = ev_j$blue1,
+          total1   = ev_j$total1,
+          blue2    = ev_j$blue2,
+          total2   = ev_j$total2
+        )
+      }
+
+      sim_df <- bind_rows(sim_rows)
+
+      # SBC tracks population-level parameters
+      rho_pop <- l21  # the correlation
+
+      list(
+        variables = list(
+          `mu_log[1]`    = mu_log[1],
+          `mu_log[2]`    = mu_log[2],
+          `sigma_log[1]` = sigma_log[1],
+          `sigma_log[2]` = sigma_log[2]
+          # rho is derived; tracking mu_log and sigma_log is sufficient
+        ),
+        generated = list(
+          N        = nrow(sim_df),
+          J        = J_sbc,
+          agent_id = sim_df$agent_id,
+          choice   = sim_df$choice,
+          blue1    = sim_df$blue1,
+          total1   = sim_df$total1,
+          blue2    = sim_df$blue2,
+          total2   = sim_df$total2
+        )
+      )
+    },
+    N_unused = 0
+  )
+
+  sbc_ds_ml <- generate_datasets(sbc_gen_ml, n_sbc_ml)
+
+  sbc_be_ml <- SBC::SBC_backend_cmdstan_sample(
+    mod_ml_wba,  # compiled in Chapter 9
+    chains          = 2,
+    iter_warmup     = 500,
+    iter_sampling   = 500,
+    parallel_chains = 2,
+    adapt_delta     = 0.9,
+    refresh         = 0,
+    show_messages   = FALSE
+  )
+
+  sbc_res_ml <- compute_SBC(sbc_ds_ml, sbc_be_ml, keep_fits = FALSE)
+  saveRDS(sbc_res_ml, "simmodels/ch9_sbc_ml_wba.rds")
+
+} else {
+  sbc_res_ml <- readRDS("simmodels/ch9_sbc_ml_wba.rds")
+}
+
+# ── ECDF-difference plots: population parameters ────────────────────
+SBC::plot_ecdf_diff(
+  sbc_res_ml,
+  variables = c("mu_log[1]", "mu_log[2]", "sigma_log[1]", "sigma_log[2]")
+) +
+  labs(
+    title    = "SBC Calibration: Multilevel WBA (population parameters)",
+    subtitle = paste0(n_sbc_ml, " datasets, ", J_sbc, " agents each.",
+                      "\nsigma_log parameters are most prone to funnel issues.")
+  )
+```
+
+```{r ex2a_divergence_profile}
+# Divergence profile: does funnel geometry concentrate at small sigma?
+if (!is.null(sbc_res_ml$backend_diagnostics)) {
+  diags_ml <- sbc_res_ml$backend_diagnostics
+  fail_rate <- mean(diags_ml$n_divergent > 0) * 100
+
+  cat(sprintf("%.0f%% of SBC universes produced at least one divergence.\n",
+              fail_rate))
+
+  # If the SBC object stores generated variables, plot sigma vs divergence
+  diags_ml |>
+    ggplot(aes(x = n_divergent)) +
+    geom_histogram(binwidth = 1, fill = "darkred", alpha = 0.8) +
+    labs(
+      title    = "ML-WBA Divergence Counts Across SBC Universes",
+      subtitle = sprintf("%.0f%% of universes had >=1 divergence.", fail_rate),
+      x        = "Number of Divergent Transitions",
+      y        = "Number of SBC Universes"
+    )
+}
+```
+
+**What to look for:**
+
+- If $\sigma_\text{log}$ parameters show systematic ECDF-difference
+  deviations (especially U-shaped or skewed) while $\mu_\text{log}$
+  parameters are well calibrated, this indicates Neal's Funnel: the NCP
+  is failing to fully resolve the small-$\sigma$ geometry. The
+  diagnostic response is to check whether divergences concentrate at
+  small $\sigma$ values (plot sigma against divergence count).
+
+- If both $\mu$ and $\sigma$ are well calibrated but divergence rates
+  are non-trivial (say > 5%), this indicates mild geometry issues that
+  do not bias the marginal posteriors but slow mixing. Raising
+  `adapt_delta` to 0.95 is the appropriate treatment in this case (after
+  confirming the NCP is correct).
+
+### 2b: SBC for the Sequential Model
+
+The sequential model has three parameters (`weight_direct`,
+`weight_social`, `learning_rate`) and a monotonically accumulating
+internal state. SBC checks whether the sampler can navigate this state
+space without systematic bias.
+
+```{r ex2b_sbc_sequential, message=FALSE}
+n_sbc_seq <- 200
+
+if (regenerate_simulations) {
+
+  T_sbc <- 60  # trials per SBC dataset (same as chapter example)
+
+  sbc_gen_seq <- SBC_generator_function(
+    function(T_unused) {
+      wd_t <- rlnorm(1, 0, 0.5)
+      ws_t <- rlnorm(1, 0, 0.5)
+      lr_t <- rlnorm(1, -1, 0.5)
+
+      # Simulate sequential data
+      alpha_t <- 1.0
+      beta_t  <- 1.0
+      p_blue_env <- 0.75  # stable environment
+
+      blue1_vec  <- integer(T_sbc)
+      total1_vec <- rep(8L, T_sbc)
+      blue2_vec  <- integer(T_sbc)
+      total2_vec <- rep(3L, T_sbc)
+      choice_vec <- integer(T_sbc)
+
+      for (t in seq_len(T_sbc)) {
+        belief_t <- alpha_t / (alpha_t + beta_t)
+        blue1_vec[t]  <- rbinom(1, 8, p_blue_env)
+        blue2_vec[t]  <- rbinom(1, 3, p_blue_env)
+        choice_vec[t] <- rbinom(1, 1, belief_t)
+
+        if (t < T_sbc) {
+          alpha_t <- alpha_t +
+            lr_t * (wd_t * blue1_vec[t] + ws_t * blue2_vec[t])
+          beta_t  <- beta_t +
+            lr_t * (wd_t * (8 - blue1_vec[t]) + ws_t * (3 - blue2_vec[t]))
+        }
+      }
+
+      list(
+        variables = list(
+          weight_direct = wd_t,
+          weight_social = ws_t,
+          learning_rate = lr_t
+        ),
+        generated = list(
+          T      = T_sbc,
+          choice = choice_vec,
+          blue1  = blue1_vec,
+          total1 = total1_vec,
+          blue2  = blue2_vec,
+          total2 = total2_vec
+        )
+      )
+    },
+    T_unused = 0
+  )
+
+  sbc_ds_seq <- generate_datasets(sbc_gen_seq, n_sbc_seq)
+
+  sbc_be_seq <- SBC::SBC_backend_cmdstan_sample(
+    mod_seq,  # compiled in Chapter 9
+    chains          = 2,
+    iter_warmup     = 500,
+    iter_sampling   = 500,
+    parallel_chains = 2,
+    refresh         = 0,
+    show_messages   = FALSE
+  )
+
+  sbc_res_seq <- compute_SBC(sbc_ds_seq, sbc_be_seq, keep_fits = FALSE)
+  saveRDS(sbc_res_seq, "simmodels/ch9_sbc_sequential.rds")
+
+} else {
+  sbc_res_seq <- readRDS("simmodels/ch9_sbc_sequential.rds")
+}
+
+SBC::plot_ecdf_diff(
+  sbc_res_seq,
+  variables = c("weight_direct", "weight_social", "learning_rate")
+) +
+  labs(
+    title    = "SBC Calibration: Sequential Agent",
+    subtitle = paste0(
+      n_sbc_seq, " datasets, ", T_sbc, " trials each.",
+      "\nlearning_rate is hardest to identify — expect wider bands."
+    )
+  )
+```
+
+**What to look for:**
+
+- `learning_rate` is the most vulnerable parameter. Because it scales
+  the *pace* of accumulation rather than the *direction*, its effect on
+  early trials is negligible (the denominator $\alpha_t + \beta_t$
+  is small, so the mean $\alpha_t / (\alpha_t + \beta_t)$ is sensitive
+  to each addition), but becomes visible only as evidence accumulates
+  over many trials. With $T = 60$, the SBC bands for `learning_rate`
+  will be wider than for the weight parameters.
+
+- If the ECDF-difference for `learning_rate` shows a systematic hump
+  (underconfident posteriors), it means the prior is too wide relative
+  to what the data can identify. Tightening the prior from
+  `lognormal(-1, 0.5)` to `lognormal(-1, 0.3)` and re-running SBC
+  would test this hypothesis.
+
+---
+
+## Exercise 3: Bidirectional Model Recovery — Circular Inference vs. WBA
+
+### Motivation
+
+Chapter 9 fits both the WBA and the Circular Inference (CI) model to
+data generated by the WBA, confirming that the LOO comparison does not
+spuriously prefer the more complex model. But this is only one direction
+of the test. A complete model-recovery validation (following Ch. 7's
+established practice) requires the reverse: generate data from the CI
+model and verify that the CI model wins.
+
+Without this check, we cannot distinguish two scenarios: (a) the LOO
+comparison has genuine discriminative power between WBA and CI, or (b)
+the LOO comparison always favours the model with fewer parameters,
+regardless of the generating process. Only the bidirectional test
+resolves this.
+
+### Generating Data from the Circular Inference Model
+
+```{r ex3_ci_data_generation}
+set.seed(42)
+
+# Circular inference agent: moderate overcounting of self-evidence
+ci_true_params <- list(
+  w_self       = 1.0,
+  w_other      = 0.8,
+  alpha_self   = 2.5,   # overcounts direct evidence by factor 2.5
+  alpha_other  = 1.0    # no overcounting of social evidence
+)
+
+alpha0 <- beta0 <- 0.5
+lo_prior_val <- log(alpha0 / beta0)  # = 0 for Jeffreys
+
+# Generate choices across the full evidence grid
+ci_sim_data <- evidence_combinations |>
+  slice(rep(seq_len(n()), each = 5)) |>  # 5 repetitions per combination
+  mutate(
+    lo_self   = log((alpha0 + blue1) / (beta0 + total1 - blue1)),
+    lo_social = log((alpha0 + blue2) / (beta0 + total2 - blue2)),
+    lo_combined = ci_true_params$w_self  * ci_true_params$alpha_self *
+                    (lo_self - lo_prior_val) +
+                  ci_true_params$w_other * ci_true_params$alpha_other *
+                    (lo_social - lo_prior_val) +
+                  lo_prior_val,
+    p_blue = plogis(lo_combined),
+    choice = rbinom(n(), 1, p_blue)
+  )
+
+stan_data_ci_gen <- list(
+  N      = nrow(ci_sim_data),
+  choice = ci_sim_data$choice,
+  blue1  = ci_sim_data$blue1,
+  total1 = ci_sim_data$total1,
+  blue2  = ci_sim_data$blue2,
+  total2 = ci_sim_data$total2
+)
+
+# Visualise the generated response curve
+ci_sim_data |>
+  mutate(social_evidence = factor(
+    blue2, levels = 0:3,
+    labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
+  )) |>
+  group_by(blue1, social_evidence) |>
+  summarise(p_blue_obs = mean(choice), .groups = "drop") |>
+  ggplot(aes(x = blue1, y = p_blue_obs,
+             colour = social_evidence, group = social_evidence)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50") +
+  scale_colour_brewer(palette = "Set1") +
+  scale_x_continuous(breaks = 0:8) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title    = "Simulated Choices from Circular Inference Agent",
+    subtitle = paste0("True params: w_self=", ci_true_params$w_self,
+                      ", w_other=", ci_true_params$w_other,
+                      ", alpha_self=", ci_true_params$alpha_self,
+                      ", alpha_other=", ci_true_params$alpha_other),
+    x        = "Blue marbles in direct sample",
+    y        = "P(choose blue)",
+    colour   = "Social evidence"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+Note the steeper response curves compared to WBA-generated data. This is
+the qualitative signature of circular inference: overcounting amplifies
+small differences on the log-odds scale, producing sharper transitions
+from "definitely red" to "definitely blue" as direct evidence increases.
+
+### Fitting Both Models to CI-Generated Data
+
+```{r ex3_fit_both, message=FALSE}
+# Fit the WBA (BetaBinomial, rho/kappa) to CI-generated data
+fit_wba_on_ci <- if (regenerate_simulations) {
+  fit <- mod_weighted$sample(
+    data            = stan_data_ci_gen,
+    seed            = 801,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 1000,
+    refresh         = 0
+  )
+  fit$save_object("simmodels/ch9_fit_wba_on_ci_data.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_wba_on_ci_data.rds")
+}
+
+# Fit the CI model (Bernoulli, log-odds) to CI-generated data
+fit_ci_on_ci <- if (regenerate_simulations) {
+  fit <- mod_circular$sample(
+    data            = stan_data_ci_gen,
+    seed            = 802,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 1000,
+    iter_sampling   = 1000,
+    refresh         = 0
+  )
+  fit$save_object("simmodels/ch9_fit_ci_on_ci_data.rds")
+  fit
+} else {
+  readRDS("simmodels/ch9_fit_ci_on_ci_data.rds")
+}
+
+# Diagnostics
+check_diagnostics(fit_wba_on_ci, "WBA on CI-generated data")
+check_diagnostics(fit_ci_on_ci,  "CI on CI-generated data")
+```
+
+### LOO Comparison on CI-Generated Data
+
+```{r ex3_loo_comparison}
+loo_wba_on_ci <- loo(fit_wba_on_ci$draws("log_lik", format = "matrix"))
+loo_ci_on_ci  <- loo(fit_ci_on_ci$draws("log_lik", format = "matrix"))
+
+cat("=== Bidirectional Test: CI-Generated Data ===\n")
+cat("If the CI model wins here AND the WBA wins on WBA-generated data,\n")
+cat("the comparison pipeline has genuine discriminative power.\n\n")
+
+bidir_compare <- loo_compare(
+  list(WBA = loo_wba_on_ci, CI = loo_ci_on_ci)
+)
+print(bidir_compare)
+
+diff_ratio <- abs(bidir_compare[2, "elpd_diff"] /
+                  bidir_compare[2, "se_diff"])
+cat(sprintf("\n|ELPD diff| / SE = %.2f\n", diff_ratio))
+
+bidir_weights <- loo_model_weights(
+  list(WBA = loo_wba_on_ci, CI = loo_ci_on_ci),
+  method = "stacking"
+)
+cat("\nBayesian stacking weights:\n")
+print(bidir_weights)
+```
+
+### Parameter Recovery: Does the CI Model Recover the True Loop Parameters?
+
+```{r ex3_ci_recovery}
+ci_true_df <- tibble(
+  parameter  = c("w_self", "w_other", "alpha_self", "alpha_other"),
+  true_value = c(1.0, 0.8, 2.5, 1.0)
+)
+
+draws_ci <- as_draws_df(
+  fit_ci_on_ci$draws(c("w_self", "w_other", "alpha_self", "alpha_other"))
+) |>
+  pivot_longer(everything(), names_to = "parameter", values_to = "value") |>
+  filter(!parameter %in% c(".chain", ".iteration", ".draw"))
+
+ggplot(draws_ci, aes(x = value)) +
+  geom_histogram(bins = 50, fill = "#756bb1", alpha = 0.7) +
+  geom_vline(data = ci_true_df, aes(xintercept = true_value),
+             colour = "#d73027", linewidth = 1.2, linetype = "dashed") +
+  facet_wrap(~ parameter, scales = "free") +
+  labs(
+    title    = "Parameter Recovery: CI Model on CI-Generated Data",
+    subtitle = "Red dashed = true generating values. alpha_self = 2.5 is the key test.",
+    x        = "Parameter value",
+    y        = "Posterior count"
+  )
+```
+
+### Summary Table: Bidirectional Model Recovery
+
+```{r ex3_summary_table}
+# Combine results from Chapter 9 (WBA-generated data) and this exercise
+# Chapter 9 result: WBA should win on WBA-generated data
+# This exercise result: CI should win on CI-generated data
+
+recovery_summary <- tibble(
+  `Generating model` = c("WBA (w_d=1.5, w_s=0.5)",
+                          "CI (w_self=1, alpha_self=2.5)"),
+  `Data source`      = c("Chapter 9, Self-Focused agent",
+                          "This exercise"),
+  `Expected winner`  = c("WBA", "CI"),
+  `ELPD diff / SE`   = c(
+    "See Ch. 9 output",
+    sprintf("%.2f", diff_ratio)
+  ),
+  `Stacking: WBA`    = c("See Ch. 9 output",
+                          sprintf("%.2f", bidir_weights["WBA"])),
+  `Stacking: CI`     = c("See Ch. 9 output",
+                          sprintf("%.2f", bidir_weights["CI"]))
+)
+
+knitr::kable(recovery_summary,
+             caption = "Bidirectional Model Recovery: WBA vs. Circular Inference")
+```
+
+**Interpreting the bidirectional test:**
+
+- **Both directions correct** (WBA wins on WBA data, CI wins on CI
+  data): The LOO comparison pipeline has discriminative power for these
+  two models under the simulated conditions. The 9 × 4 evidence grid
+  provides sufficient contrast to separate differential trust (WBA) from
+  overcounting (CI).
+
+- **CI fails to win on its own data:** This would indicate that the
+  WBA's pseudocount scaling can approximate the CI's overcounting
+  signature well enough that LOO cannot distinguish them. The
+  implication is that the evidence grid is not sufficiently diagnostic —
+  you need trials at intermediate evidence levels (3–5 blue of 8), where
+  the nonlinear amplification of the log-odds overcounting is most
+  distinct from linear pseudocount scaling.
+
+- **WBA fails to win on its own data:** This would indicate the CI
+  model's extra parameters absorb variance even when overcounting is
+  absent. Check whether the posterior for `alpha_self` concentrates near
+  1.0 (the CI model correctly identifies no overcounting) — if so, the
+  ELPD penalty for extra parameters is too small to overcome the
+  flexibility advantage. A stronger prior on `alpha_self_m1` (e.g.,
+  `half_normal(0, 0.5)` instead of `half_normal(0, 1)`) would regularise
+  more aggressively and might restore the expected preference.
+
+---
+
+## Summary: What These Exercises Add to Chapter 9
+
+| Exercise | Validation gap filled | Key diagnostic output |
+|---|---|---|
+| 1. WBA-Softmax | Tests the observation-model dimension; certifies the BetaBinomial is not taken on faith | SBC for $(\rho, \kappa, \phi)$; LOO comparison of observation models |
+| 2a. ML-WBA SBC | Certifies the hierarchical NCP + LKJ sampler before interpreting population parameters | ECDF-diff for $\mu_\text{log}$, $\sigma_\text{log}$; divergence profile |
+| 2b. Sequential SBC | Certifies the accumulating-state sampler before interpreting learning rates | ECDF-diff for `learning_rate`; sensitivity to prior width |
+| 3. Bidirectional recovery | Proves LOO can tell WBA and CI apart (not just that it avoids false positives) | 2 × 2 recovery table; stacking weights in both directions |
+
+Together with the main chapter, these exercises complete the full
+validation battery mandated by the cheatsheet for every model that
+touches data.
