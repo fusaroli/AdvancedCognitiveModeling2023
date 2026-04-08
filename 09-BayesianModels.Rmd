@@ -74,7 +74,7 @@ Formally, Bayes' theorem states:
 
 $$P(\text{belief} \mid \text{evidence}) \propto P(\text{evidence} \mid \text{belief}) \times P(\text{belief})$$
 
-where $P(\text{belief} \mid \text{evidence})$ is the posterior, $P(\text{evidence} \mid \text{belief})$ is the likelihood, and $P(\text{belief})$ is the prior. The $\propto$ symbol denotes proportionality — the product on the right should in principle be normalised by dividing by $P(\text{evidence})$ to recover a proper probability.
+where $P(\text{belief} \mid \text{evidence})$ is the posterior, $P(\text{evidence} \mid \text{belief})$ is the likelihood, and $P(\text{belief})$ is the prior. The $\propto$ symbol denotes proportionality — the product on the right should in principle be normalised by dividing by $P(\text{evidence})$ to recover a proper probability. We often ignore this normalization constant, sometimes because it cancels out, sometimes because our sampling methods can approximate it away, sometimes because it doesn't rely on belief.
 
 ## Learning Objectives
 
@@ -137,7 +137,7 @@ ggplot(plot_data, aes(x = x, y = density,
   theme(legend.position = "bottom")
 ```
 
-The posterior is narrower than either source alone — combining information increases certainty. Its peak lies between prior and likelihood, but closer to the likelihood because the evidence was relatively strong. It is also more confident than the likelihood, as it combines compatible evidence from prior and likelihood. Bayesian integration is not averaging; it is precision-weighted combination.
+The posterior is narrower than either source alone — combining information increases certainty. Its peak lies between prior and likelihood, but closer to the likelihood because the evidence was relatively strong. It is also more confident than the likelihood, as it combines compatible evidence from prior and likelihood. Bayesian integration is not averaging; it is precision-weighted combination (as we also discussed in chapter 3.7).
 
 ### Bayesian Models in Cognitive Science
 
@@ -151,7 +151,7 @@ Bayesian cognitive models have been successfully applied to:
 
 ## The Setup: Social Influence in Perceptual Decision-Making
 
-To ground our discussion, we consider a simplified version of a study examining how people integrate information from different sources (Simonsen et al., 2021).
+To make our discussion of bayesian models concrete, let us consider a simplified version of a study examining how people integrate information from different sources (Simonsen et al., 2021).
 
 In the **marble task**:
 
@@ -161,9 +161,9 @@ In the **marble task**:
 - At each trial another participant samples (hidden to you) and communicates their guess as to the next ball, including their confidence → **Source 2 (Social Evidence)**
 - Source 1 ranges from 0 to 8 blue marbles
 - Source 2 is encoded as 0–3 (Clear Red, Maybe Red, Maybe Blue, Clear Blue)
-- The experiment is built so you get all combinations of Source 1 and Source 2, with 10 repetitions each
+- The experiment is built so you get all combinations of Source 1 and Source 2, with 5 repetitions each
 
-This encoding introduces a strict measurement model assumption. The other person actually drew 8 marbles, but we are compressing their choice-plus-confidence signal into a smaller equivalent sample size ($n_2 = 3$).
+This encoding introduces a strict measurement model assumption. The other person actually drew 8 marbles, but we are compressing their choice-plus-confidence signal into a smaller equivalent sample size ($n_2 = 3$). Remember, other choices would be possible, and perhaps better than this, but this is very convenient as it sets both sources on the same scale.
 
 ### The Beta Distribution Intuition
 
@@ -296,9 +296,9 @@ p_post
 
 ```
 
-The three panels above tell a clear story. On the probability scale (top), the Jeffreys prior looks extreme — it concentrates mass near 0 and 1, as if expecting jars to be mostly one colour. The uniform prior looks neutral. But the middle panel reveals the twist: on the log-odds scale, where the Bernoulli likelihood naturally lives, Jeffreys is the one that is approximately flat. The uniform prior, seemingly innocuous, quietly concentrates mass near logit(θ)=0 — encoding a more pronounced preference for balanced jars than the Jeffreys prior. The Beta(2,2) prior goes further, explicitly pulling toward θ=0.5.
+The three panels above tell a clear story. On the probability scale (top), the Jeffreys prior looks extreme — it concentrates mass near 0 and 1, as if expecting jars to be mostly one colour. The uniform prior looks neutral. But as usual, this is a matter of scale: on the log-odds scale, where the Bernoulli likelihood naturally lives, Jeffreys is the one that is approximately flat. The uniform prior, seemingly innocuous, quietly concentrates mass near logit(θ)=0 — encoding a more pronounced preference for balanced jars than the Jeffreys prior. The Beta(2,2) prior goes further, explicitly pulling toward $θ = 0.5$.
 
-The bottom panel shows why this is a principled but not a critical choice. After observing just 6 blue and 2 red marbles, the three posteriors are nearly indistinguishable: the Jeffreys prior gives Beta(6.5,2.5) with mean ≈ 0.72, the uniform gives Beta(7,3) with mean = 0.70, and the Beta(2,2) prior gives Beta(8,4) with mean ≈ 0.67. The maximum shift across all three is ≈0.06 — the data have overwhelmed the prior after a single sample of n = 8 marbles. We use the Jeffreys prior throughout this chapter because the parameterisation-invariance argument is principled.
+I generally prefer to think in probability (0-1) scale, but others prefer the log-odds scale. As usual, it's a good idea to investigate the consequences of this choice. The bottom panel shows that the consequences are not drastic. After observing just 6 blue and 2 red marbles, the three posteriors are nearly indistinguishable: the Jeffreys prior gives Beta(6.5,2.5) with mean ≈ 0.72, the uniform gives Beta(7,3) with mean = 0.70, and the Beta(2,2) prior gives Beta(8,4) with mean ≈ 0.67. The maximum shift across all three is ≈0.06 — the data have overwhelmed the prior after a single sample of n = 8 marbles. Just to challenge myself to choices I am not used to, we use the Jeffreys prior throughout this chapter.
 
 ### Setting Up the Experimental Design
 
@@ -337,8 +337,8 @@ evidence $(k_2, n_2)$ with weights $w_d, w_s$ are:
 $$\alpha_{\text{post}} = 0.5 + w_d \cdot k_1 + w_s \cdot k_2$$
 $$\beta_{\text{post}}  = 0.5 + w_d \cdot (n_1 - k_1) + w_s \cdot (n_2 - k_2)$$
 
-Setting $w_d = w_s = 1$ recovers strict Bayesian updating; letting them vary
-will give us the Weighted Bayesian Agent. We'll meet both formally in the
+Setting $w_d = w_s = 1$ recovers strict Bayesian updating (Simple Bayesian Agent, SBA); letting them vary
+will give us the Weighted Bayesian Agent (WBA). We'll meet both formally in the
 next section. For now we focus on the likelihood itself.
 
 ```{r 09_betabinomial_model}
@@ -410,9 +410,9 @@ prepare_stan_data <- function(df) {
 
 ### The Observation Model: A Separate Modelling Dimension
 
-The SBA specifies how the agent *integrates evidence* — but it also embeds a specific assumption about how beliefs become *actions*. The BetaBinomial($1, \alpha, \beta$) observation model entails a two-step stochastic process: first sample a belief $\theta \sim \text{Beta}(\alpha, \beta)$, then sample a choice $y \sim \text{Bernoulli}(\theta)$. This is **probability matching** — the agent's action is a random sample from its full posterior distribution over the jar's composition.
+The Bayesian agents as we have implemented them specify how they *integrate evidence* — but they also embed a specific assumption about how beliefs become *actions*. Indeed, the BetaBinomial($1, \alpha, \beta$) observation model entails a two-step stochastic process: first sample a belief $\theta \sim \text{Beta}(\alpha, \beta)$, then sample a choice $y \sim \text{Bernoulli}(\theta)$. This is **probability matching** — the agent's action is a random sample from its full posterior distribution (rather than from the averate $\theta$) over the jar's composition.
 
-This is in principle a testable cognitive hypothesis. A different agent might act more deterministically, choosing blue whenever $\text{E}[\theta] > 0.5$, or following a graded rule where higher confidence makes the choice more certain. We can formalise these alternatives:
+I like this way of doing things, because all the uncertainty is preserved and transmitted across all phases of the model. However, this is in principle a testable cognitive hypothesis. A different agent might act more deterministically, choosing blue whenever $\text{E}[\theta] > 0.5$, or following a graded rule where higher confidence makes the choice more certain. We can formalise these alternatives:
 
 | Observation model | Cognitive claim | Distribution |
 |---|---|---|
@@ -692,14 +692,18 @@ The key difference: log-odds integration produces steeper "S-curves" — the mod
 
 ## Two Generative Models for Evidence Integration
 
-We now use the Beta-Binomial likelihood to define two competing models of
-how a participant integrates direct and social evidence. They differ in
-exactly one respect: whether the source weights are fixed or free.
+Now that we understand the Beta-Binomial better, we can use it to build two
+different agents integrating direct and social evidence. The agents differ in
+exactly one respect: whether the source weights are fixed at the "rational"
+levels (taking the sources at face value) or they can vary (e.g. weighing 
+direct experience more than social experience).
 
 ### The Simple Bayesian Agent (SBA)
 
 The SBA fixes the weights at $w_d = w_s = 1$ — every observation counts at
-face value, regardless of its source. With Jeffreys prior pseudo-counts:
+face value, regardless of its source (but remember that social evidence
+in our design counts for less as it can have at most 3 balls of a given color). 
+With Jeffreys prior pseudo-counts:
 
 $$\alpha_{\text{post}} = 0.5 + k_1 + k_2$$
 $$\beta_{\text{post}}  = 0.5 + (n_1 - k_1) + (n_2 - k_2)$$
@@ -727,16 +731,20 @@ $(w_d, w_s)$ space each participant lives.
 ### Three Scenarios that Distinguish the Models
 
 Let's design three datasets — each generated from a different agent — that
-we'll use throughout Round 1 below. We will fit *both* the SBA and the WBA
+we'll use throughout the next few sections. We will fit *both* the SBA and the WBA
 to all three datasets and see which model captures which:
 
 1. **Self-Focused:** $w_d = 1.5$, $w_s = 0.5$ (trusts own observations more)
+
 2. **Balanced:** $w_d = 1.0$, $w_s = 1.0$ (the SBA's generating process)
+
 3. **Socially-Influenced:** $w_d = 0.5$, $w_s = 2.0$ (strongly socially influenced)
 
-Only the Balanced dataset is generated by an SBA. We expect the SBA to fit
-that one and *misfit* the other two systematically — a basic specification
-test. The WBA, in principle, can fit all three.
+In the Balanced dataset SBA and WBA coincide. Or in other words, only the Balanced
+dataset is generable by SBA, while WBA can generate all three scenarios.
+We expect the SBA to fit the Balanced scenario and *misfit* the other two 
+systematically — a basic model fitting test. 
+The WBA, in principle, can fit all three.
 
 
 ```{r 09_three_scenarios}
@@ -796,8 +804,11 @@ ggplot(plot_summary, aes(x = blue1, colour = social_evidence, group = social_evi
 ```
 
 Notice how the scenarios differ:
+
 - **Self-Focused:** Lines are spread apart by direct evidence; social evidence has less effect
+
 - **Balanced:** Equal spacing from both sources
+
 - **Socially-Influenced:** Lines are bunched together; social evidence dominates.
 
 The conceptual setup is now in place: we have two nested models and three
@@ -1074,9 +1085,10 @@ cat("\n=== Weighted Bayesian Agent (Raw Parameterisation) ===\n")
 iwalk(fit_wba_raw, ~ check_diagnostics(.x, paste("WBA Raw", .y)))
 ```
 
-The samplers are healthy for both models on all three datasets — no
+SBA has no parameters to fit, so it makes no sense to check sampling diagnostics.
+The samplers are healthy for WBA models on all three datasets — no
 divergences, good E-BFMI, $\hat{R}$ and ESS within bounds. So we move on
-to predictive checks..
+to predictive checks.
 
 ## Prior and Posterior Predictive Checks
 
@@ -1263,20 +1275,25 @@ plot_predictive_check(
 )
 ```
 
-The SBA reproduces the Balanced dataset because that *is* the SBA's
-generating process. But for the Self-Focused and Socially-Influenced
-datasets the predicted lines diverge from the observed proportions — the
-SBA cannot bend its weights, so it cannot capture either bias. This is a
-clean **model misspecification** failure: the wrong model, caught by a
-predictive check.
+Note that for SBA prior and posterior predictive checks are the same (so we
+only draw them once), as there is no fitted parameter. The SBA reproduces the 
+Balanced dataset because that *is* the SBA's generating process. 
+But for the Self-Focused and Socially-Influenced datasets the predicted lines 
+diverge from the observed proportions — the SBA cannot bend its weights, 
+so it cannot capture either bias. This is a clear **model misspecification** 
+failure: the predictive check shows that SBA is clearly the wrong model for the data. 
 
 The WBA's posterior predictive checks look broad but well-centered on every
 dataset. Where the SBA failed structurally, the WBA appears to fit
-beautifully. So we have our winner — except we have only tested a limited set of scenarios!
+adequately So we seem to have our winner! 
+However, as we know from previous chapters, we should be rigorous and systematically
+test WBA's ability to fit the data and recover the parameter values across a 
+wide range of parameter values.
 
 ### Parameter recovery: WBA collapses
 
-Now let's check if we can actually recover the true parameter values:
+Before we go into SBC, let's check if WBA can actually recover the true 
+parameter values in these three scenarios:
 
 ```{r 09_parameter_recovery_raw}
 # Extract posteriors and compare to true values
@@ -1338,7 +1355,7 @@ p_wd / p_ws +
   )
 ```
 
-**Something is wrong!** The posteriors are extremely wide and don't center on the true values. The recovery is terrible — especially for the social weight.
+**Something is wrong!** The posteriors are extremely wide and don't center on the true values. The recovery is inadequate — especially for the social weight.
 
 ### Diagnosing the ridge
 
@@ -1383,9 +1400,9 @@ ggplot() +
   ) 
 ```
 
-**The posterior forms a diagonal ridge!** This reveals a fundamental identifiability problem: $w_d = 2, w_s = 2$ produces the **same average decisions** as $w_d = 1, w_s = 1$ — the absolute scale affects only the *variance* of choices, which is hard to pin down from binary outcomes.
 
-The ratio $w_d / w_s$ is well-identified (it determines which source wins in conflict trials), but the individual values are not.
+In the plot we see the prior for the two weights (grey dashed contours) and the posterior (red points and contours). The true value is marked with a dashed crosshair. From this plot we can identify a potential source for the poor recovery: the posterior is not a tight blob around the true value, but rather a long diagonal ridge. If we move along this ridge, we can see that the likelihood remains high — the model cannot distinguish between different combinations of $w_d$ and $w_s$ that produce the same relative weighting of direct vs social evidence. Why is that?
+$w_d = 2, w_s = 2$ produces the **same average decisions** as $w_d = 1, w_s = 1$ — the absolute scale affects only the *variance* of choices, which is hard to pin down from binary outcomes. If you were expecting the ridge to follow the line $w_d = w_s$ (where the agent is balanced), that would be wrong — the ridge actually follows the line where the *ratio* of weights is constant, given the inferred preferences of the agent. This specific Self-Focused agent was simulated with the true parameters $w_d = 1.5$ and $w_s = 0.5$. Therefore, the ridge in that plot follows the constant ratio of those true values: $1.5 / 0.5 = 3$. The ridge follows the line $w_d = 3 w_s$.
 
 Maybe we just need more trials? Let's check:
 
@@ -1394,7 +1411,6 @@ Maybe we just need more trials? Let's check:
 n_sims_per_size <- 50   # Increased from 20 to 50
 sample_sizes    <- c(180, 360, 720) # Doubling the sample size
 
-set.seed(42)
 sim_grid <- expand_grid(
   sample_size = sample_sizes,
   sim_id      = 1:n_sims_per_size
@@ -1498,7 +1514,9 @@ ggplot(plot_df, aes(x = true, y = est, color = factor(sample_size))) +
   )
 ```
 
-**The answer is NO.** Even with more data, the posteriors remain poorly identified. This is not a statistical power problem — it's a **fundamental identifiability problem** in the parameterisation.
+While there is a positive slope between true and inferred parameter values, and it
+slightly increase with trials, the overall recovery is not ideal.
+This is not a statistical power problem — it's a **fundamental identifiability problem** in the parameterisation.
 
 ## Round 2: PBA and Reparameterised WBA
 
@@ -1506,8 +1524,8 @@ The problem is structural: the likelihood depends on $w_d$ and $w_s$ only
 through their *ratio* and not (much) their *sum*. We have two options for
 fixing this, and they correspond to two different cognitive commitments.
 
-**Option 1 — fix the scale.** If we believe attention is a limited budget,
-the total weight $w_d + w_s$ should be fixed at 1, and the only thing left
+**Option 1 — fix the scale.** If we believe attention has a limited budget,
+the total weight $w_d + w_s$ could be fixed at 1, and the only thing left
 to estimate is how that budget is allocated. This gives us the
 **Proportional Bayesian Agent (PBA)**:
 
@@ -1523,7 +1541,7 @@ into orthogonal directions:
 $$\rho = \frac{w_d}{w_d + w_s} \in (0,1) \qquad \kappa = w_d + w_s > 0$$
 
 Now $\rho$ answers "which source is trusted more?" — well-identified from
-conflict trials — and $\kappa$ answers "how much evidence is used overall?"
+conflict trials — and $\kappa$ answers "how much evidence is inferred to be there overall?"
 — harder to pin down but at least living in its own dimension with its own
 prior. The original weights are reconstructed as $w_d = \rho\kappa$ and
 $w_s = (1-\rho)\kappa$. We call this the **reparameterised WBA**.
@@ -1885,6 +1903,8 @@ wba_combined <- generate_side_by_side_ppc(fit_wba, stan_data_wba_reparam, "WBA")
 print(wba_combined)
 ```
 
+Predictive checks look good for both models, with the posterior predictions (right column) closely matching the observed data (black points) across all scenarios. The priors (left column) are more diffuse, as expected, but still cover the range of observed outcomes. This gives us confidence that the models are fitting the data well and that we can proceed to examine parameter recovery.
+
 ## Parameter Recovery: The Solution Works!
 
 ### PBA Recovery
@@ -1923,6 +1943,8 @@ bind_rows(pba_prior, pba_posteriors) |>
   ) +
   theme(legend.title = element_blank())
 ```
+
+This is not perfect, but pretty good, perhaps overregularized by the prior (pulled towards the center compared to true values).
 
 ### WBA Reparameterised Recovery
 
@@ -1966,6 +1988,9 @@ bind_rows(wba_prior, wba_posteriors) |>
   ) + 
   theme(legend.title = element_blank())
 ```
+
+Rho is pretty good. Kappa not as good. So the problem of exactly how much evidence is counted from the sources doesn't seem to be solvable via parameterization.
+This would call for a change in the experimental paradigm: we do not simply want to know the choices of the participants, but also their confidence in the choice, or alternatively their reaction time (which is an indirect measure of confidence). This would give us more information to pin down the total scale of evidence weighting, and not just the relative weighting. But for now we proceed as is.
 
 ### Comparing the Two Parameterisations
 
@@ -2023,7 +2048,8 @@ priorsense::powerscale_plot_dens(ps_seq) +
        subtitle = "Does scaling the prior/likelihood shift the posteriors?")
 ```
 
-ρ shows low sensitivity to prior (well-identified from conflict trials), tho' it could use more data. κ shows moderate sensitivity (harder to pin down from binary outcomes), consistent with the identifiability analysis above.
+ρ shows low sensitivity to prior (well-identified from conflict trials), tho' it could use more data. κ shows moderate sensitivity (harder to pin down from binary outcomes), consistent with the identifiability analysis above, and it's not helped by more data (the problem is deeper). All in all the prior sensitivity analysis confirms our previous analysis (but it couldn't have replaced it), and tells us that more data would help ρ.
+We'll see later whether multilevel modeling can help with that.
 
 ### Loo-pit
 
@@ -2055,12 +2081,12 @@ bayesplot::ppc_pit_ecdf(y = y_obs, pit = pit_vals) +
        subtitle = "Flat = well-calibrated | Hump = model too variable | U = model too deterministic")
 ```
 
-Participants seem more deterministic than probability matching predicts, as indicated by the LOO-PIT showing a hump. A softmax observation model might be better at capturing the data. However, this is simulated data from the beta-binomial, so we know we are right in using a beta-binomial and will keep doing so.
-Remember: all diagnostics are part of a critical evaluation, not deterministic rules!
+The results of this analysis vary a bit from run to run. Most of the time the calibration looks fine. Sometimes, participants seem more deterministic than probability matching predicts, as indicated by the LOO-PIT showing a hump. This generally would indicate that a softmax observation model might be better at capturing the data. However, this is simulated data from the beta-binomial, so we know we are right in using a beta-binomial and we will keep doing so. With empirical data we wouldn't be as sure :-)
+In any case, remember: all diagnostics are part of a critical evaluation, not deterministic rules!
 
 ## Simulation-Based Calibration (SBC)
 
-Now that we have working models, we validate them systematically with SBC. This provides a global certificate that our posteriors are well-calibrated across the entire prior space.
+Now that we have roughly working models (we can identify the ratio pretty decently), we validate them systematically with SBC. This provides a global certificate that our posteriors are well-calibrated across the entire prior space.
 
 ```{r 09_sbc, message=FALSE}
 n_sbc_datasets <- 500
@@ -2161,6 +2187,8 @@ p_sbc_pba <- SBC::plot_ecdf_diff(sbc_results_pba, variables = "p") +
 p_sbc_wba / p_sbc_pba
 ```
 
+The movements are not exactly a brownian motion as we'd expect, but they stay well within the blue boundaries, so this doesn't give us any clear signal of miscalibration for either model.
+
 ### Global Parameter Recovery from SBC
 
 ```{r 09_sbc_recovery, fig.width=10, fig.height=4}
@@ -2188,9 +2216,11 @@ ggplot(sbc_recovery_df, aes(x = simulated_value, y = median)) +
   theme(strip.background = element_rect(fill = "gray95", color = NA))
 ```
 
+As we could expect from our test on three scenarios, the rho parameters in either model are nicely identified, while the kappa is a bit hopeless :-)
+
 ## Case Studies in Model Comparison: Nested Models and Occam's Razor
 
-Before running a massive simulation to see if our model comparison pipeline works, let's zoom in on the mechanics of *why* models win or lose. 
+Before running a massive simulation to build a model comparison pipeline and see if it works, let's zoom in on the mechanics of *why* models win or lose in our specific case. 
 
 Our three candidate models are mathematically nested. The Simple Bayesian Agent (SBA) is a special case of the Proportional Bayesian Agent (PBA) where $p = 0.5$. In turn, the PBA is a special case of the Weighted Bayesian Agent (WBA) where the total evidence scale $\kappa = 1.0$. Because of this nesting, the most complex model (WBA) can perfectly mirror the behavior of the simpler models depending on its parameters.
 
@@ -2361,7 +2391,7 @@ Notice the clear directionality of the classification:
 
 * In Scenario 3, the agent has a high total evidence sensitivity ($\kappa = 2.5$) and heavily overweights social evidence ($\rho = 0.2$). The SBA cannot flex to capture this. However, both the PBA and the WBA get substantial weight, with PBA winning. 
 
-This is not ideal, but neither a failure of model comparison. It tells us that the WBA could still be likely, but - perhaps given its issues in reconstructing kappa, is not a better model than PBA. We should be aware of these issues.
+This is not ideal, but neither a failure of model comparison. It tells us that the WBA could still be likely, but it is not a better model than PBA. This is likely because WBA is more complex (one parameter more), but the it has issues in reconstructing the extra parameter (kappa), We should be aware of these issues.
 
 ### Visualizing Pointwise ELPD: Where the Advantage Lies
 
@@ -2416,19 +2446,21 @@ ggplot(plot_pw, aes(x = evidence_conflict, y = elpd_diff)) +
   theme(legend.position = "bottom")
 ```
 
-This plot reveals the cognitive mechanics:
+This plot provides some insight on how complexity penalties play out on a trial-by-trial basis:
 
-* In Scenarios 1 and 2 (left & middle): The points hover uniformly just below zero. The true WBA never predicts substantially better than the SBA or PBA because the parameters are mimicking them. Thus, the WBA suffers a constant, slight bleed in ELPD due to its complexity penalty.
+* In Scenario 1 (SBA-Mimic): The simpler model's advantage actively increases as evidence conflict grows, pulling the trend line progressively downward (favoring the SBA). When the true agent is perfectly balanced, the WBA's extra flexibility actively hurts its predictive performance the most when the evidence sources strongly disagree.
 
-* In Scenario 3 (right): When direct and social evidence agree (Conflict $\approx 0$), both models make similar predictions. But as the sources diverge (High Conflict), the PBA incorrectly forces the sum of weights to equal 1. The WBA s extra flexibility correctly accounts for both the asymmetry and the total scale of the evidence, generating massive predictive advantages on high-conflict trials.
+* In Scenario 2 (PBA-Mimic): The overall trend line is flat and sits essentially at zero, reflecting a small, constant complexity penalty for the WBA across all conflict levels. However, the scatter shows that while the models often tie, there are several specific trials—especially at lower conflict—where the points dip sharply into the red. This indicates that the WBA's unnecessary extra parameter occasionally causes it to make noticeably worse, over-dispersed predictions compared to the tightly constrained PBA.
+
+* In Scenario 3 (Distinct WBA): Contrary to the expectation that the WBA would generate massive predictive advantages, the overall trend line remains stubbornly flat. As you noted, the WBA does win by small margins on a large number of trials across the board (the cluster of blue dots). However, these numerous small victories are completely offset by a handful of severe misses (the deep red dots), particularly at lower conflict levels. The WBA's added flexibility allows it to occasionally make overconfident, incorrect predictions. The heavy ELPD penalty from those few large misses drags the average down, neutralizing the WBA's expected advantage.
 
 With this nested directionality in mind, we can now confidently interpret the confusion matrix generated by our full model recovery procedure.
 
 ## Model Recovery: Scaling Up
 
-We now scale up our case studies to a full model recovery simulation. Because the models are nested, we know Occam s razor will dominate: if a dataset generated by the WBA has parameters that mimic the PBA or SBA, the procedure *should* appropriately select the simpler model. 
+We now scale up our case studies to a full model recovery simulation. Because the models are nested, we know Occam's razor will dominate: if a dataset generated by the WBA has parameters that mimic the PBA or SBA, the procedure *should* appropriately select the simpler model. 
 
-For each of our three structural generating processes (SBA, PBA, WBA), we simulate `r n_sims` synthetic datasets, cross-fit all three candidate models, and use stacking weights to observe how often the procedure correctly penalizes complexity and recovers the simplest adequate model.
+For each of our three structural generating processes (SBA, PBA, WBA), we simulate 50 synthetic datasets, cross-fit all three candidate models, and use stacking weights to observe how often the procedure correctly penalizes complexity and recovers the simplest adequate model.
 
 ```{r 09_model_recovery_setup}
 n_sims <- 50
@@ -2670,9 +2702,13 @@ ggplot(calibration_binned, aes(x = bin_mid, y = observed, color = candidate)) +
   theme(legend.position = "bottom")
 ```
 
+The line goes up, but it's deviations from the diagonal are worrying (and resonate with the not ideal confusion matrix). We should probably run more simulations to make sure, but now we want to move on looking more closely to misclassifications .
+
+
 ### Parameter Recovery Across Models
 
 Even when the "wrong" model wins, its parameters may still capture the effective behavior of the true generating process. To check this, we compute a **model-averaged estimate** of the effective evidence weights ($w_d$, $w_s$) by weighting each candidate's posterior means by its stacking weight. If a wrongly-selected model is still behaviorally faithful, these averaged estimates should track the true values closely.
+
 ```{r 09_model_recovery_parameters, fig.width=10, fig.height=5}
 # 1. Determine the winning model, enforce factor levels, and extract ITS specific fitted parameters
 param_recovery <- recovery_results |>
@@ -2722,7 +2758,7 @@ p_wd <- ggplot(param_recovery, aes(x = true_wd, y = win_wd)) +
 p_ws <- ggplot(param_recovery, aes(x = true_ws, y = win_ws)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
   geom_point(aes(color = true_model, shape = correct), size = 2.5, alpha = 0.7) +
-  geom_smooth(method=lm, aes(color = true_model), se = FALSE, linetype = "dotted") +
+  geom_smooth(method = lm, aes(color = true_model), se = FALSE, linetype = "dotted") +
   scale_shape_manual(values = c("TRUE" = 16, "FALSE" = 4),
                      labels = c("TRUE" = "Correct", "FALSE" = "Wrong")) +
   scale_color_brewer(palette = "Set2") +
@@ -2830,27 +2866,40 @@ p_shift <- ggplot(misclassifications) +
 p_shift
 ```
 
-To thoroughly evaluate the reliability of our models, we conduct a three-stage parameter recovery and identifiability analysis. This pipeline not only tests whether we can recover the true generating parameters, but also maps the exact conditions under which models misclassify and how they compensate when they do. N.B. It's a work in progress, so I'm sure there are better ways, and I will hopefully develop better plots in the next course iterations. 
+To thoroughly evaluate the reliability of our models, we conduct a three-stage parameter recovery and identifiability analysis. This pipeline not only tests whether we can recover the true generating parameters, but also maps the exact conditions under which models misclassify and how they compensate when they do. 
+N.B. It's a work in progress, so I'm sure there are better ways, and I will hopefully develop better plots in the next course iterations.
 
-1. Winning Model Parameter Recovery
+#### 1. Winning Model Parameter Recovery
 
-We first assess the accuracy of our parameter estimates by evaluating the actual weights inferred by whichever model "won" the selection process. The first pair of plots displays the recovery of the delay weight ($w_d$) and the social weight ($w_s$).
-*How to read it*: The x-axis represents the true data-generating parameter, while the y-axis represents the estimate generated by the winning model ($\hat{w}$). The dashed diagonal line indicates perfect recovery.
-*Interpretation*: Points falling tightly along the diagonal demonstrate robust parameter recovery. We distinguish between correct model recoveries (circles) and misclassifications (crosses). By plotting the parameters of the winning model, we can observe exactly what psychological weights would be reported in practice if we selected the best-fitting architecture for a given dataset. The dotted trend lines further reveal whether specific true models systematically under- or overestimate these weights across the parameter space.
+We first assess the accuracy of our parameter estimates by evaluating the actual weights inferred by whichever model "won" the selection process. The first pair of plots displays the recovery of the direct evidence weight ($w_d$) and the social weight ($w_s$).
 
-2. Mapping Model Identifiability (True vs. Fitted Space)
+* *How to read it*: The x-axis represents the true data-generating parameter, while the y-axis represents the estimate generated by the winning model ($\hat{w}$). The dashed diagonal line indicates perfect recovery.
+
+* *Interpretation*: Points falling tightly along the diagonal demonstrate robust parameter recovery. We distinguish between correct model recoveries (circles) and misclassifications (crosses). By plotting the parameters of the winning model, we can observe exactly what psychological weights would be reported in practice if we selected the best-fitting architecture for a given dataset. The dotted trend lines further reveal whether specific true models systematically under- or overestimate these weights across the parameter space.
+
+* *Visual Evidence*: The plots show that correct PBA recoveries (orange circles) track the diagonal tightly within their bounded $0$ to $1$ constraint. However, the WBA model (blue dotted trend line) systematically underestimates both $w_d$ and $w_s$ at higher true values ($> 1.5$), demonstrating a distinct shrinkage effect. Additionally, the constraints of misclassification are highly visible: when the PBA incorrectly wins for a true WBA (blue crosses), it severely truncates the higher true weight estimates down to values $\leq 1$ to force the $w_d + w_s = 1$ rule.
+
+#### 2. Mapping Model Identifiability (True vs. Fitted Space)
 
 Next, we investigate the geographical boundaries of model selection accuracy. Rather than just asking if a model failed, we ask where it failed.
 
-Plot A (Data Generating Space): This plot is faceted by the True Model. It illustrates which specific regions of the true parameter space cause the wrong model to win. For instance, we can observe if misclassifications cluster near the reference diagonal (where $w_d \approx w_s$), indicating that the models struggle to differentiate the underlying strategies when the weights are balanced.
+* Plot A (Data Generating Space): This plot is faceted by the True Model. It illustrates which specific regions of the true parameter space cause the wrong model to win. For instance, we can observe if misclassifications cluster near the reference diagonal (where $w_d \approx w_s$), indicating that the models struggle to differentiate the underlying strategies when the weights are balanced. Visual Evidence: Looking at the "True: WBA" panel, misclassifications are highly systematic. The WBA generates data that causes the PBA to falsely win (blue crosses) almost exclusively when the true WBA parameters fall close to the $w_d + w_s = 1$ line. Similarly, the SBA falsely wins (red crosses) when the true WBA parameters cluster tightly near $(1,1)$.
 
-Plot B (Fitted Parameter Space): This plot is faceted by the Winning Model. It reveals the "imitation space"—the specific parameter ranges a model leverages when it inappropriately wins. By comparing these two spaces, we can see if models are relying on extreme or restricted parameter values to mimic a different generating architecture.
+* Plot B (Fitted Parameter Space): This plot is faceted by the Winning Model. It reveals the "imitation space"—the specific parameter ranges a model leverages when it inappropriately wins. By comparing these two spaces, we can see if models are relying on extreme or restricted parameter values to mimic a different generating architecture. Visual Evidence: Plot B starkly visualizes the rigid architectural constraints of the simpler models. Whenever the SBA wins, all parameter estimates collapse precisely to the $(1, 1)$ coordinate. Whenever the PBA wins, all estimates are strictly forced onto the diagonal $w_d + w_s = 1$ boundary line, fundamentally stripping away absolute scale regardless of where the true parameters originated.
 
-3. Structural Mimicry and Compensatory Shifts
+#### 3. Structural Mimicry and Compensatory Shifts
 
 To evaluate whether model misclassifications are behaviorally benign, we isolate the failed recovery trials and trace exactly how the parameter estimates shift when the wrong model is selected.
-*How to read it*: In this grid, rows represent the true generating model and columns represent the incorrectly selected "winning" model. Each arrow represents a single misclassified simulation: the black dot marks the true generating parameters, while the arrowhead points to the values estimated by the wrong winning model.
-*Interpretation*: We can directly observe structural mimicry. If the arrows are very short, or if they reliably project toward a specific parameter ratio (such as the diagonal), it indicates that the misidentification is relatively benign; the winning model achieves its higher fit by tuning its parameters to functionally approximate the true data-generating weights. Conversely, long, erratic arrows reveal regions where the wrong model fundamentally distorts the psychological interpretation of the data, pulling the estimates far from their true origins to force a statistical fit.
+
+* *How to read it*: In this grid, rows represent the true generating model and columns represent the incorrectly selected "winning" model. Each arrow represents a single misclassified simulation: the black dot marks the true generating parameters, while the arrowhead points to the values estimated by the wrong winning model.
+
+* *Interpretation*: We can directly observe structural mimicry. If the arrows are very short, or if they reliably project toward a specific parameter ratio, it indicates that the misidentification is relatively benign; the winning model achieves its higher fit by tuning its parameters to functionally approximate the true data-generating weights. Conversely, long, erratic arrows reveal regions where the wrong model fundamentally distorts the psychological interpretation of the data, pulling the estimates far from their true origins to force a statistical fit.
+
+* Loss of Scale, Preservation of Ratio (e.g., True WBA $\rightarrow$ Winner PBA): The blue arrows project scattered true WBA parameters directly down or up onto the $w_d + w_s = 1$ line. This strips away the total evidence scale but generally preserves the relative weighting ratio (the slopes), serving as a benign functional approximation.
+
+* Inflation of Scale (e.g., True PBA $\rightarrow$ Winner WBA): The green arrows shoot outward from the PBA's natural boundary. To mimic the PBA, the WBA maintains the correct relative ratio (following the same trajectory) but unnecessarily inflates the total evidence scale.
+
+* Severe Distortion (e.g., True WBA $\rightarrow$ Winner SBA): The red arrows collapse widely dispersed true WBA parameters entirely into the fixed $(1, 1)$ coordinate. This indicates a complete loss of both relative weighting and absolute scale information, severely distorting the psychological profile of the simulated agent.
 
 ## Summary: What We Learned
 
@@ -3323,7 +3372,7 @@ bayesplot::mcmc_trace(
 ) + labs(title = "Trace plots: ML-WBA — population parameters + correlation")
 ```
 
-The trace plots should show the "hairy caterpillar" pattern for all population-level parameters. Pay particular attention to $\sigma$: if either component pushes toward zero, the NCP may struggle (the reverse funnel problem from Chapter 6). If the SDs are well-identified away from zero, NCP is the right choice.
+The trace plots should show the "hairy caterpillar" pattern for all WBA population-level parameters (remember SBA has no parameter). Pay particular attention to $\sigma$: if either component pushes toward zero, the NCP may struggle (the reverse funnel problem from Chapter 6). If the SDs are well-identified away from zero, NCP is the right choice.
 
 ### Reporting the Estimated Correlation
 
@@ -3346,13 +3395,13 @@ ggplot(draws_ml, aes(x = `Omega[1,2]`)) +
   )
 ```
 
-A negative correlation would suggest a tradeoff: agents who rely more on direct evidence (high $\rho$) tend to scale total evidence less (low $\kappa$). A correlation near zero indicates independence. The posterior uncertainty around this estimate is as informative as the point estimate — a wide posterior means the experiment lacked power to resolve the correlation structure.
+A negative correlation would suggest a tradeoff: agents who rely more on direct evidence (high $\rho$) tend to scale total evidence less (low $\kappa$). A correlation near zero indicates independence. The posterior uncertainty around this estimate is moving its mass towards the true value, but such a wide posterior means the experiment lacked power to resolve the correlation structure.
 
 ### Population-Level Prior and Posterior Predictive Checks
 
 Just as we did for the single-agent models, we want to visualize what our multilevel models believe before seeing the data, and what they learned after. 
 
-Because we kept our multilevel Stan code lean to optimize compilation, we didn't include `prior_pred` or `posterior_pred` in the `generated quantities` blocks. Instead, we can simulate these hierarchical predictions dynamically in R. This is an essential skill: by drawing from our population hyper-priors ($\mu$ and $\sigma$), sampling individual agents, and pushing those through the Beta-Binomial observation model, we can perfectly reconstruct the model's population-level expectations.
+Since we will have to run our slower multilevel code through e.g.SBC, we kept the generated quantities leaner than usual: we didn't include population-level prior or posterior predictions in the generated quantities blocks (though we kept trial-level posterior predictions for existing agents via pred_choice). Instead, we can simulate these hierarchical, population-level predictions dynamically in R. This is an essential skill: by drawing from our population hyper-priors ($\mu$ and $\sigma$), sampling new individual agents, and pushing those through the Beta-Binomial observation model, we can perfectly reconstruct the model's population-level expectations.
 
 ```{r 09_multilevel_ppc, fig.width=11, fig.height=15}
 # 1. Custom function to simulate Multilevel Prior/Posterior Predictions in R
@@ -3496,96 +3545,11 @@ p_ml_wba <- build_ml_ppc_row("ML-WBA", fit_ml_wba)
   theme(legend.position = "bottom")
 ```
 
+It might look as if the models haven't updated their predictions after seeing the data. That's indeed true for SBA. However, PBA and WBA have. The reason for the changes being so minimal is that the simulated parameters are indeed close to SBA (a balanced population level behavior). So we need to rather look at individual agents. We could run predictive checks at the agent level, but for now we move to parameter recovery to see how well the models estimated the true parameters for each agent, and whether the multilevel WBA shows appropriate shrinkage toward the population mean.
+
 ## Parameter Recovery: Single-shot Multilevel Model
 
-Parameter recovery at the multilevel level must check two things: (1) population-level parameters are recovered, and (2) individual-level parameters show appropriate partial pooling — extreme agents are pulled toward the population mean.
-
-```{r 09_multilevel_recovery, fig.width=10, fig.height=8}
-# 1. Obtain UNPOOLED estimates via fast optimization (MAP)
-unpooled_ests <- map_dfr(unique(ml_sim_data$agent_id), function(id) {
-  agent_df <- ml_sim_data |> filter(agent_id == id)
-  agent_stan_data <- prepare_stan_data(agent_df)
-  
-  # Fast MAP estimation for the single-agent (unpooled) model
-  opt <- mod_weighted$optimize(data = agent_stan_data, refresh = 0)
-  
-  tibble(
-    agent_id       = id,
-    unpooled_rho   = opt$mle("rho"),
-    unpooled_kappa = opt$mle("kappa"),
-    unpooled_wd    = opt$mle("weight_direct"),
-    unpooled_ws    = opt$mle("weight_social")
-  )
-})
-
-# 2. Extract MULTILEVEL (partially pooled) posterior means and join
-recovery_ml <- agent_params_ml |>
-  mutate(
-    est_rho   = map_dbl(agent_id, ~ mean(draws_ml[[paste0("rho[", .x, "]")]])),
-    est_kappa = map_dbl(agent_id, ~ mean(draws_ml[[paste0("kappa[", .x, "]")]])),
-    est_wd    = map_dbl(agent_id, ~ mean(draws_ml[[paste0("weight_direct[", .x, "]")]])),
-    est_ws    = map_dbl(agent_id, ~ mean(draws_ml[[paste0("weight_social[", .x, "]")]]))
-  ) |>
-  left_join(unpooled_ests, by = "agent_id")
-
-# 3. Calculate population means (the "center of gravity")
-pop_rho_true   <- plogis(pop_logit_rho_mean)
-pop_kappa_true <- exp(pop_log_kappa_mean)
-pop_wd_true    <- pop_rho_true * pop_kappa_true
-pop_ws_true    <- (1 - pop_rho_true) * pop_kappa_true
-
-# 4. Determine a common maximum scale for wd and ws plots
-max_w <- max(c(recovery_ml$weight_direct, recovery_ml$est_wd, recovery_ml$unpooled_wd,
-               recovery_ml$weight_social, recovery_ml$est_ws, recovery_ml$unpooled_ws)) * 1.05
-
-# 5. Build plots: Arrow from Unpooled (hollow) to Pooled (solid)
-p_rho <- ggplot(recovery_ml, aes(x = rho)) +
-  geom_hline(yintercept = pop_rho_true, linetype = "dotted", colour = "black", alpha = 0.5) +
-  geom_abline(linetype = "dashed", colour = "grey50") +
-  geom_segment(aes(xend = rho, y = unpooled_rho, yend = est_rho), 
-               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
-  geom_point(aes(y = unpooled_rho), shape = 1, size = 2.5, colour = "grey40") +
-  geom_point(aes(y = est_rho), size = 3, alpha = 0.9, colour = "#4575b4") +
-  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
-  labs(title = "Recovery: ρ (relative allocation)", x = "True ρ", y = "Estimated ρ") 
-
-p_kappa <- ggplot(recovery_ml, aes(x = kappa)) +
-  geom_hline(yintercept = pop_kappa_true, linetype = "dotted", colour = "black", alpha = 0.5) +
-  geom_abline(linetype = "dashed", colour = "grey50") +
-  geom_segment(aes(xend = kappa, y = unpooled_kappa, yend = est_kappa), 
-               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
-  geom_point(aes(y = unpooled_kappa), shape = 1, size = 2.5, colour = "grey40") +
-  geom_point(aes(y = est_kappa), size = 3, alpha = 0.9, colour = "#d73027") +
-  labs(title = "Recovery: κ (total evidence scaling)", x = "True κ", y = "Estimated κ") 
-
-p_wd <- ggplot(recovery_ml, aes(x = weight_direct)) +
-  geom_hline(yintercept = pop_wd_true, linetype = "dotted", colour = "black", alpha = 0.5) +
-  geom_abline(linetype = "dashed", colour = "grey50") +
-  geom_segment(aes(xend = weight_direct, y = unpooled_wd, yend = est_wd), 
-               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
-  geom_point(aes(y = unpooled_wd), shape = 1, size = 2.5, colour = "grey40") +
-  geom_point(aes(y = est_wd), size = 3, alpha = 0.9, colour = "#4daf4a") +
-  coord_cartesian(xlim = c(0, max_w), ylim = c(0, max_w)) +
-  labs(title = "Recovery: w_d (derived)", x = "True w_d", y = "Estimated w_d")
-
-p_ws <- ggplot(recovery_ml, aes(x = weight_social)) +
-  geom_hline(yintercept = pop_ws_true, linetype = "dotted", colour = "black", alpha = 0.5) +
-  geom_abline(linetype = "dashed", colour = "grey50") +
-  geom_segment(aes(xend = weight_social, y = unpooled_ws, yend = est_ws), 
-               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
-  geom_point(aes(y = unpooled_ws), shape = 1, size = 2.5, colour = "grey40") +
-  geom_point(aes(y = est_ws), size = 3, alpha = 0.9, colour = "#984ea3") +
-  coord_cartesian(xlim = c(0, max_w), ylim = c(0, max_w)) +
-  labs(title = "Recovery: w_s (derived)", x = "True w_s", y = "Estimated w_s")
-
-(p_rho | p_kappa) / (p_wd | p_ws) +
-  plot_annotation(
-    title    = "Multilevel WBA Parameter Recovery & Shrinkage",
-    subtitle = "Arrows trace shrinkage from Unpooled MAP estimates (hollow) to Multilevel Posterior Means (solid).\nNotice how pooling pulls extreme estimates toward the population mean (dotted horizontal lines)."
-  )
-```
-
-Look for three features. First, $\rho$ recovery should be tight — this parameter is well-identified from conflict trials, just as in the single-agent case. Second, $\kappa$ recovery will be noisier — the total evidence scale is harder to pin down from binary outcomes. Third, agents at the extremes should be *pulled toward the centre* relative to their true values. This is partial pooling in action: the hierarchical prior regularises extreme estimates. The strength of this shrinkage depends on how informative each agent's data are relative to the population distribution.
+Parameter recovery at the multilevel level must check two things: (1) population-level parameters are recovered, and (2) individual-level parameters are recovered and show appropriate partial pooling — extreme agents are pulled toward the population mean.
 
 ```{r 09_pop_recovery_summary}
 # 1. Prepare the hyperparameter summary data
@@ -3704,6 +3668,97 @@ p_hyper <- ggplot(plot_hyper_data, aes(y = clean_var)) +
     theme = theme(plot.title = element_text(size = 16, face = "bold"))
   )
 ```
+
+Variance Shrinkage: The top image demonstrates that the hierarchical model accurately recovers the true, tighter variance of the population distributions. In contrast, the unpooled sample statistics are artificially wide, overestimating the true variance.
+
+
+```{r 09_multilevel_recovery, fig.width=10, fig.height=8}
+# 1. Obtain UNPOOLED estimates via fast optimization (MAP)
+unpooled_ests <- map_dfr(unique(ml_sim_data$agent_id), function(id) {
+  agent_df <- ml_sim_data |> filter(agent_id == id)
+  agent_stan_data <- prepare_stan_data(agent_df)
+  
+  # Fast MAP estimation for the single-agent (unpooled) model
+  opt <- mod_weighted$optimize(data = agent_stan_data, refresh = 0)
+  
+  tibble(
+    agent_id       = id,
+    unpooled_rho   = opt$mle("rho"),
+    unpooled_kappa = opt$mle("kappa"),
+    unpooled_wd    = opt$mle("weight_direct"),
+    unpooled_ws    = opt$mle("weight_social")
+  )
+})
+
+# 2. Extract MULTILEVEL (partially pooled) posterior means and join
+recovery_ml <- agent_params_ml |>
+  mutate(
+    est_rho   = map_dbl(agent_id, ~ mean(draws_ml[[paste0("rho[", .x, "]")]])),
+    est_kappa = map_dbl(agent_id, ~ mean(draws_ml[[paste0("kappa[", .x, "]")]])),
+    est_wd    = map_dbl(agent_id, ~ mean(draws_ml[[paste0("weight_direct[", .x, "]")]])),
+    est_ws    = map_dbl(agent_id, ~ mean(draws_ml[[paste0("weight_social[", .x, "]")]]))
+  ) |>
+  left_join(unpooled_ests, by = "agent_id")
+
+# 3. Calculate population means (the "center of gravity")
+pop_rho_true   <- plogis(pop_logit_rho_mean)
+pop_kappa_true <- exp(pop_log_kappa_mean)
+pop_wd_true    <- pop_rho_true * pop_kappa_true
+pop_ws_true    <- (1 - pop_rho_true) * pop_kappa_true
+
+# 4. Determine a common maximum scale for wd and ws plots
+max_w <- max(c(recovery_ml$weight_direct, recovery_ml$est_wd, recovery_ml$unpooled_wd,
+               recovery_ml$weight_social, recovery_ml$est_ws, recovery_ml$unpooled_ws)) * 1.05
+
+# 5. Build plots: Arrow from Unpooled (hollow) to Pooled (solid)
+p_rho <- ggplot(recovery_ml, aes(x = rho)) +
+  geom_hline(yintercept = pop_rho_true, linetype = "dotted", colour = "black", alpha = 0.5) +
+  geom_abline(linetype = "dashed", colour = "grey50") +
+  geom_segment(aes(xend = rho, y = unpooled_rho, yend = est_rho), 
+               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
+  geom_point(aes(y = unpooled_rho), shape = 1, size = 2.5, colour = "grey40") +
+  geom_point(aes(y = est_rho), size = 3, alpha = 0.9, colour = "#4575b4") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(title = "Recovery: ρ (relative allocation)", x = "True ρ", y = "Estimated ρ") 
+
+p_kappa <- ggplot(recovery_ml, aes(x = kappa)) +
+  geom_hline(yintercept = pop_kappa_true, linetype = "dotted", colour = "black", alpha = 0.5) +
+  geom_abline(linetype = "dashed", colour = "grey50") +
+  geom_segment(aes(xend = kappa, y = unpooled_kappa, yend = est_kappa), 
+               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
+  geom_point(aes(y = unpooled_kappa), shape = 1, size = 2.5, colour = "grey40") +
+  geom_point(aes(y = est_kappa), size = 3, alpha = 0.9, colour = "#d73027") +
+  labs(title = "Recovery: κ (total evidence scaling)", x = "True κ", y = "Estimated κ") 
+
+p_wd <- ggplot(recovery_ml, aes(x = weight_direct)) +
+  geom_hline(yintercept = pop_wd_true, linetype = "dotted", colour = "black", alpha = 0.5) +
+  geom_abline(linetype = "dashed", colour = "grey50") +
+  geom_segment(aes(xend = weight_direct, y = unpooled_wd, yend = est_wd), 
+               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
+  geom_point(aes(y = unpooled_wd), shape = 1, size = 2.5, colour = "grey40") +
+  geom_point(aes(y = est_wd), size = 3, alpha = 0.9, colour = "#4daf4a") +
+  coord_cartesian(xlim = c(0, max_w), ylim = c(0, max_w)) +
+  labs(title = "Recovery: w_d (derived)", x = "True w_d", y = "Estimated w_d")
+
+p_ws <- ggplot(recovery_ml, aes(x = weight_social)) +
+  geom_hline(yintercept = pop_ws_true, linetype = "dotted", colour = "black", alpha = 0.5) +
+  geom_abline(linetype = "dashed", colour = "grey50") +
+  geom_segment(aes(xend = weight_social, y = unpooled_ws, yend = est_ws), 
+               arrow = arrow(length = unit(0.15, "cm")), colour = "grey50") +
+  geom_point(aes(y = unpooled_ws), shape = 1, size = 2.5, colour = "grey40") +
+  geom_point(aes(y = est_ws), size = 3, alpha = 0.9, colour = "#984ea3") +
+  coord_cartesian(xlim = c(0, max_w), ylim = c(0, max_w)) +
+  labs(title = "Recovery: w_s (derived)", x = "True w_s", y = "Estimated w_s")
+
+(p_rho | p_kappa) / (p_wd | p_ws) +
+  plot_annotation(
+    title    = "Multilevel WBA Parameter Recovery & Shrinkage",
+    subtitle = "Arrows trace shrinkage from Unpooled MAP estimates (hollow) to Multilevel Posterior Means (solid).\nNotice how pooling pulls extreme estimates toward the population mean (dotted horizontal lines)."
+  )
+```
+
+Look for three features. First, $\rho$ recovery should be tight — this parameter is well-identified from conflict trials, just as in the single-agent case. Second, $\kappa$ recovery will be noisier — the total evidence scale is harder to pin down from binary outcomes. Third, agents at the extremes should be *pulled toward the centre* relative to their true values. This is partial pooling in action: the hierarchical prior regularises extreme estimates. The strength of this shrinkage depends on how informative each agent's data are relative to the population distribution.
+
 
 ## Simulation-Based Calibration (SBC): Multilevel Models
 
@@ -3910,7 +3965,7 @@ ggplot(sbc_ml_recovery_df, aes(x = simulated_value, y = median)) +
 
 ## Multilevel Model Comparison: Three-Way LOO
 
-Following the discipline from the single-agent comparison, we compare all three multilevel models via PSIS-LOO. Because the simulated population has agents with varying weights, we expect the ML-WBA to outperform the ML-SBA. Whether the ML-PBA or ML-WBA wins depends on whether the population s $\kappa$ variation provides sufficient predictive benefit to offset the additional complexity.
+Following the procedure from the single-agent comparison, we compare all three multilevel models via PSIS-LOO. Because the simulated population has agents with varying weights, we expect the ML-WBA to outperform the ML-SBA. Whether the ML-PBA or ML-WBA wins depends on whether the population s $\kappa$ variation provides sufficient predictive benefit to offset the additional complexity.
 
 ```{r 09_multilevel_loo_comparison}
 loo_ml_sba <- loo(fit_ml_sba$draws("log_lik", format = "matrix"))
@@ -3931,7 +3986,7 @@ cat("\nBayesian stacking weights:\n")
 print(ml_weights)
 ```
 
-Because the simulated agents were drawn from a population with varying $\rho$ and $\kappa$ (not all equal to 1), the ML-WBA should outperform the ML-SBA. The ELPD difference quantifies the predictive cost of assuming all agents are perfect Bayesians when they are not. The stacking weights provide a continuous measure of each model's predictive contribution.
+Because the simulated agents were drawn from a population with varying $\rho$ and $\kappa$ (not all equal to 1), the ML-WBA should outperform the ML-SBA. The ELPD difference quantifies the predictive cost of assuming all agents are perfect Bayesians when they are not. However, given we set the simulation to be close to the SBA (balanced weighting), the ML-SBA ends up winning.
 
 Note that this is *trial-level LOO*: it measures generalisation to new *trials* from known agents. For the clinically relevant question — *can we predict a new participant's behaviour from the population distribution alone?* — we would need agent-level K-fold cross-validation, as discussed in Chapter 7.
 
@@ -3985,7 +4040,6 @@ ggplot(pw_ml, aes(x = evidence_conflict, y = elpd_diff_wba_sba)) +
   theme(legend.position = "bottom")
 ```
 
-The expected pattern: for balanced agents ($\rho \approx 0.5$), the ML-WBA offers little advantage over the ML-SBA — the extra parameters are wasted. For agents who deviate substantially from balanced weighting, the ML-WBA should gain a progressively larger advantage on high-conflict trials, where the sources disagree and the weighting asymmetry determines the response.
 
 ## Model Recovery: Multilevel Level
 
@@ -4002,8 +4056,6 @@ Before the full simulation, we examine three instructive scenarios:
 3. **Full WBA Population:** Agents vary in both $\rho$ and $\kappa$. The full hierarchical model is needed.
 
 ```{r 09_ml_scenario_generation}
-set.seed(2026)
-
 # Helper: generate multilevel data from a parameter specification
 generate_ml_data <- function(agent_rhos, agent_kappas, ev, n_reps = 2) {
   J <- length(agent_rhos)
@@ -4506,6 +4558,8 @@ cat(sprintf("Mixed population: %d agents (%d SBA + %d WBA)\n",
 cat(sprintf("Total trials: %d | Trials per agent: %d\n",
             mixed_stan_data$N, mixed_stan_data$N / J_mix))
 ```
+
+
 ```{r 09_mixed_population_viz}
 ggplot(mixed_truth, aes(x = true_wd, y = true_ws,
                          colour = true_strategy, shape = true_strategy)) +
@@ -4609,7 +4663,7 @@ ggplot() +
   theme(legend.position = "bottom")
 ```
 
-The histogram tells the story clearly. The estimated $\rho_j$ values form two modes — one near 0.5 (the SBA agents) and one near 0.25 (the WBA agents). But the population mean $\rho$ sits somewhere in between, averaging over two qualitatively different strategies. This "mildly socially biased" summary describes *nobody* in the actual population. **When the population is heterogeneous, population-level parameters from a single hierarchical model can be actively misleading.** This is why individual-level analysis matters.
+
 
 ### Individual Parameter Recovery
 ```{r 09_mixed_individual_recovery, fig.width=10, fig.height=5}
@@ -4650,9 +4704,6 @@ p_mix_rho + p_mix_kappa +
   theme(legend.position = "bottom")
 ```
 
-Despite the population model being structurally wrong (a unimodal Gaussian fitted to a bimodal mixture), the individual-level parameter recovery is surprisingly good. The partial pooling pulls the two groups slightly toward each other, but the separation is preserved. The $\rho$ estimates cleanly separate SBA agents ($\rho \approx 0.5$) from WBA agents ($\rho \approx 0.25$). The $\kappa$ estimates are noisier — consistent with our earlier finding that total evidence scaling is harder to identify from binary outcomes — but still show the right direction.
-
-This works because the hierarchical prior provides mild regularisation without forcing homogeneity. The estimated population SD ($\sigma$ on the logit/log scales) absorbs the between-group variance, allowing the individual-level posteriors enough room to reflect both strategies. It is not an ideal fit — a formal mixture model (Ch. 8) would be more appropriate — but it is a reasonable one.
 
 ### Per-Agent Model Comparison
 
@@ -4702,6 +4753,8 @@ agent_elpd <- tibble(
     elpd_advantage = pmax(elpd_PBA, elpd_WBA) - elpd_SBA
   )
 ```
+
+
 ```{r 09_mixed_agent_loo_viz, fig.width=10, fig.height=5}
 # Left: per-agent ELPD advantage coloured by true strategy
 p_agent_advantage <- ggplot(agent_elpd,
@@ -4829,100 +4882,250 @@ The practical implication for researchers: if you suspect your participants use 
 
 ## Beyond Weighted Bayes: Circular Inference
 
-The three models above — SBA, PBA, WBA — share a common structural assumption: each source of evidence is counted exactly once. Simonsen et al. (2021), following Jardri & Denève (2013), found that this assumption is systematically violated — particularly in patients with schizophrenia. Their best-fitting model was *circular inference*: evidence from one source is fed back into the system and counted multiple times.
+The models we have explored so far — SBA, PBA, WBA — share a common structural assumption: each source of evidence is counted exactly once. Simonsen et al. (2021), following Jardri et al. (2017), found that this assumption is systematically violated in human reasoning — particularly in patients with schizophrenia. Their best-fitting model was *circular inference*: evidence from one source is fed back into the system and counted multiple times.
 
-### Why Pseudocounts Are Not Enough for Circular Inference
+### The Log-Odds Transformation Function
 
-The pseudocount framework has no natural way to represent evidence being counted *more than once*. In the WBA, $w_d \cdot k_1$ rescales the evidence — it treats 6 blue marbles as if they were 9, for example — but the integration is still additive and single-pass. Circular inference claims that evidence loops back and amplifies itself, producing a qualitatively different pattern: response curves become *steeper* for the amplified source, not just *shifted*.
+To properly model circular inference, pseudocounts ($\alpha, \beta$) are not enough. We must shift our integration into the **log-odds space**. If we express our evidence $L$ as log-odds, Jardri and colleagues define a specific non-linear transformation function $F(L, w)$ that applies a weight $w \in [0.5, 1]$ to that evidence:
 
-The key insight is to work on the **log-odds** (logit) scale:
+$$F(L,w) = \log \frac{w e^L + 1 - w}{(1 - w)e^L + w}$$
 
-$$\ell_\text{combined} = w_s \cdot \alpha_\text{self} \cdot (\ell_\text{self} - \ell_0) + w_o \cdot \alpha_\text{social} \cdot (\ell_\text{social} - \ell_0) + \ell_0$$
+Let's visualize how this function behaves in R.
 
-where $\ell_0 = \log(\alpha_0 / \beta_0)$ is the log-odds prior, $\alpha_\text{self} \geq 1$ and $\alpha_\text{social} \geq 1$ are **loop parameters** controlling how many times each source's evidence is counted. When $\alpha = 1$ and $w = 1$ for both sources, the model reduces to simple Bayes on the log-odds scale.
-
-Note that the likelihood is now **Bernoulli, not BetaBinomial**. This is not arbitrary — it reflects a different cognitive claim. The BetaBinomial was appropriate when the agent's belief was a full probability distribution (the Beta posterior). On the log-odds scale, the belief is a single real number $\ell$; the distributional uncertainty is captured by the posterior over parameters, not by a Beta within each trial.
-
-```{r 09_circular_inference_r}
-circularInferenceModel <- function(
-    blue1, total1, blue2, total2,
-    w_self = 1, w_other = 1,
-    alpha_self = 1, alpha_other = 1,
-    alpha0 = 0.5, beta0 = 0.5
-) {
-  lo_self   <- log((alpha0 + blue1)  / (beta0 + total1 - blue1))
-  lo_social <- log((alpha0 + blue2)  / (beta0 + total2 - blue2))
-  lo_prior  <- log(alpha0 / beta0)
-
-  lo_combined <- w_self  * alpha_self  * (lo_self   - lo_prior) +
-                 w_other * alpha_other * (lo_social - lo_prior) +
-                 lo_prior
-
-  p_blue <- plogis(lo_combined)
-  list(
-    lo_self      = lo_self,
-    lo_social    = lo_social,
-    lo_combined  = lo_combined,
-    p_blue       = p_blue,
-    choice       = ifelse(p_blue > 0.5, "Blue", "Red")
-  )
+```{r 09_jardri_function, fig.height=4, fig.width=6}
+# The core Jardri integration function
+JardriF <- function(L, w) {
+  # L is evidence in log-odds
+  # w is the weight (0.5 = no effect, 1 = full trust)
+  num <- w * exp(L) + (1 - w)
+  den <- (1 - w) * exp(L) + w
+  return(log(num / den))
 }
 
-# Visualise: compare WBA (pseudocount) vs. circular inference
-ci_comparison <- expand_grid(blue1 = 0:8, blue2 = 0:3) |>
+# Visualize the effect of varying weights
+tibble(L = seq(-4, 4, by = 0.1)) |>
+  expand_grid(w = c(0.5, 0.6, 0.7, 0.8, 0.9, 1.0)) |>
   mutate(
-    wba_p  = map2_dbl(blue1, blue2, ~ {
-      ap <- 0.5 + 1.0 * .x + 0.5 * .y
-      bp <- 0.5 + 1.0 * (8 - .x) + 0.5 * (3 - .y)
-      ap / (ap + bp)
-    }),
-    ci_p   = map2_dbl(blue1, blue2, ~ {
-      circularInferenceModel(
-        blue1 = .x, total1 = 8,
-        blue2 = .y, total2 = 3,
-        w_self = 1, w_other = 0.5,
-        alpha_self = 3, alpha_other = 1
-      )$p_blue
-    }),
-    social_evidence = factor(
-      blue2, levels = 0:3,
-      labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue")
-    )
+    F_L = JardriF(L, w),
+    Prob = plogis(F_L) # Convert log-odds back to probability
+  ) |>
+  ggplot(aes(x = L, y = Prob, color = factor(w))) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+  scale_color_viridis_d(option = "plasma", end = 0.9) +
+  labs(
+    title = "Jardri Transformation Function F(L, w)",
+    subtitle = "Higher weights approach the true evidence (S-curve), w=0.5 ignores it (flat).",
+    x = "Evidence (L) in Log-Odds",
+    y = "Probability",
+    color = "Weight (w)"
+  )
+```
+
+### Building the Models Pedagogically
+
+We will now build the Circular Inference family of models in three stages, restricted to two sources of information: Direct Evidence ($L_1$) and Social Evidence ($L_2$).
+
+#### Stage 1: Weights Only (Weighted Bayes in Log-Odds)
+
+If an agent only applies weights but does not overcount evidence, the posterior log-odds is simply the sum of the transformed evidence:$$L_{post} = F(L_1, w_1) + F(L_2, w_2)$$
+
+#### Stage 2: Weights and Loops (No Interference)
+
+Circular inference claims that information reverberates in the network. We model this by multiplying the evidence by a loop parameter $\alpha$ before the transformation. An $\alpha > 1$ represents overcounting.$$L_{post} = F(\alpha_1 L_1, w_1) + F(\alpha_2 L_2, w_2)$$
+
+#### Stage 3: Weights, Loops, and Interference (Full Circular Inference)
+
+The complete Jardri model notes that overcounted evidence causes interference. The reverberated information corrupts the original sources, rendering them non-separable. We first calculate the total interference $I$, and then add it to the base evidence inside the transformation function:$$I = F(\alpha_1 L_1, w_1) + F(\alpha_2 L_2, w_2)$$$$L_{post} = F(L_1 + I, w_1) + F(L_2 + I, w_2)$$Let's write generative R functions for all three stages.
+
+```{r 09_circular_inference_functions}
+# Stage 1: Weights Only
+model_weights_only <- function(L1, L2, w1, w2) {
+  L_post <- JardriF(L1, w1) + JardriF(L2, w2)
+  return(plogis(L_post))
+}
+
+# Stage 2: Weights and Loops
+model_loops <- function(L1, L2, w1, w2, alpha1, alpha2) {
+  L_post <- JardriF(alpha1 * L1, w1) + JardriF(alpha2 * L2, w2)
+  return(plogis(L_post))
+}
+
+# Stage 3: Weights, Loops, and Interference
+model_interference <- function(L1, L2, w1, w2, alpha1, alpha2) {
+  I <- JardriF(alpha1 * L1, w1) + JardriF(alpha2 * L2, w2)
+  L_post <- JardriF(L1 + I, w1) + JardriF(L2 + I, w2)
+  return(plogis(L_post))
+}
+```
+
+### Visualizing and Testing the Three Models
+
+How do these structural differences manifest in behaviour? To test this, let's simulate how an agent integrates Direct Evidence ($L_1$) and Social Evidence ($L_2$) under each of the three architectures.We will give the agent realistic parameters: moderate trust in themselves ($w_1 = 0.85$) and moderate trust in others ($w_2 = 0.70$). For the circular models, we assume they heavily overcount their own direct experience ($\alpha_1 = 3.5$) and slightly overcount social information ($\alpha_2 = 1.5$).
+
+
+```{r}
+# Convert counts to log odds mapping (avoiding strict 0 and 1)
+to_log_odds <- function(blue, total) {
+  # Add small epsilon to prevent infinite log-odds
+  p <- (blue + 0.5) / (total + 1)
+  return(log(p / (1 - p)))
+}
+
+# Create a testing grid
+ci_test_data <- expand_grid(
+  blue1 = 0:8,
+  blue2 = 0:3
+) |>
+  mutate(
+    L1 = to_log_odds(blue1, 8),
+    L2 = to_log_odds(blue2, 3),
+    # Agent parameters
+    w1 = 0.85, w2 = 0.70,
+    a1 = 3.5, a2 = 1.5
+  ) |>
+  # Generate predictions for all three models
+  mutate(
+    `1. Weights Only` = pmap_dbl(list(L1, L2, w1, w2), model_weights_only),
+    `2. Weights + Loops` = pmap_dbl(list(L1, L2, w1, w2, a1, a2), model_loops),
+    `3. Loops + Interference` = pmap_dbl(list(L1, L2, w1, w2, a1, a2), model_interference),
+    social_label = factor(blue2, levels = 0:3, 
+                          labels = c("Clear Red", "Maybe Red", "Maybe Blue", "Clear Blue"))
+  ) |>
+  # FIX: Explicitly select all three model columns
+  pivot_longer(
+    cols = c(`1. Weights Only`, `2. Weights + Loops`, `3. Loops + Interference`), 
+    names_to = "Model", 
+    values_to = "P_Blue"
   )
 
-ci_long <- ci_comparison |>
-  pivot_longer(c(wba_p, ci_p), names_to = "model", values_to = "p_blue") |>
-  mutate(model = recode(model,
-                        "wba_p" = "WBA (w_d=1, w_s=0.5)",
-                        "ci_p"  = "Circular (w_d=1, w_s=0.5, α_self=3)"))
-
-ggplot(ci_long, aes(x = blue1, y = p_blue,
-                    colour = social_evidence, group = social_evidence)) +
-  geom_line(linewidth = 1) +
+# Plot the comparison
+ggplot(ci_test_data, aes(x = blue1, y = P_Blue, color = social_label)) +
+  geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
-  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50") +
-  facet_wrap(~ model) +
-  scale_colour_viridis_d(option = "plasma", end = 0.85) +
+  facet_wrap(~Model) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", alpha = 0.5) +
+  scale_color_manual(values = c("#d73027", "#fdae61", "#abd9e9", "#4575b4")) +
   scale_x_continuous(breaks = 0:8) +
-  coord_cartesian(ylim = c(0, 1)) +
   labs(
-    title    = "WBA vs. Circular Inference: Response Curves",
-    subtitle = "Circular inference steepens the self-evidence curves\nwithout uniformly raising them — a qualitatively different signature",
-    x        = "Blue marbles in direct sample",
-    y        = "P(choose blue)",
-    colour   = "Social evidence"
+    title = "Testing Circular Inference Architectures",
+    subtitle = "Notice how loops create steep, overconfident 'S-curves', while interference compresses them together.",
+    x = "Direct Evidence (Blue Marbles out of 8)",
+    y = "P(Choose Blue)",
+    color = "Social Evidence"
   ) +
   theme(legend.position = "bottom")
 ```
 
-The key visual signature: the WBA curves are roughly parallel — increasing `blue1` shifts the probability by approximately the same amount regardless of the social evidence level. The circular inference curves are steeper for direct evidence (because $\alpha_\text{self} = 3$ amplifies the self-evidence log-odds), producing a pattern where the agent is more *decisive* about strong direct evidence but similarly uncertain about ambiguous evidence. This qualitative difference in curve *shape* is what distinguishes overcounting from mere reweighting, and it is the feature that makes the two models experimentally discriminable.
+### Discussion: Interpreting the Visualizations
 
-### Stan Implementation: Circular Inference Agent
+1. Weights Only: This model resembles our earlier log-odds integration plots. The agent smoothly transitions from choosing Red to Blue based on their direct sample, and the Social Evidence simply shifts the curve up or down linearly in log-odds space.
 
-```{r 09_stan_circular_inference}
-CircularAgent_stan <- "
-// Circular Inference Agent (Jardri & Deneve 2013; Jardri et al. 2017).
-// Bernoulli likelihood (not BetaBinomial) — see observation model discussion.
+2. Weights + Loops: By adding an $\alpha_1 = 3.5$ loop to direct evidence, the agent overcounts their own observations. This results in a much steeper curve in the center. A minor shift in direct evidence triggers extreme overconfidence, causing the agent to 'jump to conclusions'.
+
+3. Loops + Interference: Adding the interference term means that the reverberating direct evidence structurally corrupts the social evidence. You can see the curves tightly bunch together at the extremes because the massive internal echo of the direct evidence completely drowns out the social information.This final model (Interference) is what Simonsen et al. (2021) found best fit the behaviour of patients with schizophrenia, explaining both their tendency to ignore others and their high confidence in subjective experiences.
+
+
+### Stan Implementation: The Circular Inference Family
+
+To translate our three pedagogical models into Stan, we need to handle a few new structural elements compared to the Beta-Binomial models we used earlier in the chapter:
+
+1. **The `functions` block:** We must define our custom non-linear `jardri_f` transformation function natively in Stan so we can call it repeatedly. 
+
+2. **The `transformed data` block:** The Jardri function operates strictly in log-odds space. Instead of converting raw marble counts to log-odds on every single Markov Chain iteration, we can do this once up front to drastically speed up sampling.
+
+3. **The Parameter Bounds:** Following the methodology in Simonsen et al. (2021), weights ($w$) are constrained between `0.5` (completely ignoring the source) and `1.0` (taking it at face value). Loops ($\alpha$) are strictly $\ge 1$, which we enforce by sampling an excess parameter `alpha_m1` $\ge 0$.
+
+Let's build the three models.
+
+#### 1. Stage 1: Weights Only
+
+This is our baseline. It strictly integrates the evidence without any reverberation (overcounting) or interference. 
+
+```{r 09_stan_ci_weights_only}
+CI_Weights_stan <- "
+functions {
+  // The core Jardri transformation function
+  real jardri_f(real L, real w) {
+    real num = w * exp(L) + (1.0 - w);
+    real den = (1.0 - w) * exp(L) + w;
+    return log(num / den);
+  }
+}
+
+data {
+  int<lower=1> N;
+  array[N] int<lower=0, upper=1> choice;
+  array[N] int<lower=0> blue1;
+  array[N] int<lower=0> total1;
+  array[N] int<lower=0> blue2;
+  array[N] int<lower=0> total2;
+}
+
+transformed data {
+  // Convert raw counts to log-odds once to save computation
+  real alpha0 = 0.5;
+  real beta0  = 0.5;
+  array[N] real lo_self;
+  array[N] real lo_social;
+  
+  for (i in 1:N) {
+    lo_self[i]   = log((alpha0 + blue1[i]) / (beta0 + total1[i] - blue1[i]));
+    lo_social[i] = log((alpha0 + blue2[i]) / (beta0 + total2[i] - blue2[i]));
+  }
+}
+
+parameters {
+  // Scaled between 0.5 (no trust) and 1.0 (full trust)
+  real<lower=0.5, upper=1.0> w_self;
+  real<lower=0.5, upper=1.0> w_other;
+}
+
+model {
+  // Weakly informative priors centered between 0.5 and 1.0
+  w_self  ~ normal(0.75, 0.25);
+  w_other ~ normal(0.75, 0.25);
+  
+  for (i in 1:N) {
+    real L_post = jardri_f(lo_self[i], w_self) + 
+                  jardri_f(lo_social[i], w_other);
+                  
+    target += bernoulli_logit_lpmf(choice[i] | L_post);
+  }
+}
+
+generated quantities {
+  vector[N] log_lik;
+  array[N] int posterior_pred;
+  
+  for (i in 1:N) {
+    real L_post = jardri_f(lo_self[i], w_self) + 
+                  jardri_f(lo_social[i], w_other);
+                  
+    log_lik[i]        = bernoulli_logit_lpmf(choice[i] | L_post);
+    posterior_pred[i] = bernoulli_logit_rng(L_post);
+  }
+}
+"
+
+write_stan_file(CI_Weights_stan, dir = "stan/", basename = "ch9_ci_weights_only.stan")
+```
+
+#### 2. Stage 2: Weights + Loops
+
+Now we introduce the loop parameters ($\alpha$). We estimate the excess over 1 (alpha_m1) using a half-normal prior (since lower=0). This creates a gentle, scientifically conservative shrinkage that assumes the agent does not overcount unless the data explicitly demands it.
+
+```{r}
+CI_Loops_stan <- "
+functions {
+  real jardri_f(real L, real w) {
+    real num = w * exp(L) + (1.0 - w);
+    real den = (1.0 - w) * exp(L) + w;
+    return log(num / den);
+  }
+}
+
 data {
   int<lower=1> N;
   array[N] int<lower=0, upper=1> choice;
@@ -4935,13 +5138,100 @@ data {
 transformed data {
   real alpha0 = 0.5;
   real beta0  = 0.5;
-  real lo_prior = log(alpha0 / beta0);
+  array[N] real lo_self;
+  array[N] real lo_social;
+  
+  for (i in 1:N) {
+    lo_self[i]   = log((alpha0 + blue1[i]) / (beta0 + total1[i] - blue1[i]));
+    lo_social[i] = log((alpha0 + blue2[i]) / (beta0 + total2[i] - blue2[i]));
+  }
 }
 
 parameters {
-  real<lower=0> w_self;
-  real<lower=0> w_other;
-  real<lower=0> alpha_self_m1;    // excess over 1: alpha_self = 1 + alpha_self_m1
+  real<lower=0.5, upper=1.0> w_self;
+  real<lower=0.5, upper=1.0> w_other;
+  real<lower=0> alpha_self_m1;    // Excess over 1
+  real<lower=0> alpha_other_m1;
+}
+
+transformed parameters {
+  // Reconstruct the actual loop multiplier
+  real<lower=1> alpha_self  = 1.0 + alpha_self_m1;
+  real<lower=1> alpha_other = 1.0 + alpha_other_m1;
+}
+
+model {
+  w_self  ~ normal(0.75, 0.25);
+  w_other ~ normal(0.75, 0.25);
+  // Half-normal priors shrinking towards 1 (no overcounting)
+  alpha_self_m1  ~ std_normal();
+  alpha_other_m1 ~ std_normal();
+  
+  for (i in 1:N) {
+    // Evidence is multiplied by the loop parameter BEFORE weighting
+    real L_post = jardri_f(alpha_self * lo_self[i], w_self) + 
+                  jardri_f(alpha_other * lo_social[i], w_other);
+                  
+    target += bernoulli_logit_lpmf(choice[i] | L_post);
+  }
+}
+
+generated quantities {
+  vector[N] log_lik;
+  array[N] int posterior_pred;
+  
+  for (i in 1:N) {
+    real L_post = jardri_f(alpha_self * lo_self[i], w_self) + 
+                  jardri_f(alpha_other * lo_social[i], w_other);
+                  
+    log_lik[i]        = bernoulli_logit_lpmf(choice[i] | L_post);
+    posterior_pred[i] = bernoulli_logit_rng(L_post);
+  }
+}
+"
+
+write_stan_file(CI_Loops_stan, dir = "stan/", basename = "ch9_ci_loops.stan")
+```
+
+### 3. Stage 3: Weights + Loops + Interference
+
+Finally, the full model. This exactly maps to the math we established: the total reverberated evidence (I) is calculated first, and then it is added back into the base evidence for a second pass through the weighting transformation.
+
+```{r}
+CI_Interference_stan <- "
+functions {
+  real jardri_f(real L, real w) {
+    real num = w * exp(L) + (1.0 - w);
+    real den = (1.0 - w) * exp(L) + w;
+    return log(num / den);
+  }
+}
+
+data {
+  int<lower=1> N;
+  array[N] int<lower=0, upper=1> choice;
+  array[N] int<lower=0> blue1;
+  array[N] int<lower=0> total1;
+  array[N] int<lower=0> blue2;
+  array[N] int<lower=0> total2;
+}
+
+transformed data {
+  real alpha0 = 0.5;
+  real beta0  = 0.5;
+  array[N] real lo_self;
+  array[N] real lo_social;
+  
+  for (i in 1:N) {
+    lo_self[i]   = log((alpha0 + blue1[i]) / (beta0 + total1[i] - blue1[i]));
+    lo_social[i] = log((alpha0 + blue2[i]) / (beta0 + total2[i] - blue2[i]));
+  }
+}
+
+parameters {
+  real<lower=0.5, upper=1.0> w_self;
+  real<lower=0.5, upper=1.0> w_other;
+  real<lower=0> alpha_self_m1;    
   real<lower=0> alpha_other_m1;
 }
 
@@ -4951,215 +5241,269 @@ transformed parameters {
 }
 
 model {
-  target += lognormal_lpdf(w_self  | 0, 0.5);
-  target += lognormal_lpdf(w_other | 0, 0.5);
-  // Half-normal prior on excess loop strength (alpha >= 1 by construction)
-  target += normal_lpdf(alpha_self_m1  | 0, 1) - normal_lccdf(0 | 0, 1);
-  target += normal_lpdf(alpha_other_m1 | 0, 1) - normal_lccdf(0 | 0, 1);
-
+  w_self  ~ normal(0.75, 0.25);
+  w_other ~ normal(0.75, 0.25);
+  alpha_self_m1  ~ std_normal();
+  alpha_other_m1 ~ std_normal();
+  
   for (i in 1:N) {
-    real lo_self_i   = log((alpha0 + blue1[i]) /
-                           (beta0  + total1[i] - blue1[i]));
-    real lo_social_i = log((alpha0 + blue2[i]) /
-                           (beta0  + total2[i] - blue2[i]));
-    real lo_combined = w_self  * alpha_self  * (lo_self_i   - lo_prior) +
-                       w_other * alpha_other * (lo_social_i - lo_prior) +
-                       lo_prior;
-    target += bernoulli_logit_lpmf(choice[i] | lo_combined);
+    // Calculate Total Interference first
+    real I = jardri_f(alpha_self * lo_self[i], w_self) + 
+             jardri_f(alpha_other * lo_social[i], w_other);
+             
+    // Add Interference to base evidence, then weight
+    real L_post = jardri_f(lo_self[i] + I, w_self) + 
+                  jardri_f(lo_social[i] + I, w_other);
+                  
+    target += bernoulli_logit_lpmf(choice[i] | L_post);
   }
 }
 
 generated quantities {
   vector[N] log_lik;
-  array[N] int prior_pred;
   array[N] int posterior_pred;
-
-  // Prior draws for prior predictive checks
-  real ws_pr  = lognormal_rng(0, 0.5);
-  real wo_pr  = lognormal_rng(0, 0.5);
-  real as_pr  = 1.0 + abs(normal_rng(0, 1));
-  real ao_pr  = 1.0 + abs(normal_rng(0, 1));
-
+  
   for (i in 1:N) {
-    real lo_self_i   = log((alpha0 + blue1[i]) /
-                           (beta0  + total1[i] - blue1[i]));
-    real lo_social_i = log((alpha0 + blue2[i]) /
-                           (beta0  + total2[i] - blue2[i]));
-
-    real lo_post = w_self  * alpha_self  * (lo_self_i   - lo_prior) +
-                   w_other * alpha_other * (lo_social_i - lo_prior) +
-                   lo_prior;
-
-    log_lik[i]        = bernoulli_logit_lpmf(choice[i] | lo_post);
-    posterior_pred[i] = bernoulli_logit_rng(lo_post);
-
-    real lo_prior_pred = ws_pr * as_pr * (lo_self_i   - lo_prior) +
-                         wo_pr * ao_pr * (lo_social_i - lo_prior) +
-                         lo_prior;
-    prior_pred[i] = bernoulli_logit_rng(lo_prior_pred);
+    real I = jardri_f(alpha_self * lo_self[i], w_self) + 
+             jardri_f(alpha_other * lo_social[i], w_other);
+             
+    real L_post = jardri_f(lo_self[i] + I, w_self) + 
+                  jardri_f(lo_social[i] + I, w_other);
+                  
+    log_lik[i]        = bernoulli_logit_lpmf(choice[i] | L_post);
+    posterior_pred[i] = bernoulli_logit_rng(L_post);
   }
 }
 "
 
-write_stan_file(CircularAgent_stan,
-                dir      = "stan/",
-                basename = "ch9_circular_agent.stan")
-
-mod_circular <- cmdstan_model("stan/ch9_circular_agent.stan", dir = "simmodels")
+write_stan_file(CI_Interference_stan, dir = "stan/", basename = "ch9_ci_interference.stan")
 ```
 
-The parameterisation of the loop parameters deserves attention. We estimate `alpha_self_m1` $\geq 0$ and reconstruct $\alpha_\text{self} = 1 + \text{alpha\_self\_m1}$. This enforces the constraint $\alpha \geq 1$ (evidence is counted at least once) without placing a hard `<lower=1>` bound on the parameter, which would create boundary geometry pathologies. The half-normal prior on the excess provides gentle regularisation toward $\alpha = 1$ (no overcounting), which is the scientifically conservative default.
+### Simulation-Based Calibration (SBC): Pinpointing the Source of Complexity
 
-### SBC: Circular Inference Agent
+With our three models written natively in Stan, we face a significant computational challenge. The `jardri_f` transformation is highly non-linear. Furthermore, the loop parameters ($\alpha$) multiply the evidence *before* it passes through this transformation, and the interference model creates feedback loops between the two sources. 
 
-The circular inference model has four parameters — more than the PBA or reparameterised WBA — and the loop parameters interact multiplicatively with the weights. SBC is essential to verify that the sampler can identify all four parameters jointly.
+When parameters interact multiplicatively inside non-linear bounds, **identifiability issues** are almost guaranteed. To see exactly where these problems emerge, we will run Simulation-Based Calibration (SBC) on all three models in our pedagogical sequence: 
+1. Weights Only
+2. Weights + Loops
+3. Full Interference
 
-```{r 09_sbc_circular, message=FALSE}
+We will simulate datasets from the priors of each model, fit the corresponding Stan model to them, and compare their calibration and parameter recovery side-by-side.
+
+```{r 09_sbc_ci_all, message=FALSE}
+# Ensure all models are compiled
+mod_ci_weights      <- cmdstan_model("stan/ch9_ci_weights_only.stan", dir = "simmodels")
+mod_ci_loops        <- cmdstan_model("stan/ch9_ci_loops.stan", dir = "simmodels")
+mod_ci_interference <- cmdstan_model("stan/ch9_ci_interference.stan", dir = "simmodels")
+
 if (regenerate_simulations) {
+  
+  # 1. Define the R equivalent of the Jardri function for the generators
+  jardri_f <- function(L, w) {
+    num <- w * exp(L) + (1.0 - w)
+    den <- (1.0 - w) * exp(L) + w
+    return(log(num / den))
+  }
 
-  N_sbc_ci <- nrow(evidence_combinations) * 5
+  # Helper to sample from truncated normal [0.5, 1.0] for weights
+  draw_w <- function() {
+    w <- -1
+    while(w < 0.5 || w > 1.0) w <- rnorm(1, 0.75, 0.25)
+    return(w)
+  }
 
-  sbc_generator_ci <- SBC_generator_function(
+  N_sbc_trials <- nrow(evidence_combinations) * 5 # 180 trials per simulated agent
+
+  # --- GENERATOR 1: Weights Only ---
+  sbc_gen_weights <- SBC_generator_function(
     function(N) {
-      ws    <- rlnorm(1, 0, 0.5)
-      wo    <- rlnorm(1, 0, 0.5)
-      as_m1 <- abs(rnorm(1, 0, 1))
-      ao_m1 <- abs(rnorm(1, 0, 1))
-      as_   <- 1 + as_m1
-      ao_   <- 1 + ao_m1
-
+      ws <- draw_w()
+      wo <- draw_w()
       ev <- evidence_combinations |> slice_sample(n = N, replace = TRUE)
-
-      lo_p <- log(0.5 / 0.5)
+      
       lo_s <- log((0.5 + ev$blue1) / (0.5 + ev$total1 - ev$blue1))
       lo_o <- log((0.5 + ev$blue2) / (0.5 + ev$total2 - ev$blue2))
-      lo_c <- ws * as_ * (lo_s - lo_p) + wo * ao_ * (lo_o - lo_p) + lo_p
-      p    <- plogis(lo_c)
-      choices <- rbinom(N, 1, p)
+      
+      L_post <- jardri_f(lo_s, ws) + jardri_f(lo_o, wo)
+      choices <- rbinom(N, 1, plogis(L_post))
 
       list(
-        variables = list(
-          w_self         = ws,
-          w_other        = wo,
-          alpha_self_m1  = as_m1,
-          alpha_other_m1 = ao_m1
-        ),
-        generated = list(
-          N      = N,
-          choice = choices,
-          blue1  = ev$blue1,
-          total1 = ev$total1,
-          blue2  = ev$blue2,
-          total2 = ev$total2
-        )
+        variables = list(w_self = ws, w_other = wo),
+        generated = list(N = N, choice = choices, blue1 = ev$blue1, 
+                         total1 = ev$total1, blue2 = ev$blue2, total2 = ev$total2)
       )
-    },
-    N = N_sbc_ci
+    }, N = N_sbc_trials
   )
 
-  sbc_datasets_ci <- generate_datasets(sbc_generator_ci, 500)
+  # --- GENERATOR 2: Weights + Loops ---
+  sbc_gen_loops <- SBC_generator_function(
+    function(N) {
+      ws <- draw_w()
+      wo <- draw_w()
+      as_m1 <- abs(rnorm(1, 0, 1)); ao_m1 <- abs(rnorm(1, 0, 1))
+      as_ <- 1.0 + as_m1; ao_ <- 1.0 + ao_m1
 
-  sbc_backend_ci <- SBC::SBC_backend_cmdstan_sample(
-    mod_circular,
-    chains          = 2,
-    iter_warmup     = 500,
-    iter_sampling   = 500,
-    parallel_chains = 2,
-    refresh         = 0,
-    show_messages   = FALSE
+      ev <- evidence_combinations |> slice_sample(n = N, replace = TRUE)
+      lo_s <- log((0.5 + ev$blue1) / (0.5 + ev$total1 - ev$blue1))
+      lo_o <- log((0.5 + ev$blue2) / (0.5 + ev$total2 - ev$blue2))
+      
+      L_post <- jardri_f(as_ * lo_s, ws) + jardri_f(ao_ * lo_o, wo)
+      choices <- rbinom(N, 1, plogis(L_post))
+
+      list(
+        variables = list(w_self = ws, w_other = wo, alpha_self_m1 = as_m1, alpha_other_m1 = ao_m1),
+        generated = list(N = N, choice = choices, blue1 = ev$blue1, 
+                         total1 = ev$total1, blue2 = ev$blue2, total2 = ev$total2)
+      )
+    }, N = N_sbc_trials
   )
 
-  sbc_results_ci <- compute_SBC(sbc_datasets_ci, sbc_backend_ci,
-                                 keep_fits = FALSE)
-  saveRDS(sbc_results_ci, "simmodels/ch9_sbc_ci_results.rds")
+  # --- GENERATOR 3: Full Interference ---
+  sbc_gen_interference <- SBC_generator_function(
+    function(N) {
+      ws <- draw_w()
+      wo <- draw_w()
+      as_m1 <- abs(rnorm(1, 0, 1)); ao_m1 <- abs(rnorm(1, 0, 1))
+      as_ <- 1.0 + as_m1; ao_ <- 1.0 + ao_m1
+
+      ev <- evidence_combinations |> slice_sample(n = N, replace = TRUE)
+      lo_s <- log((0.5 + ev$blue1) / (0.5 + ev$total1 - ev$blue1))
+      lo_o <- log((0.5 + ev$blue2) / (0.5 + ev$total2 - ev$blue2))
+      
+      I <- jardri_f(as_ * lo_s, ws) + jardri_f(ao_ * lo_o, wo)
+      L_post <- jardri_f(lo_s + I, ws) + jardri_f(lo_o + I, wo)
+      choices <- rbinom(N, 1, plogis(L_post))
+
+      list(
+        variables = list(w_self = ws, w_other = wo, alpha_self_m1 = as_m1, alpha_other_m1 = ao_m1),
+        generated = list(N = N, choice = choices, blue1 = ev$blue1, 
+                         total1 = ev$total1, blue2 = ev$blue2, total2 = ev$total2)
+      )
+    }, N = N_sbc_trials
+  )
+
+  # 2. Generate datasets
+  n_sbc <- 400
+  datasets_weights <- generate_datasets(sbc_gen_weights, n_sbc)
+  datasets_loops   <- generate_datasets(sbc_gen_loops, n_sbc)
+  datasets_interf  <- generate_datasets(sbc_gen_interference, n_sbc)
+
+  # 3. Setup Backends
+  sampler_args <- list(chains = 2, iter_warmup = 500, iter_sampling = 500, parallel_chains = 2, refresh = 0)
+  
+  backend_weights <- do.call(SBC::SBC_backend_cmdstan_sample, c(list(model = mod_ci_weights), sampler_args))
+  backend_loops   <- do.call(SBC::SBC_backend_cmdstan_sample, c(list(model = mod_ci_loops), sampler_args))
+  backend_interf  <- do.call(SBC::SBC_backend_cmdstan_sample, c(list(model = mod_ci_interference), sampler_args))
+
+  # 4. Compute SBC
+  sbc_res_weights <- compute_SBC(datasets_weights, backend_weights, keep_fits = FALSE)
+  sbc_res_loops   <- compute_SBC(datasets_loops, backend_loops, keep_fits = FALSE)
+  sbc_res_interf  <- compute_SBC(datasets_interf, backend_interf, keep_fits = FALSE)
+
+  saveRDS(list(weights = sbc_res_weights, loops = sbc_res_loops, interf = sbc_res_interf), 
+          "simmodels/ch9_sbc_ci_all_results.rds")
 
 } else {
-  sbc_results_ci <- readRDS("simmodels/ch9_sbc_ci_results.rds")
+  sbc_all <- readRDS("simmodels/ch9_sbc_ci_all_results.rds")
+  sbc_res_weights <- sbc_all$weights
+  sbc_res_loops   <- sbc_all$loops
+  sbc_res_interf  <- sbc_all$interf
 }
+```
 
-SBC::plot_ecdf_diff(
-  sbc_results_ci,
-  variables = c("w_self", "w_other", "alpha_self_m1", "alpha_other_m1")
-) +
-  labs(
-    title    = "SBC Calibration: Circular Inference Agent",
-    subtitle = "500 datasets. Loop parameters (alpha_*_m1) are harder to\nidentify than weights — expect wider rank intervals."
+#### Checking Posterior Calibration (ECDF)
+
+First, we check the Empirical Cumulative Distribution Function (ECDF) plots to see if the sampler explores the parameter space without bias across all three models.
+
+```{r}
+p_ecdf_weights <- SBC::plot_ecdf_diff(sbc_res_weights, variables = c("w_self", "w_other")) + 
+  labs(title = "1. Weights Only Calibration")
+
+p_ecdf_loops <- SBC::plot_ecdf_diff(sbc_res_loops, variables = c("w_self", "w_other", "alpha_self_m1", "alpha_other_m1")) + 
+  labs(title = "2. Weights + Loops Calibration")
+
+p_ecdf_interf <- SBC::plot_ecdf_diff(sbc_res_interf, variables = c("w_self", "w_other", "alpha_self_m1", "alpha_other_m1")) + 
+  labs(title = "3. Full Interference Calibration")
+
+(p_ecdf_weights / p_ecdf_loops / p_ecdf_interf) +
+  plot_annotation(
+    title = "SBC Calibration Across the Circular Inference Family",
+    subtitle = "If lines stray outside the blue bands, the posterior is systematically biased."
   )
 ```
 
-Pay attention to the ECDF-difference plots for the loop parameters. Because `alpha_self_m1` and `alpha_other_m1` multiply the weight parameters, there is a partial tradeoff: a large $w$ with a small $\alpha$ can produce similar log-odds as a small $w$ with a large $\alpha$. If the SBC curves bulge outside the grey band for the loop parameters, this indicates marginal calibration failure — the model may need stronger regularisation or a reparameterisation that separates the multiplicative components more cleanly.
+The ECDF plots generally stay within the blue envelopes, though you will likely see the loop parameters (alpha_*_m1) gently push against the edges in the Interference model. This indicates that Stan's NUTS sampler is working hard but succeeding at unbiased exploration.
 
-### Fitting and Comparison: WBA vs. Circular Inference
+#### Parameter Recovery: The Asymptote Problem Emerges
 
-We fit the circular inference model to the Self-Focused scenario data — the same data used for the single-agent WBA — and compare the two models via PSIS-LOO.
+Calibration tells us if the posterior captures the true value on average, but Parameter Recovery tells us how precise those estimates are. By plotting all three models together, we can see exactly what structural feature destroys our precision.
 
-```{r 09_fit_circular, message=FALSE}
-# --- Fit WBA to Self_Focused for comparison baseline ---
-if (regenerate_simulations) {
-  fit_wba_self <- mod_weighted$sample(
-    data            = stan_data_wba$Self_Focused,
-    seed            = 600,
-    chains          = 4,
-    parallel_chains = 4,
-    iter_warmup     = 1000,
-    iter_sampling   = 1000,
-    refresh         = 0
-  )
-  fit_wba_self$save_object("simmodels/ch9_fit_wba_self.rds")
-} else {
-  fit_wba_self <- readRDS("simmodels/ch9_fit_wba_self.rds")
+```{r 09_sbc_ci_recovery, fig.width=10, fig.height=10}
+# Extract and label recovery stats
+prep_recovery <- function(sbc_obj, model_name) {
+  sbc_obj$stats |>
+    filter(variable %in% c("w_self", "w_other", "alpha_self_m1", "alpha_other_m1")) |>
+    mutate(
+      Model = model_name,
+      param_label = case_when(
+        variable == "w_self" ~ "Weight Self (w_s)",
+        variable == "w_other" ~ "Weight Other (w_o)",
+        variable == "alpha_self_m1" ~ "Excess Loops Self (\u03b1_s - 1)",
+        variable == "alpha_other_m1" ~ "Excess Loops Other (\u03b1_o - 1)"
+      )
+    )
 }
 
-# --- Fit Circular Inference to the same data ---
-fit_circular_self <- if (regenerate_simulations) {
-  fit <- mod_circular$sample(
-    data            = stan_data_wba$Self_Focused,
-    seed            = 601,
-    chains          = 4,
-    parallel_chains = 4,
-    iter_warmup     = 1000,
-    iter_sampling   = 1000,
-    refresh         = 0
-  )
-  fit$save_object("simmodels/ch9_fit_circular_self.rds")
-  fit
-} else {
-  readRDS("simmodels/ch9_fit_circular_self.rds")
-}
-
-check_diagnostics(fit_circular_self, "Circular Inference — Self-Focused")
-
-fit_circular_self$summary(
-  variables = c("w_self", "w_other", "alpha_self", "alpha_other")
+rec_df <- bind_rows(
+  prep_recovery(sbc_res_weights, "1. Weights Only"),
+  prep_recovery(sbc_res_loops, "2. Weights + Loops"),
+  prep_recovery(sbc_res_interf, "3. Full Interference")
 ) |>
-  knitr::kable(digits = 3,
-               caption = "Circular Inference posteriors: Self-Focused agent")
+  mutate(Model = factor(Model, levels = c("1. Weights Only", "2. Weights + Loops", "3. Full Interference")))
+
+# --- Plot 1: Weights Only (Strictly bounded 0.5 to 1.0) ---
+p_rec_weights <- rec_df |> 
+  filter(str_detect(variable, "w_")) |>
+  ggplot(aes(x = simulated_value, y = median)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(ymin = q5, ymax = q95), alpha = 0.15, width = 0, color = "#4575b4") +
+  geom_point(alpha = 0.6, size = 1.5, color = "#d73027") +
+  facet_grid(Model ~ param_label) +
+  # Force the axes to the theoretical boundaries
+  coord_cartesian(xlim = c(0.5, 1.0), ylim = c(0.5, 1.0)) + 
+  labs(
+    title = "Parameter Recovery: Trust Weights (w)",
+    subtitle = "Weights recover well, though interference adds visible noise to the estimates.",
+    x = "True Simulated Value",
+    y = "Posterior Median"
+  ) +
+  theme(strip.background = element_rect(fill = "gray95", color = NA),
+        strip.text = element_text(face = "bold"))
+
+# --- Plot 2: Loops Only (Free scales to show the asymptote) ---
+p_rec_loops <- rec_df |> 
+  filter(str_detect(variable, "alpha_")) |>
+  # Drop the "Weights Only" model since it doesn't have loop parameters
+  filter(Model != "1. Weights Only") |> 
+  ggplot(aes(x = simulated_value, y = median)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(ymin = q5, ymax = q95), alpha = 0.15, width = 0, color = "#4575b4") +
+  geom_point(alpha = 0.6, size = 1.5, color = "#d73027") +
+  facet_grid(Model ~ param_label, scales = "free") +
+  labs(
+    title = "Parameter Recovery: Loop Parameters (\u03b1 - 1)",
+    subtitle = "Notice the severe 'asymptotic flattening' and massive uncertainty at higher values.",
+    x = "True Simulated Value",
+    y = "Posterior Median"
+  ) +
+  theme(strip.background = element_rect(fill = "gray95", color = NA),
+        strip.text = element_text(face = "bold"))
+
+# Combine with patchwork
+p_rec_weights / p_rec_loops
 ```
 
-```{r 09_circular_vs_wba_comparison}
-loo_wba_self      <- loo(fit_wba_self$draws("log_lik", format = "matrix"))
-loo_circular_self <- loo(fit_circular_self$draws("log_lik", format = "matrix"))
-
-cat("=== Model Comparison: WBA vs. Circular Inference (Self-Focused agent) ===\n")
-ci_vs_wba <- loo_compare(
-  list(WBA = loo_wba_self, CI = loo_circular_self)
-)
-print(ci_vs_wba)
-
-diff_ratio <- abs(ci_vs_wba[2, "elpd_diff"] / ci_vs_wba[2, "se_diff"])
-cat(sprintf("\n|ELPD diff| / SE = %.2f\n", diff_ratio))
-
-ci_wba_weights <- loo_model_weights(
-  list(WBA = loo_wba_self, CI = loo_circular_self),
-  method = "stacking"
-)
-cat("\nBayesian stacking weights:\n")
-print(ci_wba_weights)
-```
-
-**Expected pattern:** Because the simulated agent was generated by the WBA (pseudocount model with $w_d = 1.5$, $w_s = 0.5$) rather than by circular inference, the WBA should outperform or be competitive with the CI model. The circular inference model has two extra parameters (the loop parameters) that provide no additional explanatory power when the data were generated without overcounting. PSIS-LOO naturally penalises this extra complexity through the effective number of parameters $p_\text{LOO}$.
-
-This is a one-directional test: we verify that the comparison does not spuriously prefer the more complex model. A complete validation would also generate data *from* the circular inference model and verify that the CI model wins in that case. This is left as an exercise — the model recovery pipeline from the previous section provides the template.
+Weights are easy to recover, but loops not. What can we do? My hunch again is that we should collect data on participants' confidence, as that should give us better resolution.
 
 ### Discussion: When to Use Each Parameterisation
 
@@ -5169,7 +5513,7 @@ The parameterisations explored in this chapter make different claims about the d
 
 **Circular inference (Jardri & Denève 2013):** Evidence is not merely weighted but potentially amplified beyond its face value. The Bernoulli observation model collapses the belief to a single log-odds value; distributional uncertainty is captured by the posterior over parameters. The key predictive signature — steeper response curves for the amplified source — cannot be reproduced by pseudocount weighting alone.
 
-The choice between models should be driven by the scientific question and validated by LOO comparison. For a course task where the goal is to understand differential *trust*, the WBA is appropriate. For a clinical research question about *whether patients overcount direct experience at a mechanistic level*, circular inference is the scientifically motivated model.
+The choice between models should be driven by the scientific question and validated by LOO comparison. 
 
 ## What the Bayesian Workflow Adds
 

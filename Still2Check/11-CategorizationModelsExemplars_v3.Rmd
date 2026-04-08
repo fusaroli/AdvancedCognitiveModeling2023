@@ -13,8 +13,8 @@ date: "2025-04-28"
 ```{r, W11 load packages, include=FALSE}
 # Set to TRUE to run computationally intensive simulations/fits.
 # Set to FALSE to load pre-computed results.
-regenerate_simulations <- FALSE
-run_intensive_checks   <- FALSE   # controls recovery / SBC / LFO-CV chunks
+regenerate_simulations <- TRUE
+run_intensive_checks   <- TRUE   # controls recovery / SBC / LFO-CV chunks
 
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -91,8 +91,11 @@ diagnostic_summary_table <- function(fit, params = NULL) {
 > marginalization (Ch. 8), and hierarchical Bayesian cognition (Ch. 9–10).
 > This chapter applies the full toolkit to *categorization* — asking not only
 > what parameters describe a participant's behavior, but which *cognitive
-> architecture* best accounts for how people learn to assign objects to kinds.
-> We begin with the exemplar approach: the Generalized Context Model (GCM).
+> mechanism* best accounts for how people learn to assign objects to kinds.
+> We begin with the exemplar approach: the Generalized Context Model (GCM). 
+> The following chapters will introduce prototype and rule-based models, 
+> and then compare all three approaches head-to-head using the full validation 
+> battery.
 >
 > An important caveat that Ch. 7 did not face: the GCM is **path-dependent** —
 > the likelihood at trial $t$ depends on the full sequence of stimuli on
@@ -116,13 +119,17 @@ How do humans learn categories and make categorization decisions? This seemingly
 Computational models offer a powerful way to formalize theories about categorization. By implementing these theories as computer algorithms, we can:
 
 * Explore the consequences of different theoretical assumptions
+
 * Make precise predictions about human behavior in categorization tasks
+
 * Test competing theories against empirical data
 
 In this chapter, we will explore three major approaches to modeling categorization:
 
 * **Exemplar models** — which propose that categories are represented by storing individual examples
+
 * **Prototype models** — which suggest categories are represented by an abstract "average" or central tendency
+
 * **Rule-based models** — which posit that categories are represented by explicit rules or decision boundaries
 
 Each approach captures different aspects of human categorization and has generated substantial empirical research. We'll implement computational versions of each model type, allowing us to compare their behavior and predictions.
@@ -133,11 +140,14 @@ The computational modeling of categorization has a rich history in cognitive psy
 
 ### Early Views: The Classical Approach
 
-Early theories of categorization followed what is now called the classical view, where categories were defined by necessary and sufficient features. In this view, category membership is an all-or-nothing affair: an object either satisfies the criteria or it doesn't. While intuitive, this approach struggled to explain many aspects of human categorization, such as:
+Early theories of categorization followed what is now called the classical view, where categories were defined by necessary and sufficient features. In this view, category membership is an all-or-nothing affair: an object either satisfies the logical criteria or it doesn't. While intuitive, this approach struggled to explain many aspects of human categorization, such as:
 
 * Graded category membership (some members seem "more typical" than others)
+
 * Unclear boundaries between categories
+
 * Context-dependent categorization
+
 * Family resemblance structures (where no single feature is necessary)
 
 ### The Prototype Revolution
@@ -164,6 +174,8 @@ More recent work has focused on hybrid models that incorporate elements of multi
 
 ## The Three Model Classes: Core Assumptions and Predictions
 
+### N.B: THE KEY FEATURES / PREDICTIONS SHOULD BE DIRECTLY COMPARED
+
 Let's examine the core assumptions of the three model classes we'll be implementing:
 
 ### Exemplar Models: Individual Instances as Category Representations
@@ -173,16 +185,23 @@ Let's examine the core assumptions of the three model classes we'll be implement
 **Key Features**:
 
 * No abstraction: All encountered exemplars are stored
+
 * Categorization involves computing similarity to all stored exemplars
+
 * Similarity is often modeled using an exponential decay function of distance
+
 * Different dimensions can receive different attention weights
+
 * Memory effects (recency, frequency) can influence categorization
 
 **Predictions**:
 
 * Sensitivity to specific training examples
+
 * Better handling of exceptions and atypical category members
+
 * Categorization of new items depends on their similarity to specific remembered examples
+
 * Learning can be incremental, one example at a time
 
 ### Prototype Models: Categories as Central Tendencies
@@ -192,15 +211,21 @@ Let's examine the core assumptions of the three model classes we'll be implement
 **Key Features**:
 
 * Abstraction: Information about individual examples is integrated into a summary representation
+
 * Only the prototype (and possibly variance information) is stored for each category
+
 * Categorization involves computing similarity to category prototypes
+
 * Can be updated incrementally (as in Kalman filter approaches)
 
 **Predictions**:
 
 * The most typical (average) category members will be categorized most easily
+
 * Less sensitivity to specific examples
+
 * More efficient in terms of memory requirements
+
 * May struggle with categories that have complex structures (e.g., non-linear boundaries)
 
 ### Rule-Based Models: Categories as Decision Boundaries
@@ -210,15 +235,21 @@ Let's examine the core assumptions of the three model classes we'll be implement
 **Key Features**:
 
 * Rules partition the stimulus space into regions corresponding to different categories
+
 * Rules can be simple (single dimension) or complex (combining multiple dimensions)
+
 * Focus is on relevant dimensions while irrelevant dimensions are ignored
+
 * Rule selection often involves hypothesis testing
 
 **Predictions**:
 
 * Sharp category boundaries
+
 * Fast decisions once rules are learned
+
 * Selective attention to rule-relevant dimensions
+
 * Less sensitivity to similarity once rules are established
 
 ## Our Implementation Approach
@@ -226,24 +257,12 @@ Let's examine the core assumptions of the three model classes we'll be implement
 We'll implement three models representing each major theoretical approach:
 
 * **Generalized Context Model (GCM)** — A canonical exemplar model where categorization is based on summed similarity to all stored examples
+
 * **Kalman Filter Prototype Model** — A dynamic prototype model that incrementally updates category representations (Ch. 12)
+
 * **Bayesian Particle Filter for Rules** — A rule-based model that maintains a distribution over potential categorization rules (Ch. 13)
 
-Each implementation follows a similar structure: explicit Phase 0 interrogation, core model function as a forward simulator, Stan implementation for parameter estimation, the mandatory MCMC diagnostic battery, prior/posterior predictive checks, parameter recovery, prior sensitivity, and SBC. The validation battery is the persona's six-phase pipeline; the table below shows which phase each section addresses.
-
-> **🗺️ Validation battery roadmap for this chapter**
->
-> | Phase | Persona check | Section in this chapter |
-> |-------|--------------|------------------------|
-> | 0 | Cognitive-to-statistical mapping; identifiability interrogation | §"Phase 0: Interrogating the GCM" |
-> | 1 | Mathematical formulation matches the Stan code | §"Mathematical Formulation" + §"Implementing the GCM in Stan" |
-> | 2 | Prior predictive check | §"Prior Predictive Check" |
-> | 3 | Posterior predictive check | §"Posterior Predictive Check (single subject)" |
-> | 4 | Prior-posterior update; prior sensitivity | §"Prior–Posterior Update Plot" + §"Prior Sensitivity Analysis" |
-> | 5 | Parameter recovery + SBC | §"Extensive Parameter Recovery" + §"Single-Subject SBC" + §"Multilevel SBC" |
-> | 3.0 | Mandatory MCMC diagnostic battery | §"Mandatory MCMC Diagnostic Battery" (single + multilevel) |
-> | 4.5 | LOO-PIT (randomised for binary) | §"Randomised LOO-PIT" |
-> | 4.6 | LFO-CV for sequential models | §"Leave-Future-Out Cross-Validation: A Real Implementation" |
+Each implementation follows a similar structure: core model function as a forward simulator, Stan implementation for parameter estimation, the mandatory MCMC diagnostic battery, prior/posterior predictive checks, parameter recovery, prior sensitivity, and SBC. 
 
 Let's begin with the Generalized Context Model.
 

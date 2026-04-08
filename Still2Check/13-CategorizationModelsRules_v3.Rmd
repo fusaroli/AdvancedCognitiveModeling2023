@@ -1,0 +1,2266 @@
+---
+title: "13 — Rule-Based Models: Learning Explicit Criteria"
+output:
+  html_document:
+    mathjax: default
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+date: "2025-04-28"
+---
+
+```{r, 13_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 5
+)
+
+# Set to TRUE to rerun simulations and Stan fits.
+# FALSE loads pre-computed results from 'simdata/'.
+regenerate_simulations <- FALSE
+
+# Set to TRUE to run the long-running validation chunks
+# (rule-set sensitivity, real SBC for the Stan proxy, ABC pipeline,
+# coverage validation, ABC-vs-Stan comparison).
+run_intensive_checks   <- FALSE
+
+pacman::p_load(
+  tidyverse,    # data manipulation and visualization
+  patchwork,    # combining plots
+  cmdstanr,     # Stan interface
+  posterior,    # tidy posterior arrays
+  tidybayes,    # tidy extraction of draws
+  bayesplot,    # MCMC diagnostic plots
+  loo,          # LOO-CV and PSIS
+  SBC,          # Simulation-Based Calibration
+  priorsense,   # prior sensitivity
+  future,       # parallel processing
+  furrr,        # parallel functional programming
+  matrixStats   # logSumExp for ABC and PSIS calculations
+)
+
+theme_set(theme_classic())
+
+# Prior hyperparameter for logit(error_prob)
+# logit(0.05) ≈ -2.94 ; Normal(-2, 1) puts most mass below error_prob = 0.27
+LOGIT_ERROR_PRIOR_MEAN <- -2.0
+LOGIT_ERROR_PRIOR_SD   <- 1.0
+
+# ── Structural commitments for the particle filter (Model A) ─────────────────
+# These are NOT inferred from data — they are cognitive choices the modeller
+# makes. Phase 0, question 4 surfaces them.
+N_PARTICLES_FIXED <- 100   # working-memory bound on hypothesis count
+MAX_RULE_DIMS     <- 2     # maximum number of conditions in a rule
+RULE_OPERATORS    <- c(">", "<")
+RULE_LOGIC        <- c("AND", "OR")
+
+for (d in c("stan", "simdata", "simmodels")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+
+# ── Shared diagnostic helper (canonical version lives in Ch 11) ──────────────
+# Re-defined here for standalone use. Same signature as Ch 11 / Ch 12.
+diagnostic_summary_table <- function(fit, pars = NULL) {
+  diag <- fit$diagnostic_summary(quiet = TRUE)
+  draws_summary <- fit$summary(variables = pars)
+
+  out <- tibble(
+    n_divergent      = sum(diag$num_divergent),
+    n_max_treedepth  = sum(diag$num_max_treedepth),
+    min_ebfmi        = round(min(diag$ebfmi), 3),
+    max_rhat         = round(max(draws_summary$rhat,    na.rm = TRUE), 4),
+    min_ess_bulk     = round(min(draws_summary$ess_bulk, na.rm = TRUE), 0),
+    min_ess_tail     = round(min(draws_summary$ess_tail, na.rm = TRUE), 0)
+  ) |>
+    mutate(
+      max_mcse_ratio = {
+        ratios <- draws_summary$mcse_mean / draws_summary$sd
+        round(max(ratios, na.rm = TRUE), 4)
+      }
+    )
+
+  ok_div  <- out$n_divergent     == 0
+  ok_rhat <- out$max_rhat        <  1.01
+  ok_bulk <- out$min_ess_bulk    >  400
+  ok_tail <- out$min_ess_tail    >  400
+  ok_ebfmi<- out$min_ebfmi       >  0.2
+  ok_mcse <- out$max_mcse_ratio  <  0.05
+
+  if (!all(c(ok_div, ok_rhat, ok_bulk, ok_tail, ok_ebfmi, ok_mcse))) {
+    warning(
+      "MCMC diagnostic battery: at least one threshold breached. ",
+      "Inspect divergences and reparameterize before interpreting the posterior.",
+      call. = FALSE
+    )
+  }
+
+  out
+}
+
+# ── Kruschke (1993) stimulus set ─────────────────────────────────────────────
+# Identical to Ch. 11 and Ch. 12; redefined here for standalone use.
+stimulus_info <- tibble(
+  stimulus      = c(5, 3, 7, 1, 8, 2, 6, 4),
+  height        = c(1, 1, 2, 2, 3, 3, 4, 4),
+  position      = c(2, 3, 1, 4, 1, 4, 2, 3),
+  category_true = c(0, 0, 1, 0, 1, 0, 1, 1)
+)
+
+n_blocks         <- 8
+n_stim_per_block <- nrow(stimulus_info)
+total_trials     <- n_blocks * n_stim_per_block
+
+# Feature ranges for threshold sampling (min and max of each feature)
+feature_range <- list(
+  height   = range(stimulus_info$height),
+  position = range(stimulus_info$position)
+)
+
+# ── Per-subject schedule helper ───────────────────────────────────────────────
+make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
+  set.seed(seed)
+  n_stim <- nrow(stimulus_info)
+  sequence <- unlist(lapply(seq_len(n_blocks), function(b) {
+    sample(stimulus_info$stimulus, n_stim, replace = FALSE)
+  }))
+  tibble(
+    trial_within_subject = seq_along(sequence),
+    block                = rep(seq_len(n_blocks), each = n_stim),
+    stimulus_id          = sequence
+  ) |>
+    left_join(stimulus_info, by = c("stimulus_id" = "stimulus")) |>
+    rename(category_feedback = category_true) |>
+    dplyr::select(trial_within_subject, block, stimulus_id,
+                  height, position, category_feedback)
+}
+
+plan(multisession, workers = max(1, availableCores() - 1))
+```
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chapters 11 and 12 implemented similarity-based accounts of categorization:
+> the GCM stores individual exemplars and decides by summed similarity, while
+> the Kalman filter prototype model tracks running category averages. Both
+> update continuously and live as well-formed Stan likelihoods. This chapter
+> takes a third route: **rule-based categorization**, where learners maintain
+> and update discrete hypotheses about logical criteria for category
+> membership. We implement this using a Bayesian particle filter — a sequential
+> Monte Carlo method that maintains a weighted distribution over candidate
+> rules.
+>
+> **Two distinct models will appear in this chapter, and the distinction is
+> load-bearing**:
+>
+> * **Model A (the cognitive theory)** is the particle filter itself. Its
+>   parameters are $\varepsilon$ (error rate), $N_{\text{particles}}$ (a
+>   working-memory bound), `max_dims`, the rule grammar, and the resampling
+>   threshold. Its likelihood has no closed form because the rule space is
+>   discrete and combinatorial, the resampling step is non-differentiable, and
+>   the particle trajectories cannot be marginalised analytically. **Stan
+>   cannot fit Model A.** It can only be fitted via simulator-based inference,
+>   for which we use Approximate Bayesian Computation (ABC).
+> * **Model B (a tractable Stan proxy)** is a static, conditionally
+>   exchangeable mixture over a small fixed set of hand-picked candidate
+>   rules. Its likelihood is closed-form Bernoulli marginalised with
+>   `log_sum_exp`. It admits the full HMC validation pipeline. **Validation of
+>   Model B is not validation of Model A.** A reader who skips this distinction
+>   will end up using LOO scores from Model B as if they reported on the
+>   particle filter's predictive accuracy. They do not.
+>
+> The pedagogical move in this chapter is to fit *both* models, using HMC for
+> Model B and ABC for Model A, and to read the gap between their posteriors as
+> the chapter's main empirical finding: the magnitude of the structural bias
+> you accept when you replace an intractable cognitive theory with a tractable
+> proxy.
+>
+> Standard PSIS-LOO is **technically valid for Model B** (it is conditionally
+> exchangeable — leaving out trial $t$ does not affect the likelihood of any
+> other trial), so the LFO-CV machinery introduced in Chapters 11 and 12 is
+> not needed here. We say this once, in §"LFO-CV does not apply here," and
+> reference Chapter 11's `psis_lfo_gcm()` and Chapter 12's `psis_lfo_kalman()`
+> for completeness.
+
+# Rule-Based Models of Categorization
+
+> **📋 Validation battery roadmap for this chapter**
+>
+> Two columns because two models. Validation of Model B does not transfer to
+> Model A.
+>
+> | Persona phase | Model A (particle filter) | Model B (Stan mixture proxy) |
+> |---|---|---|
+> | 0. Conceptual interrogation | §"Phase 0: Two Models, Not One" | §"Phase 0: Two Models, Not One" |
+> | 1. Forward simulator | `rule_particle_filter()` | none — no separate simulator needed |
+> | 2. Implementation | R only — no closed-form likelihood | §"Stan Model: Marginalised Mixture" |
+> | 3.0 MCMC diagnostics | n/a (no MCMC) | §"Mandatory MCMC Diagnostic Battery" |
+> | 3.2 Prior predictive | §"Prior Predictive Check (Model A)" — and the cross-model warning that goes with it | uses Model A's simulator → cross-model warning applies |
+> | 3.3 Posterior predictive | via ABC posterior | §"Posterior Predictive Check (Model B)" |
+> | 3.4 Prior–posterior update | §"ABC: Prior–Posterior Update for $\varepsilon$" | §"Prior–Posterior Update Plot (Model B)" |
+> | 3.5 Prior sensitivity | summary-statistic sensitivity | `priorsense::powerscale_sensitivity()` |
+> | 4.5 LOO-PIT (randomised, binary) | n/a | §"Randomised LOO-PIT (Model B)" |
+> | 4.6 LFO-CV | n/a (Model A is fitted via ABC, not likelihood) | §"LFO-CV Does Not Apply Here" — Model B is exchangeable |
+> | 6a. Parameter recovery | §"ABC: Coverage Validation" | §"Parameter Recovery (Model B)" |
+> | 6b. SBC | §"ABC: Coverage Validation (Prangle et al. 2014)" | §"Real SBC for the Stan Mixture (Model B)" |
+> | 6b.cross. Cross-model calibration check | §"Cross-Model Calibration Check" — generates from Model A, fits Model B; **labelled** as a robustness check, not SBC |
+> | Identifiability check | §"Phase 0", Q3 ($\varepsilon$ vs rule set) | §"Phase 0", Q3 |
+
+## Theoretical Foundations
+
+In the previous chapters, we explored models based on similarity. Exemplar models compute similarity to stored instances, while prototype models compute similarity to category averages. However, humans sometimes categorize using explicit criteria or rules. Think about definitions like "a square is a shape with four equal sides and four right angles" or simple diagnostic rules like "if the animal has feathers, it's a bird."
+
+Rule-based models propose that categorization often involves learning and applying such explicit rules that define category membership by partitioning the feature space.
+
+### Core Assumptions of Rule-Based Models
+
+1. **Explicit Rules**: Categories are represented by rules specifying conditions for membership (e.g., "Height > 2.5 AND Position < 3.0").
+
+2. **Rule Testing**: Learning involves generating, testing, weighting and refining candidate rules based on feedback.
+
+3. **Selective Attention**: Rules typically focus attention on specific, relevant features mentioned in the rule, ignoring irrelevant ones.
+
+4. **Deterministic Boundaries**: Simple rules often create sharp, axis-aligned boundaries in the feature space.
+
+5. **Verbal Representation**: Rules are often easily verbalizable (e.g., "If height > 2.5, then Category A"), and might actually become easier to learn and represent through verbalization.
+
+### Rules vs. Similarity-Based Approaches
+
+The distinction between rule-based and similarity-based approaches lies not just in the computational details, but in fundamental assumptions about how the mind represents categories:
+
+| Aspect | Rule-Based Models | Similarity-Based Models |
+|--------|------------------|------------------------|
+| **Representation** | Explicit decision criteria | Stored examples or prototypes |
+| **Decision Process** | Rule application | Similarity computation |
+| **Feature Use** | Selective (focus on rule-relevant features) | Holistic (all features might contribute) |
+| **Category Boundaries** | Sharp and often axis-aligned | Fuzzy and sensitive to overall similarity |
+| **Individual Differences** | Different rules | Different attention weights |
+| **Generalization Pattern** | Rectangle-like regions | Similarity-gradient regions |
+
+### Representing and Evaluating Rules
+
+How can we represent a rule computationally? For our 2D stimuli (height, position), a simple rule might involve one or both dimensions and a threshold.
+
+Example Rule: "If Height > 3.5, then predict Category 1, otherwise Category 0."
+
+We can represent this rule in R as a list:
+
+```{r, 13 rule representation}
+# Example: a simple 1D rule
+rule_example_1d <- list(
+  dimensions        = 1,
+  thresholds        = 3.5,
+  operations        = ">",
+  prediction_if_true = 1
+)
+
+# Example: a 2D rule (Height > 2 AND Position < 3 => Cat 0)
+rule_example_2d <- list(
+  dimensions        = c(1, 2),
+  thresholds        = c(2.0, 3.0),
+  operations        = c(">", "<"),
+  logic             = "AND",
+  prediction_if_true = 0
+)
+```
+
+Now, a function to evaluate a given rule against a stimulus:
+
+```{r, 13 evaluate rule}
+# Evaluate a rule for a given stimulus.
+# Returns the category prediction (0 or 1).
+evaluate_rule <- function(rule, stimulus) {
+
+  eval_cond <- function(dim_idx, thresh, op) {
+    switch(op,
+           ">" = stimulus[dim_idx] > thresh,
+           "<" = stimulus[dim_idx] < thresh,
+           stop("Invalid operation in rule"))
+  }
+
+  if (length(rule$dimensions) == 1) {
+    condition_met <- eval_cond(rule$dimensions[1], rule$thresholds[1], rule$operations[1])
+
+  } else if (length(rule$dimensions) == 2) {
+    c1 <- eval_cond(rule$dimensions[1], rule$thresholds[1], rule$operations[1])
+    c2 <- eval_cond(rule$dimensions[2], rule$thresholds[2], rule$operations[2])
+    condition_met <- if (rule$logic == "AND") c1 & c2
+                     else if (rule$logic == "OR") c1 | c2
+                     else stop("Invalid logic in 2D rule")
+  } else {
+    stop("Rule dimension count not supported (only 1 or 2)")
+  }
+
+  ifelse(condition_met, rule$prediction_if_true, 1L - rule$prediction_if_true)
+}
+
+# --- Test ---
+test_stimulus <- c(2.5, 3.8)
+cat("Rule 1 Prediction:", evaluate_rule(rule_example_1d, test_stimulus),
+    "(Expected: 0 — Height 2.5 is not > 3.5)\n")
+cat("Rule 2 Prediction:", evaluate_rule(rule_example_2d, test_stimulus),
+    "(Expected: 1 — Height > 2 TRUE, Position < 3 FALSE; AND => FALSE => predicts 1)\n")
+```
+
+---
+
+
+## Phase 0: Two Models, Not One
+
+The persona's Phase 0 interrogation is unusually consequential for this chapter, because rule-based categorisation has the property that the *cognitive theory we want to test* (the particle filter) and the *model we can fit with HMC* (a marginalised mixture over fixed rules) are not the same model — and pretending otherwise has cost real research conclusions in the past. We surface the structural commitments before any code is written.
+
+> **Q1 — What is the cognitive theory?**
+>
+> The cognitive theory is **Model A**: a sequential agent that maintains a finite working set of $N_{\text{particles}}$ candidate rules drawn from a structured grammar, updates the weights on those rules via Bayes's rule given new feedback, resamples when effective sample size drops below threshold, and chooses categories by weighted vote. The agent's parameters are:
+>
+> * $\varepsilon$ — error rate (probability that the agent applies its rule incorrectly on any trial)
+> * $N_{\text{particles}}$ — the number of hypotheses the agent maintains simultaneously, interpretable as a working-memory bound
+> * $\text{max\_dims}$ — the maximum number of feature conditions in a rule
+> * The rule grammar — which features, operators, and logical connectives are allowed
+> * The resampling threshold — when the agent reorganises its hypothesis set
+>
+> The cognitive theory is the *whole* particle filter, including these structural choices. None of them is a nuisance.
+
+> **Q2 — Can the cognitive theory be fitted with HMC? No. Why not?**
+>
+> Three reasons stack:
+>
+> 1. **The rule space is discrete and combinatorial.** Stan needs gradients with respect to a continuous parameter space. There is no natural notion of a derivative with respect to "which logical operator appears in condition 1" or "which feature dimension this rule uses."
+> 2. **The resampling step is non-differentiable.** Even if we could embed individual rules in a continuous space, the resample operation is a stochastic discrete jump that no HMC sampler can integrate over.
+> 3. **The latent particle trajectories cannot be marginalised analytically.** In Chapter 8 we marginalised mixture components by summing over them; here the "latent variable" is a high-dimensional trajectory of weighted rule sets, and the corresponding sum has no closed form for any reasonable rule grammar.
+>
+> The principled response is **simulator-based inference**. Approximate Bayesian Computation (ABC) is the textbook tool for this exact situation: the simulator $M(\theta, V) \mapsto y$ exists (it is the `rule_particle_filter` R function), the parameters $\theta$ are well-defined, but the likelihood $p(y \mid \theta)$ has no tractable form. ABC replaces the likelihood with a proxy $\Pr(d(Y_\theta, y_{\text{obs}}) \leq \epsilon)$, estimated by counting simulator runs that produce data within tolerance $\epsilon$ of the observation under a chosen distance $d$ on summary statistics. We implement this in §"Approximate Bayesian Computation for Model A" and use it to estimate $\varepsilon$ — and, optionally, $N_{\text{particles}}$ — directly under the cognitive theory.
+
+> **Q3 — What is Model B and how does it relate to Model A?**
+>
+> **Model B is *not* the same as Model A with a clever marginalisation trick.** It is a completely different generative model: a static, conditionally exchangeable mixture over a small fixed set of hand-picked candidate rules, with one continuous parameter $\varepsilon$ and uniform weights over $R$ rules. Its likelihood is closed-form Bernoulli, marginalised analytically with `log_sum_exp`. It has no learning dynamics, no resampling, no working-memory bound, no rule discovery, and the candidate rules are fixed by the modeller (us) by inspecting the stimulus layout.
+>
+> Model B fits cleanly in Stan and admits the full HMC validation pipeline. **But what it validates is Model B, not Model A.** A flat ECDF in an SBC plot for Model B means "Stan correctly inverts the marginalised mixture." It does *not* mean "Stan correctly inverts the particle filter," and it never could.
+>
+> What Model B *can* answer, when fitted to data generated from Model A: "given this particular candidate rule set, what value of $\varepsilon$ best explains the observed responses?" If the particle filter's converged rule happens to be in the candidate set, Model B's $\varepsilon$ posterior will track Model A's $\varepsilon$ closely. If the converged rule is *not* in the candidate set, Model B compensates by inflating $\varepsilon$ to absorb the systematic misclassifications. The $\varepsilon$ posterior is then a *biased* estimate of the cognitive parameter, biased in a direction the modeller cannot easily correct.
+>
+> **What we commit to here:** We treat Model B as a tractable proxy whose validation tests the proxy, not the cognitive theory. We use ABC to fit Model A. We compare the two posteriors as the chapter's main empirical result.
+
+> **Q4 — Are there parameters being silently fixed in Model A?**
+>
+> Three structural choices that earlier drafts of this chapter buried in code:
+>
+> 1. **$N_{\text{particles}}$.** Earlier versions used 50, 100, 150, or 200 in different sub-sections without justification. We commit here to a single defended default: $N_{\text{particles}} = 100$, interpretable as a working-memory bound on the number of hypotheses an agent can maintain simultaneously. This is the value used everywhere in the chapter unless explicitly varied (in §"Sensitivity to $N_{\text{particles}}$" and in the ABC subsection where it can become a free parameter).
+> 2. **$\text{max\_dims} = 2$.** The rule grammar allows up to two-condition rules (1D or 2D). We test sensitivity to this in §"Rule Grammar: Formal Specification" by also fitting under $\text{max\_dims} = 1$ and $\text{max\_dims} = 3$.
+> 3. **Operator and logic sets.** $\{>, <\}$ and $\{\text{AND}, \text{OR}\}$. No negation, no equality, no nested logic. These are commitments to a specific rule language and they bias the inferential conclusions just as much as the prior on $\varepsilon$ does. The prior-sensitivity machinery (`priorsense::powerscale_sensitivity`) cannot detect bias from these choices because the bias is in the structural prior, not the parametric prior over $\varepsilon$.
+
+> **Q5 — Are the candidate rules in Model B truly prior to the data?**
+>
+> No, and this is the part of the chapter that earlier drafts admitted in a single bracketed remark and then ignored. **The five candidate rules in Model B are picked by looking at the stimulus layout.** Strictly speaking, then, $p(\text{rule} = r) = 1/R$ is not a prior — it is an empirical approximation to the *posterior* over rules, conditional on having inspected the data-generating structure. The honest framings are either (i) treat the candidate set as a sensitivity analysis ("we test what fit a hand-picked rule set provides; results are conditional on this set"), or (ii) generate the candidate rules blind by running the particle filter on a *separately simulated* dataset and using its converged top rules. Both options are exercised in §"Discharging the Post-Hoc Rule Selection."
+
+**Summary of Phase 0 commitments.** Two models, not one. Model A is the cognitive theory, has no Stan-tractable likelihood, and is fitted via ABC. Model B is a tractable proxy with a hand-picked rule set; it admits the full HMC validation pipeline but the validation tests the proxy, not the theory. $N_{\text{particles}}$ is fixed at 100 with an explicit cognitive interpretation. The rule grammar is documented formally below. The Stan candidate rule set is treated as a sensitivity-analysis condition, not as a prior. The chapter's main empirical contribution is the **gap between the ABC posterior on $\varepsilon$ under Model A and the Stan posterior on $\varepsilon$ under Model B** — that gap is the structural bias you accept when you replace the cognitive theory with a tractable proxy.
+
+---
+
+## Rule Grammar: Formal Specification
+
+Earlier drafts of this chapter left the rule grammar inside the body of `generate_random_rule()` and let the reader infer it from the code. The persona's Phase 0 says: name the structural priors. Here is the formal grammar.
+
+A rule $r$ in our grammar is a tuple
+
+$$r = (D, T, O, L, c) \in \mathcal{R}$$
+
+where:
+
+* $D \in \mathcal{P}(\{1, 2\}) \setminus \emptyset$ with $|D| \leq \text{max\_dims}$ is the set of feature dimensions used by the rule. With $\text{max\_dims} = 2$, $|D| \in \{1, 2\}$.
+* $T \in \mathbb{R}^{|D|}$ is the threshold vector, with the $k$-th element drawn uniformly from the observed range of feature $D_k$ (in our task: height $\in [1, 4]$ and position $\in [1, 4]$).
+* $O \in \{>, <\}^{|D|}$ is the operator vector.
+* $L \in \{\text{AND}, \text{OR}\}$ is the logical connective; only used when $|D| = 2$.
+* $c \in \{0, 1\}$ is the prediction emitted when all conditions are satisfied. The complementary prediction is emitted otherwise.
+
+The number of distinct rules in this grammar is finite (although large). For $\text{max\_dims} = 2$ on a 2-feature task: $|\mathcal{R}| = 2 \cdot |T_{\text{grid}}| \cdot 2 \cdot 2 + \binom{2}{2} \cdot |T_{\text{grid}}|^2 \cdot 4 \cdot 2 \cdot 2$, where $|T_{\text{grid}}|$ is the threshold discretisation. With a continuous threshold space the grammar has uncountably many rules, but they fall into a finite set of structurally distinct equivalence classes (one per (dimension subset, operator pattern, logical connective, prediction polarity) combination).
+
+**Commitments encoded in this grammar:**
+
+* No negation operator. A rule cannot say "NOT (Height > 2)." Negation can be partially recovered by flipping $c$ and choosing the complementary inequality, but compound negations across two conditions cannot be expressed.
+* No equality operator. Strict inequalities only.
+* Maximum two conditions per rule. A reader who believes humans use rules with three or more dimensions in this task will need to relax `max_dims`.
+* Continuous thresholds. The grammar treats thresholds as a continuous parameter, not a categorical choice. This is what makes the rule space combinatorial-times-continuous and what defeats analytical marginalisation in Stan.
+
+We will test sensitivity to `max_dims` in the dedicated subsection, and the operator/logic-set commitments are flagged in §"Limitations."
+
+---
+
+## The Challenge: Searching the Space of Rules
+
+Evaluating a given rule is easy. The hard part of rule-based learning is finding the right rule. The number of possible rules (combinations of dimensions, thresholds, operations, logic) is vast. How can a learner efficiently search this space?
+
+Unlike exemplar and prototype models, where the representation is straightforward, rule-based models need mechanisms for:
+
+1. Generating candidate rules
+2. Testing rules against observed data
+3. Switching between rules when necessary
+4. Maintaining uncertainty about which rule is correct
+
+---
+
+## The Bayesian Particle Filter: Tracking Rule Hypotheses (Model A)
+
+The Bayesian particle filter provides an elegant solution to these challenges. Originally developed for tracking physical objects, particle filters have been adapted to model how humans track and update hypotheses. In our context, each "particle" represents a possible categorization rule, and the filter maintains and updates a distribution over these rules.
+
+**This is Model A — the cognitive theory.** Everything in this section implements the cognitive model whose intractable likelihood will eventually require ABC to fit.
+
+The core idea:
+
+1. **Particles = Rules**: Each particle is a specific candidate rule.
+
+2. **Weights = Belief**: Each particle has a weight $w_i$ representing the probability that this specific rule is the "true" rule. Initially, all weights are equal ($1/N$).
+
+3. **Update Weights**: When a new stimulus and its correct category are observed, we update the weights. Rules that correctly predict the category get their weights increased; rules that predict incorrectly get their weights decreased. The amount of change depends on how likely the observation was under that rule.
+
+4. **Resample**: Over time, many particles accumulate near-zero weight ("particle degeneracy"). To focus computational effort, we periodically resample: draw $N$ new particles with probability proportional to their weights. High-weight particles are likely to be selected multiple times; low-weight particles are likely to be dropped. After resampling, weights are reset to $1/N$.
+
+### Why Model A's Likelihood is Intractable for HMC
+
+Stan's HMC sampler requires a continuous, differentiable log posterior density. Individual rule particles are discrete, symbolic structures — lists containing integers, operators, and real-valued thresholds. The *space* of all possible rules is a combinatorial set of structured objects: there is no natural notion of a gradient with respect to "which logical operator appears in condition 1" or "which dimension is used." This is exactly the class of discrete latent variables that must be integrated out analytically before any Stan code is written (the same principle we applied to mixture components in Chapter 8).
+
+For Model A, this analytical marginalisation is **not feasible in closed form** over a combinatorial rule space crossed with continuous thresholds and a non-differentiable resampling step. The particle filter therefore lives entirely in R, where it acts as its own approximate Bayesian inference engine via sequential Monte Carlo.
+
+**This is the standard situation for which simulator-based inference was invented.** The Lintusaari et al. ABC review describes the pattern exactly:
+
+> "Many recent models in biology describe nature to a high degree of accuracy but are not amenable to analytical treatment. The models can, however, be simulated on computers… While it is usually relatively easy to generate data from the models for any configuration of the parameters, the real interest is often focused on the inverse problem: the identification of parameter configurations that would plausibly lead to data that are sufficiently similar to the observed data."
+
+Model A is exactly such a model: $\theta = (\varepsilon, N_{\text{particles}}, \text{max\_dims}, \ldots)$, $V$ is the random variables driving particle initialisation and resampling, $M$ is the `rule_particle_filter` function, and $y$ is the trial-by-trial response sequence. Section "Approximate Bayesian Computation for Model A" implements ABC for this simulator. Until then, we treat the particle filter purely as a forward simulator.
+
+
+### Step 1: Generating Initial Rule Particles
+
+```{r, 13 generate rules}
+# Generate a single random rule.
+# This is the implementation of the formal grammar from §"Rule Grammar".
+generate_random_rule <- function(n_features,
+                                 max_dims     = MAX_RULE_DIMS,
+                                 feature_range = list(c(0, 5), c(0, 5))) {
+  num_dims   <- sample(seq_len(max_dims), 1)
+  dims_used  <- sort(sample(seq_len(n_features), size = num_dims, replace = FALSE))
+
+  thresholds <- numeric(num_dims)
+  operations <- character(num_dims)
+  for (k in seq_len(num_dims)) {
+    di           <- dims_used[k]
+    thresholds[k] <- runif(1, feature_range[[di]][1], feature_range[[di]][2])
+    operations[k] <- sample(RULE_OPERATORS, 1)
+  }
+
+  list(
+    dimensions        = dims_used,
+    thresholds        = thresholds,
+    operations        = operations,
+    logic             = if (num_dims == 2) sample(RULE_LOGIC, 1) else NA,
+    prediction_if_true = sample(0:1, 1)
+  )
+}
+
+# Initialize N particles with equal weights.
+initialize_particles <- function(n_particles, n_features,
+                                  max_dims = MAX_RULE_DIMS,
+                                  feature_range = list(c(0, 5), c(0, 5))) {
+  particles <- vector("list", n_particles)
+  for (i in seq_len(n_particles))
+    particles[[i]] <- generate_random_rule(n_features, max_dims, feature_range)
+  list(particles = particles, weights = rep(1 / n_particles, n_particles))
+}
+
+# --- Example ---
+n_particles_example <- 5
+n_features_example  <- 2
+initial_system <- initialize_particles(n_particles_example, n_features_example)
+cat(paste("Initialized", n_particles_example, "particles. Example rule 1:\n"))
+print(initial_system$particles[[1]])
+cat("Initial weights:", initial_system$weights, "\n")
+```
+
+### Step 2: Updating Particle Weights
+
+When we observe a stimulus $\vec{x}$ and its true category $y$, we update weight $w_i$ for each particle $i$. We introduce a small $\varepsilon$ (`error_prob`) to allow for occasional noise or misapplication:
+
+$$P(y \mid \vec{x}, \text{rule}_i) = \begin{cases} 1 - \varepsilon & \text{if rule}_i \text{ predicts } y \\ \varepsilon & \text{otherwise} \end{cases}$$
+
+The updated weight is $w_i' \propto w_i \times P(y \mid \vec{x}, \text{rule}_i)$, then renormalized.
+
+```{r, 13 update weights}
+update_weights <- function(particles, weights, stimulus, true_category,
+                           error_prob = 0.05) {
+  n <- length(particles)
+  new_w <- numeric(n)
+  for (i in seq_len(n)) {
+    pred      <- evaluate_rule(particles[[i]], stimulus)
+    likelihood <- if (pred == true_category) 1 - error_prob else error_prob
+    new_w[i]  <- weights[i] * likelihood
+  }
+  total <- sum(new_w)
+  if (total > 1e-9) new_w / total else rep(1 / n, n)
+}
+
+# --- Example ---
+cat("\n--- Example Weight Update ---\n")
+updated_w <- update_weights(
+  initial_system$particles, initial_system$weights,
+  stimulus = c(4, 3), true_category = 1, error_prob = 0.1
+)
+preds <- sapply(initial_system$particles, evaluate_rule, stimulus = c(4, 3))
+cat("Rule predictions for stimulus [4, 3]:", preds, "\n")
+cat("Weights BEFORE:", round(initial_system$weights, 3), "\n")
+cat("Weights AFTER: ", round(updated_w, 3), "\n")
+```
+
+### Step 3: Resampling Particles
+
+If we only update weights, eventually most weights become near zero and only a few particles dominate — **particle degeneracy**. Resampling revitalizes the particle set by drawing $N$ new particles with probability proportional to weights, then resetting all weights to $1/N$.
+
+A common heuristic is to resample when the **Effective Sample Size** (ESS) drops below a threshold (e.g., $N/2$). ESS is estimated as $1 / \sum_i w_i^2$. Low ESS indicates high degeneracy.
+
+> **A note on ESS here vs. ESS in MCMC diagnostics.** ESS appears in two distinct
+> contexts in this module. In Chapters 4–10 it measures how many effectively
+> independent posterior draws an MCMC chain produces. Here it measures how many
+> particles are effectively contributing to the filter's approximation, given
+> their weights. Both are measures of statistical efficiency under a sampling
+> procedure; the underlying intuition is the same but the contexts are
+> different. The persona's diagnostic battery in Phase 3.0 is about the first
+> kind (MCMC ESS); the resampling threshold here is about the second kind
+> (particle ESS). Both names are correct and they refer to genuinely different
+> things.
+
+```{r, 13 resample particles}
+resample_particles <- function(particles, weights) {
+  n          <- length(particles)
+  idx        <- sample.int(n, size = n, replace = TRUE, prob = weights)
+  new_p      <- particles[idx]
+  new_w      <- rep(1 / n, n)
+  list(particles = new_p, weights = new_w)
+}
+
+# --- Example ---
+cat("\n--- Example Resampling ---\n")
+skewed_w <- c(0.01, 0.60, 0.02, 0.35, 0.02)
+cat("Weights BEFORE resampling:", skewed_w, "\n")
+rs <- resample_particles(initial_system$particles, skewed_w)
+cat("Weights AFTER resampling: ", rs$weights, "\n")
+```
+
+### Step 4: Making Predictions
+
+The particle filter makes a categorization decision for a new stimulus $\vec{x}$ via a weighted vote across all particles:
+
+$$P(\text{Choose Cat 1} \mid \vec{x}) = \sum_{i=1}^{N} w_i \times P(\text{Cat 1} \mid \vec{x}, \text{rule}_i)$$
+
+where $P(\text{Cat 1} \mid \vec{x}, \text{rule}_i) = 1 - \varepsilon$ if rule $i$ predicts category 1, and $\varepsilon$ otherwise.
+
+### Putting it Together: The Particle Filter Agent
+
+```{r, 13 particle filter agent}
+# Full particle filter agent — this is Model A.
+# Returns a tibble of prob_cat1 and sim_response for each trial.
+# Note: n_particles defaults to N_PARTICLES_FIXED (= 100), the structural
+# commitment from Phase 0 Q4.
+rule_particle_filter <- function(n_particles               = N_PARTICLES_FIXED,
+                                 error_prob,
+                                 obs,
+                                 cat_one,
+                                 max_dims                  = MAX_RULE_DIMS,
+                                 resample_threshold_factor = 0.5,
+                                 quiet                     = TRUE) {
+  n_trials   <- nrow(obs)
+  n_features <- ncol(obs)
+  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+
+  ps       <- initialize_particles(n_particles, n_features, max_dims, fr)
+  particles <- ps$particles
+  weights   <- ps$weights
+
+  response_probs <- numeric(n_trials)
+
+  for (i in seq_len(n_trials)) {
+    if (!quiet && i %% 20 == 0) cat("Trial", i, "\n")
+
+    stim <- as.numeric(obs[i, ])
+
+    # ── Prediction ────────────────────────────────────────────────────────────
+    preds        <- sapply(particles, evaluate_rule, stimulus = stim)
+    p_cat1_rules <- ifelse(preds == 1, 1 - error_prob, error_prob)
+    p            <- sum(weights * p_cat1_rules)
+    response_probs[i] <- pmax(1e-9, pmin(1 - 1e-9, p))
+
+    # ── Weight update ─────────────────────────────────────────────────────────
+    weights <- update_weights(particles, weights, stim, cat_one[i], error_prob)
+
+    # ── Resample if ESS is low ────────────────────────────────────────────────
+    ess <- 1 / sum(weights^2)
+    if (ess < n_particles * resample_threshold_factor) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+
+  tibble(prob_cat1 = response_probs,
+         sim_response = rbinom(n_trials, 1, response_probs))
+}
+
+cat("Particle filter agent function defined.\n")
+```
+
+This implementation captures the core cognitive processes hypothesized by rule-based models: hypothesis generation, testing against evidence, belief updating, and adaptive focusing of the hypothesis set. **It is also the simulator that ABC will use in §"Approximate Bayesian Computation for Model A."**
+
+---
+
+## Simulating Categorization Behavior
+
+Let's simulate how Model A performs on the Kruschke (1993) task. Each agent receives its **own independently randomized stimulus order**, consistent with the path-dependence design from Chapters 11 and 12.
+
+```{r, 13 simulate rule responses}
+# Wrapper: generates per-agent schedule then calls rule_particle_filter.
+simulate_rule_agent <- function(agent_id, n_particles, max_dims, error_prob,
+                                stimulus_info, n_blocks, subject_seed) {
+  schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  obs      <- as.matrix(schedule[, c("height", "position")])
+  cat_one  <- schedule$category_feedback
+
+  result <- rule_particle_filter(
+    n_particles               = n_particles,
+    error_prob                = error_prob,
+    obs                       = obs,
+    cat_one                   = cat_one,
+    max_dims                  = max_dims,
+    resample_threshold_factor = 0.5,
+    quiet                     = TRUE
+  )
+
+  schedule |>
+    mutate(
+      agent_id    = agent_id,
+      n_particles = n_particles,
+      max_dims    = max_dims,
+      error_prob  = error_prob,
+      prob_cat1   = result$prob_cat1,
+      sim_response = result$sim_response,
+      correct     = as.integer(category_feedback == sim_response)
+    ) |>
+    group_by(agent_id, n_particles, max_dims, error_prob) |>
+    mutate(performance = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+
+param_df_rules <- expand_grid(
+  agent_id    = 1:10,
+  n_particles = c(50, 200),         # exploring sensitivity to N_particles
+  max_dims    = c(1, 2),            # exploring sensitivity to grammar depth
+  error_prob  = c(0.05, 0.2)
+) |>
+  mutate(subject_seed = agent_id)   # unique, reproducible seed per agent
+
+rule_sim_file <- file.path("simdata", "W13_rule_simulated_responses.csv")
+
+if (regenerate_simulations || !file.exists(rule_sim_file)) {
+  cat("Regenerating rule-based simulations...\n")
+  rule_responses <- future_pmap_dfr(
+    list(
+      agent_id    = param_df_rules$agent_id,
+      n_particles = param_df_rules$n_particles,
+      max_dims    = param_df_rules$max_dims,
+      error_prob  = param_df_rules$error_prob,
+      subject_seed = param_df_rules$subject_seed
+    ),
+    simulate_rule_agent,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    .options = furrr_options(seed = TRUE)
+  )
+  write_csv(rule_responses, rule_sim_file)
+  cat("Simulations saved.\n")
+} else {
+  rule_responses <- read_csv(rule_sim_file, show_col_types = FALSE)
+  cat("Simulations loaded.\n")
+}
+
+ggplot(rule_responses,
+       aes(x = trial_within_subject, y = performance,
+           color = factor(n_particles))) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.15,
+               aes(fill = factor(n_particles)), linetype = 0) +
+  facet_grid(
+    max_dims ~ error_prob,
+    labeller = labeller(
+      max_dims   = function(x) paste("Max Dims:", x),
+      error_prob = function(x) paste("Error Prob:", x)
+    )
+  ) +
+  scale_color_viridis_d(option = "plasma", name = "N Particles") +
+  scale_fill_viridis_d(option = "plasma", name = "N Particles") +
+  labs(
+    title    = "Rule-Based Model Learning Performance (Model A)",
+    subtitle = "Facets show effect of max rule dimensions and error probability",
+    x = "Trial", y = "Cumulative Accuracy (Mean ± SE)"
+  ) +
+  ylim(0.4, 1.0)
+```
+
+**Simulation Interpretation**: This visualization shows how Model A's performance is affected by:
+
+* **Number of Particles**: More particles allow better exploration of the rule space, potentially leading to faster learning or higher final accuracy, though gains may diminish. **This parameter has cognitive content** (working-memory bound on hypothesis count) and is a candidate for ABC inference rather than fixing.
+* **Maximum Rule Dimensions**: Allowing 2D rules (`max_dims = 2`) may be necessary if the true category boundary requires integrating information across dimensions. Setting `max_dims = 1` corresponds to a simpler grammar that cannot express conjunctive concepts.
+* **Error Probability**: A higher `error_prob` makes the model more tolerant of imperfect rules, which can be helpful in noisy environments but may prevent convergence on a precise rule if one exists.
+
+
+### Visualizing Rule Learning Over Time
+
+A key feature of Model A is that the hypotheses are explicit. We can track which rules the particle filter believes are most likely at different points during learning.
+
+```{r, 13 track rule learning}
+track_rule_learning <- function(n_particles, error_prob, obs, cat_one,
+                                max_dims                  = MAX_RULE_DIMS,
+                                top_k                     = 1,
+                                resample_threshold_factor = 0.5) {
+  n_trials  <- nrow(obs)
+  n_features <- ncol(obs)
+  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+
+  ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
+  particles <- ps$particles
+  weights   <- ps$weights
+
+  format_rule_info <- function(rule) {
+    list(
+      dimension1  = if (length(rule$dimensions) >= 1) rule$dimensions[1] else NA_integer_,
+      operation1  = if (length(rule$operations)  >= 1) rule$operations[1]  else NA_character_,
+      threshold1  = if (length(rule$thresholds)  >= 1) rule$thresholds[1]  else NA_real_,
+      dimension2  = if (length(rule$dimensions) >= 2) rule$dimensions[2] else NA_integer_,
+      operation2  = if (length(rule$operations)  >= 2) rule$operations[2]  else NA_character_,
+      threshold2  = if (length(rule$thresholds)  >= 2) rule$thresholds[2]  else NA_real_,
+      logic       = if (!is.na(rule$logic)) rule$logic else "N/A",
+      prediction  = rule$prediction_if_true
+    )
+  }
+
+  history <- vector("list", n_trials)
+  for (i in seq_len(n_trials)) {
+    stim <- as.numeric(obs[i, ])
+    top_idx <- order(weights, decreasing = TRUE)[seq_len(min(top_k, n_particles))]
+    history[[i]] <- map_dfr(top_idx, ~{
+      tibble(trial = i, rank = which(top_idx == .x),
+             weight = weights[.x], !!!format_rule_info(particles[[.x]]))
+    })
+
+    weights <- update_weights(particles, weights, stim, cat_one[i], error_prob)
+    ess     <- 1 / sum(weights^2)
+    if (ess < n_particles * resample_threshold_factor) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+  bind_rows(history)
+}
+
+# Run tracking with a fixed seed-1 schedule for reproducibility
+track_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 1)
+
+rule_tracking_data <- track_rule_learning(
+  n_particles = N_PARTICLES_FIXED,
+  error_prob  = 0.1,
+  obs         = as.matrix(track_schedule[, c("height", "position")]),
+  cat_one     = track_schedule$category_feedback,
+  max_dims    = MAX_RULE_DIMS,
+  top_k       = 1
+)
+
+# Format rule text for plotting
+rule_to_text <- function(rule_row) {
+  dim_names <- c("Height", "Position")
+  if (is.na(rule_row$dimension2)) {
+    sprintf("IF %s %s %.1f THEN Cat %d",
+            dim_names[rule_row$dimension1], rule_row$operation1,
+            rule_row$threshold1, rule_row$prediction)
+  } else {
+    sprintf("IF %s %s %.1f %s %s %s %.1f THEN Cat %d",
+            dim_names[rule_row$dimension1], rule_row$operation1, rule_row$threshold1,
+            rule_row$logic,
+            dim_names[rule_row$dimension2], rule_row$operation2, rule_row$threshold2,
+            rule_row$prediction)
+  }
+}
+
+rule_tracking_plot_data <- rule_tracking_data |>
+  filter(rank == 1) |>
+  rowwise() |>
+  mutate(rule_text = rule_to_text(cur_data())) |>
+  ungroup() |>
+  mutate(rule_block = consecutive_id(rule_text))
+
+ggplot(rule_tracking_plot_data, aes(x = trial, y = weight)) +
+  geom_line(aes(group = 1), color = "#0072B2") +
+  geom_point(color = "#0072B2", size = 1.5) +
+  geom_text(
+    data = rule_tracking_plot_data |> distinct(rule_block, .keep_all = TRUE),
+    aes(label = rule_text),
+    hjust = 0, vjust = -0.5, size = 3, check_overlap = TRUE
+  ) +
+  scale_y_continuous(limits = c(0, 1), name = "Weight (Probability) of Top Rule") +
+  scale_x_continuous(limits = c(0, total_trials + 5)) +
+  labs(
+    title    = "Evolution of the Top Rule Hypothesis Over Time (Model A)",
+    subtitle = "Line shows the probability assigned to the single best rule at each trial.",
+    x = "Trial"
+  )
+```
+
+**Rule Evolution Interpretation**: This plot shows how the model's belief (weight) in its single best rule hypothesis changes over trials. Periods of high weight indicate the model has converged on a dominant rule; sharp drops followed by a new label indicate a hypothesis switch as the previous rule accumulated too many prediction errors. **Note that the converged rule is one specific rule** drawn from the grammar; the empirical fact of convergence is what makes the post-hoc selection of Model B's candidate rules tempting and dangerous.
+
+### Visualizing the Decision Boundary
+
+Rule-based models typically create axis-aligned, rectangular decision boundaries. Let's visualize the boundary created by the final, most probable rule found by Model A.
+
+```{r, 13 decision boundary}
+get_final_rule_predictions <- function(n_particles, error_prob,
+                                       obs_train, cat_one_train,
+                                       grid_points, max_dims = MAX_RULE_DIMS) {
+  n_features <- ncol(obs_train)
+  fr         <- list(range(obs_train[, 1]), range(obs_train[, 2]))
+
+  ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
+  particles <- ps$particles
+  weights   <- ps$weights
+
+  for (i in seq_len(nrow(obs_train))) {
+    stim    <- as.numeric(obs_train[i, ])
+    weights <- update_weights(particles, weights, stim, cat_one_train[i], error_prob)
+    ess     <- 1 / sum(weights^2)
+    if (ess < n_particles * 0.5) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+
+  apply(as.matrix(grid_points), 1, function(pt) {
+    preds <- sapply(particles, evaluate_rule, stimulus = pt)
+    sum(weights * ifelse(preds == 1, 1 - error_prob, error_prob))
+  })
+}
+
+grid_pts <- expand.grid(
+  height   = seq(min(stimulus_info$height)   - 0.5,
+                 max(stimulus_info$height)   + 0.5, length.out = 50),
+  position = seq(min(stimulus_info$position) - 0.5,
+                 max(stimulus_info$position) + 0.5, length.out = 50)
+)
+
+# Use the same track_schedule for boundary visualization
+boundary_preds <- get_final_rule_predictions(
+  n_particles   = 200,
+  error_prob    = 0.1,
+  obs_train     = as.matrix(track_schedule[, c("height", "position")]),
+  cat_one_train = track_schedule$category_feedback,
+  grid_points   = grid_pts[, c("height", "position")],
+  max_dims      = MAX_RULE_DIMS
+)
+
+grid_decision_data <- grid_pts |>
+  mutate(
+    rule_prob_cat1 = boundary_preds,
+    rule_decision  = as.integer(rule_prob_cat1 > 0.5)
+  )
+
+ggplot() +
+  geom_tile(data = grid_decision_data,
+            aes(x = position, y = height, fill = factor(rule_decision)),
+            alpha = 0.4) +
+  stat_contour(data = grid_decision_data,
+               aes(x = position, y = height, z = rule_prob_cat1),
+               breaks = 0.5, color = "black", linewidth = 0.8) +
+  geom_point(data = stimulus_info,
+             aes(x = position, y = height,
+                 color = factor(category_true), shape = factor(category_true)),
+             size = 3) +
+  scale_fill_manual(values  = c("0" = "#E69F00", "1" = "#56B4E9"),
+                    name    = "Predicted Cat") +
+  scale_color_manual(values = c("0" = "#0072B2", "1" = "#D55E00"),
+                     name    = "True Category") +
+  scale_shape_manual(values = c("0" = 16, "1" = 17), name = "True Category") +
+  labs(
+    title    = "Rule-Based Model Decision Boundary (Model A, Particle Filter)",
+    subtitle = "Weighted average of final particle set (N=200, error=0.1)",
+    x = "Position Feature", y = "Height Feature"
+  ) +
+  coord_cartesian(
+    xlim = range(grid_decision_data$position),
+    ylim = range(grid_decision_data$height)
+  )
+```
+
+**Boundary Interpretation**: The background color shows the predicted category for each point in the feature space, based on the weighted vote of the final rule particles. The black contour marks the 50% threshold. Notice the characteristic axis-aligned, rectangular character of the boundary regions — a direct consequence of the threshold-based rule structure — in contrast to the smooth, curved boundaries that would emerge from similarity-based models.
+
+---
+
+## Beyond Selection: Enhancing the Particle Filter for Rule Discovery
+
+The Bayesian particle filter, as implemented above, provides a powerful framework for modeling how learners evaluate competing rule hypotheses. By maintaining a weighted set of particles and using resampling, it efficiently focuses on rules that best explain observed data.
+
+However, a critical point: the basic filter primarily acts as a **rule selection** mechanism rather than a **rule generation** engine. It excels at identifying the most promising rules from an *initially provided set*. If the truly optimal rule is complex or unusual and not present in the initial random pool, the basic resampling step (which only duplicates existing rules) cannot discover it.
+
+To create a model that more actively explores and discovers better rules during learning, the basic particle filter can be augmented with additional mechanisms:
+
+1. **Mutation/Perturbation**: Introduce small, random variations to rules after resampling — slightly adjust a threshold, flip a comparison operator, or change the dimension used in a condition. This allows fine-tuning and local exploration around currently successful rules.
+
+2. **Recombination/Crossover**: Combine elements from two successful "parent" rules to create new "child" rules — for example, the first condition of Parent A with the second condition of Parent B. This allows synthesizing features discovered independently by different rules.
+
+3. **Targeted Rule Generation**: Generate new rules specifically designed to address stimuli consistently misclassified by the current particle set, or focus on features prevalent in high-weight rules.
+
+4. **Complexity Adjustment**: Probabilistically add a condition to a successful 1D rule to explore whether a 2D rule performs better, or simplify a poorly performing 2D rule into its constituent 1D components.
+
+Incorporating such exploration mechanisms transforms the particle filter from a pure selection device into a more adaptive **rule discovery system** capable of generating and testing rules that were not part of the initial random set. We do not implement these extensions here, but they represent a natural direction for more cognitively realistic models of rule learning. Note also that any of these mechanisms makes Model A's intractability *worse*, not better, from an HMC standpoint — they all add stochastic discrete jumps. ABC handles them transparently.
+
+
+---
+
+## Model B: A Tractable Stan Proxy via Marginalised Mixture
+
+We now switch models. Everything in this section implements **Model B** — the static, conditionally exchangeable mixture over a fixed candidate rule set. Model B is **not** the same as Model A with a clever trick. It is a different generative process that admits HMC inference and the full validation pipeline. Validation of Model B tells us about Model B; it does not tell us about Model A. We will return to this distinction at every opportunity.
+
+### Why a separate proxy model?
+
+Model A cannot be fitted with HMC for the reasons in §"Why Model A's Likelihood is Intractable for HMC." But the persona's six-phase battery is designed around HMC and a tractable likelihood, and the model comparison framework in Chapter 15 needs ELPD scores that come from a proper Bayesian fit. Two responses:
+
+1. **Build a tractable proxy in Stan and validate it under the standard pipeline.** This is what Model B does. The proxy is honest about being a proxy: it is not the cognitive theory, and its validation does not transfer.
+
+2. **Fit Model A directly via simulator-based inference.** This is what ABC does. We do this in §"Approximate Bayesian Computation for Model A." The chapter then compares the two posteriors as its main empirical contribution.
+
+This subsection builds Model B. The ABC subsection comes later because pedagogically it makes sense to first see what the tractable proxy can and cannot do.
+
+### Model B's Generative Structure
+
+Model B enumerates a fixed set of candidate rules and marginalises over them analytically. This is identical in structure to the finite mixture models of Chapter 8, where discrete latent variables (mixture components) were summed out before any Stan code was written. Here the discrete latent variable is "which rule from the candidate set the agent follows." The marginalised likelihood for trial $i$ is:
+
+$$p(y_i \mid x_i, \varepsilon) = \sum_{r=1}^{R} p(\text{rule} = r) \cdot p(y_i \mid x_i, \text{rule}_r, \varepsilon)$$
+
+with a uniform prior over rules $p(\text{rule} = r) = 1/R$, implemented with `log_sum_exp` in Stan. Only the single continuous parameter $\varepsilon$ needs to be sampled.
+
+We parameterise $\varepsilon$ on the logit scale — $\text{logit}(\varepsilon) \sim \text{Normal}(-2, 1)$ — which is unconstrained, avoids the boundary artefacts that afflict bounded parameters in HMC, and places prior mass primarily on low error rates (prior median $\varepsilon \approx 0.12$). This is the same parameterisation philosophy as `log_c` in Chapter 11.
+
+**Critical structural facts about Model B that distinguish it from Model A:**
+
+* **No learning dynamics.** Model B treats all trials as conditionally exchangeable given $\varepsilon$. There is no trial-by-trial weight update, no resampling, no rule discovery. The agent's behaviour is determined entirely by which rule it follows (drawn once from the candidate set) and the noise rate $\varepsilon$.
+* **Fixed candidate rule set.** The $R = 5$ rules are picked by inspecting the Kruschke stimulus layout. Phase 0 Q5 surfaced this as a post-hoc choice; §"Discharging the Post-Hoc Rule Selection" tests sensitivity.
+* **Closed-form Bernoulli likelihood.** Marginalised analytically with `log_sum_exp`. HMC handles it cleanly.
+* **No path-dependence.** Standard PSIS-LOO is technically valid (see §"LFO-CV Does Not Apply Here").
+
+### A First Caveat: The Prior Predictive Check Uses Model A's Simulator
+
+Before fitting Model B we want to verify that the prior on `logit_error_prob` generates only scientifically plausible categorisation curves. There is a subtle issue: **the Stan model does not have a forward simulator with learning dynamics.** Model B is conditionally i.i.d. in $\varepsilon$, so its forward simulation is just "draw $\varepsilon$, draw a rule, generate Bernoulli responses." This produces flat learning curves at level $1 - \varepsilon$, which is empirically nothing like what the data look like.
+
+What earlier drafts of this chapter did — and what we keep here, but flag explicitly — is to draw $\varepsilon$ from the Stan prior and then use **Model A's simulator** to generate the prior predictive learning curves. This is *not* a prior predictive check for Model B in the strict sense. It is a prior predictive check for the cognitive theory under Model B's $\varepsilon$ prior. The two are not the same and the reader should know which is being shown.
+
+```{r, 13 prior predictive check}
+n_ppc_samples <- 500
+set.seed(42)
+
+ppc_logit_eps <- rnorm(n_ppc_samples, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+ppc_eps       <- plogis(ppc_logit_eps)
+ppc_sched     <- make_subject_schedule(stimulus_info, n_blocks, seed = 999)
+
+prior_pred_curves <- map_dfr(seq_len(n_ppc_samples), function(s) {
+  sim <- rule_particle_filter(
+    n_particles = N_PARTICLES_FIXED,
+    error_prob  = ppc_eps[s],
+    obs         = as.matrix(ppc_sched[, c("height", "position")]),
+    cat_one     = ppc_sched$category_feedback,
+    max_dims    = MAX_RULE_DIMS,
+    quiet       = TRUE
+  )
+  tibble(
+    sample_id = s,
+    trial     = seq_len(nrow(ppc_sched)),
+    correct   = as.integer(sim$sim_response == ppc_sched$category_feedback)
+  ) |>
+    mutate(cum_acc = cumsum(correct) / row_number())
+})
+
+ppc_summary <- prior_pred_curves |>
+  group_by(trial) |>
+  summarise(
+    q05 = quantile(cum_acc, 0.05), q25 = quantile(cum_acc, 0.25),
+    q50 = median(cum_acc),
+    q75 = quantile(cum_acc, 0.75), q95 = quantile(cum_acc, 0.95),
+    .groups = "drop"
+  )
+
+ggplot(ppc_summary, aes(x = trial)) +
+  geom_ribbon(aes(ymin = q05, ymax = q95), fill = "#E69F00", alpha = 0.20) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#E69F00", alpha = 0.40) +
+  geom_line(aes(y = q50), color = "#B07D00", linewidth = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title    = "Prior Predictive Curves Under Model A's Simulator With Model B's ε Prior",
+    subtitle = "WARNING: This is NOT a prior predictive check for Model B in the strict sense.\nModel B has no learning dynamics; its true forward sim would be flat at 1 - ε.",
+    x = "Trial", y = "Cumulative Accuracy"
+  )
+```
+
+> **⚠️ Cross-model warning explicit.** The plot above shows prior predictive learning curves drawn from the *particle filter* (Model A) using $\varepsilon$ values sampled from the Stan model's (Model B's) prior. The Stan model fitted to the same data assumes no learning, so its true prior predictive distribution would consist of flat curves at $1 - \varepsilon$ — nothing like the rising curves shown here. We display these curves anyway because they are the most informative thing to show pedagogically (they convey the range of behaviour the cognitive theory produces under Model B's $\varepsilon$ prior), but they are a *cross-model* prior predictive, not a pure within-model one. The reader who wants the strict within-model check should compute it as: for each sample $s$, draw $\varepsilon_s$, draw a rule index $r_s \in \{1, \ldots, 5\}$ uniformly, and generate Bernoulli responses with probability $\Pr(\text{cat 1} \mid x_i, r_s, \varepsilon_s)$. The result is flat. It is also not very interesting.
+
+### Stan Model
+
+```{r, 13 stan rule model}
+rule_simplified_stan <- "
+// Model B: Marginalised Mixture over Fixed Candidate Rules
+// This is NOT the cognitive theory (Model A, the particle filter).
+// It is a tractable proxy that admits HMC validation.
+// Validation of Model B tests Model B, not Model A.
+//
+// Architecture (identical in principle to Ch. 8 mixture models):
+//   - Discrete latent variable = which rule the agent follows
+//   - Marginalized analytically with log_sum_exp over a fixed rule set
+//   - Only continuous parameter: logit_error_prob (unconstrained)
+//   - error_prob = inv_logit(logit_error_prob)
+//
+// No sequential learning in this model: it treats all trials as conditionally
+// exchangeable given error_prob and the rule mixture.
+//
+// The 5 rules below cover the main decision structures visible in the
+// Kruschke stimulus layout — see §'Discharging the Post-Hoc Rule Selection'
+// for the sensitivity analysis on this choice.
+
+data {
+  int<lower=1> ntrials;
+  int<lower=1> nfeatures;                       // must be 2 for this rule set
+  array[ntrials] int<lower=0, upper=1> y;       // observed choices
+  array[ntrials, nfeatures] real obs;           // obs[,1]=Height, obs[,2]=Position
+
+  // Prior hyperparameters (passed as data for transparency)
+  real prior_logit_error_mean;
+  real<lower=0> prior_logit_error_sd;
+}
+
+parameters {
+  real logit_error_prob;   // unconstrained; error_prob = inv_logit(logit_error_prob)
+}
+
+transformed parameters {
+  real<lower=0, upper=1> error_prob = inv_logit(logit_error_prob);
+
+  // Per-trial choice probability under each rule, computed once per leapfrog
+  // step so log_lik in generated quantities is a one-line lookup.
+  // (Same architectural discipline as Ch 11 GCM and Ch 12 prototype.)
+  array[ntrials] real lp_marginal;
+
+  for (i in 1:ntrials) {
+    real h = obs[i, 1];
+    real p = obs[i, 2];
+
+    int pred1 = h > 2.5 ? 1 : 0;
+    int pred2 = p < 2.5 ? 1 : 0;
+    int pred3 = (h > 2.0 && p > 3.0) ? 1 : 0;
+    int pred4 = (h < 2.0 || p < 2.0) ? 0 : 1;
+    int pred5 = (h > 2.5 && p < 3.5) ? 1 : 0;
+
+    int R = 5;
+
+    vector[R] lp;
+    lp[1] = bernoulli_lpmf(y[i] | pred1 == 1 ? 1 - error_prob : error_prob);
+    lp[2] = bernoulli_lpmf(y[i] | pred2 == 1 ? 1 - error_prob : error_prob);
+    lp[3] = bernoulli_lpmf(y[i] | pred3 == 1 ? 1 - error_prob : error_prob);
+    lp[4] = bernoulli_lpmf(y[i] | pred4 == 1 ? 1 - error_prob : error_prob);
+    lp[5] = bernoulli_lpmf(y[i] | pred5 == 1 ? 1 - error_prob : error_prob);
+
+    lp_marginal[i] = log_sum_exp(lp) - log(R);
+  }
+}
+
+model {
+  target += normal_lpdf(logit_error_prob | prior_logit_error_mean, prior_logit_error_sd);
+  for (i in 1:ntrials) target += lp_marginal[i];
+}
+
+generated quantities {
+  // log_lik[i] is just a lookup of lp_marginal[i] — no recomputation.
+  vector[ntrials] log_lik;
+  for (i in 1:ntrials) log_lik[i] = lp_marginal[i];
+}
+"
+
+stan_file_rule <- "stan/W13_rule_simplified.stan"
+write_stan_file(rule_simplified_stan, dir = "stan/",
+                basename = "W13_rule_simplified.stan")
+mod_rule_stan <- cmdstan_model(stan_file_rule)
+cat("Model B (Stan rule mixture) compiled successfully.\n")
+```
+
+**Key aspects of the Model B Stan implementation:**
+
+* **Parameters block**: A single scalar `logit_error_prob` (unconstrained). The constraint `error_prob ∈ (0,1)` is enforced implicitly by `inv_logit`.
+* **Transformed parameters**: The marginalised log-density per trial (`lp_marginal[i]`) is computed once per leapfrog step. This is the same `transformed parameters` discipline as Chapter 11 (GCM) and Chapter 12 (Kalman prototype): if a quantity depends on parameters but is otherwise deterministic given the data, it belongs in `transformed parameters` so generated quantities can read it without recomputation.
+* **Model block**: Prior on `logit_error_prob` then accumulation of `lp_marginal[i]` into the target.
+* **Generated quantities**: `log_lik[i]` is a one-line lookup. Architecturally consistent with the other two chapters.
+
+### Fitting Model B
+
+```{r, 13 fit stan rule model}
+# Simulate responses from one Model A agent to use as 'observed' data
+fit_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 42)
+fit_sim <- rule_particle_filter(
+  n_particles = N_PARTICLES_FIXED,
+  error_prob  = 0.1,
+  obs         = as.matrix(fit_schedule[, c("height", "position")]),
+  cat_one     = fit_schedule$category_feedback,
+  max_dims    = MAX_RULE_DIMS,
+  quiet       = TRUE
+)
+
+rule_data_single <- list(
+  ntrials                 = nrow(fit_schedule),
+  nfeatures               = 2L,
+  y                       = as.integer(fit_sim$sim_response),
+  obs                     = as.matrix(fit_schedule[, c("height", "position")]),
+  prior_logit_error_mean  = LOGIT_ERROR_PRIOR_MEAN,
+  prior_logit_error_sd    = LOGIT_ERROR_PRIOR_SD
+)
+
+fit_filepath_rule <- "simmodels/W13_rule_single_fit.rds"
+if (regenerate_simulations) {
+  pf_rule <- mod_rule_stan$pathfinder(
+    data      = rule_data_single,
+    seed      = 42,
+    num_paths = 4,
+    refresh   = 0
+  )
+
+  fit_rule_stan <- mod_rule_stan$sample(
+    data            = rule_data_single,
+    init            = pf_rule,
+    seed            = 42,
+    chains          = 4,
+    parallel_chains = min(4, availableCores()),
+    iter_warmup     = 1000,
+    iter_sampling   = 1500,
+    refresh         = 300,
+    adapt_delta     = 0.9
+  )
+  fit_rule_stan$save_object(fit_filepath_rule)
+  cat("Model B fitted and saved.\n")
+} else {
+  if (file.exists(fit_filepath_rule)) {
+    fit_rule_stan <- readRDS(fit_filepath_rule)
+    cat("Loaded existing Model B fit.\n")
+  } else {
+    cat("Fit file not found. Set regenerate_simulations = TRUE.\n")
+    fit_rule_stan <- NULL
+  }
+}
+
+if (!is.null(fit_rule_stan)) {
+  param_summary <- fit_rule_stan$summary(
+    variables = c("logit_error_prob", "error_prob")
+  )
+  print(param_summary)
+}
+```
+
+
+### Mandatory MCMC Diagnostic Battery
+
+The persona's Phase 3.0 says: curate the diagnostics, even when they are nearly trivial. Use the same `diagnostic_summary_table()` helper as Chapters 11 and 12.
+
+```{r, 13 diag battery model B}
+if (!is.null(fit_rule_stan)) {
+  diag_tbl <- diagnostic_summary_table(
+    fit_rule_stan,
+    pars = c("logit_error_prob", "error_prob")
+  )
+  print(diag_tbl)
+
+  cat("\nThreshold reference (persona Phase 3.0):\n",
+      "  divergences        = 0\n",
+      "  rank-normalized Rhat < 1.01\n",
+      "  bulk ESS           > 400\n",
+      "  tail ESS           > 400\n",
+      "  E-BFMI             > 0.2\n",
+      "  MCSE_mean / SD     < 0.05\n", sep = "")
+
+  p_trace <- bayesplot::mcmc_trace(
+    fit_rule_stan$draws(c("logit_error_prob", "error_prob")),
+    facet_args = list(ncol = 2)
+  ) +
+    ggtitle("Trace plots — should look like hairy caterpillars")
+
+  p_rank <- bayesplot::mcmc_rank_overlay(
+    fit_rule_stan$draws(c("logit_error_prob", "error_prob")),
+    facet_args = list(ncol = 2)
+  ) +
+    ggtitle("Rank histograms — should be uniform across chains")
+
+  print(p_trace / p_rank)
+}
+```
+
+### Posterior Predictive Check (Model B)
+
+The posterior predictive check is honest about being a check on Model B, not on the cognitive theory. We sample $\varepsilon$ from the posterior, draw a rule index $r$ uniformly from the candidate set, and generate Bernoulli responses. The result is what Model B *actually* predicts: a flat-mean response sequence with whatever variation the rule mixture provides.
+
+```{r, 13 ppc model B}
+if (!is.null(fit_rule_stan)) {
+  eps_draws  <- as_draws_df(fit_rule_stan$draws("error_prob"))$error_prob
+  n_draws    <- length(eps_draws)
+  obs_mat    <- as.matrix(fit_schedule[, c("height", "position")])
+  R_rules    <- 5L
+  n_obs      <- nrow(fit_schedule)
+
+  # Per-rule predictions on the observed stimulus sequence
+  rule_preds <- matrix(0L, nrow = R_rules, ncol = n_obs)
+  for (i in seq_len(n_obs)) {
+    h <- obs_mat[i, 1]; p <- obs_mat[i, 2]
+    rule_preds[1, i] <- as.integer(h > 2.5)
+    rule_preds[2, i] <- as.integer(p < 2.5)
+    rule_preds[3, i] <- as.integer(h > 2.0 && p > 3.0)
+    rule_preds[4, i] <- as.integer(!(h < 2.0 || p < 2.0))
+    rule_preds[5, i] <- as.integer(h > 2.5 && p < 3.5)
+  }
+
+  set.seed(2026)
+  yrep <- matrix(0L, nrow = n_draws, ncol = n_obs)
+  for (s in seq_len(n_draws)) {
+    r_idx     <- sample.int(R_rules, 1)
+    rule_pred <- rule_preds[r_idx, ]
+    p_cat1    <- ifelse(rule_pred == 1, 1 - eps_draws[s], eps_draws[s])
+    yrep[s, ] <- rbinom(n_obs, 1, p_cat1)
+  }
+
+  # Cumulative-accuracy ribbons vs. observed
+  obs_correct <- as.integer(fit_sim$sim_response == fit_schedule$category_feedback)
+  obs_cum_acc <- cumsum(obs_correct) / seq_len(n_obs)
+  yrep_correct <- sweep(yrep, 2,
+                        as.numeric(fit_schedule$category_feedback),
+                        FUN = function(a, b) as.numeric(a == b))
+  yrep_cum_acc <- t(apply(yrep_correct, 1, function(r) cumsum(r) / seq_along(r)))
+
+  cum_acc_summary <- tibble(
+    trial = seq_len(n_obs),
+    q05   = apply(yrep_cum_acc, 2, quantile, 0.05),
+    q25   = apply(yrep_cum_acc, 2, quantile, 0.25),
+    q50   = apply(yrep_cum_acc, 2, quantile, 0.50),
+    q75   = apply(yrep_cum_acc, 2, quantile, 0.75),
+    q95   = apply(yrep_cum_acc, 2, quantile, 0.95),
+    obs   = obs_cum_acc
+  )
+
+  ggplot(cum_acc_summary, aes(x = trial)) +
+    geom_ribbon(aes(ymin = q05, ymax = q95), fill = "#56B4E9", alpha = 0.20) +
+    geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#56B4E9", alpha = 0.40) +
+    geom_line(aes(y = q50), color = "#0072B2", linewidth = 1) +
+    geom_line(aes(y = obs), color = "#D55E00", linewidth = 1) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") +
+    labs(
+      title    = "Posterior Predictive Check (Model B)",
+      subtitle = "Blue: Model B's posterior predictive\nOrange: observed (generated by Model A)\nThe gap is informative — Model B has no learning curve.",
+      x = "Trial", y = "Cumulative accuracy"
+    ) +
+    coord_cartesian(ylim = c(0.4, 1))
+}
+```
+
+**Reading this plot.** The blue ribbons are Model B's actual posterior predictive cumulative accuracy. They are **flat across trials**, because Model B has no learning dynamics. The orange line is the observed data, generated by Model A, which *does* have learning dynamics. **The systematic gap is the structural misspecification of Model B**, made visible. This is exactly what the chapter wants the reader to see: Model B can recover an $\varepsilon$ value that fits the *average* response, but it cannot reproduce the trial-by-trial structure because that structure comes from a process Model B does not have.
+
+### Prior–Posterior Update Plot (Model B)
+
+```{r, 13 prior posterior update}
+if (!is.null(fit_rule_stan)) {
+  draws_df <- as_draws_df(fit_rule_stan$draws(c("logit_error_prob", "error_prob")))
+
+  set.seed(7)
+  n_prior <- nrow(draws_df)
+  prior_logit_eps <- rnorm(n_prior, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+  prior_eps       <- plogis(prior_logit_eps)
+
+  prior_post_df <- bind_rows(
+    tibble(scale = "logit_error_prob (computational)",
+           value = prior_logit_eps, source = "prior"),
+    tibble(scale = "logit_error_prob (computational)",
+           value = draws_df$logit_error_prob, source = "posterior"),
+    tibble(scale = "error_prob (interpretable)",
+           value = prior_eps, source = "prior"),
+    tibble(scale = "error_prob (interpretable)",
+           value = draws_df$error_prob, source = "posterior")
+  )
+
+  true_lines <- tibble(
+    scale = c("logit_error_prob (computational)", "error_prob (interpretable)"),
+    value = c(qlogis(0.1), 0.1)
+  )
+
+  ggplot(prior_post_df, aes(x = value, fill = source, color = source)) +
+    geom_density(alpha = 0.4, linewidth = 0.6) +
+    geom_vline(data = true_lines,
+               aes(xintercept = value),
+               color = "red", linetype = "dashed") +
+    facet_wrap(~ scale, scales = "free") +
+    scale_fill_manual(values = c(prior = "#999999", posterior = "#E69F00")) +
+    scale_color_manual(values = c(prior = "#666666", posterior = "#B07D00")) +
+    labs(
+      title    = "Prior → Posterior Update for Model B",
+      subtitle = "Red dashed line = Model A's true generating ε = 0.1\nGap between posterior centre and the dashed line is the structural-bias signature.",
+      x = NULL, y = "Density"
+    )
+}
+```
+
+The posterior should be substantially narrower than the prior. The relationship of the posterior centre to the dashed red line (the true $\varepsilon$ used to generate the data) is the **structural bias signature**: if the dashed line falls in the bulk of the posterior, the proxy is approximately faithful for this data; if the dashed line is in the tail or outside the posterior, the proxy is biased and the size of the offset is informative about how badly the candidate rule set misses the converged rule.
+
+### Randomised LOO-PIT (Model B)
+
+The same calibration check we used in Chapters 11 and 12, applied to Model B.
+
+```{r, 13 loo pit randomised}
+if (!is.null(fit_rule_stan)) {
+  log_lik_mat <- fit_rule_stan$draws("log_lik", format = "matrix")
+  loo_obj     <- loo::loo(log_lik_mat, cores = 4)
+
+  log_w <- loo::weights.importance_sampling(loo_obj$psis_object,
+                                             normalize = TRUE,
+                                             log = TRUE)
+
+  # Compute LOO predictive probability of cat 1 from Model B
+  # For this we need per-trial p_cat1 under each posterior draw and rule.
+  # Easiest: sample rule per draw, compute p_cat1 = (1 - eps if rule says 1 else eps),
+  # then average using LOO weights.
+  eps_draws_full <- as_draws_df(fit_rule_stan$draws("error_prob"))$error_prob
+  n_draws_full   <- length(eps_draws_full)
+  n_obs          <- nrow(fit_schedule)
+
+  set.seed(11)
+  rule_idx_per_draw <- sample.int(5L, n_draws_full, replace = TRUE)
+
+  # Per (draw, trial) p_cat1
+  p_draws <- matrix(0, nrow = n_draws_full, ncol = n_obs)
+  for (s in seq_len(n_draws_full)) {
+    r <- rule_idx_per_draw[s]
+    pred_row <- rule_preds[r, ]
+    p_draws[s, ] <- ifelse(pred_row == 1,
+                            1 - eps_draws_full[s],
+                            eps_draws_full[s])
+  }
+
+  loo_p_cat1 <- vapply(seq_len(n_obs), function(i) {
+    sum(exp(log_w[, i]) * p_draws[, i])
+  }, numeric(1))
+
+  y_obs <- as.integer(fit_sim$sim_response)
+  set.seed(2026)
+  rloo_pit <- vapply(seq_along(y_obs), function(i) {
+    p_i <- loo_p_cat1[i]
+    if (y_obs[i] == 1) runif(1, 1 - p_i, 1) else runif(1, 0, 1 - p_i)
+  }, numeric(1))
+
+  ggplot(tibble(rloo_pit = rloo_pit), aes(x = rloo_pit)) +
+    geom_histogram(aes(y = after_stat(density)), bins = 20,
+                   fill = "#E69F00", color = "white") +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+    labs(
+      title    = "Randomised LOO-PIT (Model B)",
+      subtitle = "If Model B is calibrated for this data, the histogram should look uniform on [0, 1]",
+      x = "Randomised PIT value", y = "Density"
+    ) +
+    coord_cartesian(ylim = c(0, 2.5))
+}
+```
+
+A roughly uniform histogram says Model B is calibrated *for the proxy task* (predicting individual binary responses given the posterior over $\varepsilon$ and the rule mixture). It does *not* say Model B is calibrated as a model of the cognitive process — that would require the full ABC pipeline to validate Model A directly.
+
+### LOO with Pareto-k as a Misspecification Diagnostic
+
+```{r, 13 loo rule}
+if (!is.null(fit_rule_stan)) {
+  loo_rule <- loo::loo(log_lik_mat, cores = 4)
+  print(loo_rule)
+  plot(loo_rule, label_points = TRUE,
+       main = "PSIS-LOO Pareto-k: Model B")
+}
+```
+
+Unlike Chapters 11 and 12, here the LOO ELPD is **technically valid** (Model B is conditionally exchangeable — see next subsection). But the Pareto-$\hat{k}$ values are still informative as a *misspecification diagnostic*: when Model B is misspecified relative to the true generating process (Model A), $\hat{k}$ values are likely to be elevated on the trials where the proxy fails most badly. Plotting $\hat{k}$ against trial number and stimulus identity localises the misspecification.
+
+```{r, 13 pareto k by trial and stimulus}
+if (!is.null(fit_rule_stan)) {
+  k_values <- loo_rule$diagnostics$pareto_k
+  k_df <- tibble(
+    trial      = seq_along(k_values),
+    k_hat      = k_values,
+    stimulus   = fit_schedule$stimulus_id,
+    height     = fit_schedule$height,
+    position   = fit_schedule$position,
+    true_cat   = fit_schedule$category_feedback,
+    obs_y      = fit_sim$sim_response
+  )
+
+  p_trial <- ggplot(k_df, aes(x = trial, y = k_hat)) +
+    geom_point(aes(color = factor(true_cat)), size = 1.5) +
+    geom_hline(yintercept = c(0.5, 0.7, 1.0),
+               linetype = c("dotted", "dashed", "solid"),
+               color = "red", alpha = 0.6) +
+    scale_color_manual(values = c("0" = "#0072B2", "1" = "#D55E00"),
+                       name = "True cat") +
+    labs(
+      title    = "Pareto-k by trial",
+      subtitle = "Red lines: 0.5 (monitor), 0.7 (problematic), 1.0 (failed)",
+      x = "Trial", y = "Pareto k"
+    )
+
+  p_stim <- ggplot(k_df, aes(x = factor(stimulus), y = k_hat)) +
+    geom_boxplot(fill = "#E69F00", alpha = 0.6) +
+    geom_jitter(width = 0.15, alpha = 0.4, size = 1) +
+    geom_hline(yintercept = 0.7, linetype = "dashed", color = "red") +
+    labs(
+      title    = "Pareto-k by stimulus identity",
+      subtitle = "If a particular stimulus has consistently elevated k_hat,\nthat stimulus is where the rule set fails",
+      x = "Stimulus ID", y = "Pareto k"
+    )
+
+  print(p_trial / p_stim)
+}
+```
+
+**Reading the Pareto-k plots as a misspecification diagnostic.** If the high-$\hat{k}$ values cluster on the *boundary stimuli* of the Kruschke set — the ones whose true category cannot be determined by any single rule from the candidate set — that is direct evidence that the rule set is missing the relevant boundary structure. If the high-$\hat{k}$ values cluster at *late trials*, that is a signal that Model A's particle filter has converged to a rule the candidate set does not contain, and Model B is using $\varepsilon$ inflation to absorb the systematic late-trial errors. In both cases, the diagnostic does not just say "the model is wrong" — it says **where the model is wrong**, which is much more useful.
+
+### LFO-CV Does Not Apply Here
+
+> **A back-reference, not a caveat to repeat.** Chapters 11 and 12 implement LFO-CV via `psis_lfo_gcm()` and `psis_lfo_kalman()` because the GCM and the Kalman prototype are path-dependent: trial $t$'s likelihood depends on the entire history of trials $1, \ldots, t-1$ through the memory or filter state. **Model B has no such path-dependence.** All trials are conditionally independent given $\varepsilon$ and the rule mixture: leaving out trial $t$ does not affect the likelihood of any other trial. Standard PSIS-LOO is therefore *exactly correct* for Model B and the LFO-CV machinery is unnecessary. We say this once here so the reader does not encounter the same caveat for the third time after seeing it twice in the previous chapters.
+>
+> A subtler point: when Chapter 15 compares Model B against the GCM (Chapter 11) and the Kalman prototype (Chapter 12), the comparison should be reported under each model's *correct* validation tool — LFO-CV for the path-dependent ones, standard LOO for Model B. ELPD differences across these tools are not directly commensurable on a fine scale, but they are commensurable enough to detect large effects. The bigger concern in Chapter 15 is the cross-architecture mismatch (Model B isn't even fitting the cognitive theory), and that concern is what the ABC subsection below resolves.
+
+### Prior Sensitivity Analysis
+
+```{r, 13 prior sensitivity}
+if (!is.null(fit_rule_stan)) {
+  ps <- priorsense::powerscale_sensitivity(fit_rule_stan)
+  print(ps)
+  priorsense::powerscale_plot_dens(ps, variables = c("logit_error_prob", "error_prob"))
+}
+```
+
+`powerscale_sensitivity()` reports a sensitivity index $\psi$ for each parameter. **One important limitation:** it perturbs only the *explicit* prior on `logit_error_prob`. It cannot detect sensitivity to the *implicit* prior over the rule set, which is the much bigger source of structural bias for Model B. Low $\psi$ here means Model B is robust to the parametric prior on $\varepsilon$ — it does *not* mean Model B is robust to the choice of candidate rules. The next subsection addresses that.
+
+
+---
+
+## Parameter Recovery (Model B)
+
+We test recovery systematically across the plausible range of `error_prob`, with multiple independent datasets per true value, each with its own randomized stimulus schedule. **Caveat upfront:** the data are generated by Model A, fitted by Model B. If Model A converges to a rule that is not in Model B's candidate set, recovery will be biased. This is the structural-bias signature again.
+
+```{r, 13 parameter recovery}
+run_rule_recovery <- function(true_error_prob, iteration,
+                              stimulus_info, n_blocks) {
+  subject_seed <- iteration * 1000 + round(true_error_prob * 1000)
+  sched        <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+
+  sim <- rule_particle_filter(
+    n_particles = N_PARTICLES_FIXED,
+    error_prob  = true_error_prob,
+    obs         = as.matrix(sched[, c("height", "position")]),
+    cat_one     = sched$category_feedback,
+    max_dims    = MAX_RULE_DIMS,
+    quiet       = TRUE
+  )
+
+  stan_dat <- list(
+    ntrials                = nrow(sched),
+    nfeatures              = 2L,
+    y                      = as.integer(sim$sim_response),
+    obs                    = as.matrix(sched[, c("height", "position")]),
+    prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+    prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+  )
+
+  pf <- tryCatch(
+    mod_rule_stan$pathfinder(data = stan_dat, num_paths = 4,
+                              refresh = 0, seed = subject_seed),
+    error = function(e) NULL
+  )
+  init_val <- if (!is.null(pf)) pf else 0.5
+
+  fit <- tryCatch(
+    mod_rule_stan$sample(
+      data = stan_dat, init = init_val,
+      seed = subject_seed, chains = 2, parallel_chains = 2,
+      iter_warmup = 800, iter_sampling = 1000,
+      refresh = 0, adapt_delta = 0.9
+    ),
+    error = function(e) { cat("Fit error:", e$message, "\n"); NULL }
+  )
+  if (is.null(fit)) return(NULL)
+
+  draws_eps <- fit$draws("error_prob", format = "df")
+  tibble(
+    true_error_prob   = true_error_prob,
+    iteration         = iteration,
+    estimated_eps_mean = mean(draws_eps$error_prob),
+    est_lower_95      = quantile(draws_eps$error_prob, 0.025),
+    est_upper_95      = quantile(draws_eps$error_prob, 0.975),
+    had_divergence    = any(fit$diagnostic_summary(quiet = TRUE)$num_divergent > 0)
+  )
+}
+
+eps_values_to_test <- c(0.05, 0.1, 0.15, 0.2, 0.3)
+n_recovery_iters   <- 5   # increase to 20–50 for publication-quality recovery
+
+recovery_file_rule <- "simdata/W13_rule_recovery_results.rds"
+if (regenerate_simulations || !file.exists(recovery_file_rule)) {
+  cat("Running parameter recovery for Model B...\n")
+  recovery_plan <- expand_grid(
+    true_error_prob = eps_values_to_test,
+    iteration       = seq_len(n_recovery_iters)
+  )
+  rule_recovery_results <- future_pmap_dfr(
+    list(true_error_prob = recovery_plan$true_error_prob,
+         iteration       = recovery_plan$iteration),
+    run_rule_recovery,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    .options = furrr_options(seed = TRUE)
+  )
+  saveRDS(rule_recovery_results, recovery_file_rule)
+  cat("Recovery complete and saved.\n")
+} else {
+  rule_recovery_results <- readRDS(recovery_file_rule)
+  cat("Recovery results loaded.\n")
+}
+
+ggplot(rule_recovery_results,
+       aes(x = true_error_prob, y = estimated_eps_mean)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_errorbar(aes(ymin = est_lower_95, ymax = est_upper_95,
+                    color = had_divergence),
+                width = 0.005, alpha = 0.7) +
+  geom_point(aes(color = had_divergence), size = 3) +
+  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00"),
+                     name = "Had divergence") +
+  labs(
+    title    = "Parameter Recovery: Model B (error_prob)",
+    subtitle = paste0("Points: posterior mean; bars: 95% CrI; n=",
+                      n_recovery_iters,
+                      " datasets per true value.\n",
+                      "Data generated by Model A; fitted by Model B."),
+    x = "True error_prob", y = "Estimated error_prob"
+  )
+```
+
+**Discussion of Recovery Results.** Recovery of `error_prob` depends on whether Model B's candidate rule set contains rules that match what Model A converges to on each replicate. When the converged rule is in the candidate set, recovery is good. When it is not, Model B compensates by inflating $\varepsilon$ to absorb the systematic misclassifications, and the posterior mean shifts up — the points drift above the diagonal. This drift is the *quantitative* version of the structural-bias warning.
+
+---
+
+## Discharging the Post-Hoc Rule Selection
+
+Phase 0 Q5 surfaced the fact that Model B's candidate rules are picked by inspecting the stimulus layout, which makes them empirical, not prior. We discharge this in two complementary ways.
+
+### Option 1: Sensitivity to the Candidate Rule Set
+
+We define three alternative candidate rule sets and refit Model B on the same data:
+
+* **Set A** — the original 5 hand-picked rules (the ones in the Stan code above).
+* **Set B** — 5 rules generated *blind* by running Model A on a separately-simulated training dataset and taking its top-weighted rules at the end of training. The training data is generated with $\varepsilon = 0.1$ on a different schedule than the fitting data. This is the "honest" version of the candidate set.
+* **Set C** — 5 rules deliberately chosen to be *bad* (rules that disagree with most stimuli), as a stress test.
+
+```{r, 13 rule set sensitivity, eval=run_intensive_checks}
+# Helper to build a Stan model from a list of (predictor function) rules
+build_stan_with_rules <- function(rule_predictors, name_suffix) {
+  R <- length(rule_predictors)
+  rule_lines <- paste(
+    sprintf("    int pred%d = %s;", seq_len(R), rule_predictors),
+    collapse = "\n"
+  )
+  lp_lines_model <- paste(
+    sprintf("    lp[%d] = bernoulli_lpmf(y[i] | pred%d == 1 ? 1 - error_prob : error_prob);",
+            seq_len(R), seq_len(R)),
+    collapse = "\n"
+  )
+
+  stan_code <- sprintf("
+data {
+  int<lower=1> ntrials;
+  int<lower=1> nfeatures;
+  array[ntrials] int<lower=0, upper=1> y;
+  array[ntrials, nfeatures] real obs;
+  real prior_logit_error_mean;
+  real<lower=0> prior_logit_error_sd;
+}
+parameters { real logit_error_prob; }
+transformed parameters {
+  real<lower=0, upper=1> error_prob = inv_logit(logit_error_prob);
+  array[ntrials] real lp_marginal;
+  for (i in 1:ntrials) {
+    real h = obs[i, 1];
+    real p = obs[i, 2];
+%s
+    int R = %d;
+    vector[R] lp;
+%s
+    lp_marginal[i] = log_sum_exp(lp) - log(R);
+  }
+}
+model {
+  target += normal_lpdf(logit_error_prob | prior_logit_error_mean, prior_logit_error_sd);
+  for (i in 1:ntrials) target += lp_marginal[i];
+}
+generated quantities {
+  vector[ntrials] log_lik;
+  for (i in 1:ntrials) log_lik[i] = lp_marginal[i];
+}
+", rule_lines, R, lp_lines_model)
+
+  fname <- sprintf("stan/W13_rule_%s.stan", name_suffix)
+  write_stan_file(stan_code, dir = "stan/",
+                  basename = sprintf("W13_rule_%s.stan", name_suffix))
+  cmdstan_model(fname)
+}
+
+# Set A: original hand-picked rules (replicate the existing model)
+rules_A <- c(
+  "h > 2.5 ? 1 : 0",
+  "p < 2.5 ? 1 : 0",
+  "(h > 2.0 && p > 3.0) ? 1 : 0",
+  "(h < 2.0 || p < 2.0) ? 0 : 1",
+  "(h > 2.5 && p < 3.5) ? 1 : 0"
+)
+
+# Set B: blind rules from a fresh Model A run on a separate seed
+get_blind_rules <- function(seed = 7) {
+  blind_sched <- make_subject_schedule(stimulus_info, n_blocks, seed = 50000 + seed)
+  obs_b   <- as.matrix(blind_sched[, c("height", "position")])
+  cat_b   <- blind_sched$category_feedback
+  res     <- track_rule_learning(
+    n_particles = N_PARTICLES_FIXED, error_prob = 0.1,
+    obs = obs_b, cat_one = cat_b, max_dims = MAX_RULE_DIMS, top_k = 5
+  )
+  # Take the top 5 distinct rules at the final trial
+  final <- res |> filter(trial == max(trial)) |>
+    distinct(dimension1, operation1, threshold1,
+             dimension2, operation2, threshold2,
+             logic, prediction, .keep_all = TRUE) |>
+    head(5)
+
+  pred_strings <- character(nrow(final))
+  for (k in seq_len(nrow(final))) {
+    r <- final[k, ]
+    feat1 <- if (r$dimension1 == 1) "h" else "p"
+    cond1 <- sprintf("%s %s %.2f", feat1, r$operation1, r$threshold1)
+    if (is.na(r$dimension2)) {
+      pred_strings[k] <- sprintf("(%s) ? %d : %d", cond1, r$prediction, 1 - r$prediction)
+    } else {
+      feat2 <- if (r$dimension2 == 1) "h" else "p"
+      cond2 <- sprintf("%s %s %.2f", feat2, r$operation2, r$threshold2)
+      logic_op <- if (r$logic == "AND") "&&" else "||"
+      pred_strings[k] <- sprintf("(%s %s %s) ? %d : %d",
+                                  cond1, logic_op, cond2,
+                                  r$prediction, 1 - r$prediction)
+    }
+  }
+  pred_strings
+}
+
+rules_B <- get_blind_rules(seed = 7)
+
+# Set C: deliberately bad rules
+rules_C <- c(
+  "h > 4.5 ? 1 : 0",        # virtually never fires
+  "p > 4.5 ? 1 : 0",        # virtually never fires
+  "h < 0.5 ? 1 : 0",        # virtually never fires
+  "(h > 0.5 && p > 0.5) ? 1 : 0",  # always fires
+  "(h > 0.5 || p > 0.5) ? 1 : 0"   # always fires
+)
+
+# Compile and fit each
+mod_A <- build_stan_with_rules(rules_A, "setA")
+mod_B <- build_stan_with_rules(rules_B, "setB")
+mod_C <- build_stan_with_rules(rules_C, "setC")
+
+fit_with_rules <- function(model, label) {
+  fit <- model$sample(
+    data = rule_data_single, init = 0.5, seed = 7,
+    chains = 2, parallel_chains = 2,
+    iter_warmup = 800, iter_sampling = 1000, refresh = 0, adapt_delta = 0.9
+  )
+  draws <- as_draws_df(fit$draws("error_prob"))
+  tibble(
+    rule_set     = label,
+    posterior_mean = mean(draws$error_prob),
+    posterior_lo = quantile(draws$error_prob, 0.025),
+    posterior_hi = quantile(draws$error_prob, 0.975),
+    elpd_loo     = loo::loo(fit$draws("log_lik", format = "matrix"))$estimates["elpd_loo", "Estimate"]
+  )
+}
+
+rule_set_sensitivity_file <- "simdata/W13_rule_set_sensitivity.rds"
+if (regenerate_simulations || !file.exists(rule_set_sensitivity_file)) {
+  rule_set_results <- bind_rows(
+    fit_with_rules(mod_A, "A: hand-picked"),
+    fit_with_rules(mod_B, "B: blind from Model A"),
+    fit_with_rules(mod_C, "C: deliberately bad")
+  )
+  saveRDS(rule_set_results, rule_set_sensitivity_file)
+} else if (file.exists(rule_set_sensitivity_file)) {
+  rule_set_results <- readRDS(rule_set_sensitivity_file)
+}
+
+if (exists("rule_set_results")) {
+  print(rule_set_results)
+
+  ggplot(rule_set_results,
+         aes(x = rule_set, y = posterior_mean)) +
+    geom_pointrange(aes(ymin = posterior_lo, ymax = posterior_hi)) +
+    geom_hline(yintercept = 0.1, linetype = "dashed", color = "red") +
+    labs(
+      title = "Sensitivity of Model B's ε posterior to candidate rule set",
+      subtitle = "Red dashed: true ε = 0.1 used to generate the data",
+      x = NULL, y = "Posterior mean ± 95% CrI for ε"
+    ) +
+    coord_flip()
+}
+```
+
+**Reading the rule-set sensitivity.** If the three posteriors agree, the candidate-set choice is innocuous. If they disagree — which is the expected outcome — the gap quantifies how much of Model B's estimated $\varepsilon$ is *cognitive* (genuinely tracking the agent's error rate) vs *structural* (compensating for missing rules). Set C should produce a wildly inflated $\varepsilon$ and a much worse ELPD, providing the upper bound on how much rule-set choice can move the posterior.
+
+### Sensitivity to `max_dims` (Rule Grammar Depth)
+
+```{r, 13 max dims sensitivity, eval=run_intensive_checks}
+max_dims_results_file <- "simdata/W13_max_dims_sensitivity.rds"
+if (regenerate_simulations || !file.exists(max_dims_results_file)) {
+  cat("Sweeping max_dims...\n")
+  max_dims_results <- map_dfr(c(1, 2, 3), function(md) {
+    tryCatch({
+      sched <- make_subject_schedule(stimulus_info, n_blocks, seed = 42)
+      sim_md <- rule_particle_filter(
+        n_particles = N_PARTICLES_FIXED,
+        error_prob  = 0.1,
+        obs         = as.matrix(sched[, c("height", "position")]),
+        cat_one     = sched$category_feedback,
+        max_dims    = md
+      )
+      cum_acc <- mean(sim_md$sim_response == sched$category_feedback)
+      tibble(max_dims = md, mean_accuracy = cum_acc)
+    }, error = function(e) {
+      tibble(max_dims = md, mean_accuracy = NA_real_)
+    })
+  })
+  saveRDS(max_dims_results, max_dims_results_file)
+} else if (file.exists(max_dims_results_file)) {
+  max_dims_results <- readRDS(max_dims_results_file)
+}
+
+if (exists("max_dims_results")) {
+  print(max_dims_results)
+  cat("Note: max_dims = 3 will fall back to 2 in our 2-feature task.\n",
+      "The point of this sweep is to make the structural choice visible,\n",
+      "not to discover anything new.\n")
+}
+```
+
+`max_dims` is a structural commitment of the rule grammar. In our 2-feature task it can be 1 or 2 (3 is meaningless). In a higher-dimensional task it would be a genuine free parameter and should be either fixed with explicit cognitive justification or inferred via ABC.
+
+### Option 2: Treat Set A as a Sensitivity Condition, Not a Canonical Model
+
+Rather than use Set A as *the* Model B and add Set B as a "robustness check," the honest framing is to report all three sets as variants of Model B with no privileged status. The reader sees three posteriors instead of one and decides for themselves how much of the variation is structural. This is the framing we adopt for the chapter 15 model comparison, where Model B is reported as a *family* of proxies indexed by the candidate set rather than as a single point estimate.
+
+---
+
+
+## Calibration: Two Different Checks for Two Different Things
+
+Earlier drafts of this chapter ran one block under the header "Simulation-Based Calibration (SBC)" that generated data with the particle filter (Model A) and fitted Model B. **That is not SBC.** Talts–Vehtari SBC requires the data to be drawn from the *same* generative model that is then fitted, so that the joint $(\theta, y)$ distribution of the inference model is what gets calibrated. When the generative and inferential models differ, what you are running is closer to a robustness check than a calibration check, and labelling it SBC is misleading.
+
+We split the misnamed block into two correctly-labelled checks: (1) a **Cross-Model Calibration Check** (data from Model A, fitted by Model B) and (2) a **Real SBC for Model B** (data from Model B itself, fitted by Model B). The first is a robustness check; the second is the actual Talts–Vehtari calibration test.
+
+### Cross-Model Calibration Check (NOT SBC)
+
+**Procedure.** For each iteration $i = 1, \ldots, S$: draw $\varepsilon_i$ from the prior, simulate one dataset with Model A (the particle filter) using $\varepsilon_i$, fit Model B to that dataset, record the rank of $\varepsilon_i$ within Model B's posterior. Compute the rank ECDF.
+
+**What a flat ECDF means here.** It means: under the specific misspecification of Model B for data from Model A, $\varepsilon$ happens to be recovered with the right *marginal* coverage. It does **not** mean Model B is calibrated in the Talts–Vehtari sense, because the joint $(\theta, y)$ distribution of the inference model is not the joint distribution of the data-generating process.
+
+**Why we run it anyway.** Because it answers a useful practical question: "when I fit Model B to data that came from a richer generative process (Model A), are the resulting credible intervals approximately well-calibrated for the *cognitive* parameter $\varepsilon$?" The answer to that question is informative even though it is not what SBC is technically supposed to answer.
+
+```{r, 13 cross model check, eval=run_intensive_checks}
+n_cross_iters <- 500   # use >= 1000 for production
+
+cross_generator <- SBC_generator_function(
+  function(i) {
+    logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+    eps_true       <- plogis(logit_eps_true)
+
+    sched <- make_subject_schedule(stimulus_info, n_blocks, seed = 30000 + i)
+    # NOTE: data drawn from Model A (the particle filter)
+    sim <- rule_particle_filter(
+      n_particles = N_PARTICLES_FIXED,
+      error_prob  = eps_true,
+      obs         = as.matrix(sched[, c("height", "position")]),
+      cat_one     = sched$category_feedback,
+      max_dims    = MAX_RULE_DIMS,
+      quiet       = TRUE
+    )
+
+    list(
+      variables = list(logit_error_prob = logit_eps_true),
+      generated = list(
+        ntrials                = nrow(sched),
+        nfeatures              = 2L,
+        y                      = as.integer(sim$sim_response),
+        obs                    = as.matrix(sched[, c("height", "position")]),
+        prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+        prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+      )
+    )
+  },
+  n = n_cross_iters
+)
+
+cross_backend <- SBC_backend_cmdstan_sample(
+  mod_rule_stan,
+  iter_warmup = 1000, iter_sampling = 1000,
+  chains = 2, adapt_delta = 0.9, refresh = 0
+)
+
+cross_results <- compute_SBC(
+  cross_generator, cross_backend,
+  cache_path = "simdata/W13_cross_model_check_cache",
+  keep_fits = FALSE
+)
+
+# Plotted as rank ECDF, but with explicit re-labelling in the title
+plot_ecdf_diff(cross_results) +
+  ggtitle("CROSS-MODEL CALIBRATION CHECK (not SBC)",
+          subtitle = "Data: Model A. Fit: Model B. Flat ≠ calibrated, only marginally well-covered.")
+plot_rank_hist(cross_results) +
+  ggtitle("Cross-model rank histogram (not SBC)")
+```
+
+**Reading this plot.** A flat curve here means Model B's $\varepsilon$ posterior covers Model A's true generating $\varepsilon$ at approximately the right marginal rate. This is *useful* — it tells you Model B is at least not catastrophically wrong as a tool for estimating cognitive error rates. But it does not say Model B's inference engine is calibrated in the Talts–Vehtari sense, because the data-generating distribution is not the inference model's joint distribution.
+
+### Real SBC for Model B
+
+For a proper Talts–Vehtari SBC of Model B, the generator must use Model B itself: draw $\varepsilon$ from the prior, draw a rule index from $\{1, \ldots, 5\}$ uniformly (mirroring Model B's mixture prior), and generate Bernoulli responses accordingly. Then fit Model B and check the rank distribution.
+
+```{r, 13 real sbc model B, eval=run_intensive_checks}
+n_real_sbc_iters <- 500   # use >= 1000 for production
+
+real_sbc_generator <- SBC_generator_function(
+  function(i) {
+    logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+    eps_true       <- plogis(logit_eps_true)
+
+    # Use the SAME generator as Model B's mixture: draw a rule, generate Bernoulli responses
+    rule_idx <- sample.int(5L, 1)
+    sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = 60000 + i)
+    obs_mat  <- as.matrix(sched[, c("height", "position")])
+    n_trials <- nrow(obs_mat)
+
+    rule_pred_for_trial <- function(i) {
+      h <- obs_mat[i, 1]; p <- obs_mat[i, 2]
+      switch(rule_idx,
+             as.integer(h > 2.5),
+             as.integer(p < 2.5),
+             as.integer(h > 2.0 && p > 3.0),
+             as.integer(!(h < 2.0 || p < 2.0)),
+             as.integer(h > 2.5 && p < 3.5))
+    }
+    preds  <- vapply(seq_len(n_trials), rule_pred_for_trial, integer(1))
+    p_cat1 <- ifelse(preds == 1, 1 - eps_true, eps_true)
+    y      <- rbinom(n_trials, 1, p_cat1)
+
+    list(
+      variables = list(logit_error_prob = logit_eps_true),
+      generated = list(
+        ntrials                = n_trials,
+        nfeatures              = 2L,
+        y                      = as.integer(y),
+        obs                    = obs_mat,
+        prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+        prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+      )
+    )
+  },
+  n = n_real_sbc_iters
+)
+
+real_sbc_backend <- SBC_backend_cmdstan_sample(
+  mod_rule_stan,
+  iter_warmup = 1000, iter_sampling = 1000,
+  chains = 2, adapt_delta = 0.9, refresh = 0
+)
+
+real_sbc_results <- compute_SBC(
+  real_sbc_generator, real_sbc_backend,
+  cache_path = "simdata/W13_real_sbc_cache",
+  keep_fits = FALSE
+)
+
+plot_ecdf_diff(real_sbc_results) +
+  ggtitle("REAL SBC for Model B (Talts–Vehtari)",
+          subtitle = "Data: Model B's own mixture generator. Fit: Model B.")
+plot_rank_hist(real_sbc_results) +
+  ggtitle("Real SBC rank histogram for Model B")
+```
+
+**Reading this plot.** This is the actual calibration check. A flat ECDF here means Stan correctly inverts Model B (Model B's inference engine is calibrated in the Talts–Vehtari sense). Systematic deviations would indicate a miscalibration in the Stan implementation itself — a sign error, an off-by-one in the marginalisation, or a prior-on-`logit_error_prob` mismatch. **This is the only diagnostic in the chapter that tests the Stan engine on its own terms.** The cross-model check above tests something else — it tests how Model B behaves when applied to data from a richer process — and that something else is informative but it is not SBC.
+
+
+---
+
+## Approximate Bayesian Computation for Model A
+
+This is the section that does what earlier drafts of this material avoided: it fits the actual cognitive theory rather than a tractable proxy. Approximate Bayesian Computation (ABC) sidesteps the intractable likelihood by replacing it with a proxy based on the distance between summary statistics of simulated and observed data:
+
+$$p_{d, \epsilon}(\theta \mid y_{\text{obs}}) \propto \Pr(d(s(Y_\theta), s(y_{\text{obs}})) \leq \epsilon) \, p(\theta)$$
+
+where $s(\cdot)$ is a vector of summary statistics, $d(\cdot)$ is a distance, and $\epsilon$ is a tolerance. The Lintusaari et al. ABC review covers the basic theory; we give a working implementation here.
+
+The ABC posterior is **not** the true posterior. It is biased by (i) the choice of summary statistics, (ii) the choice of distance, and (iii) the tolerance $\epsilon$. The bias vanishes as $\epsilon \to 0$ and as the summary statistics become sufficient — and grows as $\epsilon$ becomes large or the summary statistics become uninformative. There is no free lunch, and we will be explicit about the cost.
+
+### Summary Statistics
+
+The persona's "Phase 0 of ABC" question is: which summary statistics do you choose, and why?
+
+We choose three:
+
+1. **Block-1 vs block-final accuracy difference.** Captures *learning slope* — the speed at which accuracy improves with experience. Variations in $\varepsilon$ change this slope, so it is informative.
+2. **Per-stimulus accuracy vector** (length 8 in the Kruschke set). Captures *category-boundary geometry* — which stimuli the agent gets right and which it gets wrong. Variations in $\varepsilon$ rescale these uniformly, but variations in *which rule* the agent converges to change them in structured ways. The vector is therefore informative about both $\varepsilon$ and the (unobservable) converged rule.
+3. **Lag-1 response autocorrelation.** Captures within-block consistency. A high-noise agent has near-zero autocorrelation; a low-noise agent has structured persistence within blocks of similar stimuli.
+
+We standardise the summary vector componentwise (mean and SD over the simulated draws) and use Euclidean distance — the standard rejection-ABC convention from the Lintusaari paper.
+
+```{r, 13 abc summary stats, eval=run_intensive_checks}
+# Compute the summary statistics vector for one response sequence
+compute_abc_summaries <- function(responses, schedule) {
+  n_trials <- length(responses)
+  block_id <- schedule$block
+  correct  <- as.integer(responses == schedule$category_feedback)
+
+  # 1. Learning slope: block-1 vs block-final accuracy
+  acc_block1     <- mean(correct[block_id == 1])
+  acc_blockfinal <- mean(correct[block_id == max(block_id)])
+  slope <- acc_blockfinal - acc_block1
+
+  # 2. Per-stimulus accuracy (length = number of distinct stimuli)
+  per_stim <- vapply(sort(unique(schedule$stimulus_id)), function(s) {
+    mean(correct[schedule$stimulus_id == s])
+  }, numeric(1))
+
+  # 3. Lag-1 response autocorrelation
+  if (n_trials > 1 && sd(responses) > 0) {
+    lag1 <- cor(responses[-n_trials], responses[-1])
+  } else {
+    lag1 <- 0
+  }
+
+  c(slope = slope, per_stim, lag1 = lag1)
+}
+
+# Test it
+example_summary <- compute_abc_summaries(
+  fit_sim$sim_response, fit_schedule
+)
+cat("Example summary vector (length", length(example_summary), "):\n")
+print(round(example_summary, 3))
+```
+
+> **Why these three and not others?** Slope alone confounds $\varepsilon$ with the rule grammar's expressiveness. Per-stimulus accuracy alone misses the temporal dynamics that distinguish "fast learner with high noise" from "slow learner with low noise." Lag-1 autocorrelation alone ignores boundary geometry. Combining the three gives a vector that varies in interpretable directions across the parameter space — and that, by the Lintusaari paper's recommendation, is the right criterion for choosing ABC summaries: *they should change predictably with the parameters of interest*.
+
+### Rejection ABC
+
+The simplest ABC algorithm: simulate many parameter–data pairs from the prior, keep the ones whose summary distance is smallest. The accepted parameters approximate the ABC posterior at tolerance $\epsilon = $ the Nth-percentile distance.
+
+```{r, 13 rejection abc, eval=run_intensive_checks}
+# Generate the observed summary on the fitting data we already have
+obs_summary <- compute_abc_summaries(
+  as.integer(fit_sim$sim_response), fit_schedule
+)
+
+# Rejection ABC over a grid of (eps, log N_particles) draws from a prior
+n_abc_sims <- 10000
+abc_cache  <- "simdata/W13_abc_rejection_results.rds"
+
+if (regenerate_simulations || !file.exists(abc_cache)) {
+  cat("Running rejection ABC for Model A...\n")
+  set.seed(2026)
+
+  abc_draws <- tibble(
+    iter    = seq_len(n_abc_sims),
+    log_eps = rnorm(n_abc_sims, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD),
+    eps     = plogis(rnorm(n_abc_sims, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)),
+    # Optionally: also sample N_particles from a discrete prior
+    N_part  = sample(c(50, 100, 150, 200), n_abc_sims, replace = TRUE)
+  )
+
+  abc_summary_list <- future_pmap(
+    list(eps_i = abc_draws$eps, N_i = abc_draws$N_part, seed_i = abc_draws$iter),
+    function(eps_i, N_i, seed_i) {
+      sched <- make_subject_schedule(stimulus_info, n_blocks, seed = 70000 + seed_i)
+      sim <- rule_particle_filter(
+        n_particles = N_i,
+        error_prob  = eps_i,
+        obs         = as.matrix(sched[, c("height", "position")]),
+        cat_one     = sched$category_feedback,
+        max_dims    = MAX_RULE_DIMS,
+        quiet       = TRUE
+      )
+      compute_abc_summaries(as.integer(sim$sim_response), sched)
+    },
+    .options = furrr_options(seed = TRUE)
+  )
+
+  abc_summary_mat <- do.call(rbind, abc_summary_list)
+
+  # Standardise summaries componentwise
+  s_means <- colMeans(abc_summary_mat)
+  s_sds   <- apply(abc_summary_mat, 2, sd)
+  s_sds[s_sds < 1e-9] <- 1
+  abc_summary_z <- sweep(sweep(abc_summary_mat, 2, s_means, "-"), 2, s_sds, "/")
+  obs_z         <- (obs_summary - s_means) / s_sds
+
+  distances <- sqrt(rowSums(sweep(abc_summary_z, 2, obs_z, "-")^2))
+
+  abc_results <- abc_draws |>
+    mutate(distance = distances) |>
+    arrange(distance)
+
+  # Accept the closest 1% (= 100 draws at n_abc_sims = 10000)
+  accept_n <- max(50, round(0.01 * n_abc_sims))
+  abc_posterior <- abc_results |> head(accept_n)
+
+  saveRDS(list(abc_results = abc_results,
+               abc_posterior = abc_posterior,
+               s_means = s_means, s_sds = s_sds),
+          abc_cache)
+} else if (file.exists(abc_cache)) {
+  cached_abc <- readRDS(abc_cache)
+  abc_results   <- cached_abc$abc_results
+  abc_posterior <- cached_abc$abc_posterior
+}
+
+if (exists("abc_posterior")) {
+  cat("ABC posterior:", nrow(abc_posterior), "accepted draws\n")
+  cat("ABC posterior mean for ε:", round(mean(abc_posterior$eps), 4), "\n")
+  cat("ABC posterior 95% CI for ε: [",
+      round(quantile(abc_posterior$eps, 0.025), 4), ", ",
+      round(quantile(abc_posterior$eps, 0.975), 4), "]\n", sep = "")
+  cat("ABC posterior mode for N_particles: ",
+      names(sort(table(abc_posterior$N_part), decreasing = TRUE))[1],
+      "\n", sep = "")
+
+  ggplot(abc_posterior, aes(x = eps)) +
+    geom_histogram(aes(y = after_stat(density)),
+                   fill = "#009E73", alpha = 0.7, bins = 20) +
+    geom_vline(xintercept = 0.1, color = "red", linetype = "dashed") +
+    labs(
+      title    = "ABC Posterior for ε under Model A",
+      subtitle = "Red dashed: true generating ε = 0.1\nRejection ABC, 10000 simulations, top 1% accepted",
+      x = "ε", y = "Density"
+    )
+}
+```
+
+**A note on cost.** Rejection ABC is brutal. We did 10000 particle filter runs to get 100 accepted draws, and the $N_{\text{particles}}$ axis pushes this further. Production-grade ABC for this kind of expensive simulator would use **SMC ABC** (Sisson, Fan, & Tanaka 2007; Beaumont et al. 2009), which adaptively focuses simulation effort on high-density regions of the posterior, or **BOLFI** (Gutmann & Corander 2016), which fits a Gaussian process surrogate to the distance function and reduces the simulator-call budget by orders of magnitude. BOLFI in particular is designed for exactly this class of expensive simulator: the Kruschke particle filter at $T = 64$ trials and $N_{\text{particles}} = 100$ takes a non-trivial amount of time per simulation, and BOLFI's surrogate would let you fit Model A in a few hundred simulator calls instead of 10000+.
+
+For the chapter we keep rejection ABC because it is the most pedagogically transparent variant. For a real research project on this material, BOLFI is the right tool. The ELFI Python package implements both SMC ABC and BOLFI; if your curriculum is R-only, document the cross-language step honestly.
+
+### ABC Coverage Validation (Phase 6 in ABC dialect)
+
+The ABC analogue of SBC is **coverage validation** (Wegmann et al. 2009; Prangle, Blum, Popovic, & Sisson 2014): generate data with known $\varepsilon$, run the ABC pipeline, check whether the 95% credible interval contains the truth in 95% of replicates. This is the persona's Phase 6 in ABC dialect.
+
+```{r, 13 abc coverage, eval=run_intensive_checks}
+# Coarse coverage check at 5 true ε values, 5 replicates each
+abc_coverage_file <- "simdata/W13_abc_coverage.rds"
+
+if (regenerate_simulations || !file.exists(abc_coverage_file)) {
+  cat("Running ABC coverage validation (this is slow)...\n")
+  coverage_grid <- expand_grid(
+    true_eps = c(0.05, 0.10, 0.15, 0.20, 0.30),
+    rep      = 1:5
+  )
+
+  # Reuse the s_means/s_sds from the cached run
+  s_means <- cached_abc$s_means
+  s_sds   <- cached_abc$s_sds
+
+  # Reduced number of simulations per ABC fit for the coverage loop
+  n_inner_sims <- 2000
+
+  coverage_results <- future_pmap_dfr(
+    list(true_eps = coverage_grid$true_eps, rep = coverage_grid$rep),
+    function(true_eps, rep) {
+      # Generate observed data
+      sched_obs <- make_subject_schedule(stimulus_info, n_blocks,
+                                          seed = 80000 + rep * 10 + round(true_eps * 100))
+      sim_obs <- rule_particle_filter(
+        n_particles = N_PARTICLES_FIXED,
+        error_prob  = true_eps,
+        obs         = as.matrix(sched_obs[, c("height", "position")]),
+        cat_one     = sched_obs$category_feedback,
+        max_dims    = MAX_RULE_DIMS,
+        quiet       = TRUE
+      )
+      obs_z <- (compute_abc_summaries(sim_obs$sim_response, sched_obs) - s_means) / s_sds
+
+      # Inner ABC loop
+      inner_eps <- plogis(rnorm(n_inner_sims, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD))
+      inner_dists <- vapply(seq_len(n_inner_sims), function(k) {
+        sched_k <- make_subject_schedule(stimulus_info, n_blocks,
+                                          seed = 90000 + rep * 1000 + k)
+        sim_k <- rule_particle_filter(
+          n_particles = N_PARTICLES_FIXED,
+          error_prob  = inner_eps[k],
+          obs         = as.matrix(sched_k[, c("height", "position")]),
+          cat_one     = sched_k$category_feedback,
+          max_dims    = MAX_RULE_DIMS,
+          quiet       = TRUE
+        )
+        sk_z <- (compute_abc_summaries(sim_k$sim_response, sched_k) - s_means) / s_sds
+        sqrt(sum((sk_z - obs_z)^2))
+      }, numeric(1))
+
+      accept_idx <- order(inner_dists)[seq_len(round(0.01 * n_inner_sims))]
+      ci <- quantile(inner_eps[accept_idx], c(0.025, 0.975))
+
+      tibble(
+        true_eps = true_eps, rep = rep,
+        ci_lo = ci[1], ci_hi = ci[2],
+        covers = (true_eps >= ci[1]) & (true_eps <= ci[2]),
+        post_mean = mean(inner_eps[accept_idx])
+      )
+    },
+    .options = furrr_options(seed = TRUE)
+  )
+
+  saveRDS(coverage_results, abc_coverage_file)
+} else if (file.exists(abc_coverage_file)) {
+  coverage_results <- readRDS(abc_coverage_file)
+}
+
+if (exists("coverage_results")) {
+  print(coverage_results)
+  cat("\nOverall empirical 95% coverage:",
+      round(mean(coverage_results$covers), 3), "\n")
+
+  ggplot(coverage_results, aes(x = true_eps, y = post_mean)) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+    geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi, color = covers),
+                  width = 0.005, alpha = 0.7) +
+    geom_point(aes(color = covers), size = 3) +
+    scale_color_manual(values = c("FALSE" = "#D55E00", "TRUE" = "#0072B2"),
+                       name = "95% CI covers truth?") +
+    labs(
+      title    = "ABC Coverage Validation for Model A",
+      subtitle = "Empirical 95% coverage should be ≈ 0.95 if ABC posterior is calibrated",
+      x = "True ε", y = "ABC posterior mean (with 95% CI)"
+    )
+}
+```
+
+**Reading the coverage check.** This is the analogue of an SBC pass/fail for the ABC pipeline. The empirical coverage at the bottom should be close to 0.95. If it is much less than 0.95, the ABC posterior is overconfident — the tolerance is too tight, the summary statistics are insufficient, or the distance metric is mismatched. If it is much greater than 0.95, the posterior is underconfident — the tolerance is too loose. Both conditions are diagnosable and fixable.
+
+A full Prangle et al. (2014) coverage test would also include local-coverage checks at multiple levels (50%, 80%, 95%) and per-bin coverage to detect non-uniform calibration. We do the simpler version here for pedagogical clarity; the full version is the right move for production work.
+
+### The Main Empirical Result: ABC vs Stan Posteriors
+
+Here is the comparison the chapter has been building toward. We fit the same observed dataset under both Model A (via ABC) and Model B (via HMC) and overlay the two posteriors on $\varepsilon$. **The gap between them is the structural bias you accept when you replace the cognitive theory with a tractable proxy.**
+
+```{r, 13 abc vs stan, eval=run_intensive_checks}
+if (exists("abc_posterior") && !is.null(fit_rule_stan)) {
+  stan_eps  <- as_draws_df(fit_rule_stan$draws("error_prob"))$error_prob
+  abc_eps   <- abc_posterior$eps
+
+  comparison_df <- bind_rows(
+    tibble(eps = abc_eps, method = "Model A (ABC, particle filter)"),
+    tibble(eps = stan_eps, method = "Model B (HMC, marginalised mixture)")
+  )
+
+  ggplot(comparison_df, aes(x = eps, fill = method, color = method)) +
+    geom_density(alpha = 0.4, linewidth = 0.6) +
+    geom_vline(xintercept = 0.1, color = "red", linetype = "dashed") +
+    scale_fill_manual(values = c("Model A (ABC, particle filter)"      = "#009E73",
+                                  "Model B (HMC, marginalised mixture)" = "#E69F00")) +
+    scale_color_manual(values = c("Model A (ABC, particle filter)"      = "#006D4E",
+                                   "Model B (HMC, marginalised mixture)" = "#B07D00")) +
+    labs(
+      title    = "ABC vs HMC: Posterior on ε for Model A vs Model B",
+      subtitle = "Red dashed: true generating ε = 0.1\nThe gap between these distributions IS the structural bias of the proxy.",
+      x = "ε", y = "Density"
+    )
+
+  cat("\n--- Posterior summaries ---\n")
+  cat("Model A (ABC) posterior:    mean =", round(mean(abc_eps), 4),
+      "  95% CI = [", round(quantile(abc_eps, 0.025), 4), ",",
+                       round(quantile(abc_eps, 0.975), 4), "]\n")
+  cat("Model B (HMC) posterior:    mean =", round(mean(stan_eps), 4),
+      "  95% CI = [", round(quantile(stan_eps, 0.025), 4), ",",
+                       round(quantile(stan_eps, 0.975), 4), "]\n")
+  cat("True generating ε:           0.1\n")
+}
+```
+
+**Reading the gap.** Three possibilities:
+
+1. **The two posteriors substantially overlap and both contain the true value.** This is the best case: Model B's hand-picked rule set happens to cover Model A's converged rule, and the proxy is approximately faithful. The chapter 15 LOO comparison can be trusted on this dataset.
+2. **The two posteriors are offset but both contain the true value.** Model B is biased but not catastrophically wrong. The offset quantifies the structural bias; ELPD comparisons in chapter 15 are valid for *predictive* purposes but not for strong claims about the cognitive parameter.
+3. **The two posteriors are far apart and the dashed line is in only one of them (typically Model A's).** Model B is materially misspecified for this dataset. ELPD comparisons in chapter 15 should be reported under both models and the discrepancy flagged.
+
+This is the chapter's main empirical contribution: a worked example of a case in which the gap between the cognitive theory and its tractable proxy is large enough to *matter*. It is also the strongest argument in this entire trio of chapters for why simulator-based inference is not a curiosity but a methodological necessity.
+
+
+---
+
+## Cognitive Insights from Rule-Based Models
+
+Rule-based models, particularly Model A (the particle filter), offer several cognitive insights:
+
+* **Explicit Hypothesis Testing**: They model the process of generating, testing, and refining explicit hypotheses about category structure.
+* **Abrupt Learning**: Performance can change sharply when a highly effective rule is discovered and gains high weight — producing the "aha moment" learning curves sometimes observed in humans.
+* **Selective Attention**: Attention is modeled as selecting specific dimensions relevant to the current best rules, rather than continuous weighting across all dimensions.
+* **Verbalizability**: The explicit nature of rules often aligns with people's ability and tendency to verbalize their categorization strategies.
+* **Individual Differences**: Different individuals might converge on different (but potentially equally effective) rules, explaining variations in reported strategies.
+* **Working-memory bound**: $N_{\text{particles}}$ has direct cognitive content as a hypothesis-set capacity. ABC makes this an inferable parameter rather than a structural choice — this is a non-trivial methodological gain over the Stan proxy, which has no analogue.
+
+---
+
+## Strengths and Limitations
+
+**Strengths:**
+
+* Cognitive plausibility: aligns with introspection and verbal reports of using rules.
+* Efficiency for simple structures: very effective when categories are defined by simple, logical rules.
+* Sharp boundaries: naturally captures categories with clear-cut criteria.
+* Handles logic: easily incorporates AND, OR, and NOT operators within the chosen grammar.
+* Working-memory interpretation: $N_{\text{particles}}$ has direct cognitive meaning as a hypothesis capacity bound, and is recoverable from data via ABC.
+* Honest about its scope: the Model A vs Model B distinction makes it possible to fit the cognitive theory directly (via ABC) while still having a tractable proxy (Model B) for downstream model comparison.
+
+**Limitations:**
+
+* **Family resemblance categories**: rule-based models struggle with categories defined by overall similarity where no single rule applies to all members.
+* **Complex boundaries**: requires very complex rules or many simple rules to approximate non-axis-aligned or curved boundaries.
+* **Graded typicality**: doesn't easily explain why some category members seem more typical than others.
+* **Feature learning**: standard models assume predefined features; they don't typically learn which features are relevant from raw input.
+* **Rule grammar is a structural prior** (Phase 0 Q4): the chapter commits to $\{>, <\}$ operators, $\{\text{AND}, \text{OR}\}$ logical connectives, $\text{max\_dims} = 2$, and continuous thresholds. Different grammars would give different posteriors. Sensitivity to `max_dims` is exercised in §"Sensitivity to `max_dims`"; sensitivity to operators and connectives is left as an exercise.
+* **Model B is structurally biased relative to Model A** (Phase 0 Q3, Q5): the Stan proxy is a different model from the cognitive theory. Validation of Model B (LOO, prior sensitivity, real SBC) tests the proxy. The ABC vs Stan comparison in §"The Main Empirical Result" makes the bias visible. Chapter 15 should report both posteriors when comparing rule-based models against GCM and prototype.
+* **ABC has its own approximation error**: the ABC posterior depends on the choice of summary statistics, distance, and tolerance. We use a coverage check (§"ABC Coverage Validation") to validate the pipeline, but the dependence on summaries means the ABC posterior is not the true Bayesian posterior — it is the *tolerance-band Bayesian posterior conditioned on the chosen summaries*. The reader should know this is a real cost, not a free pass.
+* **Computational cost of ABC**: rejection ABC needs many simulator runs. SMC ABC and BOLFI are the production-grade alternatives. For the Kruschke task at $T = 64$ trials and $N_{\text{particles}} = 100$, BOLFI would be the right tool for any real research project.
+* **No multilevel extension yet**: this chapter, like Chapter 12, stops at single-subject inference. The multilevel rule model (with population-level priors on $\varepsilon$ and per-subject offsets) is straightforward to add to Model B but non-trivial for the ABC pipeline; Chapter 15 takes up the multilevel comparison across all three model classes.
+
+## Conclusion: The Role of Rules and the Cost of Tractability
+
+Rule-based models offer a distinct perspective on categorization, emphasizing explicit criteria and logical operations rather than overall similarity. The Bayesian particle filter (Model A) provides a sophisticated framework for modeling how learners might search the space of possible rules, maintain uncertainty, and update beliefs based on evidence. Its likelihood is intractable in Stan, which is why the chapter introduced two responses to that intractability:
+
+1. **The tractable proxy (Model B)**: a marginalised mixture over a fixed candidate rule set, fitted with HMC, validated via the standard six-phase pipeline. Useful for downstream model comparison, *biased* relative to the cognitive theory in a direction the chapter quantifies via the ABC-vs-Stan posterior gap.
+
+2. **Simulator-based inference (ABC for Model A)**: rejection ABC with three carefully-chosen summary statistics, validated via a coverage check, fitting the actual cognitive theory directly. More expensive, more honest, and the only way to recover $N_{\text{particles}}$ as a cognitive parameter rather than a structural commitment.
+
+The chapter's pedagogical move is to fit *both*. The gap between the two posteriors is the structural bias the modeller accepts when they replace the cognitive theory with a proxy. On data where the proxy's candidate rules happen to cover what Model A converges to, the gap is small and Model B's LOO scores can be trusted as cognitive evidence. On data where they do not, the gap is large and Model B's LOO scores are *structural artefacts* — they tell you about the proxy's fit, not about the agent.
+
+Pure rule-based models may not account for all aspects of human categorization (especially for natural categories with fuzzy boundaries), but they capture an important element of human cognition, particularly in domains involving definitions, instruction, or well-defined criteria. Often, human behavior might reflect a blend or interplay between rule-based and similarity-based processing — a topic explored in hybrid models (like COVIS or RULEX) and addressed directly in the **next chapter**, which compares all three model classes on the same dataset. Chapter 15 reports the comparison **twice**:
+
+* Once under the LOO/LFO-CV framework, with each model fitted under its appropriate validation tool (LFO-CV for the GCM and Kalman prototype via the implementations in Chapters 11 and 12; standard LOO for Model B). This is the comparison the proxies make possible.
+* Once under ABC, with Model A (the particle filter), the GCM, and the Kalman prototype all fitted as simulator-based models on a common footing. This is the comparison the cognitive theories deserve.
+
+The expected outcome is that the two comparisons agree on the easy cases and disagree on the hard ones, and that the disagreement is informative about which empirical conclusions in the categorisation literature have been over-claimed because they were based on tractable proxies of intractable cognitive theories. That is the methodological payoff of taking simulator-based inference seriously.
