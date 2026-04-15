@@ -52,7 +52,11 @@ for (d in c("stan", "simdata", "simmodels")) {
 diagnostic_summary_table <- function(fit, params = NULL) {
   if (is.null(fit)) return(NULL)
   diag <- fit$diagnostic_summary(quiet = TRUE)
-  s    <- fit$summary(variables = params)
+  
+  s <- fit$summary(
+    variables = params, 
+    "mean", "sd", "rhat", "ess_bulk", "ess_tail", "mcse_mean"
+  )
 
   tibble(
     metric = c(
@@ -73,12 +77,12 @@ diagnostic_summary_table <- function(fit, params = NULL) {
     ),
     threshold = c("== 0", "< 1.01", "> 400", "> 400", "> 0.2", "< 0.05"),
     pass = c(
-      sum(diag$num_divergent)            == 0,
-      max(s$rhat, na.rm = TRUE)          <  1.01,
-      min(s$ess_bulk, na.rm = TRUE)      >  400,
-      min(s$ess_tail, na.rm = TRUE)      >  400,
-      min(diag$ebfmi, na.rm = TRUE)      >  0.2,
-      max(s$mcse_mean / s$sd, na.rm = TRUE) < 0.05
+      sum(diag$num_divergent)               == 0,
+      max(s$rhat, na.rm = TRUE)             <  1.01,
+      min(s$ess_bulk, na.rm = TRUE)         >  400,
+      min(s$ess_tail, na.rm = TRUE)         >  400,
+      min(diag$ebfmi, na.rm = TRUE)         >  0.2,
+      max(s$mcse_mean / s$sd, na.rm = TRUE) <  0.05
     )
   )
 }
@@ -97,14 +101,16 @@ diagnostic_summary_table <- function(fit, params = NULL) {
 > and then compare all three approaches head-to-head using the full validation 
 > battery.
 >
-> An important caveat that Ch. 7 did not face: the GCM is **path-dependent** —
+> Two important caveats that previous did not face. 
+> First, the categorization models learn, that is, are **path-dependent** —
 > the likelihood at trial $t$ depends on the full sequence of stimuli on
 > trials $1, \ldots, t-1$ through the exemplar memory store. Standard LOO-CV
 > is therefore technically invalid here. Rather than wave at this and hope it
-> doesn't matter, **this chapter is the canonical place where leave-future-out
-> cross-validation (LFO-CV; Bürkner, Gabry, & Vehtari, 2020) is implemented**.
-> Chapters 12, 13, and 15 then *use* this implementation rather than apologise
-> for not having one.
+> doesn't matter, we introduce leave-future-out cross-validation (LFO-CV; 
+> Bürkner, Gabry, & Vehtari, 2020).
+> Second, the rule-based models we will discuss cannot really be fit using
+> MCMC (we'll see why), so we need to introduce a new slower method: Approximate
+> Bayesian Computation (ABC).
 
 # Introduction to Categorization Models
 
@@ -112,11 +118,11 @@ diagnostic_summary_table <- function(fit, params = NULL) {
 
 Categorization is one of the most fundamental cognitive abilities that humans possess. From early childhood, we learn to organize the world around us into meaningful categories: distinguishing food from non-food, safe from dangerous, or one letter from another. This process of assigning objects to categories is complex, involving perception, memory, attention, and decision-making.
 
-How do humans learn categories and make categorization decisions? This seemingly simple question has generated decades of research and theoretical debate in cognitive science. The answer matters not only for understanding human cognition but also for developing artificial intelligence systems, designing educational interventions, and understanding cognitive disorders that affect categorization abilities.
+How do humans learn categories and make categorization decisions? This seemingly simple question has generated decades of research and theoretical debate in cognitive science.
 
 ## Why Model Categorization?
 
-Computational models offer a powerful way to formalize theories about categorization. By implementing these theories as computer algorithms, we can:
+As we have seen in previous chapters, computational models offer powerful ways to formalize theories about categorization. By implementing these theories as computer algorithms, we can:
 
 * Explore the consequences of different theoretical assumptions
 
@@ -133,10 +139,9 @@ In this chapter, we will explore three major approaches to modeling categorizati
 * **Rule-based models** — which posit that categories are represented by explicit rules or decision boundaries
 
 Each approach captures different aspects of human categorization and has generated substantial empirical research. We'll implement computational versions of each model type, allowing us to compare their behavior and predictions.
+Note that there are many hybrid models and more complex approaches, but covering these three will give usa solid foundation also for understanding the more complex models.
 
 ## Historical Development of Categorization Models
-
-The computational modeling of categorization has a rich history in cognitive psychology:
 
 ### Early Views: The Classical Approach
 
@@ -164,7 +169,7 @@ The Generalized Context Model (GCM), developed by Nosofsky, became the standard 
 
 ### Rule-Based Models
 
-While similarity-based approaches (both prototype and exemplar) gained prominence, other researchers argued that people sometimes use explicit rules for categorization. Rule-based models propose that categorization involves applying decision rules that partition the stimulus space.
+While similarity-based approaches (both prototype and exemplar) gained prominence, other researchers argued that people sometimes use explicit rules for categorization. Rule-based models propose that categorization involves applying decision rules that partition the stimulus space. To overcome at least some of the critiques against a more classical approach, many contemporary rule-based approaches are probabilistic, reflecting the complexity of real-world categories.
 
 Models like Bayesian particle filters, multinomial trees, COVIS (COmpetition between Verbal and Implicit Systems) and RULEX (RULe-plus-EXception) formalize these ideas, suggesting that rule learning and application form a core part of human categorization, particularly for well-defined categories.
 
@@ -174,83 +179,15 @@ More recent work has focused on hybrid models that incorporate elements of multi
 
 ## The Three Model Classes: Core Assumptions and Predictions
 
-### N.B: THE KEY FEATURES / PREDICTIONS SHOULD BE DIRECTLY COMPARED
-
 Let's examine the core assumptions of the three model classes we'll be implementing:
 
-### Exemplar Models: Individual Instances as Category Representations
-
-**Core Assumption**: Categories are represented by storing individual examples (exemplars) in memory.
-
-**Key Features**:
-
-* No abstraction: All encountered exemplars are stored
-
-* Categorization involves computing similarity to all stored exemplars
-
-* Similarity is often modeled using an exponential decay function of distance
-
-* Different dimensions can receive different attention weights
-
-* Memory effects (recency, frequency) can influence categorization
-
-**Predictions**:
-
-* Sensitivity to specific training examples
-
-* Better handling of exceptions and atypical category members
-
-* Categorization of new items depends on their similarity to specific remembered examples
-
-* Learning can be incremental, one example at a time
-
-### Prototype Models: Categories as Central Tendencies
-
-**Core Assumption**: Categories are represented by their central tendencies or prototypes.
-
-**Key Features**:
-
-* Abstraction: Information about individual examples is integrated into a summary representation
-
-* Only the prototype (and possibly variance information) is stored for each category
-
-* Categorization involves computing similarity to category prototypes
-
-* Can be updated incrementally (as in Kalman filter approaches)
-
-**Predictions**:
-
-* The most typical (average) category members will be categorized most easily
-
-* Less sensitivity to specific examples
-
-* More efficient in terms of memory requirements
-
-* May struggle with categories that have complex structures (e.g., non-linear boundaries)
-
-### Rule-Based Models: Categories as Decision Boundaries
-
-**Core Assumption**: Categories are represented by explicit rules that specify the necessary and sufficient conditions for category membership.
-
-**Key Features**:
-
-* Rules partition the stimulus space into regions corresponding to different categories
-
-* Rules can be simple (single dimension) or complex (combining multiple dimensions)
-
-* Focus is on relevant dimensions while irrelevant dimensions are ignored
-
-* Rule selection often involves hypothesis testing
-
-**Predictions**:
-
-* Sharp category boundaries
-
-* Fast decisions once rules are learned
-
-* Selective attention to rule-relevant dimensions
-
-* Less sensitivity to similarity once rules are established
+| Feature / Dimension | Exemplar Models (e.g., GCM) | Prototype Models | Rule-Based Models |
+| :--- | :--- | :--- | :--- |
+| **Core Representation** | Individual instances. | An abstract central tendency ("average"). | Explicit rules (necessary/sufficient conditions). |
+| **Level of Abstraction** | **None:** All encountered examples are stored. | **High:** Individual details are integrated into a summary. | **High:** Continuous space partitioned into discrete regions. |
+| **Similarity / Distance** | distance to stored exemplars (often exponential decay). | distance to the central prototype (often exponential decay). | Probability that the exemplar is generated by the rule. |
+| **Attention Allocation** | continuous attention weights to dimensions. | continuous attention weights to dimensions. | **Selective:**  continuous attention "weights" to rules. |
+| **Key Predictions** | High sensitivity to specific training examples; categorization depends on specific memories. | "Typicality effect": The most mathematically average items are categorized most easily. | Fast decisions once rules are learned; selective attention to specific features. |
 
 ## Our Implementation Approach
 
@@ -258,13 +195,11 @@ We'll implement three models representing each major theoretical approach:
 
 * **Generalized Context Model (GCM)** — A canonical exemplar model where categorization is based on summed similarity to all stored examples
 
-* **Kalman Filter Prototype Model** — A dynamic prototype model that incrementally updates category representations (Ch. 12)
+* **Kalman Filter Prototype Model** — A dynamic prototype model that builds on the GCM infrastructure, but incrementally updates category representations instead of storing new exemplars.  (Ch. 12)
 
 * **Bayesian Particle Filter for Rules** — A rule-based model that maintains a distribution over potential categorization rules (Ch. 13)
 
-Each implementation follows a similar structure: core model function as a forward simulator, Stan implementation for parameter estimation, the mandatory MCMC diagnostic battery, prior/posterior predictive checks, parameter recovery, prior sensitivity, and SBC. 
-
-Let's begin with the Generalized Context Model.
+Each implementation endeavors to follow a similar structure: core model function as a forward simulator, Stan implementation for parameter estimation, the mandatory MCMC diagnostic battery, prior/posterior predictive checks, parameter recovery, prior sensitivity, and SBC. However, as we will see Bayesian Particle Filters are not so amenable to this style of inference, so we will introduce Approximate Bayesian Computation (ABC) for that model in Ch. 13.
 
 ---
 
@@ -277,36 +212,26 @@ The Generalized Context Model (GCM), developed by Robert Nosofsky in the 1980s, 
 ### Core Assumptions of the GCM
 
 * **Memory for Instances**: Every encountered example is stored in memory with its category label.
-* **Similarity Computation**: Categorization decisions are based on computing the similarity between a new stimulus and all stored exemplars.
-* **Selective Attention**: Attention can be distributed differently across stimulus dimensions, effectively stretching or shrinking the psychological space.
-* **Choice Probability**: The probability of assigning a stimulus to a category is proportional to its summed similarity to exemplars of that category.
 
-## Phase 0: Interrogating the GCM as a Cognitive Theory
+* **Similarity Computation**: Distannce is calculated using a city-block metric (Manhattan distance, steps in each direction, without allowing diagonal movements). Similarity between a new stimulus and each stored exemplar is an exponentially decreasing function of their city-metric distance, with the decay rate governed by parameter $c$.
 
-Before formalising the GCM as equations and Stan code, the persona's Phase 0 mandate requires us to ask several uncomfortable questions about what the model is actually committed to. Verbal models hide answers; formalisation forces them. The four questions below are not optional — they are exactly the questions a colleague should ask before letting us run an inference engine on this model.
+* **Selective Attention**: Per-dimension weights $w$ rescale the psychological space — stretching or shrinking each axis — before distance is computed.
 
-**Q1. The First-Trial Question.** *On trial 1, before any feedback has been received, what does the agent do?*
+* **Bias**: A parameter $\beta$ weights the category-A summed similarity against category-B's in the choice rule, independent of the stimuli.
 
-The model has no exemplars in memory. There is nothing to compute similarity to. The agent must therefore either (a) refuse to answer, (b) sample from a default distribution, or (c) act as if some prior exemplars existed. We commit to (b): the agent responds with probability $\beta$ (the bias parameter) of choosing category 1. The same fallback applies whenever the memory contains exemplars from only one of the two categories — until both categories have been observed at least once, the choice is governed by $\beta$ alone. **This makes $\beta$ identifiable from early trials in a way it is not from late trials**, which has direct consequences for the recovery analyses below.
+* **Choice Probability**: The probability of assigning a stimulus to a category is proportional to its summed similarity to exemplars of that category. No parameter is defined here.
 
-**Q2. The Persistence Question.** *Once an exemplar is stored, is it ever forgotten? Are recent exemplars weighted more heavily than old ones?*
+The point of the previous paragraph is to define the specific commitments we are making in this chapter, which are: "the Nosofsky 1986 GCM with a Manhattan distance, no forgetting, $\beta$ as both a static bias and the cold-start default, and a simple probabilistic decision rule (no softmax)." However, any of these core assumptions can be challenged and/or implemented in different ways. Just because Nosofsky did it one way doesn't mean we have to. E.g. we could implement the GCM with a geometric distance, with memory decay, with a different cold-start strategy, or with a softmax temperature for decisions. 
 
-The standard GCM says no to both. Every exemplar contributes equally to summed similarity, forever. This is a strong cognitive claim — it implies a memory store of unbounded capacity and no recency or primacy effects on the similarity computation itself. (Recency does emerge through the cumulative size of the memory store, but only in the trivial sense that early trials have less data to compute against.) Models that drop this assumption — exemplar models with memory decay, or hybrid prototype-exemplar models — make different and more falsifiable predictions. We commit to the canonical Nosofsky formulation here, but the reader should know this is a *commitment*, not a *derivation*.
+### Parameters: Cognitive Commitment, Algebraic Role, Stan Parameterization
 
-**Q3. The Observation-vs-Decision Noise Question.** *Where does the model's stochasticity come from?*
+The GCM has three primary parameters in this formulation. For each, we make three commitments simultaneously — a cognitive one (what the parameter *means*), an algebraic one (how it enters the equations below), and a Stan-level one (how it is declared so the sampler has a well-behaved geometry to move on). Keeping these three layers aligned from the very start help us creating consistent code for both forward and inferential modeling.
 
-The GCM has no softmax temperature. All choice variability comes from the ratio $\beta s_1 / (\beta s_1 + (1-\beta) s_0)$, where $s_1$ and $s_0$ are summed similarities to the two categories. This ratio is then used directly as the Bernoulli parameter. Two consequences:
+**Attention weights $w$.** Cognitively, $w$ is a simplex of dimension-specific attention weights: simplex means that there is finite attention (1) and higher weight means more attention, and therefore more diagnostic contribution, for that feature. Algebraically, $w$ enters the distance formula as the per-dimension coefficient in the attention-weighted city-block metric, so changing $w$ literally stretches or compresses each axis of the psychological space before similarity is computed. At the Stan level $w$ is declared as `simplex[nfeatures]`, which enforces $w_m \ge 0$ and $\sum_m w_m = 1$ directly in the parameterization and gives the Dirichlet prior its natural support.
 
-1. **There is no separate decisional noise parameter.** The closer summed similarities are to each other, the noisier choices become — but this noise is fully determined by $w$ and $c$, not freely parametrised.
-2. **Sensitivity $c$ doubles as a generalisation parameter and as a decisional precision parameter.** Higher $c$ means similarity decays faster *and* that the Bernoulli probabilities are pushed closer to 0 or 1. These two roles are mathematically conflated in the standard GCM. A hypothetical agent with sharp generalisation but noisy decisions cannot be represented in this model.
+**Sensitivity $c$.** Cognitively, $c$ represents perceptual discriminability — the width of the generalization gradient and, in this formulation, the model's decisional precision as well (there is no separate softmax temperature). Higher $c$ = faster similarity decay = less generalization = higher specificity. Algebraically, $c$ is the exponential decay rate in $\eta_{ij} = e^{-c\, d_{ij}}$, so it controls the slope of the similarity curve seen in the visualization below. At the Stan level, we need to ensure that $c$ stays a positive value, so we cannot sample it directly. We sample an unconstrained `real log_c` and set `c = exp(log_c)` in `transformed parameters`. This log-normal reparameterization is constraint-free and geometrically well-behaved — the sampler moves on an unbounded real line and the positivity constraint is preserved through exponentiation.
 
-This is a known limitation of the standard GCM. We do not fix it here (doing so would require adding a softmax temperature $\tau$ and re-doing the prior predictive analysis), but we name it as a structural commitment rather than letting the reader discover it by surprise.
-
-**Q4. The $c$–$w$ Identifiability Question.** *Are sensitivity and attention weights jointly identifiable from this experimental design?*
-
-There is a known partial trade-off: sharpening the attention weights $w$ (concentrating attention on fewer dimensions) acts on summed similarity in a way that is geometrically related to increasing sensitivity $c$ (steepening the similarity decay). For some experimental designs the two can become almost confounded. For Kruschke's (1993) two-dimensional set with both dimensions diagnostic, $c$ and $w$ should in principle be separately identified, but the burden of proof is on the model — *we will show this empirically in §"Joint Posterior Geometry: c vs w"* by inspecting the joint posterior pairs plot. If the pairs plot shows a strong diagonal ridge, the design is the problem, not the model.
-
-> **A note on what Phase 0 buys you.** None of these four questions changes the Stan code. They change what we *claim* about the Stan code. Without them, a reader sees a fitted GCM and infers we are testing "the cognitive theory of exemplar-based categorisation." With them, the reader knows we are testing "the Nosofsky 1986 GCM with no forgetting, no softmax temperature, $\beta$ as both a static bias and the cold-start default, and the assumption that the Kruschke design separately identifies $c$ from $w$." The second statement is the one a referee will hold us to.
+**Response bias $\beta$.** Cognitively, $\beta$ is a baseline preference for category A independent of stimulus similarity; $\beta = 0.5$ is unbiased, and deviations reflect asymmetric response tendencies or unequal base rates. In this chapter $\beta$ also serves as the cold-start fallback: before *both* categories have been observed, the agent responds at probability $\beta$. Algebraically, $\beta$ weights the category-A summed similarity against category-B's in $P(A\mid i)$. At the Stan level $\beta$ is declared as `real<lower=0, upper=1>` with a Beta prior, bounding the parameter to the open interval on which it is defined.
 
 ## Mathematical Formulation
 
@@ -372,28 +297,21 @@ The probability of assigning stimulus $i$ to category A is based on summed simil
 
 $$P(A|i) = \frac{\beta \sum_{j \in A} \eta_{ij}}{\beta \sum_{j \in A} \eta_{ij} + (1-\beta) \sum_{k \in B} \eta_{ik}}$$
 
-Where $\sum_{j \in A} \eta_{ij}$ is the summed similarity to all exemplars of category A, $\sum_{k \in B} \eta_{ik}$ is the summed similarity to all exemplars of category B, and $\beta \in (0,1)$ is a response bias for category A. Note that we use the **sum** of similarities throughout — in both the R simulation and the Stan likelihood — consistent with the original GCM formulation. The cold-start fallback from Q1 applies whenever one of the summed similarities is undefined: if either $\sum_{j \in A}$ or $\sum_{k \in B}$ has no terms yet, the response probability is $\beta$.
+Where $\sum_{j \in A} \eta_{ij}$ is the summed similarity to all exemplars of category A, $\sum_{k \in B} \eta_{ik}$ is the summed similarity to all exemplars of category B, and $\beta \in (0,1)$ is a response bias for category A. Note that we use the **sum** of similarities throughout — in both the R simulation and the Stan likelihood — consistent with the original GCM formulation. The cold-start fallback applies whenever one of the summed similarities is undefined: if either $\sum_{j \in A}$ or $\sum_{k \in B}$ has no terms yet, the response probability is $\beta$.
 
 ### The GCM Agent Implementation (R Simulation)
 
 With distance and similarity functions in place, we implement an agent that observes stimuli, stores them into categories according to feedback, and compares new stimuli to stored exemplars.
 
-The agent operates in two modes — these are the two branches of Q1:
-
-* *Cold start*: If no exemplars from one or both categories have yet been observed, the agent responds at the bias probability.
-* *Similarity-based choice*: Otherwise, it calculates summed similarity to each category's exemplars and makes a probabilistic choice.
-
 ```{r, 11 generative GCM model}
 # Generative GCM model function.
-# Uses log_c (unconstrained) to match the Stan parameterization exactly.
-# Internally computes c = exp(log_c).
+# Takes the sensitivity parameter on its natural (cognitive) scale.
 gcm_simulate <- function(w,            # attention weights (sums to 1)
-                         log_c,        # log sensitivity (unconstrained)
+                         c,            # sensitivity (natural scale, strictly positive)
                          bias,         # response bias towards category 1
                          obs,          # matrix of stimulus features (trials x features)
                          cat_feedback, # true category labels (0 or 1)
                          quiet = TRUE) {
-  c_val    <- exp(log_c)   # derive sensitivity on original scale
   ntrials  <- nrow(obs)
   nfeatures <- ncol(obs)
 
@@ -416,7 +334,7 @@ gcm_simulate <- function(w,            # attention weights (sums to 1)
     } else {
       # Compute similarity from current stimulus to every stored exemplar
       sims <- vapply(seq_len(n_mem), function(e) {
-        similarity(distance(current_stim, memory_obs[e, ], w), c_val)
+        similarity(distance(current_stim, memory_obs[e, ], w), c)
       }, numeric(1))
 
       # Sum (not mean) similarity per category — matches original GCM formulation
@@ -440,7 +358,7 @@ gcm_simulate <- function(w,            # attention weights (sums to 1)
 }
 ```
 
-This implementation captures the core cognitive processes proposed by the GCM: storing exemplars, computing similarity, weighting by attention, and making probabilistic choices based on relative summed similarity. Critically, the *exact* same control flow appears in the Stan model below — this is the persona's Phase 1 mandate ("the simulator must mirror the mathematical dependencies of the planned Stan model exactly").
+This implementation captures the core cognitive processes proposed by the GCM: storing exemplars, computing similarity, weighting by attention, and making probabilistic choices based on relative summed similarity. Critically, the *exact* same control flow has to appear in the Stan code that we will produce.
 
 ---
 
@@ -469,13 +387,13 @@ n_stim_per_block  <- nrow(stimulus_info)
 total_trials      <- n_blocks * n_stim_per_block
 ```
 
-Notice that the categories are not linearly separable: no single threshold on height or position perfectly partitions the stimuli. This is what makes the design useful for testing whether the model can recover both attention weights $w$ and sensitivity $c$ — the answer to Q4 above depends on both dimensions actually carrying diagnostic information, which they do here.
+Notice that the categories are not linearly separable: no single threshold on height or position perfectly partitions the stimuli. This is what makes the design useful for testing whether the model can recover both attention weights $w$ and sensitivity $c$.
 
 ---
 
 ## Per-Subject Schedule Generation
 
-In a real experiment each participant sees the stimuli in an **independently randomized** order. Because the GCM is path-dependent — the memory state at trial $t$ depends on the exact ordering of trials $1, \ldots, t-1$ — using the same ordering for every simulated agent is a modeling error: it calibrates the inference engine on a single memory trajectory rather than the distribution of trajectories the model will encounter in real data. We therefore generate a distinct randomized schedule for each subject using a deterministic, reproducible seed.
+In a real experiment each participant sees the stimuli in an **independently randomized** order. Because the GCM is path-dependent — the memory state at trial $t$ depends on the exact ordering of trials $1, \ldots, t-1$ — using the same ordering for every simulated agent would be a modeling error: it would calibrate the inference engine on a single memory trajectory rather than the distribution of trajectories the model will encounter in real data. We therefore generate a distinct randomized schedule for each subject using a deterministic, reproducible seed.
 
 ```{r, 11 per-subject schedule}
 # Generate one randomized experiment schedule for one subject.
@@ -502,7 +420,7 @@ make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
 }
 ```
 
-This function is the sole source of randomized trial sequences throughout the chapter. All other code receives a schedule produced by `make_subject_schedule`.
+We will be using this very same randomization function throughout the chapter.
 
 ---
 
@@ -511,14 +429,14 @@ This function is the sole source of randomized trial sequences throughout the ch
 We simulate agents with different parameter settings. `simulate_gcm_agent` wraps `gcm_simulate` by generating the agent's own randomized schedule from a subject-specific seed:
 
 ```{r, 11 GCM response simulations}
-simulate_gcm_agent <- function(agent_id, w_true, log_c_true, bias_true,
+simulate_gcm_agent <- function(agent_id, w_true, c_true, bias_true,
                                stimulus_info, n_blocks, subject_seed) {
   schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
   obs      <- schedule |> dplyr::select(height, position)
   feedback <- schedule$category_feedback
 
   sim_results <- gcm_simulate(
-    w = w_true, log_c = log_c_true, bias = bias_true,
+    w = w_true, c = c_true, bias = bias_true,
     obs = obs, cat_feedback = feedback, quiet = TRUE
   )
 
@@ -527,8 +445,8 @@ simulate_gcm_agent <- function(agent_id, w_true, log_c_true, bias_true,
       agent_id   = agent_id,
       w1_true    = w_true[1],
       w2_true    = w_true[2],
-      log_c_true = log_c_true,
-      c_true     = exp(log_c_true),
+      c_true     = c_true,
+      log_c_true = log(c_true),
       bias_true  = bias_true,
       prob_cat1  = sim_results$prob_cat1,
       sim_response = sim_results$sim_response,
@@ -539,18 +457,18 @@ simulate_gcm_agent <- function(agent_id, w_true, log_c_true, bias_true,
     ungroup()
 }
 
-# Parameter grid on the log_c scale
-# (log_c = log(1) = 0 corresponds to moderate generalization;
-#  log_c = log(4) ≈ 1.39 to high specificity)
+# Parameter grid on the natural c scale
+# (c = 1 corresponds to moderate generalization;
+#  c = 4 to high specificity)
 param_grid <- expand_grid(
-  w_setting    = list(c(0.5, 0.5), c(0.1, 0.9), c(0.9, 0.1)),
-  log_c_setting = c(log(0.5), log(1.0), log(2.0), log(4.0)),
+  w_setting    = list(c(0.5, 0.5), c(0.7, 0.3), c(0.9, 0.1)),
+  c_setting    = c(0.5, 1.0, 2.0, 4.0, 5.0, 15.0),
   bias_setting  = 0.5
 ) |>
   mutate(
     setting_id  = row_number(),
     w_label     = map_chr(w_setting, ~paste(round(.x, 1), collapse = ",")),
-    c_label     = paste0("c≈", round(exp(log_c_setting), 1)),
+    c_label     = paste0("c≈", round(c_setting, 1)),
     label       = paste0("w=(", w_label, "), ", c_label)
   )
 
@@ -567,7 +485,7 @@ if (regenerate_simulations) {
     list(
       agent_id     = simulation_plan$agent_id,
       w_true       = simulation_plan$w_setting,
-      log_c_true   = simulation_plan$log_c_setting,
+      c_true       = simulation_plan$c_setting,
       bias_true    = simulation_plan$bias_setting
     ),
     simulate_gcm_agent,
@@ -641,8 +559,10 @@ p_w_effect
 From these plots we observe:
 
 * **Attention weights matter**: For this category structure, equal weights `w=(0.5,0.5)` generally lead to the best performance, especially at higher sensitivity values — both dimensions are informative.
-* **Sensitivity affects the learning trajectory**: Too low a $c$ value produces overgeneralization and slow learning; too high a value produces rapid forgetting-by-distance that can hurt accuracy when weights are skewed.
-* **Parameters interact**: The effect of sensitivity $c$ depends on attention weights. For equal weights, higher $c$ is beneficial up to a point. With skewed weights, a different $c$ may be optimal. *This interaction is exactly the source of the Q4 c–w identifiability concern*: if performance is similar for several different $(c, w)$ combinations, the data will not pin them down separately.
+
+* **Sensitivity affects the learning trajectory**: Too low a $c$ value produces overgeneralization and slow learning. The literature reports that too high a value produces rapid forgetting-by-distance that could hurt accuracy when weights are skewed, but we don't see that here.
+
+* **Parameters interact**: The effect of sensitivity $c$ depends on attention weights. Unless we have very unequal weights, very high $c$ is indistinguishable from lower values. *This interaction is exactly the source of the c–w identifiability concern*: if performance is similar for several different $(c, w)$ combinations, the data will not pin them down separately.
 
 **Demonstrating path-dependence:** Because each agent receives a unique stimulus order, agents with identical parameters can follow divergent learning curves in early trials — the cold-start trajectory and the specific sequence of exemplars stored in memory differs. This is exactly the diversity of trajectories that real data presents, and it is why per-subject randomization in the simulation matters for realistic model validation.
 
@@ -650,17 +570,18 @@ From these plots we observe:
 
 ## Prior Predictive Check
 
-Before fitting a single data point, we ask: do the priors generate only *scientifically plausible* categorization curves? If the prior predictive distribution includes trajectories with performance well below chance throughout the entire experiment, the prior is implying behaviour that no cognitive model would predict. The prior predictive check is a mandatory step in the six-phase validation pipeline.
+Before fitting a single data point, we ask: do the priors generate only plausible categorization curves? If the prior predictive distribution includes trajectories with performance well below chance throughout the entire experiment, the prior is implying behaviour that no cognitive model would predict. We pick performance as a visualization, because it's easy to think through, but other targets would be possible.
 
-We draw $S = 500$ parameter vectors directly from the priors encoded in the Stan model:
+We need to define the priors for Stan model already here:
 
-- $w \sim \text{Dirichlet}(1, 1)$ — uniform over the simplex
-- $\log c \sim \text{Normal}(\log 2, 1)$ — implies $c \in (0.27, 14.8)$ at $\pm 2$ SD
+- $w \sim \text{Dirichlet}(1, 1)$ — uniform over the simplex: all dimensions are a priori equally important.
+- $\log c \sim \text{Normal}(\log(2), 1)$ — implies $c \in (0.27, 14.8)$ at $\pm 2$ SD
 - $\text{bias} \sim \text{Beta}(1, 1)$ — uniform over $(0, 1)$
+
+We draw $S = 500$ parameter vectors from those priors and generate the simulations.
 
 ```{r, 11 prior predictive check}
 n_prior_samples <- 500
-set.seed(42)
 
 prior_draws <- tibble(
   sample_id = seq_len(n_prior_samples),
@@ -682,8 +603,9 @@ prior_pred_curves <- pmap_dfr(
     bias      = prior_draws$bias
   ),
   function(sample_id, log_c, w1, bias) {
+    c <- exp(log_c)
     sim <- gcm_simulate(
-      w = c(w1, 1 - w1), log_c = log_c, bias = bias,
+      w = c(w1, 1 - w1), c = c, bias = bias,
       obs         = ppc_schedule |> dplyr::select(height, position),
       cat_feedback = ppc_schedule$category_feedback
     )
@@ -720,7 +642,7 @@ ggplot(prior_pred_summary, aes(x = trial)) +
   )
 ```
 
-The prior predictive envelope covers the full plausible range: chance performance (≈ 0.5) for uninformative parameter draws, and accuracy approaching 1.0 for high-sensitivity agents with well-directed attention. No draws push accuracy below chance across the experiment — the prior does not imply impossible or absurd behavior. This is the standard we require before proceeding to inference.
+The prior predictive envelope covers the full plausible range: chance performance (≈ 0.5) for uninformative parameter draws, and accuracy approaching 1.0 for high-sensitivity agents with well-directed attention. No draws push accuracy below chance across the experiment — the prior does not imply absurd behavior. 
 
 ---
 
@@ -730,11 +652,9 @@ While simulating the GCM helps understand its behavior, we ultimately want to es
 
 ### Architectural choice: `prob_cat1[i]` in `transformed parameters`
 
-A naive Stan implementation of a sequential cognitive model places the entire trial-by-trial loop inside the `model{}` block as a local block, accumulates `target +=` along the way, and then *duplicates the entire loop* in `generated quantities{}` to compute `log_lik[i]`. This works, but it doubles the per-iteration cost (the loop runs twice on every saved draw) and creates two copies of the same code that must be kept in sync.
+A naive Stan implementation of a sequential cognitive model places the entire trial-by-trial loop inside the `model{}` block as a local scope, accumulates `target +=` along the way, and then *duplicates the entire loop* in `generated quantities{}` to compute `log_lik[i]`. This works, but it doubles the per-iteration cost (the loop runs twice on every saved draw) and it creates two copies of the same code that must be kept in sync — and the second copy is the one that quietly rots when the first is updated.
 
-There is a better pattern. Because the GCM's per-trial choice probability $p_i$ is a deterministic function of the parameters $(w, c, \beta)$ and the data sequence, it belongs in `transformed parameters`. The `model{}` block then becomes a single line — `bernoulli_lpmf(y | prob_cat1)` — and `generated quantities{}` becomes a one-line lookup. This is the same pattern the Kalman prototype model in Ch. 12 uses, and it should be the default for any cognitive model whose per-trial likelihood is deterministic given the parameters. The persona's Phase 2.1 is unambiguous about this: "If a variable depends only on observed data, calculate it in `transformed data`. If it depends on estimated parameters, it must go in `transformed parameters`."
-
-The cost is one `vector[ntrials]` of additional storage per saved draw. The savings are roughly half the per-iteration evaluation cost and the elimination of duplicated code. We adopt this pattern throughout.
+There is a better pattern. Because the GCM's per-trial choice probability $p_i$ is a deterministic function of the parameters $(w, c, \beta)$ and the data sequence, it belongs in `transformed parameters` as a single source of truth. The `model{}` block then becomes a one-line vectorised Bernoulli likelihood, and `generated quantities{}` becomes a lookup against the already-computed `prob_cat1` vector. Anything that depends only on observed data is evaluated once in `transformed data`; anything that depends on parameters is cached once in `transformed parameters`; the `model{}` and `generated quantities{}` blocks consume those caches. This is the same pattern the Kalman prototype model in Ch. 12 will use, and it should be the default for any cognitive model whose per-trial likelihood is deterministic given the parameters.
 
 ```{r, 11 gcm stan model}
 gcm_single_stan <- "
@@ -766,6 +686,20 @@ data {
   real<lower=0> bias_prior_beta;
 }
 
+transformed data {
+  // Precompute absolute differences between all trials for all features
+  // abs_diff[i, j, f] holds the absolute difference between trial i and trial j on feature f
+  array[ntrials, ntrials, nfeatures] real abs_diff;
+  
+  for (i in 1:ntrials) {
+    for (j in 1:ntrials) {
+      for (f in 1:nfeatures) {
+        abs_diff[i, j, f] = abs(obs[i, f] - obs[j, f]);
+      }
+    }
+  }
+}
+
 parameters {
   simplex[nfeatures] w;
   real log_c;
@@ -779,7 +713,7 @@ transformed parameters {
   vector<lower=1e-9, upper=1-1e-9>[ntrials] prob_cat1;
 
   {
-    array[ntrials, nfeatures] real memory_obs;
+    array[ntrials] int memory_trial_idx;
     array[ntrials] int memory_cat;
     int n_mem = 0;
 
@@ -800,8 +734,9 @@ transformed parameters {
         vector[n_mem] sims;
         for (e in 1:n_mem) {
           real d = 0;
+          int past_i = memory_trial_idx[e];
           for (f in 1:nfeatures)
-            d += w[f] * abs(obs[i, f] - memory_obs[e, f]);
+            d += w[f] * abs_diff[i, past_i, f];
           sims[e] = exp(-c * d);
         }
         real s1 = 0;
@@ -819,7 +754,7 @@ transformed parameters {
 
       // Memory update
       n_mem += 1;
-      for (f in 1:nfeatures) memory_obs[n_mem, f] = obs[i, f];
+      memory_trial_idx[n_mem] = i;
       memory_cat[n_mem] = cat_feedback[i];
     }
   }
@@ -839,8 +774,12 @@ generated quantities {
   // log_lik reads from prob_cat1 — the loop is not re-run.
   // This is the architectural payoff of the transformed-parameters layout.
   vector[ntrials] log_lik;
+  real lprior;
   for (i in 1:ntrials)
     log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1[i]);
+  lprior = dirichlet_lpdf(w | w_prior_alpha) +
+           normal_lpdf(log_c | log_c_prior_mean, log_c_prior_sd) +
+           beta_lpdf(bias | bias_prior_alpha, bias_prior_beta);
 }
 "
 
@@ -849,25 +788,38 @@ write_stan_file(gcm_single_stan, dir = "stan/", basename = "W11_gcm_single.stan"
 mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 ```
 
-Key aspects of the Stan implementation:
+### What each block does:
 
-* **Parameters block**: `w` as a simplex (enforcing $\sum w_m = 1$), `log_c` as an unconstrained real, and `bias` constrained to $(0,1)$. The sensitivity $c$ on the natural scale is derived in `transformed parameters` as `exp(log_c)` — a standard log-normal reparameterization that is both constraint-free and geometrically well-behaved.
-* **Transformed parameters**: implements the trial-by-trial recursion *once*, storing each trial's choice probability in `prob_cat1[i]`. The cold-start branch and the similarity-based branch are exactly the two cases laid out in Phase 0 Q1.
-* **Model block**: priors followed by a vectorised one-line likelihood `bernoulli_lpmf(y | prob_cat1)`. This is the Stan equivalent of "trust the transformed-parameter computation and stop re-doing it."
-* **Generated quantities**: `log_lik[i]` is a one-line lookup. No memory store, no loop, no duplication. Adding posterior predictive quantities later via `cmdstanr::$generate_quantities()` is now trivial because the underlying computation is already cached in `prob_cat1`.
+* **`transformed data`**: Builds the `abs_diff[i, j, f]` tensor of per-feature absolute differences between all trial pairs. Evaluated exactly once per chain before sampling starts.
 
-> **A note on `reduce_sum` and parallelization**: The GCM's inner loop cannot be parallelized with `reduce_sum`. Stan's `reduce_sum` function requires that each slice's log-density contribution be conditionally independent of all other slices given the parameters. In the GCM, trial $t$'s contribution to `target` depends on the memory state accumulated from trials $1, \ldots, t-1$ — a strict sequential dependence. Forcing `reduce_sum` here would produce incorrect results. The correct approach for large datasets is to precompute the $n_\text{stim} \times n_\text{stim}$ matrix of feature differences in R (there are only 8 unique stimuli in the Kruschke task, giving an $8 \times 8 \times 2$ tensor) and pass it to Stan, eliminating redundant absolute-value computations from the inner loop. We do not implement this optimization here, as the 64-trial Kruschke task is fast enough without it.
+* **`parameters`**: Declares the three primitives — `simplex[nfeatures] w`, unconstrained `real log_c`, and `real<lower=0, upper=1> bias`. See the parameter inventory above for what each declaration commits to.
+
+* **`transformed parameters`**: Caches `prob_cat1[i]` in a single forward pass over trials. Memory is indexed by trial number (`memory_trial_idx`), so each stored exemplar's distance is a lookup into the precomputed `abs_diff` tensor rather than a re-subtraction of raw features.
+
+* **`model`**: Priors followed by a vectorised one-line likelihood, `bernoulli_lpmf(y | prob_cat1)`.
+
+* **`generated quantities`**: `log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1[i])` as a per-trial lookup, and `lprior` recomputed as the joint log-prior so `priorsense` has what it needs for power-scaling diagnostics.
+
+> A note on reduce_sum and parallelization: The GCM's inner loop cannot be parallelized 
+> with reduce_sum. Stan's reduce_sum function requires that each slice's log-density 
+> contribution be conditionally independent of all other slices given the parameters.
+> In the GCM, trial $t$'s contribution to target depends on the specific memory state
+> accumulated sequentially from trials $1, \ldots, t-1$. Forcing reduce_sum here would
+> produce mathematically incorrect results. Because we cannot parallelize the loop, the
+> correct way to speed up the model is exactly the transformed data tensor optimization
+> implemented above, which minimizes the raw arithmetic performed inside that strict
+> sequential bottleneck.
 
 ### Fitting the Single-Subject GCM
 
-We use Pathfinder (multi-path variational inference) to find stable starting values before HMC, as mandated for nonlinear cognitive models with constrained parameter spaces.
+We use Pathfinder (multi-path variational inference) to find stable starting values before HMC.
 
 ```{r, 11 fitting gcm stan model}
 # Select one simulated agent: w ≈ (0.1, 0.9), c ≈ 1
 agent_to_fit <- simulated_responses |>
   filter(
-    round(w1_true, 1) == 0.1,
-    abs(log_c_true - log(1.0)) == min(abs(log_c_true - log(1.0)))
+    round(w1_true, 1) == 0.9, 
+    abs(log_c_true - log(2.0)) == min(abs(log_c_true - log(2.0)))
   ) |>
   filter(agent_id == min(agent_id)) |>
   slice(1:total_trials)
@@ -920,9 +872,9 @@ if (regenerate_simulations) {
 }
 ```
 
-### Mandatory MCMC Diagnostic Battery
+### MCMC Diagnostic Battery
 
-The persona's Phase 3.0 is non-negotiable: *the posterior is only valid if the sampler explored the parameter space correctly.* Looking at posterior estimates from a broken sampler is like reading a map drawn by a robot that kept falling over. Before interpreting any posterior, we curate the diagnostic battery and refuse to proceed if anything fails.
+Remember: *the posterior is only valid if the sampler explored the parameter space correctly.* 
 
 ```{r, 11 single subject diagnostic battery}
 if (!is.null(fit_gcm_single)) {
@@ -949,7 +901,7 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-The diagnostic table is the single source of truth for "did the sampler work." A divergence count of zero, $\hat{R}_{\text{rank-normalised}} < 1.01$ on every parameter, bulk and tail ESS above 400, E-BFMI above 0.2, and MCSE/SD below 0.05 are the persona's Phase 3.0 thresholds. If any row fails, the chapter halts and the model gets reparameterised, not pushed harder with `adapt_delta = 0.99`. (The persona explicitly forbids tuning the sampler in place of fixing the geometry.)
+The diagnostic table gives us some crucial hints as to whether the sampler worked. A divergence count of zero, $\hat{R}_{\text{rank-normalised}} < 1.01$ on every parameter, bulk and tail ESS above 400, E-BFMI above 0.2, and MCSE/SD below 0.05 are the persona's Phase 3.0 thresholds. If any row fails, we should investigate deeper and figure out whether the sampler should get different parameter values, the priors should be changed and the model should be reparameterised.
 
 ### Posterior Predictive Check (single subject)
 
@@ -996,11 +948,11 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-The observed cumulative accuracy curve should sit comfortably inside the posterior predictive ribbons. If it falls in the tails — particularly the upper or lower 5% — that is a signal that the model is failing to reproduce the observed learning trajectory, even though parameter recovery may look fine on point estimates. The posterior predictive is the persona's Phase 3.3 check, and it lives here.
+The observed cumulative accuracy curve lies well within the posterior predictive ribbons.
 
 ### Prior–Posterior Update Plot
 
-The persona's Phase 4 requires explicit comparison of the prior and the posterior on each parameter, on both the computational and the interpretable scale. The point is to make *information gain* visible: if the posterior is no narrower than the prior, the data were uninformative for that parameter.
+An explicit comparison of the prior and the posterior on each parameter, on both the computational and the interpretable scale. The point is to make *information gain* visible: if the posterior is no narrower than the prior, the data were uninformative for that parameter.
 
 ```{r, 11 prior posterior update single}
 if (!is.null(fit_gcm_single)) {
@@ -1052,11 +1004,11 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-For each parameter, three things matter: (a) the posterior should be substantially narrower than the prior — *information gain*; (b) the true value should sit comfortably inside the posterior credible interval — *consistency*; (c) the posterior should not have shifted to the boundary of the prior, which would suggest the prior is fighting the likelihood. The plot above shows all four parameters on both the computational ($\log c$) and interpretable ($c$) scales; the persona's Phase 4 explicitly requires both.
+For each parameter, three things matter: (a) the posterior should be substantially narrower than the prior — *information gain*; (b) the true value should sit comfortably inside the posterior credible interval — *consistency*; (c) the posterior should not have shifted to the boundary of the prior, which would suggest the prior is fighting the likelihood. The plot above shows all four parameters on both the computational ($\log c$) and interpretable ($c$) scales.
 
 ### Joint Posterior Geometry: $c$ vs $w$
 
-Phase 0 Q4 asked whether $c$ and $w$ are jointly identifiable from this experimental design. We can now answer empirically by inspecting the joint posterior pairs plot. A diagonal ridge in the $(\log c, w_1)$ panel would indicate a confound: the data cannot tell us which combination of $(c, w_1)$ generated them.
+From previous chapters we know that it is crucial whether $c$ and $w$ are jointly identifiable from this experimental design. We can now answer empirically by inspecting the joint posterior pairs plot. A diagonal ridge in the $(\log c, w_1)$ panel would indicate a confound: the data cannot tell us which combination of $(c, w_1)$ generated them.
 
 ```{r, 11 cw identifiability pairs}
 if (!is.null(fit_gcm_single)) {
@@ -1068,7 +1020,7 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-For the Kruschke (1993) stimulus set used here, the $(\log c, w_1)$ panel should be approximately elliptical without a strong diagonal — both dimensions of the stimulus space carry diagnostic information, so the data can in principle separate sensitivity from attention. If the panel showed a strong diagonal, the right response would not be to widen the priors but to redesign the experiment (e.g., add stimuli that vary the diagnostic information per dimension). This is the persona's Phase 0.3 rule: identifiability failures are design problems, not model problems.
+For the Kruschke (1993) stimulus set used here, the $(\log c, w_1)$ panel should be approximately elliptical without a strong diagonal — both dimensions of the stimulus space carry diagnostic information, so the data can in principle separate sensitivity from attention. If the panel showed a strong diagonal, the right response would not be to widen the priors but to redesign the experiment (e.g., add stimuli that vary the diagnostic information per dimension).
 
 ---
 
@@ -1087,9 +1039,9 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-If trials with $\hat{k} > 0.7$ cluster at early indices (where memory is sparse and the cold-start branch is active) or at specific stimuli (where the model is making confident predictions that the data contradict), we have a localised diagnosis. If they are scattered uniformly, the PSIS approximation is uniformly poor — which is itself a signal to switch to LFO-CV.
+If there are trials with $\hat{k} > 0.7$ and they cluster at early indices (where memory is sparse and the cold-start branch is active) or at specific stimuli (where the model is making confident predictions that the data contradict), we have a localised diagnosis. If they are scattered uniformly, the PSIS approximation is uniformly poor — which is itself a signal to switch to LFO-CV. Luckily we don't seem to have any.
 
-### Leave-Future-Out Cross-Validation: A Real Implementation
+### Leave-Future-Out Cross-Validation
 
 This is the canonical LFO-CV implementation referenced from Chapters 12, 13, and 15.
 
@@ -1141,26 +1093,19 @@ psis_lfo_gcm <- function(stan_model,
     fit
   }
 
-  # Helper: given a fit on training trials 1..n_train, predict trial n_train+1..T
-  # by re-running the deterministic forward simulator with each posterior draw.
-  # The 'extended' Stan data passes ALL trials but we only USE log_lik for the
-  # held-out indices; the in-training likelihood values are reused for IS weights.
+  # Helper: predict all trials conditional on the existing draws
   predict_future <- function(fit, full_data) {
-    # Build the extended data list with all T trials
     full_n <- length(full_data$y)
     ext_data <- full_data
     ext_data$ntrials <- full_n
 
-    # Use cmdstanr's $generate_quantities() to evaluate prob_cat1 and log_lik
-    # on every trial, conditional on the existing draws.
     gq_fit <- stan_model$generate_quantities(
       fitted_params = fit,
       data = ext_data,
       seed = seed,
       parallel_chains = 2
     )
-    log_lik_full <- gq_fit$draws("log_lik", format = "matrix")
-    log_lik_full
+    gq_fit$draws("log_lik", format = "matrix")
   }
 
   T_total       <- length(full_data$y)
@@ -1170,44 +1115,60 @@ psis_lfo_gcm <- function(stan_model,
   k_history     <- numeric(0)
 
   # Initial fit on the first L trials
-  fit_curr     <- fit_subset(L, seed = seed)
-  ll_full_curr <- predict_future(fit_curr, full_data)
-  refits       <- c(refits, L)
+  fit_curr      <- fit_subset(L, seed = seed)
+  ll_full_curr  <- predict_future(fit_curr, full_data)
+  
+  refits        <- c(refits, L)
+  last_fit_n    <- L   # Track the number of trials the current model is trained on
+  n_draws       <- nrow(ll_full_curr)
 
-  # Importance ratio anchor: log p(y_{1:L} | theta) under current posterior
   ll_train_curr <- rowSums(ll_full_curr[, 1:L, drop = FALSE])
 
   for (t in (L + 1):T_total) {
-    # Importance weights to re-weight current posterior to p(theta | y_{1:t-1})
-    ll_train_target <- rowSums(ll_full_curr[, 1:(t - 1), drop = FALSE])
-    log_w           <- ll_train_target - ll_train_curr
+    
+    # 1. Skip PSIS if the target (t-1) is EXACTLY what we just fitted.
+    if (t - 1 == last_fit_n) {
+      k_t <- 0
+      k_history[t] <- k_t
+      # Normalized uniform log-weights (sum to 1 on probability scale)
+      lw <- rep(-log(n_draws), n_draws) 
+    } else {
+      # 2. Otherwise, re-weight current posterior to p(theta | y_{1:t-1})
+      ll_train_target <- rowSums(ll_full_curr[, 1:(t - 1), drop = FALSE])
+      log_w           <- ll_train_target - ll_train_curr
 
-    psis_obj <- loo::psis(log_w, r_eff = NA)
-    k_t      <- loo::pareto_k_values(psis_obj)
-    k_history[t] <- k_t
+      psis_obj     <- loo::psis(log_w, r_eff = NA)
+      k_t          <- loo::pareto_k_values(psis_obj)
+      k_history[t] <- k_t
 
-    if (k_t > k_thresh) {
-      if (verbose) cat("Refit at t =", t, "(k =", round(k_t, 3), ")\n")
-      fit_curr      <- fit_subset(t - 1, seed = seed + t)
-      ll_full_curr  <- predict_future(fit_curr, full_data)
-      ll_train_curr <- rowSums(ll_full_curr[, 1:(t - 1), drop = FALSE])
-      log_w         <- rep(0, length(ll_train_curr))
-      psis_obj      <- loo::psis(log_w, r_eff = NA)
-      refits        <- c(refits, t - 1)
+      if (k_t > k_thresh) {
+        if (verbose) cat("Refit at t =", t, "(k =", round(k_t, 3), ")\n")
+        fit_curr      <- fit_subset(t - 1, seed = seed + t)
+        ll_full_curr  <- predict_future(fit_curr, full_data)
+        ll_train_curr <- rowSums(ll_full_curr[, 1:(t - 1), drop = FALSE])
+        
+        last_fit_n    <- t - 1
+        refits        <- c(refits, last_fit_n)
+        
+        # After refitting, we bypass PSIS and use uniform weights
+        lw <- rep(-log(n_draws), n_draws)
+      } else {
+        # PSIS passed, extract the weights
+        lw <- as.numeric(weights(psis_obj))
+      }
     }
 
     # Reweighted log predictive density at t
-    lw <- as.numeric(weights(psis_obj))   # log weights
     lp <- ll_full_curr[, t]
     elpd_lfo[t] <- matrixStats::logSumExp(lw + lp)
   }
 
   list(
-    elpd_lfo  = sum(elpd_lfo, na.rm = TRUE),
+    elpd_lfo       = sum(elpd_lfo, na.rm = TRUE),
     elpd_pointwise = elpd_lfo,
-    refits    = refits,
-    k_history = k_history,
-    L         = L
+    refits         = refits,
+    k_history      = k_history,
+    L              = L
   )
 }
 
@@ -1245,8 +1206,8 @@ if (!is.null(fit_gcm_single)) {
     geom_line(alpha = 0.7) +
     geom_point(alpha = 0.5) +
     scale_color_manual(values = c(elpd_loo = "#0072B2", elpd_lfo = "#D55E00"),
-                       labels = c("PSIS-LOO (invalid for sequential)",
-                                  "PSIS-LFO (correct)")) +
+                       labels = c("PSIS-LFO (correct)",
+                                  "PSIS-LOO (invalid for sequential)")) +
     labs(
       title    = "Per-trial ELPD: LOO vs LFO-CV",
       subtitle = "Differences are largest where the path-dependence assumption fails most",
@@ -1255,6 +1216,12 @@ if (!is.null(fit_gcm_single)) {
     theme(legend.position = "bottom")
 }
 ```
+
+The gap between the two lines on any specific trial tells you exactly how much the model's understanding of the parameters changed between that moment in time and the end of the experiment.
+
+* **Big gap**: The future data radically changed the model's parameters in a way that was critical for predicting this specific trial.
+
+* **Overlap**: The early parameters were already "good enough" to predict this specific trial, or the future data simply confirmed what the model already knew.
 
 **Validation against exact one-step-ahead refits.** PSIS-LFO is an approximation. To check that it agrees with the exact answer, we compute exact $p(y_t \mid y_{1:t-1})$ by refitting at every $t \in \{L, L+8, L+16, \ldots\}$ — not at every $t$, which would be prohibitive, but on a subset that is dense enough to characterise the agreement.
 
@@ -1319,7 +1286,7 @@ If PSIS-LFO is doing its job, the points lie on the $y = x$ diagonal. Systematic
 
 ### Randomised LOO-PIT
 
-The persona's Phase 4.5 specifies LOO-PIT as the primary calibration check for predictive distributions. For binary outcomes, the standard LOO-PIT is degenerate (it can take only two values), which makes the diagnostic plot uninformative. The fix is *randomised* LOO-PIT (Säilynoja et al., 2022): for each observation, draw a uniform random number on the interval $[F(y - 1), F(y)]$ where $F$ is the LOO predictive CDF. The result is uniformly distributed if the model is calibrated.
+We've seen in previous chapters how LOO-PIT should be the primary calibration check for predictive distributions. For binary outcomes, the standard LOO-PIT is degenerate (it can take only two values), which makes the diagnostic plot uninformative. The fix is *randomised* LOO-PIT (Säilynoja et al., 2022): for each observation, draw a uniform random number on the interval $[F(y - 1), F(y)]$ where $F$ is the LOO predictive CDF. The result is uniformly distributed if the model is calibrated.
 
 This block uses the *actual* posterior predictive draws computed from `prob_cat1` — there are no placeholder `rbinom` calls and no leftover brms syntax.
 
@@ -1376,25 +1343,134 @@ Following the workflow established in Ch. 8, we check how sensitive the posterio
 if (!is.null(fit_gcm_single)) {
   ps <- priorsense::powerscale_sensitivity(fit_gcm_single)
   print(ps)
+  
   priorsense::powerscale_plot_dens(
-    ps, variables = c("log_c", "w[1]", "bias")
+    fit_gcm_single, 
+    variables = c("log_c", "w[1]", "bias")
   )
 }
 ```
 
-Posterior sensitivity above 0.05 on any parameter indicates that the prior and likelihood are not pulling strongly in the same direction — a useful flag for prior revision if theoretically motivated. Influential priors are not always bad: they can regularise inference, incorporate domain knowledge, or benchmark against previous literature. The persona's Phase 5 wants this displayed, not hidden.
+Posterior sensitivity above 0.05 on any parameter indicates that the prior and likelihood are not pulling strongly in the same direction — a useful flag for prior revision if theoretically motivated. Influential priors are not always bad: they can regularise inference, incorporate domain knowledge, or benchmark against previous literature. But we should be explicit about this.
 
 ---
 
-### Key Parameters and Their Cognitive Interpretations
+## Single-Subject Simulation-Based Calibration (SBC)
 
-The GCM has three primary parameters in this formulation:
+While parameter recovery assesses if the model can retrieve known parameters at specific grid points, **Simulation-Based Calibration (SBC)** checks the internal consistency and calibration of the entire Bayesian inference procedure (model code + priors) across the *whole* prior. It asks: "If the true parameters really came from our specified priors, would our inference procedure, on average, produce posteriors that are statistically consistent with those priors?"
 
-1. **Attention Weights ($w$)**: A simplex vector determining the relative importance of each stimulus dimension in similarity calculations. Higher weight = more attention to that dimension. Cognitively represents selective attention processes.
+### Why Use SBC?
 
-2. **Sensitivity Parameter ($c$)**: A positive scalar determining how rapidly similarity decays with psychological distance. Higher $c$ = faster decay, less generalization, higher specificity. Lower $c$ = slower decay, more generalization. We parameterize as $\log c$ in Stan to keep the parameter on an unconstrained scale while preserving the positivity constraint through exponentiation. Cognitively represents perceptual discriminability, memory specificity, or the width of the generalization gradient. *As discussed in Phase 0 Q3, $c$ also implicitly absorbs decisional precision in this model — there is no separate softmax temperature.*
+* **Detects implementation bugs**: SBC is excellent at finding subtle errors in Stan code (e.g., indexing mistakes, incorrect transformations, likelihood errors).
+* **Validates priors**: It reveals if priors are unintentionally too informative or interact poorly with the likelihood, leading to biased posteriors.
+* **Checks calibration**: Ensures that posterior intervals (e.g., 95% credible intervals) have the correct coverage frequency across the prior space.
+* **Complements recovery**: Previous recovery checks assess performance at specific points; SBC checks performance across the entire prior predictive distribution.
 
-3. **Response Bias ($\beta$)**: A scalar in $(0,1)$ representing a baseline preference for one category independent of stimulus similarity. $\text{bias} = 0.5$ indicates unbiased responding; deviations reflect asymmetric response tendencies or unequal base rates. *As discussed in Phase 0 Q1, $\beta$ also serves as the cold-start fallback before both categories have been observed.*
+### How SBC Works
+
+The core idea: parameters drawn from the prior should be uniformly distributed within their corresponding posterior distribution, after fitting the model to data generated from those prior-drawn parameters.
+
+1. **Sample** one set of all model parameters from their prior distributions.
+2. **Simulate** one dataset from those parameters.
+3. **Fit** the Stan model to this simulated dataset.
+4. **Rank** each true parameter value among the $M$ posterior samples: $\text{rank}(\theta^*) = \sum_{m=1}^{M} \mathbb{I}(\theta_m < \theta^*)$.
+5. **Repeat** $S \geq 1000$ times and plot the empirical CDF of ranks.
+
+If the model and priors are correctly specified, the rank statistics are **uniformly distributed**. The preferred diagnostic is the **ECDF-difference plot** (Säilynoja, Bürkner, & Vehtari, 2022), which is more sensitive to subtle calibration failures than rank histograms. We use the `SBC` package, which is consistent with how SBC was conducted in Chapters 6 and 8.
+
+### Implementing SBC for the Single-Subject Model
+
+```{r, 11 sbc single subject, eval=run_intensive_checks}
+# SBC for the single-subject GCM.
+# The generator function must:
+#   (a) sample parameters from the EXACT priors encoded in the Stan model block
+#   (b) generate a dataset using gcm_simulate with those parameters
+#   (c) return a list with named elements: variables (true params) and generated (Stan data list)
+# Using the same priors in (a) and in the Stan model is the discipline that
+# catches bugs: any mismatch will produce non-uniform ECDF-diff plots.
+
+n_sbc_iterations_single <- 500   # use >= 1000 for publication-quality SBC
+
+gcm_single_sbc_generator <- SBC_generator_function(
+  # 1. Signature updated to expect zero arguments
+  function() {
+    # 1a. Sample from priors
+    w_true     <- as.numeric(MCMCpack::rdirichlet(1, c(1, 1)))
+    log_c_true <- rnorm(1, LOG_C_PRIOR_MEAN, LOG_C_PRIOR_SD)
+    c_true     <- exp(log_c_true)
+    bias_true  <- rbeta(1, 1, 1)
+
+    # 1b. Generate one randomized schedule for this SBC iteration
+    # 2. Use sample.int() instead of the manual 'i' counter
+    sbc_schedule <- make_subject_schedule(stimulus_info, n_blocks,
+                                          seed = sample.int(1e8, 1))
+
+    # 1c. Simulate data using gcm_simulate
+    sim <- gcm_simulate(
+      w            = w_true, 
+      c            = c_true, 
+      bias         = bias_true,
+      obs          = sbc_schedule |> dplyr::select(height, position),
+      cat_feedback = sbc_schedule$category_feedback
+    )
+
+    list(
+      variables = list(
+        `w[1]` = w_true[1],
+        `w[2]` = w_true[2],
+        log_c  = log_c_true,
+        bias   = bias_true
+      ),
+      generated = list(
+        ntrials          = nrow(sbc_schedule),
+        nfeatures        = 2L,
+        y                = as.integer(sim$sim_response),
+        obs              = as.matrix(sbc_schedule[, c("height", "position")]),
+        cat_feedback     = as.integer(sbc_schedule$category_feedback),
+        w_prior_alpha    = c(1, 1),
+        log_c_prior_mean = LOG_C_PRIOR_MEAN,
+        log_c_prior_sd   = LOG_C_PRIOR_SD,
+        bias_prior_alpha = 1,
+        bias_prior_beta  = 1
+      )
+    )
+  }
+)
+
+gcm_single_sbc_backend <- SBC_backend_cmdstan_sample(
+  mod_gcm_single,
+  iter_warmup   = 1000,
+  iter_sampling = 1000,
+  chains        = 2,
+  adapt_delta   = 0.9,
+  refresh       = 0
+)
+
+gcm_single_datasets <- generate_datasets(
+  gcm_single_sbc_generator, 
+  n_sims = n_sbc_iterations_single
+)
+
+# 2. Compute SBC on the realized datasets
+sbc_results_single <- compute_SBC(
+  gcm_single_datasets,
+  gcm_single_sbc_backend,
+  cache_mode = "results",
+  cache_location = "simdata/W11_sbc_single_cache",
+  keep_fits  = FALSE
+)
+
+# ECDF-difference plot: the preferred diagnostic (Säilynoja et al. 2022)
+# Flat lines within the 99% simultaneous band indicate well-calibrated posteriors.
+# U-shaped → posterior too narrow; bell-shaped → posterior too wide;
+# monotone trend → systematic bias.
+plot_ecdf_diff(sbc_results_single)
+plot_rank_hist(sbc_results_single)   # for comparison with earlier chapters
+```
+
+Uniform ECDF-difference curves — flat lines staying within the simultaneous confidence band — constitute strong evidence that the Stan code and priors form a coherent inference engine. Any systematic deviation (U-shape, bell-shape, or monotone drift) identifies which parameter is miscalibrated and in which direction, providing a direct diagnostic for debugging.
+
+Passing single-agent SBC is the statistical authorization to introduce hierarchical structure. Flat ECDF-difference curves mean the inference engine for *one* agent is calibrated against its own priors — the posteriors the Stan program returns are the posteriors those priors imply. That is the prerequisite for treating this engine as a building block in a population model: a hierarchical GCM stacks a population layer on top of the per-subject inference, so if the per-subject inference were miscalibrated, the hierarchy would only propagate the miscalibration upward.
 
 ---
 
@@ -1562,7 +1638,7 @@ simulate_multilevel_gcm <- function(n_subjects, stimulus_info, n_blocks,
     all_agent_data[[j]] <- simulate_gcm_agent(
       agent_id      = j,
       w_true        = as.numeric(ind_w[j, ]),
-      log_c_true    = ind_log_c[j],
+      c_true        = ind_c[j],
       bias_true     = ind_bias[j],
       stimulus_info = stimulus_info,
       n_blocks      = n_blocks,
@@ -2161,112 +2237,6 @@ Flagging iterations with divergences (in orange) allows us to separate reliable 
 
 ---
 
-## Single-Subject Simulation-Based Calibration (SBC)
-
-While parameter recovery assesses if the model can retrieve known parameters at specific grid points, **Simulation-Based Calibration (SBC)** checks the internal consistency and calibration of the entire Bayesian inference procedure (model code + priors) across the *whole* prior. It asks: "If the true parameters really came from our specified priors, would our inference procedure, on average, produce posteriors that are statistically consistent with those priors?"
-
-### Why Use SBC?
-
-* **Detects implementation bugs**: SBC is excellent at finding subtle errors in Stan code (e.g., indexing mistakes, incorrect transformations, likelihood errors).
-* **Validates priors**: It reveals if priors are unintentionally too informative or interact poorly with the likelihood, leading to biased posteriors.
-* **Checks calibration**: Ensures that posterior intervals (e.g., 95% credible intervals) have the correct coverage frequency across the prior space.
-* **Complements recovery**: Recovery checks performance at specific points; SBC checks average performance across the entire prior predictive distribution.
-
-### How SBC Works
-
-The core idea: parameters drawn from the prior should be uniformly distributed within their corresponding posterior distribution, after fitting the model to data generated from those prior-drawn parameters.
-
-1. **Sample** one set of all model parameters from their prior distributions.
-2. **Simulate** one dataset from those parameters.
-3. **Fit** the Stan model to this simulated dataset.
-4. **Rank** each true parameter value among the $M$ posterior samples: $\text{rank}(\theta^*) = \sum_{m=1}^{M} \mathbb{I}(\theta_m < \theta^*)$.
-5. **Repeat** $S \geq 1000$ times and plot the empirical CDF of ranks.
-
-If the model and priors are correctly specified, the rank statistics are **uniformly distributed**. The preferred diagnostic is the **ECDF-difference plot** (Säilynoja, Bürkner, & Vehtari, 2022), which is more sensitive to subtle calibration failures than rank histograms. We use the `SBC` package, which is consistent with how SBC was conducted in Chapters 6 and 8.
-
-### Implementing SBC for the Single-Subject Model
-
-```{r, 11 sbc single subject, eval=run_intensive_checks}
-# SBC for the single-subject GCM.
-# The generator function must:
-#   (a) sample parameters from the EXACT priors encoded in the Stan model block
-#   (b) generate a dataset using gcm_simulate with those parameters
-#   (c) return a list with named elements: variables (true params) and generated (Stan data list)
-# Using the same priors in (a) and in the Stan model is the discipline that
-# catches bugs: any mismatch will produce non-uniform ECDF-diff plots.
-
-n_sbc_iterations_single <- 500   # use >= 1000 for publication-quality SBC
-
-gcm_single_sbc_generator <- SBC_generator_function(
-  function(i) {
-    # 1a. Sample from priors
-    w_true    <- as.numeric(MCMCpack::rdirichlet(1, c(1, 1)))
-    log_c_true <- rnorm(1, LOG_C_PRIOR_MEAN, LOG_C_PRIOR_SD)
-    bias_true  <- rbeta(1, 1, 1)
-
-    # 1b. Generate one randomized schedule for this SBC iteration
-    sbc_schedule <- make_subject_schedule(stimulus_info, n_blocks,
-                                          seed = 10000 + i)
-
-    # 1c. Simulate data using gcm_simulate
-    sim <- gcm_simulate(
-      w = w_true, log_c = log_c_true, bias = bias_true,
-      obs          = sbc_schedule |> dplyr::select(height, position),
-      cat_feedback = sbc_schedule$category_feedback
-    )
-
-    list(
-      variables = list(
-        `w[1]` = w_true[1],
-        `w[2]` = w_true[2],
-        log_c  = log_c_true,
-        bias   = bias_true
-      ),
-      generated = list(
-        ntrials          = nrow(sbc_schedule),
-        nfeatures        = 2L,
-        y                = as.integer(sim$sim_response),
-        obs              = as.matrix(sbc_schedule[, c("height", "position")]),
-        cat_feedback     = as.integer(sbc_schedule$category_feedback),
-        w_prior_alpha    = c(1, 1),
-        log_c_prior_mean = LOG_C_PRIOR_MEAN,
-        log_c_prior_sd   = LOG_C_PRIOR_SD,
-        bias_prior_alpha = 1,
-        bias_prior_beta  = 1
-      )
-    )
-  },
-  n = n_sbc_iterations_single
-)
-
-gcm_single_sbc_backend <- SBC_backend_cmdstan_sample(
-  mod_gcm_single,
-  iter_warmup   = 1000,
-  iter_sampling = 1000,
-  chains        = 2,
-  adapt_delta   = 0.9,
-  refresh       = 0
-)
-
-sbc_results_single <- compute_SBC(
-  gcm_single_sbc_generator,
-  gcm_single_sbc_backend,
-  cache_path = "simdata/W11_sbc_single_cache",
-  keep_fits  = FALSE
-)
-
-# ECDF-difference plot: the preferred diagnostic (Säilynoja et al. 2022)
-# Flat lines within the 99% simultaneous band indicate well-calibrated posteriors.
-# U-shaped → posterior too narrow; bell-shaped → posterior too wide;
-# monotone trend → systematic bias.
-plot_ecdf_diff(sbc_results_single)
-plot_rank_hist(sbc_results_single)   # for comparison with earlier chapters
-```
-
-Uniform ECDF-difference curves — flat lines staying within the simultaneous confidence band — constitute strong evidence that the Stan code and priors form a coherent inference engine. Any systematic deviation (U-shape, bell-shape, or monotone drift) identifies which parameter is miscalibrated and in which direction, providing a direct diagnostic for debugging.
-
----
-
 ## Multilevel SBC
 
 The single-subject SBC validates the inference engine for one agent. The multilevel SBC validates the inference engine *for the population structure* — and this is where NCP-related geometry pathologies show up that are invisible to single-subject SBC. The persona's Phase 5 lists the reverse funnel as a known NCP failure mode, and multilevel SBC is the diagnostic that catches it.
@@ -2291,6 +2261,7 @@ gcm_ml_sbc_generator <- SBC_generator_function(
     z_log_c       <- rnorm(n_subjects_sbc, 0, 1)
     z_logit_bias  <- rnorm(n_subjects_sbc, 0, 1)
     subj_log_c    <- pop_log_c_mean + pop_log_c_sd * z_log_c
+    subj_c        <- exp(subj_log_c)
     subj_bias     <- plogis(pop_logit_bias_mean + pop_logit_bias_sd * z_logit_bias)
     alpha_w       <- pmax(1e-9, kappa * pop_w)
     subj_w        <- MCMCpack::rdirichlet(n_subjects_sbc, alpha_w)
@@ -2301,7 +2272,7 @@ gcm_ml_sbc_generator <- SBC_generator_function(
                                      seed = 50000 + i * 100 + j)
       sim   <- gcm_simulate(
         w = as.numeric(subj_w[j, ]),
-        log_c = subj_log_c[j],
+        c = subj_c[j],
         bias  = subj_bias[j],
         obs          = sched |> dplyr::select(height, position),
         cat_feedback = sched$category_feedback

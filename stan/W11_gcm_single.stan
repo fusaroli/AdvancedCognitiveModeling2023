@@ -1,150 +1,125 @@
 
-// Generalized Context Model (GCM) - Single Subject (Scaled Logit c)
+// Generalized Context Model — Single Subject (refactored architecture)
+//
+// Key design:
+//   prob_cat1[i] is the per-trial choice probability. It is deterministic
+//   given (w, log_c, bias) and the data sequence, so it lives in
+//   transformed parameters. model{} reads it once via bernoulli_lpmf.
+//   generated quantities{} reads the same vector for log_lik[i].
+//
+// Parameterization:
+//   w      : attention weights (simplex)
+//   log_c  : log sensitivity (unconstrained); c = exp(log_c)
+//   bias   : response bias towards category 1 (0–1)
 
 data {
-  int<lower=1> ntrials;       
-  int<lower=1> nfeatures;     
-  array[ntrials] int<lower=0, upper=1> y;       
-  array[ntrials, nfeatures] real obs; 
-  array[ntrials] int<lower=0, upper=1> cat_feedback; 
+  int<lower=1> ntrials;
+  int<lower=1> nfeatures;
+  array[ntrials] int<lower=0, upper=1> y;
+  array[ntrials, nfeatures] real obs;
+  array[ntrials] int<lower=0, upper=1> cat_feedback;
+
+  // Prior hyperparameters (passed as data for flexibility)
+  vector[nfeatures] w_prior_alpha;
+  real log_c_prior_mean;
+  real<lower=0> log_c_prior_sd;
+  real<lower=0> bias_prior_alpha;
+  real<lower=0> bias_prior_beta;
+}
+
+transformed data {
+  // Precompute absolute differences between all trials for all features
+  // abs_diff[i, j, f] holds the absolute difference between trial i and trial j on feature f
+  array[ntrials, ntrials, nfeatures] real abs_diff;
   
-  // Priors
-  vector[nfeatures] w_prior_alpha; 
-  // Prior for c_logit_scaled: normal(mean, sd)
-  array[2] real c_logit_scaled_prior_params; 
-  array[2] real bias_prior_params; 
-  
-  // Define bounds for c
-  real<lower=0> C_UPPER_BOUND; 
-  real LOWER_BOUND; // Typically 0
+  for (i in 1:ntrials) {
+    for (j in 1:ntrials) {
+      for (f in 1:nfeatures) {
+        abs_diff[i, j, f] = abs(obs[i, f] - obs[j, f]);
+      }
+    }
+  }
 }
 
 parameters {
-  simplex[nfeatures] w;       
-  real c_logit_scaled;      // Scaled logit transformed sensitivity
-  real<lower=0, upper=1> bias; 
+  simplex[nfeatures] w;
+  real log_c;
+  real<lower=0, upper=1> bias;
 }
 
 transformed parameters {
-  // Calculate c on original scale from the transformed parameter
-  real<lower=LOWER_BOUND, upper=C_UPPER_BOUND> c = LOWER_BOUND + (C_UPPER_BOUND - LOWER_BOUND) * inv_logit(c_logit_scaled); 
+  real<lower=0> c = exp(log_c);
+
+  // Per-trial choice probability — computed once per leapfrog step.
+  vector<lower=1e-9, upper=1-1e-9>[ntrials] prob_cat1;
+
+  {
+    array[ntrials] int memory_trial_idx;
+    array[ntrials] int memory_cat;
+    int n_mem = 0;
+
+    for (i in 1:ntrials) {
+      real p_i;
+      int has_cat0 = 0;
+      int has_cat1 = 0;
+
+      for (k in 1:n_mem) {
+        if (memory_cat[k] == 0) has_cat0 = 1;
+        if (memory_cat[k] == 1) has_cat1 = 1;
+      }
+
+      if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
+        // Cold-start branch — answers Q1 of Phase 0.
+        p_i = bias;
+      } else {
+        vector[n_mem] sims;
+        for (e in 1:n_mem) {
+          real d = 0;
+          int past_i = memory_trial_idx[e];
+          for (f in 1:nfeatures)
+            d += w[f] * abs_diff[i, past_i, f];
+          sims[e] = exp(-c * d);
+        }
+        real s1 = 0;
+        real s0 = 0;
+        for (e in 1:n_mem) {
+          if (memory_cat[e] == 1) s1 += sims[e];
+          else                    s0 += sims[e];
+        }
+        real num = bias * s1;
+        real den = num + (1 - bias) * s0;
+        p_i = (den > 1e-9) ? num / den : bias;
+      }
+
+      prob_cat1[i] = fmax(1e-9, fmin(1 - 1e-9, p_i));
+
+      // Memory update
+      n_mem += 1;
+      memory_trial_idx[n_mem] = i;
+      memory_cat[n_mem] = cat_feedback[i];
+    }
+  }
 }
 
 model {
   // Priors
-  target += dirichlet_lpdf(w | w_prior_alpha);          
-  // Prior on the TRANSFORMED sensitivity parameter
-  target += normal_lpdf(c_logit_scaled | c_logit_scaled_prior_params[1], c_logit_scaled_prior_params[2]); 
-  target += beta_lpdf(bias | bias_prior_params[1], bias_prior_params[2]); 
+  target += dirichlet_lpdf(w    | w_prior_alpha);
+  target += normal_lpdf(log_c   | log_c_prior_mean, log_c_prior_sd);
+  target += beta_lpdf(bias      | bias_prior_alpha, bias_prior_beta);
 
-  // Likelihood calculation trial-by-trial
-  { 
-    array[ntrials, nfeatures] real memory_obs; 
-    array[ntrials] int memory_cat;        
-    int n_memory = 0;                     
-
-    for (i in 1:ntrials) {
-      real prob_cat1; 
-      int has_cat0 = 0;
-      int has_cat1 = 0;
-      if (n_memory > 0) {
-        for (k in 1:n_memory) {
-          if (memory_cat[k] == 0) has_cat0 = 1;
-          if (memory_cat[k] == 1) has_cat1 = 1;
-        }
-      }
-
-      if (n_memory == 0 || has_cat0 == 0 || has_cat1 == 0) {
-        prob_cat1 = bias;
-      } else {
-        vector[n_memory] similarities;
-        for (e in 1:n_memory) {
-          real dist_val = 0; 
-          for (f in 1:nfeatures) {
-             dist_val += w[f] * abs(obs[i, f] - memory_obs[e, f]);
-          }
-          // Similarity calculation using the derived 'c'
-          similarities[e] = exp(-c * dist_val); 
-        }
-
-        real sum_sim_cat1 = 0;
-        real sum_sim_cat0 = 0;
-        for (e in 1:n_memory) {
-          if (memory_cat[e] == 1) sum_sim_cat1 += similarities[e];
-          else sum_sim_cat0 += similarities[e];
-        }
-        
-        real numerator = bias * sum_sim_cat1;
-        real denominator = numerator + (1 - bias) * sum_sim_cat0;
-
-        if (denominator > 1e-9) { 
-          prob_cat1 = numerator / denominator;
-        } else {
-          prob_cat1 = bias; 
-        }
-        
-        prob_cat1 = fmax(1e-9, fmin(1.0 - 1e-9, prob_cat1)); // Use smaller epsilon
-      }
-      
-      target += bernoulli_lpmf(y[i] | prob_cat1);
-
-      // Update memory
-      n_memory += 1;
-      // Avoid potential overflow if ntrials is large and memory isn't bounded
-      if (n_memory <= ntrials) { 
-          memory_obs[n_memory] = obs[i];
-          memory_cat[n_memory] = cat_feedback[i];
-      }
-    } 
-  } 
+  // Vectorised Bernoulli likelihood — one line, no duplicated loop.
+  target += bernoulli_lpmf(y | prob_cat1);
 }
 
 generated quantities {
+  // log_lik reads from prob_cat1 — the loop is not re-run.
+  // This is the architectural payoff of the transformed-parameters layout.
   vector[ntrials] log_lik;
-  // Also generate c_logit_scaled for direct comparison in recovery/SBC
-  real c_logit_scaled_rep = c_logit_scaled; // Replicate for output
-  real c_rep = c; // Replicate derived c for output
-  
-  { // Replicate memory logic exactly from model block
-    array[ntrials, nfeatures] real memory_obs; 
-    array[ntrials] int memory_cat;        
-    int n_memory = 0;                     
-
-    for (i in 1:ntrials) {
-      real prob_cat1; 
-      int has_cat0 = 0;
-      int has_cat1 = 0;
-      if (n_memory > 0) { /* ... check memory ... */ }
-
-      if (n_memory == 0 || has_cat0 == 0 || has_cat1 == 0) {
-        prob_cat1 = bias;
-      } else {
-        vector[n_memory] similarities;
-        for (e in 1:n_memory) {
-          real dist_val = 0; 
-          for (f in 1:nfeatures) { /* ... calculate distance ... */ }
-          // Use the derived 'c' from transformed parameters
-          similarities[e] = exp(-c * dist_val); 
-        }
-        real sum_sim_cat1 = 0;
-        real sum_sim_cat0 = 0;
-        /* ... calculate summed similarities ... */
-        real numerator = bias * sum_sim_cat1;
-        real denominator = numerator + (1 - bias) * sum_sim_cat0;
-        if (denominator > 1e-9) { /* ... calculate prob_cat1 ... */ }
-        else { prob_cat1 = bias; }
-        prob_cat1 = fmax(1e-9, fmin(1.0 - 1e-9, prob_cat1));
-      }
-      
-      log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1);
-
-      // Update memory
-      n_memory += 1;
-      if (n_memory <= ntrials) {
-          memory_obs[n_memory] = obs[i];
-          memory_cat[n_memory] = cat_feedback[i];
-      }
-    } 
-  } 
+  real lprior;
+  for (i in 1:ntrials)
+    log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1[i]);
+  lprior = dirichlet_lpdf(w | w_prior_alpha) +
+           normal_lpdf(log_c | log_c_prior_mean, log_c_prior_sd) +
+           beta_lpdf(bias | bias_prior_alpha, bias_prior_beta);
 }
 
