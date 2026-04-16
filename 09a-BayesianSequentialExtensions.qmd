@@ -1,18 +1,26 @@
-```{r 09a_setup, include=FALSE}
+# Sequential Extensions of the Bayesian Agent
+
+```{r setup-app-a, include=FALSE}
 knitr::opts_chunk$set(
-  echo    = TRUE,
-  warning = FALSE,
-  message = FALSE,
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
   fig.width  = 8,
   fig.height = 5,
-  fig.align  = "center",
+  fig.align  = 'center',
   out.width  = "80%",
   dpi        = 300
 )
 
+# Flag to control whether to regenerate simulations/fits
+# Set to TRUE to rerun everything, FALSE to load saved results.
+regenerate_simulations <- FALSE
+
+# Create directories if they don't exist
 for (d in c("stan", "simdata", "simmodels", "figures")) {
   if (!dir.exists(d)) dir.create(d)
 }
+```
 
 pacman::p_load(
   tidyverse,
@@ -26,8 +34,6 @@ pacman::p_load(
 theme_set(theme_minimal())
 set.seed(1234)
 ```
-
-# Appendix: Sequential Extensions of the Bayesian Agent
 
 Every Bayesian agent we built in Ch. 9 — SBA, WBA, PBA, and their
 multilevel cousins — shares two strong assumptions. First, the agent is
@@ -385,17 +391,22 @@ write_stan_file(ThresholdAgent_stan,
 ```
 
 ```{r 09a_threshold_fit, results = "hide"}
-mod_A <- cmdstan_model("stan/ch9a_threshold_agent.stan")
+mod_A <- cmdstan_model("stan/ch9a_threshold_agent.stan", dir = "simmodels")
 
-fit_A <- mod_A$sample(
-  data = stan_data_A,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  iter_warmup = 500,
-  iter_sampling = 500,
-  refresh = 0
-)
+if (regenerate_simulations || !file.exists("simmodels/ch9a_fit_A.rds")) {
+  fit_A <- mod_A$sample(
+    data = stan_data_A,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    iter_warmup = 500,
+    iter_sampling = 500,
+    refresh = 0
+  )
+  fit_A$save_object("simmodels/ch9a_fit_A.rds")
+} else {
+  fit_A <- readRDS("simmodels/ch9a_fit_A.rds")
+}
 ```
 
 ```{r 09a_threshold_diagnostics}
@@ -687,17 +698,22 @@ write_stan_file(AdaptiveAgent_stan,
 ```
 
 ```{r 09a_adaptive_fit, results = "hide"}
-mod_B <- cmdstan_model("stan/ch9a_adaptive_agent.stan")
+mod_B <- cmdstan_model("stan/ch9a_adaptive_agent.stan", dir = "simmodels")
 
-fit_B <- mod_B$sample(
-  data = stan_data_B,
-  seed = 321,
-  chains = 2,
-  parallel_chains = 2,
-  iter_warmup = 500,
-  iter_sampling = 500,
-  refresh = 0
-)
+if (regenerate_simulations || !file.exists("simmodels/ch9a_fit_B.rds")) {
+  fit_B <- mod_B$sample(
+    data = stan_data_B,
+    seed = 321,
+    chains = 2,
+    parallel_chains = 2,
+    iter_warmup = 500,
+    iter_sampling = 500,
+    refresh = 0
+  )
+  fit_B$save_object("simmodels/ch9a_fit_B.rds")
+} else {
+  fit_B <- readRDS("simmodels/ch9a_fit_B.rds")
+}
 ```
 
 ```{r 09a_adaptive_diagnostics}

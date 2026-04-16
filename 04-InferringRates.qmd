@@ -1,6 +1,36 @@
 
 # From simulation to model fitting
 
+```{r setup-ch04, include=FALSE}
+knitr::opts_chunk$set(
+  warning    = FALSE,
+  message    = FALSE,
+  echo       = TRUE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = 'center',
+  out.width  = "80%",
+  dpi        = 300
+)
+
+pacman::p_load(
+  tidyverse,
+  here,
+  cmdstanr,
+  posterior,
+  bayesplot,
+  furrr,
+  future,
+  patchwork
+)
+
+# Parallel Setup: Leave 2 cores free for system stability
+n_cores <- parallel::detectCores() - 2
+future::plan(multisession, workers = n_cores)
+
+theme_set(theme_classic())
+```
+
 > **📍 Where we are in the Bayesian modeling workflow:**
 > Ch. 3 built forward models — code that generates data *from* known parameters.
 > This chapter reverses the arrow: given observed choices, we infer the parameters
@@ -12,7 +42,7 @@
 In Chapter 3, we formalized verbal models into computational agents and explored their behavior through simulation by *setting* their parameters (like bias `rate` or WSLS rules). However, when analyzing real experimental data, we don't know the true parameter values underlying a participant's behavior. The core task shifts from simulation to **parameter estimation**: inferring the plausible values of model parameters *given* the observed data.
 
 
-## Learning Goals
+## Learning Objectives
 
 This chapter transitions from simulating predefined models (Chapter 3) to inferring model parameters from data using Bayesian methods. By the end of this chapter, you will be able to:
 
@@ -69,25 +99,6 @@ Here we build a new simulation of random agents with bias and noise. The code an
 # Flag to control whether to regenerate simulation/fitting results for the knitted files
 # Set to TRUE to rerun everything (takes time!), FALSE to load saved results.
 regenerate_simulations <- FALSE 
-
-# Load required packages using pacman::p_load
-pacman::p_load(
-  tidyverse,
-  here,
-  cmdstanr,
-  posterior,
-  bayesplot,
-  furrr,
-  future,
-  patchwork     
-)
-
-# Parallel Setup: Leave 2 cores free for system stability
-n_cores <- parallel::detectCores() - 2
-plan(multisession, workers = n_cores)
-
-# Optional: Set a default ggplot theme
-theme_set(theme_classic())
 
 # --- Simulate Data for Fitting ---
 # Goal: Generate data from known models/parameters to test our fitting procedures.

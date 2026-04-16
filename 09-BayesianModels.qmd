@@ -1435,7 +1435,7 @@ generate_random_trials <- function(wd, ws, n_trials) {
 cat(sprintf("Running %d total parameter recovery simulations...\n", nrow(sim_grid)))
 
 # Run fits in parallel (using your existing multicore plan)
-if (regenerate_simulations) {
+if (regenerate_simulations || !file.exists("simmodels/ch9_n_investigation.rds")) {
   recovery_results <- future_pmap_dfr(
     list(sim_grid$sample_size, sim_grid$sim_id, sim_grid$true_wd, sim_grid$true_ws),
     function(n_trials, id, wd, ws) {
@@ -1804,7 +1804,7 @@ stan_data_wba_reparam <- map(true_wba_reparam, function(params) {
 ### Fit All Models
 
 ```{r 09_fit_reparam_models}
-if (regenerate_simulations) {
+if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch9_fit_pba_%s.rds", names(stan_data_pba))))) {
   # --- Fit PBA ---
   fit_pba <- map2(stan_data_pba, 201:203, function(data, seed) {
     do.call(mod_proportional$sample,
@@ -2091,7 +2091,7 @@ Now that we have roughly working models (we can identify the ratio pretty decent
 ```{r 09_sbc, message=FALSE}
 n_sbc_datasets <- 500
 
-if (regenerate_simulations) {
+if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_wba_results.rds", "simmodels/ch9_sbc_pba_results.rds")))) {
   
   fixed_ev_grid <- evidence_combinations |> slice(rep(seq_len(n()), times = 5))
 
@@ -2253,7 +2253,7 @@ fit_all_models <- function(stan_data, ...) {
   list(SBA = sba, PBA = pba, WBA = wba)
 }
 
-if (regenerate_simulations) {
+if (regenerate_simulations || !file.exists("simmodels/ch9_scenario_case_studies.rds")) {
   set.seed(2026)
 
   # 1. Generate three datasets (all True Model = WBA with specific params)
@@ -2466,7 +2466,7 @@ For each of our three structural generating processes (SBA, PBA, WBA), we simula
 n_sims <- 50
 plan(multisession, workers = parallel::detectCores() - 2)
 
-if (regenerate_simulations) {
+if (regenerate_simulations || !file.exists("simmodels/ch9_model_recovery.rds")) {
 
   # Generate datasets from each model type
   sim_grid <- bind_rows(
@@ -3329,7 +3329,7 @@ mod_ml_wba <- cmdstan_model("stan/ch9_multilevel_wba.stan", dir = "simmodels")
 ## Fitting the Multilevel Models
 
 ```{r 09_fit_multilevel, message=FALSE}
-fit_ml_sba <- if (regenerate_simulations) {
+fit_ml_sba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_sba.rds")) {
   fit <- mod_ml_sba$sample(
     data            = stan_data_ml,
     chains          = 4,
@@ -3344,7 +3344,7 @@ fit_ml_sba <- if (regenerate_simulations) {
 } else {
   readRDS("simmodels/ch9_fit_ml_sba.rds")
 }
-fit_ml_pba <- if (regenerate_simulations) {
+fit_ml_pba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_pba.rds")) {
   fit <- mod_ml_pba$sample(
     data            = stan_data_ml,
     chains          = 4,
@@ -3360,7 +3360,7 @@ fit_ml_pba <- if (regenerate_simulations) {
   readRDS("simmodels/ch9_fit_ml_pba.rds")
 }
 
-fit_ml_wba <- if (regenerate_simulations) {
+fit_ml_wba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_wba.rds")) {
   fit <- mod_ml_wba$sample(
     data            = stan_data_ml,
     chains          = 4,
@@ -3788,8 +3788,8 @@ SBC is *more* critical for multilevel models than for single-agent models. The h
 ```{r 09_ml_sbc, message=FALSE}
 n_sbc_ml <- 200  # Reduced from single-agent count due to computational cost
 
-if (regenerate_simulations) {
-
+if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_ml_wba.rds", "simmodels/ch9_sbc_ml_pba.rds")))) {
+  
   # ── ML-WBA SBC Generator ──────────────────────────────────────────
   sbc_gen_ml_wba <- SBC_generator_function(
     function(n_agents_sbc, ev, n_reps) {
@@ -4152,7 +4152,7 @@ fit_ml_scenario <- function(stan_data, label) {
   )
 }
 
-if (regenerate_simulations) {
+if (regenerate_simulations || !file.exists("simmodels/ch9_ml_scenario_loos.rds")) {
   loos_scen1 <- fit_ml_scenario(scen1_data, "SBA-Mimic Population")
   loos_scen2 <- fit_ml_scenario(scen2_data, "PBA Population")
   loos_scen3 <- fit_ml_scenario(scen3_data, "Full WBA Population")
@@ -4292,7 +4292,7 @@ We now scale up to a full model recovery simulation at the multilevel level. For
 n_ml_sims <- 30  # Per generating model
 J_recovery <- 12  # Agents per simulated population
 
-if (regenerate_simulations) {
+if (regenerate_simulations || !file.exists("simmodels/ch9_ml_model_recovery.rds")) {
   
   ml_recovery_results <- list()
   counter <- 0
@@ -4604,8 +4604,8 @@ The SBA agents form a tight cluster at $(w_d, w_s) = (1, 1)$ — they are all id
 
 ### Fitting All Three Multilevel Models
 ```{r 09_mixed_fit, message=FALSE}
-if (regenerate_simulations) {
-
+if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_fit_mix_sba.rds", "simmodels/ch9_fit_mix_pba.rds", "simmodels/ch9_fit_mix_wba.rds")))) {
+  
   fit_mix_sba <- mod_ml_sba$sample(
     data = mixed_stan_data, chains = 4, parallel_chains = 4,
     iter_warmup = 1000, iter_sampling = 1000,
@@ -5317,7 +5317,7 @@ mod_ci_weights      <- cmdstan_model("stan/ch9_ci_weights_only.stan", dir = "sim
 mod_ci_loops        <- cmdstan_model("stan/ch9_ci_loops.stan", dir = "simmodels")
 mod_ci_interference <- cmdstan_model("stan/ch9_ci_interference.stan", dir = "simmodels")
 
-if (regenerate_simulations) {
+if (regenerate_simulations || !file.exists("simmodels/ch9_sbc_ci_all_results.rds")) {
   
   # 1. Define the R equivalent of the Jardri function for the generators
   jardri_f <- function(L, w) {
