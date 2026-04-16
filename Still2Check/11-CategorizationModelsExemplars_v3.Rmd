@@ -1466,11 +1466,96 @@ sbc_results_single <- compute_SBC(
 # monotone trend → systematic bias.
 plot_ecdf_diff(sbc_results_single)
 plot_rank_hist(sbc_results_single)   # for comparison with earlier chapters
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# i) Investigating Diagnostic Issues
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Extract the backend diagnostics (divergences, treedepth)
+backend_diags <- sbc_results_single$backend_diagnostics
+
+# 2. Extract default diagnostics (Rhat, ESS)
+default_diags <- sbc_results_single$default_diagnostics |>
+  dplyr::select(sim_id, max_rhat, min_ess_to_rank)
+
+# 3. Extract true values from the stats object and pivot to wide format
+true_params_wide <- sbc_results_single$stats |>
+  dplyr::select(sim_id, variable, simulated_value) |>
+  tidyr::pivot_wider(names_from = variable, values_from = simulated_value)
+
+# 4. Join them all together by sim_id
+diag_df <- backend_diags |>
+  dplyr::left_join(default_diags, by = "sim_id") |>
+  dplyr::left_join(true_params_wide, by = "sim_id") |>
+  dplyr::mutate(
+    # Flag any simulation that triggered a divergence, max treedepth, or high Rhat
+    has_issue = n_divergent > 0 | n_max_treedepth > 0 | max_rhat > 1.01
+  )
+
+# Plot to see WHERE in the parameter space the issues occur
+p_diag_c_bias <- ggplot(diag_df, aes(x = log_c, y = bias, color = has_issue)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00")) +
+  labs(
+    title = "Diagnostic Issues in Parameter Space",
+    subtitle = "Orange points: divergence, max treedepth, or Rhat > 1.01",
+    x = "True log(c)",
+    y = "True Bias"
+  ) +
+  theme(legend.position = "bottom")
+
+p_diag_w_c <- ggplot(diag_df, aes(x = `w[1]`, y = log_c, color = has_issue)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00")) +
+  labs(
+    title = "Attention vs Sensitivity",
+    x = "True w[1]",
+    y = "True log(c)"
+  ) +
+  theme(legend.position = "none")
+
+# Print the diagnostic investigation plots
+print(p_diag_c_bias | p_diag_w_c)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ii) Parameter Recovery on SBC Simulations
+# ─────────────────────────────────────────────────────────────────────────────
+# The 'SBC' package automatically computes the posterior mean, median, and 
+# quantiles for every fit. We just need to plot `mean` against `simulated_value`.
+recovery_df <- sbc_results_single$stats
+
+p_sbc_recovery <- ggplot(recovery_df, aes(x = simulated_value, y = mean)) +
+  geom_point(alpha = 0.4, color = "#0072B2") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  facet_wrap(~variable, scales = "free") +
+  labs(
+    title = "Parameter Recovery Across SBC Simulations",
+    subtitle = "Posterior mean vs True generated value",
+    x = "True Value (simulated_value)",
+    y = "Estimated Value (Posterior Mean)"
+  ) +
+  theme_bw()
+
+# Print the recovery plot
+print(p_sbc_recovery)
 ```
 
-Uniform ECDF-difference curves — flat lines staying within the simultaneous confidence band — constitute strong evidence that the Stan code and priors form a coherent inference engine. Any systematic deviation (U-shape, bell-shape, or monotone drift) identifies which parameter is miscalibrated and in which direction, providing a direct diagnostic for debugging.
+While calibration and parameter recovery seem fine, we get some issues with the sampler when the true log(c) is above 0. The model computes similarity using exponential decay: exp(-c * distance). When c gets large, this similarity drops to exactly zero for anything except perfectly identical stimuli.
 
-Passing single-agent SBC is the statistical authorization to introduce hierarchical structure. Flat ECDF-difference curves mean the inference engine for *one* agent is calibrated against its own priors — the posteriors the Stan program returns are the posteriors those priors imply. That is the prerequisite for treating this engine as a building block in a population model: a hierarchical GCM stacks a population layer on top of the per-subject inference, so if the per-subject inference were miscalibrated, the hierarchy would only propagate the miscalibration upward.
+Stan's HMC sampler relies on gradients (the slope of the parameter space) to figure out where to move next. When similarities hit absolute zero, the gradients become completely flat. The sampler essentially finds itself blindfolded on an infinite, perfectly flat plain—it wanders around aimlessly until it hits max treedepth, or it takes a wild leap and registers a divergence.
+
+What is the solution? It is to question whether we want to assume that participants have high c's or not. If we are fine with assuming no high c in the real population, then we are good. We make sure that our prior strongly discourages high values, and we are transparent about this assumption. 
+
+If not, then we need to reparameterize the GCM. I have a few possible routes, which I haven't tested (perhaps in the next iteration?):
+
+1. Softmax decision rule: the standard GCM conflates generalization (how wide the similarity gradient is) with decisional precision (how deterministically the agent responds) into the single $c$ parameter. Decoupling them might let the similarities decay gracefully while $\tau$ handles the extreme confidence, bypassing the gradient collapse entirely.
+
+2. Changing the similarity function. We would need to go back to our knowledge of cognitive processes and try to figure out a psychologically plausible similarity function that doesn't hit zero.
+
+3. Changing the task structure. We could collect confidence, or use RTs as a proxy for confidence. We could make the category boundary probabilistic (e.g., category feedback is noisy, or the category boundary itself is fuzzy), which would make extreme precision less likely to describe any given agent's behavior. We could use stimuli closer to the boundary, which again creates more uncertainty. Etc.
+
+For now we will agree on participants never having high c and move onto a multilevel model.
 
 ---
 

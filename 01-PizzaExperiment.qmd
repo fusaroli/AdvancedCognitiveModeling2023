@@ -213,6 +213,7 @@ mc_settings <- list(
   chains = 2,
   iter = 6000,
   seed = 123,
+  refresh = 0,
   backend = "cmdstanr"
 )
 ```
@@ -243,6 +244,8 @@ linear_model <- brm(
   prior = linear_priors,
   chains = mc_settings$chains,
   iter = mc_settings$iter,
+  refresh = mc_settings$refresh,
+  silent = 2,
   seed = mc_settings$seed, # Ensures reproducibility of MCMC sampling
   backend = mc_settings$backend,
   file = linear_model_path, # Use relative path
@@ -291,6 +294,8 @@ lognormal_model <- brm(
   adapt_delta = 0.99,
   max_treedepth = 20,
   iter = mc_settings$iter,
+  refresh = mc_settings$refresh,
+  silent = 2,
   seed = mc_settings$seed, # Use the same seed for comparison if desired
   backend = mc_settings$backend,
   file = lognormal_model_path, # Use relative path
@@ -506,7 +511,7 @@ writeLines(stan_code, stan_model_path)
 
 # Compile and fit the Stan model using the relative path
 # Compilation happens once; subsequent runs load the compiled object if unchanged.
-mod <- cmdstan_model("models/pizza_physics_model.stan")
+mod <- cmdstan_model("models/pizza_physics_model.stan", quiet = TRUE)
 ```
 ### Prior Predictive Check
 Before fitting our model to empirical data, we must ensure our priors generate physically plausible heating curves (Simulation Validation). If our `normal(0.005, 0.005)` prior on `HOT` is appropriate, simulated temperatures should gradually approach $T_{\infty}$ without exceeding it or dropping below absolute zero.
@@ -537,7 +542,9 @@ fit <- mod$sample(
   data = stan_data,
   seed = 123,
   chains = 2,
-  parallel_chains = 2
+  parallel_chains = 2,
+  refresh = 0,
+  show_messages = FALSE
 )
 ```
 
