@@ -1,6 +1,6 @@
 # Bayesian Models of Cognition
 
-```{r 09_setup, include=FALSE}
+```{r ch10_setup, include=FALSE}
 knitr::opts_chunk$set(
   echo    = TRUE,
   warning = FALSE,
@@ -46,7 +46,7 @@ plan(sequential) # switch to multisession when pre-running the script before kni
 > our Bayesian statistical tools to test whether this hypothesis fits human
 > behaviour in a social learning task, applying the full validation battery
 > from Chs. 5–7. The chapter also introduces Leave-Future-Out cross-validation
-> for sequential models, a technique flagged in Ch. 7 but not developed there.
+> for sequential models, a technique flagged in Ch. 8 but not developed there.
 
 ## Bayesian statistics vs. Bayesian Cognition
 
@@ -95,7 +95,7 @@ Bayesian models of cognition explore the idea that the mind operates according t
 
 ### Visualising Bayesian Updating
 
-```{r 09_visualising_bayesian_updating}
+```{r ch10_visualising_bayesian_updating}
 x          <- seq(0, 1, by = 0.01)
 prior      <- dbeta(x, 3, 3)
 likelihood <- dbeta(x, 7, 3)
@@ -174,7 +174,7 @@ What should we put as prior? We previously chose a uniform distribution on the 0
 
 As usual, it's easier to understand our choices if we plot the priors and their consequences.
 
-```{r 09_prior_comparison}
+```{r ch10_prior_comparison}
 theta_grid <- seq(0.001, 0.999, length.out = 500)
 n_grid     <- length(theta_grid)
 
@@ -300,7 +300,7 @@ I generally prefer to think in probability (0-1) scale, but others prefer the lo
 
 ### Setting Up the Experimental Design
 
-```{r 09_setup_experiment}
+```{r ch10_setup_experiment}
 # Create the full factorial design
 evidence_combinations <- expand_grid(
   blue1  = 0:8,   # Direct evidence: 0-8 blue marbles out of 8
@@ -339,7 +339,7 @@ Setting $w_d = w_s = 1$ recovers strict Bayesian updating (Simple Bayesian Agent
 will give us the Weighted Bayesian Agent (WBA). We'll meet both formally in the
 next section. For now we focus on the likelihood itself.
 
-```{r 09_betabinomial_model}
+```{r ch10_betabinomial_model}
 # Core belief-update function implementing the Beta-Binomial integration model
 betaBinomialModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
                                blue1, total1, blue2, total2,
@@ -433,7 +433,7 @@ The consequence is that even when the posterior mean is 0.70 in favour of blue, 
 This two-stage structure has a measurable implication: the BetaBinomial has **greater variance than a Binomial** with the same mean. This excess variance is called **overdispersion**, and it arises precisely because $\theta$ must itself be sampled from the Beta rather than being known.
 
 
-```{r 09_betabinomial_two_step_demo}
+```{r ch10_betabinomial_two_step_demo}
 # Scenario: 4 blue of 8 direct + 2 blue of 3 social (Jeffreys prior)
 alpha_demo <- 0.5 + 4 + 2   # = 6.5
 beta_demo  <- 0.5 + 4 + 1   # = 5.5
@@ -511,7 +511,7 @@ The left panel shows that even in a relatively informative scenario (11 total ob
 
 ### Predictions Under Equal Weights
 
-```{r 09_sba_predictions}
+```{r ch10_sba_predictions}
 # Calculate SBA predictions for all evidence combinations
 sim_data <- evidence_combinations |>
   pmap_dfr(function(blue1, blue2, total1, total2) {
@@ -567,7 +567,7 @@ Observe that the lines are strictly parallel. Because the total pseudo-count den
 
 As we have seen above, the BetaBinomial has greater variance than a Binomial with the same mean. This excess variance is called overdispersion, let's visualize it.
 
-```{r 09_betabinomial_overdispersion}
+```{r ch10_betabinomial_overdispersion}
 # We predict N=10 future draws. This allows the excess variance 
 # from overdispersion to manifest as positive integers.
 N_predict <- 10
@@ -636,7 +636,7 @@ Overdispersion is greatest when evidence is ambiguous (near a 50/50 probability 
 
 An alternative framing is to convert evidence to log-odds rather than pseudo-counts. Here we compare the two approaches:
 
-```{r 09_logodds_comparison}
+```{r ch10_logodds_comparison}
 # --- Log-Odds Integration Function ---
 SimpleBayes_f <- function(bias, Source1, Source2) {
   # Using base R equivalents for portability:
@@ -745,7 +745,7 @@ systematically — a basic model fitting test.
 The WBA, in principle, can fit all three.
 
 
-```{r 09_three_scenarios}
+```{r ch10_three_scenarios}
 agents <- tibble(
   agent_type    = c("Self-Focused", "Balanced", "Socially-Influenced"),
   weight_direct = c(1.5, 1.0, 0.5),
@@ -846,7 +846,7 @@ models in Stan and finds out what happens.
 \end{tikzpicture}
 ```
 
-```{r 09_stan_simple_agent}
+```{r ch10_stan_simple_agent}
 SimpleAgent_stan <- "
 // Simple Bayesian Agent (SBA).
 // No free parameters — evidence is counted at face value.
@@ -885,7 +885,7 @@ generated quantities {
 
 write_stan_file(SimpleAgent_stan,
                 dir      = "stan/",
-                basename = "ch9_simple_agent.stan")
+                basename = "ch10_simple_agent.stan")
 ```
 
 ### Stan code: WBA (raw parameterisation)
@@ -925,7 +925,7 @@ We start with the intuitive parameterisation using $w_d$ and $w_s$ directly:
 \end{tikzpicture}
 ```
 
-```{r 09_stan_weighted_agent_raw}
+```{r ch10_stan_weighted_agent_raw}
 WeightedAgentRaw_stan <- "
 // Weighted Bayesian Agent (raw parameterisation).
 // w_d, w_s > 0: independent weights on direct and social evidence.
@@ -975,15 +975,15 @@ generated quantities {
 
 write_stan_file(WeightedAgentRaw_stan,
                 dir      = "stan/",
-                basename = "ch9_weighted_agent_raw.stan")
+                basename = "ch10_weighted_agent_raw.stan")
 ```
 
 ### Fitting the three scenarios
 
 
-```{r 09_compile_models}
-mod_simple       <- cmdstan_model("stan/ch9_simple_agent.stan", dir = "simmodels")
-mod_weighted_raw <- cmdstan_model("stan/ch9_weighted_agent_raw.stan", dir = "simmodels")
+```{r ch10_compile_models}
+mod_simple       <- cmdstan_model("stan/ch10_simple_agent.stan", dir = "simmodels")
+mod_weighted_raw <- cmdstan_model("stan/ch10_weighted_agent_raw.stan", dir = "simmodels")
 
 sampler_args <- list(
   chains = 4, 
@@ -996,7 +996,7 @@ sampler_args <- list(
 
 #### Preparing data
 
-```{r 09_prepare_scenario_data}
+```{r ch10_prepare_scenario_data}
 # True values for the three WBA scenarios
 true_wba <- list(
   Self_Focused        = list(wd = 1.5, ws = 0.5),
@@ -1017,10 +1017,10 @@ stan_data_wba <- map(true_wba, function(params) {
 
 ### Fitting the Simple Model
 
-```{r 09_fit_simple}
+```{r ch10_fit_simple}
 fit_sba_paths <- here::here(
   "simmodels",
-  paste0("ch9_fit_sba_", names(stan_data_wba), ".rds")
+  paste0("ch10_fit_sba_", names(stan_data_wba), ".rds")
 ) |> set_names(names(stan_data_wba))
 
 if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
@@ -1044,10 +1044,10 @@ if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
 
 ### Fitting the Weighted Model
 
-```{r 09_fit_weighted_raw}
+```{r ch10_fit_weighted_raw}
 fit_wba_raw_paths <- here::here(
   "simmodels",
-  paste0("ch9_fit_wba_raw_", names(stan_data_wba), ".rds")
+  paste0("ch10_fit_wba_raw_", names(stan_data_wba), ".rds")
 ) |> set_names(names(stan_data_wba))
 
 if (regenerate_simulations || !all(file.exists(fit_wba_raw_paths))) {
@@ -1090,7 +1090,7 @@ to predictive checks.
 
 ## Prior and Posterior Predictive Checks
 
-```{r 09_posterior_predictive}
+```{r ch10_posterior_predictive}
 # Generalized Extraction Function for Posteriors
 extract_predictive_data <- function(fit, stan_data, scenario_name, target_var = "posterior_pred") {
   obs_df <- tibble(
@@ -1293,7 +1293,7 @@ wide range of parameter values.
 Before we go into SBC, let's check if WBA can actually recover the true 
 parameter values in these three scenarios:
 
-```{r 09_parameter_recovery_raw}
+```{r ch10_parameter_recovery_raw}
 # Extract posteriors and compare to true values
 wba_recovery <- imap_dfr(fit_wba_raw, function(fit, name) {
   as_draws_df(fit$draws(c("weight_direct", "weight_social"))) |> 
@@ -1359,7 +1359,7 @@ p_wd / p_ws +
 
 Let's visualize the joint posterior to understand what's happening:
 
-```{r 09_posterior_ridge}
+```{r ch10_posterior_ridge}
 # Extract joint posterior draws
 post_draws_self <- as_draws_df(
   fit_wba_raw$Self_Focused$draws(c("weight_direct", "weight_social"))
@@ -1404,7 +1404,7 @@ $w_d = 2, w_s = 2$ produces the **same average decisions** as $w_d = 1, w_s = 1$
 
 Maybe we just need more trials? Let's check:
 
-```{r 09_trial_number_investigation}
+```{r ch10_trial_number_investigation}
 # Set up a grid of simulations across our desired sample sizes
 n_sims_per_size <- 50   # Increased from 20 to 50
 sample_sizes    <- c(180, 360, 720) # Doubling the sample size
@@ -1433,7 +1433,7 @@ generate_random_trials <- function(wd, ws, n_trials) {
 cat(sprintf("Running %d total parameter recovery simulations...\n", nrow(sim_grid)))
 
 # Run fits in parallel (using your existing multicore plan)
-if (regenerate_simulations || !file.exists("simmodels/ch9_n_investigation.rds")) {
+if (regenerate_simulations || !file.exists("simmodels/ch10_n_investigation.rds")) {
   recovery_results <- future_pmap_dfr(
     list(sim_grid$sample_size, sim_grid$sim_id, sim_grid$true_wd, sim_grid$true_ws),
     function(n_trials, id, wd, ws) {
@@ -1469,9 +1469,9 @@ if (regenerate_simulations || !file.exists("simmodels/ch9_n_investigation.rds"))
     },
     .options = furrr_options(seed = 123)
   )
-  saveRDS(recovery_results, "simmodels/ch9_n_investigation.rds")
+  saveRDS(recovery_results, "simmodels/ch10_n_investigation.rds")
 } else {
-  recovery_results <- readRDS("simmodels/ch9_n_investigation.rds")
+  recovery_results <- readRDS("simmodels/ch10_n_investigation.rds")
 }
 
 # Reshape data for plotting
@@ -1583,7 +1583,7 @@ attention) and we'll fit both.
 \end{tikzpicture}
 ```
 
-```{r 09_stan_proportional_agent}
+```{r ch10_stan_proportional_agent}
 ProportionalAgent_stan <- "
 // Proportional Bayesian Agent (PBA).
 // p in [0,1] allocates the unit evidence budget between direct and social.
@@ -1638,7 +1638,7 @@ generated quantities {
 
 write_stan_file(ProportionalAgent_stan,
                 dir = "stan/",
-                basename = "ch9_proportional_agent.stan")
+                basename = "ch10_proportional_agent.stan")
 ```
 
 ### Weighted Bayesian Agent (Reparameterised)
@@ -1681,7 +1681,7 @@ write_stan_file(ProportionalAgent_stan,
 \end{tikzpicture}
 ```
 
-```{r 09_stan_weighted_reparam}
+```{r ch10_stan_weighted_reparam}
 WeightedAgent_stan <- "
 // Weighted Bayesian Agent (reparameterised).
 // rho in (0,1): relative weight of direct vs social evidence.
@@ -1749,21 +1749,21 @@ generated quantities {
 
 write_stan_file(WeightedAgent_stan,
                 dir = "stan/",
-                basename = "ch9_weighted_agent.stan")
+                basename = "ch10_weighted_agent.stan")
 ```
 
 ## Fitting the Reparameterised Models
 
-```{r 09_compile_reparam}
-mod_proportional <- cmdstan_model("stan/ch9_proportional_agent.stan", dir = "simmodels")
-mod_weighted     <- cmdstan_model("stan/ch9_weighted_agent.stan", dir = "simmodels")
+```{r ch10_compile_reparam}
+mod_proportional <- cmdstan_model("stan/ch10_proportional_agent.stan", dir = "simmodels")
+mod_weighted     <- cmdstan_model("stan/ch10_weighted_agent.stan", dir = "simmodels")
 ```
 
 ### Prepare PBA Data
 
 The PBA uses normalized weights that sum to 1, so we need to convert our scenarios:
 
-```{r 09_prepare_pba_data}
+```{r ch10_prepare_pba_data}
 # For PBA, p represents w_d / (w_d + w_s)
 # Self-Focused: 1.5 / 2.0 = 0.75
 # Balanced: 1.0 / 2.0 = 0.5  
@@ -1784,7 +1784,7 @@ stan_data_pba <- map(true_pba, function(p) {
 
 ### Prepare WBA Reparameterised Data
 
-```{r 09_prepare_wba_reparam_data}
+```{r ch10_prepare_wba_reparam_data}
 true_wba_reparam <- list(
   Self_Focused        = list(rho = 0.75, kappa = 2.0, wd = 1.5, ws = 0.5),
   Balanced            = list(rho = 0.50, kappa = 2.0, wd = 1.0, ws = 1.0),
@@ -1801,8 +1801,8 @@ stan_data_wba_reparam <- map(true_wba_reparam, function(params) {
 
 ### Fit All Models
 
-```{r 09_fit_reparam_models}
-if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch9_fit_pba_%s.rds", names(stan_data_pba))))) {
+```{r ch10_fit_reparam_models}
+if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch10_fit_pba_%s.rds", names(stan_data_pba))))) {
   # --- Fit PBA ---
   fit_pba <- map2(stan_data_pba, 201:203, function(data, seed) {
     do.call(mod_proportional$sample,
@@ -1810,7 +1810,7 @@ if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch9_fit_pba_%s
   })
   names(fit_pba) <- names(stan_data_pba)
   iwalk(fit_pba, ~ .x$save_object(
-    sprintf("simmodels/ch9_fit_pba_%s.rds", .y)
+    sprintf("simmodels/ch10_fit_pba_%s.rds", .y)
   ))
 
   # --- Fit WBA reparameterised ---
@@ -1820,17 +1820,17 @@ if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch9_fit_pba_%s
   })
   names(fit_wba) <- names(stan_data_wba_reparam)
   iwalk(fit_wba, ~ .x$save_object(
-    sprintf("simmodels/ch9_fit_wba_%s.rds", .y)
+    sprintf("simmodels/ch10_fit_wba_%s.rds", .y)
   ))
 } else {
   fit_pba <- map(
     names(stan_data_pba),
-    ~ readRDS(sprintf("simmodels/ch9_fit_pba_%s.rds", .x))
+    ~ readRDS(sprintf("simmodels/ch10_fit_pba_%s.rds", .x))
   ) |> set_names(names(stan_data_pba))
 
   fit_wba <- map(
     names(stan_data_wba_reparam),
-    ~ readRDS(sprintf("simmodels/ch9_fit_wba_%s.rds", .x))
+    ~ readRDS(sprintf("simmodels/ch10_fit_wba_%s.rds", .x))
   ) |> set_names(names(stan_data_wba_reparam))
 }
 
@@ -1844,7 +1844,7 @@ iwalk(fit_wba, ~ check_diagnostics(.x, paste("WBA", .y)))
 
 ### Quick predictive checks
 
-```{r 09_reparam_ppc, fig.width=11, fig.height=14}
+```{r ch10_reparam_ppc, fig.width=11, fig.height=14}
 # Helper function to generate and combine Prior vs. Posterior checks dynamically
 generate_side_by_side_ppc <- function(fit_list, data_list, model_title) {
   
@@ -1907,7 +1907,7 @@ Predictive checks look good for both models, with the posterior predictions (rig
 
 ### PBA Recovery
 
-```{r 09_pba_recovery}
+```{r ch10_pba_recovery}
 pba_prior <- tibble(p = rbeta(4000, 2, 2), Scenario = "Prior")
 
 pba_posteriors <- imap_dfr(fit_pba, function(fit, name) {
@@ -1946,7 +1946,7 @@ This is not perfect, but pretty good, perhaps overregularized by the prior (pull
 
 ### WBA Reparameterised Recovery
 
-```{r 09_wba_reparam_recovery}
+```{r ch10_wba_reparam_recovery}
 wba_prior <- tibble(
   rho = rbeta(4000, 2, 2), 
   kappa = rlnorm(4000, log(2), 0.5), 
@@ -1992,7 +1992,7 @@ This would call for a change in the experimental paradigm: we do not simply want
 
 ### Comparing the Two Parameterisations
 
-```{r 09_compare_parameterisations, fig.width=10, fig.height=5}
+```{r ch10_compare_parameterisations, fig.width=10, fig.height=5}
 # Joint posterior in reparameterised space
 p_good <- as_draws_df(fit_wba$Self_Focused$draws(c("rho", "kappa"))) |> 
   as_tibble() |>
@@ -2029,7 +2029,7 @@ p_bad | p_good +
 
 ### Prior sensitivity
 
-```{r 09_prior_sensitivity}
+```{r ch10_prior_sensitivity}
 ## Prior Sensitivity
 sens_wba <- priorsense::powerscale_sensitivity(
   fit_wba$Self_Focused,
@@ -2051,7 +2051,7 @@ We'll see later whether multilevel modeling can help with that.
 
 ### Loo-pit
 
-```{r 09_loo_pit}
+```{r ch10_loo_pit}
 ## LOO-PIT Calibration (Randomised for Discrete Outcomes)
 # For Bernoulli outcomes, standard LOO-PIT is discrete and requires
 # randomisation. We use the log-likelihood to reconstruct P(y=1|y_{-i}).
@@ -2086,10 +2086,10 @@ In any case, remember: all diagnostics are part of a critical evaluation, not de
 
 Now that we have roughly working models (we can identify the ratio pretty decently), we validate them systematically with SBC. This provides a global certificate that our posteriors are well-calibrated across the entire prior space.
 
-```{r 09_sbc, message=FALSE}
+```{r ch10_sbc, message=FALSE}
 n_sbc_datasets <- 500
 
-if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_wba_results.rds", "simmodels/ch9_sbc_pba_results.rds")))) {
+if (regenerate_simulations || !all(file.exists(c("simmodels/ch10_sbc_wba_results.rds", "simmodels/ch10_sbc_pba_results.rds")))) {
   
   fixed_ev_grid <- evidence_combinations |> slice(rep(seq_len(n()), times = 5))
 
@@ -2130,7 +2130,7 @@ if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_wba_results.
   )
 
   sbc_results_wba <- compute_SBC(sbc_datasets_wba, sbc_backend_wba, keep_fits = FALSE)
-  saveRDS(sbc_results_wba, "simmodels/ch9_sbc_wba_results.rds")
+  saveRDS(sbc_results_wba, "simmodels/ch10_sbc_wba_results.rds")
 
   # ── PBA SBC generator ──────────────────────────────────────────────
   sbc_generator_pba <- SBC_generator_function(
@@ -2166,11 +2166,11 @@ if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_wba_results.
   )
 
   sbc_results_pba <- compute_SBC(sbc_datasets_pba, sbc_backend_pba, keep_fits = FALSE)
-  saveRDS(sbc_results_pba, "simmodels/ch9_sbc_pba_results.rds")
+  saveRDS(sbc_results_pba, "simmodels/ch10_sbc_pba_results.rds")
 
 } else {
-  sbc_results_wba <- readRDS("simmodels/ch9_sbc_wba_results.rds")
-  sbc_results_pba <- readRDS("simmodels/ch9_sbc_pba_results.rds")
+  sbc_results_wba <- readRDS("simmodels/ch10_sbc_wba_results.rds")
+  sbc_results_pba <- readRDS("simmodels/ch10_sbc_pba_results.rds")
 }
 
 # Plot SBC results
@@ -2189,7 +2189,7 @@ The movements are not exactly a brownian motion as we'd expect, but they stay we
 
 ### Global Parameter Recovery from SBC
 
-```{r 09_sbc_recovery, fig.width=10, fig.height=4}
+```{r ch10_sbc_recovery, fig.width=10, fig.height=4}
 wba_recovery <- sbc_results_wba$stats |>
   filter(variable %in% c("rho", "kappa")) |>
   mutate(model = "WBA")
@@ -2232,7 +2232,7 @@ To prove this, we will simulate three specific datasets, all generated by the WB
 
 3. **The Distinct WBA (Socially Influenced):** WBA with $\rho = 0.2$ and $\kappa = 2.5$ ($w_d = 0.5, w_s = 2.0$).
 
-```{r 09_scenario_generation_and_fit}
+```{r ch10_scenario_generation_and_fit}
 # Helper: fit SBA, PBA, WBA to a single dataset
 fit_all_models <- function(stan_data, ...) {
   sba <- mod_simple$sample(
@@ -2251,7 +2251,7 @@ fit_all_models <- function(stan_data, ...) {
   list(SBA = sba, PBA = pba, WBA = wba)
 }
 
-if (regenerate_simulations || !file.exists("simmodels/ch9_scenario_case_studies.rds")) {
+if (regenerate_simulations || !file.exists("simmodels/ch10_scenario_case_studies.rds")) {
   set.seed(2026)
 
   # 1. Generate three datasets (all True Model = WBA with specific params)
@@ -2290,10 +2290,10 @@ if (regenerate_simulations || !file.exists("simmodels/ch9_scenario_case_studies.
     loos_sba_mimic = loos_sba_mimic,
     loos_pba_mimic = loos_pba_mimic,
     loos_distinct  = loos_distinct
-  ), "simmodels/ch9_scenario_case_studies.rds")
+  ), "simmodels/ch10_scenario_case_studies.rds")
 
 } else {
-  cache <- readRDS("simmodels/ch9_scenario_case_studies.rds")
+  cache <- readRDS("simmodels/ch10_scenario_case_studies.rds")
   df_sba_mimic   <- cache$df_sba_mimic
   df_pba_mimic   <- cache$df_pba_mimic
   df_distinct    <- cache$df_distinct
@@ -2305,7 +2305,7 @@ if (regenerate_simulations || !file.exists("simmodels/ch9_scenario_case_studies.
 
 Now, let's look at the stacking weights and LOO comparisons for these three scenarios.
 
-```{r 09_scenario_comparison_weights}
+```{r ch10_scenario_comparison_weights}
 # Print comparison summaries using the pre-computed LOO objects
 print_scenario <- function(loos, name, true_params) {
   cat(sprintf("\n=== %s ===\nTrue DGP: WBA %s\n", name, true_params))
@@ -2395,7 +2395,7 @@ This is not ideal, but neither a failure of model comparison. It tells us that t
 
 To truly understand this, we can plot the pointwise ELPD differences. We will compare the true generating model (WBA) against the simpler model that "won" in the mimicking scenarios, and against the PBA in the distinct scenario.
 
-```{r 09_scenario_pointwise_elpd}
+```{r ch10_scenario_pointwise_elpd}
 pw_1 <- tibble(
   obs       = 1:180,
   elpd_diff = loos_sba_mimic$WBA$pointwise[,"elpd_loo"] - loos_sba_mimic$SBA$pointwise[,"elpd_loo"],
@@ -2460,11 +2460,11 @@ We now scale up our case studies to a full model recovery simulation. Because th
 
 For each of our three structural generating processes (SBA, PBA, WBA), we simulate 50 synthetic datasets, cross-fit all three candidate models, and use stacking weights to observe how often the procedure correctly penalizes complexity and recovers the simplest adequate model.
 
-```{r 09_model_recovery_setup}
+```{r ch10_model_recovery_setup}
 n_sims <- 50
 plan(multisession, workers = parallel::detectCores() - 2)
 
-if (regenerate_simulations || !file.exists("simmodels/ch9_model_recovery.rds")) {
+if (regenerate_simulations || !file.exists("simmodels/ch10_model_recovery.rds")) {
 
   # Generate datasets from each model type
   sim_grid <- bind_rows(
@@ -2552,17 +2552,17 @@ if (regenerate_simulations || !file.exists("simmodels/ch9_model_recovery.rds")) 
   }
 
   recovery_results <- bind_rows(results_list)
-  saveRDS(recovery_results, "simmodels/ch9_model_recovery.rds")
+  saveRDS(recovery_results, "simmodels/ch10_model_recovery.rds")
 
 } else {
-  recovery_results <- readRDS("simmodels/ch9_model_recovery.rds")
+  recovery_results <- readRDS("simmodels/ch10_model_recovery.rds")
 }
 ```
 
 ### Confusion Matrix
 
 The probabilistic confusion matrix shows, for each true generating model, the average stacking weight assigned to each candidate. A perfect recovery procedure would place all weight on the diagonal.
-```{r 09_model_recovery_confusion}
+```{r ch10_model_recovery_confusion}
 binary_matrix <- recovery_results |>
   # 1. Reshape to make finding the maximum weight per simulation easier
   pivot_longer(cols = starts_with("weight_"), 
@@ -2649,7 +2649,7 @@ confusion_matrix |>
 ### Model Calibration
 
 A well-calibrated model comparison procedure should assign a stacking weight of, say, 0.7 to a model that turns out to be the true generator roughly 70% of the time. We assess this by binning stacking weights for each candidate and computing the empirical frequency with which that candidate was, in fact, the true model. Points on the diagonal indicate perfect calibration; a curve bowed above the diagonal signals underconfidence (the procedure "hedges" too much), while a curve below signals overconfidence.
-```{r 09_model_recovery_calibration}
+```{r ch10_model_recovery_calibration}
 # Reshape to long: one row per (simulation × candidate model)
 calibration_long <- recovery_results |>
   pivot_longer(
@@ -2707,7 +2707,7 @@ The line goes up, but it's deviations from the diagonal are worrying (and resona
 
 Even when the "wrong" model wins, its parameters may still capture the effective behavior of the true generating process. To check this, we compute a **model-averaged estimate** of the effective evidence weights ($w_d$, $w_s$) by weighting each candidate's posterior means by its stacking weight. If a wrongly-selected model is still behaviorally faithful, these averaged estimates should track the true values closely.
 
-```{r 09_model_recovery_parameters, fig.width=10, fig.height=5}
+```{r ch10_model_recovery_parameters, fig.width=10, fig.height=5}
 # 1. Determine the winning model, enforce factor levels, and extract ITS specific fitted parameters
 param_recovery <- recovery_results |>
   mutate(
@@ -2937,15 +2937,15 @@ To evaluate whether model misclassifications are behaviorally benign, we isolate
 
 ## Multilevel Extension
 
-In real experiments, we observe many participants, each with their own weighting tendencies. Multilevel models capture these individual differences while sharing statistical strength across the population. This is the same partial-pooling logic developed in Chapter 6.
+In real experiments, we observe many participants, each with their own weighting tendencies. Multilevel models capture these individual differences while sharing statistical strength across the population. This is the same partial-pooling logic developed in Chapter 7.
 
-A single-agent model answers: *how does this person weight direct vs. social evidence?* A multilevel model answers the population-level question: *how do people in general weight evidence, and how much do they vary?* The hierarchical structure also regularises extreme individual estimates via partial pooling — agents with fewer informative trials are pulled toward the population mean, exactly as we saw in Chapter 6's matching-pennies analysis.
+A single-agent model answers: *how does this person weight direct vs. social evidence?* A multilevel model answers the population-level question: *how do people in general weight evidence, and how much do they vary?* The hierarchical structure also regularises extreme individual estimates via partial pooling — agents with fewer informative trials are pulled toward the population mean, exactly as we saw in Chapter 7's matching-pennies analysis.
 
 ## Simulating a Multi-Agent Population
 
 We simulate 20 agents, each with their own evidence-weighting tendency, drawn from a shared population distribution. The population is parameterised on transformed scales: $\text{logit}(\rho)$ and $\log(\kappa)$ follow a bivariate normal. This ensures $\rho \in (0, 1)$ and $\kappa > 0$ on the natural scale, preserves the identifiable reparameterisation from the single-agent section, and allows correlation between relative allocation and total scaling.
 
-```{r 09_multilevel_sim_setup}
+```{r ch10_multilevel_sim_setup}
 n_agents          <- 20
 n_trials_per_comb <- 2   # repetitions of each evidence combination per agent
 
@@ -3072,7 +3072,7 @@ The ML-SBA has zero free parameters per agent. It applies strict Bayesian integr
 \end{tikzpicture}
 ```
 
-```{r 09_multilevel_sba_stan}
+```{r ch10_multilevel_sba_stan}
 MultilevelSBA_stan <- "
 // Multilevel Simple Bayesian Agent
 // Zero free parameters per agent. Strict integration applied uniformly.
@@ -3111,9 +3111,9 @@ generated quantities {
 
 write_stan_file(MultilevelSBA_stan,
                 dir = "stan/",
-                basename = "ch9_multilevel_sba.stan")
+                basename = "ch10_multilevel_sba.stan")
 
-mod_ml_sba <- cmdstan_model("stan/ch9_multilevel_sba.stan", dir = "simmodels")
+mod_ml_sba <- cmdstan_model("stan/ch10_multilevel_sba.stan", dir = "simmodels")
 ```
 
 
@@ -3121,7 +3121,7 @@ mod_ml_sba <- cmdstan_model("stan/ch9_multilevel_sba.stan", dir = "simmodels")
 
 The ML-PBA estimates a single parameter per agent — the evidence allocation $p_j$ — with a population distribution on the logit scale. This is the intermediate-complexity model: it captures individual differences in *relative* weighting but not in total evidence scaling.
 
-```{r 09_multilevel_pba_stan}
+```{r ch10_multilevel_pba_stan}
 MultilevelPBA_stan <- "
 // Multilevel Proportional Bayesian Agent
 // Population distribution on logit(p).
@@ -3179,16 +3179,16 @@ generated quantities {
 
 write_stan_file(MultilevelPBA_stan,
                 dir = "stan/",
-                basename = "ch9_multilevel_pba.stan")
+                basename = "ch10_multilevel_pba.stan")
 
-mod_ml_pba <- cmdstan_model("stan/ch9_multilevel_pba.stan", dir = "simmodels")
+mod_ml_pba <- cmdstan_model("stan/ch10_multilevel_pba.stan", dir = "simmodels")
 ```
 
 ### Multilevel Weighted Bayesian Agent (Stan)
 
 The multilevel WBA implements the reparameterised $(\rho_j, \kappa_j)$ parameterisation for each agent, with a bivariate population distribution on the $(\text{logit}(\rho), \log(\kappa))$ scale. This preserves the identifiability gains from the single-agent analysis while allowing partial pooling.
 
-The key design choices mirror Chapter 6:
+The key design choices mirror Chapter 7:
 
 - **Non-centred parameterisation (NCP):** Individual deviations are expressed as $z$-scores to avoid the funnel geometry.
 - **Transformed-scale parameterisation:** We work on $(\text{logit}(\rho), \log(\kappa))$ to ensure correct support without boundary constraints.
@@ -3233,7 +3233,7 @@ The key design choices mirror Chapter 6:
 \end{tikzpicture}
 ```
 
-```{r 09_multilevel_wba_stan}
+```{r ch10_multilevel_wba_stan}
 MultilevelWBA_stan <- "
 // Multilevel Weighted Bayesian Agent (reparameterised)
 // Population distribution on (logit(rho), log(kappa)).
@@ -3319,15 +3319,15 @@ generated quantities {
 
 write_stan_file(MultilevelWBA_stan,
                 dir = "stan/",
-                basename = "ch9_multilevel_wba.stan")
+                basename = "ch10_multilevel_wba.stan")
 
-mod_ml_wba <- cmdstan_model("stan/ch9_multilevel_wba.stan", dir = "simmodels")
+mod_ml_wba <- cmdstan_model("stan/ch10_multilevel_wba.stan", dir = "simmodels")
 ```
 
 ## Fitting the Multilevel Models
 
-```{r 09_fit_multilevel, message=FALSE}
-fit_ml_sba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_sba.rds")) {
+```{r ch10_fit_multilevel, message=FALSE}
+fit_ml_sba <- if (regenerate_simulations || !file.exists("simmodels/ch10_fit_ml_sba.rds")) {
   fit <- mod_ml_sba$sample(
     data            = stan_data_ml,
     chains          = 4,
@@ -3337,12 +3337,12 @@ fit_ml_sba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_s
     adapt_delta     = 0.9,
     refresh         = 0
   )
-  fit$save_object("simmodels/ch9_fit_ml_sba.rds")
+  fit$save_object("simmodels/ch10_fit_ml_sba.rds")
   fit
 } else {
-  readRDS("simmodels/ch9_fit_ml_sba.rds")
+  readRDS("simmodels/ch10_fit_ml_sba.rds")
 }
-fit_ml_pba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_pba.rds")) {
+fit_ml_pba <- if (regenerate_simulations || !file.exists("simmodels/ch10_fit_ml_pba.rds")) {
   fit <- mod_ml_pba$sample(
     data            = stan_data_ml,
     chains          = 4,
@@ -3352,13 +3352,13 @@ fit_ml_pba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_p
     adapt_delta     = 0.95,
     refresh         = 0
   )
-  fit$save_object("simmodels/ch9_fit_ml_pba.rds")
+  fit$save_object("simmodels/ch10_fit_ml_pba.rds")
   fit
 } else {
-  readRDS("simmodels/ch9_fit_ml_pba.rds")
+  readRDS("simmodels/ch10_fit_ml_pba.rds")
 }
 
-fit_ml_wba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_wba.rds")) {
+fit_ml_wba <- if (regenerate_simulations || !file.exists("simmodels/ch10_fit_ml_wba.rds")) {
   fit <- mod_ml_wba$sample(
     data            = stan_data_ml,
     chains          = 4,
@@ -3368,10 +3368,10 @@ fit_ml_wba <- if (regenerate_simulations || !file.exists("simmodels/ch9_fit_ml_w
     adapt_delta     = 0.95,
     refresh         = 0
   )
-  fit$save_object("simmodels/ch9_fit_ml_wba.rds")
+  fit$save_object("simmodels/ch10_fit_ml_wba.rds")
   fit
 } else {
-  readRDS("simmodels/ch9_fit_ml_wba.rds")
+  readRDS("simmodels/ch10_fit_ml_wba.rds")
 }
 
 
@@ -3383,20 +3383,20 @@ check_diagnostics(fit_ml_pba, "ML-PBA")
 check_diagnostics(fit_ml_wba, "ML-WBA (reparameterised)")
 ```
 
-```{r 09_ml_trace_plots}
+```{r ch10_ml_trace_plots}
 bayesplot::mcmc_trace(
   fit_ml_wba$draws(c("mu[1]", "mu[2]", "sigma[1]", "sigma[2]", "Omega[1,2]")),
   facet_args = list(ncol = 2)
 ) + labs(title = "Trace plots: ML-WBA — population parameters + correlation")
 ```
 
-The trace plots should show the "hairy caterpillar" pattern for all WBA population-level parameters (remember SBA has no parameter). Pay particular attention to $\sigma$: if either component pushes toward zero, the NCP may struggle (the reverse funnel problem from Chapter 6). If the SDs are well-identified away from zero, NCP is the right choice.
+The trace plots should show the "hairy caterpillar" pattern for all WBA population-level parameters (remember SBA has no parameter). Pay particular attention to $\sigma$: if either component pushes toward zero, the NCP may struggle (the reverse funnel problem from Chapter 7). If the SDs are well-identified away from zero, NCP is the right choice.
 
 ### Reporting the Estimated Correlation
 
 The posterior for `Omega[1,2]` — the correlation between $\text{logit}(\rho)$ and $\log(\kappa)$ across individuals — answers the cognitive question: *do agents who allocate more attention to direct evidence also use more or less total evidence?*
 
-```{r 09_correlation_posterior}
+```{r ch10_correlation_posterior}
 draws_ml <- as_draws_df(fit_ml_wba$draws())
 
 ggplot(draws_ml, aes(x = `Omega[1,2]`)) +
@@ -3421,7 +3421,7 @@ Just as we did for the single-agent models, we want to visualize what our multil
 
 Since we will have to run our slower multilevel code through e.g.SBC, we kept the generated quantities leaner than usual: we didn't include population-level prior or posterior predictions in the generated quantities blocks (though we kept trial-level posterior predictions for existing agents via pred_choice). Instead, we can simulate these hierarchical, population-level predictions dynamically in R. This is an essential skill: by drawing from our population hyper-priors ($\mu$ and $\sigma$), sampling new individual agents, and pushing those through the Beta-Binomial observation model, we can perfectly reconstruct the model's population-level expectations.
 
-```{r 09_multilevel_ppc, fig.width=11, fig.height=15}
+```{r ch10_multilevel_ppc, fig.width=11, fig.height=15}
 # 1. Custom function to simulate Multilevel Prior/Posterior Predictions in R
 generate_ml_ppc <- function(model_name, fit, data_df, is_prior = FALSE, n_draws = 400) {
   # Prep data
@@ -3569,7 +3569,7 @@ It might look as if the models haven't updated their predictions after seeing th
 
 Parameter recovery at the multilevel level must check two things: (1) population-level parameters are recovered, and (2) individual-level parameters are recovered and show appropriate partial pooling — extreme agents are pulled toward the population mean.
 
-```{r 09_pop_recovery_summary}
+```{r ch10_pop_recovery_summary}
 # 0. Obtain UNPOOLED estimates via fast optimization (MAP) — used here and in the next chunk
 unpooled_ests <- map_dfr(unique(ml_sim_data$agent_id), function(id) {
   agent_df <- ml_sim_data |> filter(agent_id == id)
@@ -3706,7 +3706,7 @@ p_hyper <- ggplot(plot_hyper_data, aes(y = clean_var)) +
 Variance Shrinkage: The top image demonstrates that the hierarchical model accurately recovers the true, tighter variance of the population distributions. In contrast, the unpooled sample statistics are artificially wide, overestimating the true variance.
 
 
-```{r 09_multilevel_recovery, fig.width=10, fig.height=8}
+```{r ch10_multilevel_recovery, fig.width=10, fig.height=8}
 # 1. unpooled_ests was computed in the previous chunk
 
 # 2. Extract MULTILEVEL (partially pooled) posterior means and join
@@ -3783,10 +3783,10 @@ Look for three features. First, $\rho$ recovery should be tight — this paramet
 
 SBC is *more* critical for multilevel models than for single-agent models. The hierarchical posterior geometry — with its potential funnels, correlations, and partial-pooling dynamics — creates subtle failure modes that standard MCMC diagnostics may miss. We run SBC for both the ML-WBA and ML-PBA.
 
-```{r 09_ml_sbc, message=FALSE}
+```{r ch10_ml_sbc, message=FALSE}
 n_sbc_ml <- 200  # Reduced from single-agent count due to computational cost
 
-if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_ml_wba.rds", "simmodels/ch9_sbc_ml_pba.rds")))) {
+if (regenerate_simulations || !all(file.exists(c("simmodels/ch10_sbc_ml_wba.rds", "simmodels/ch10_sbc_ml_pba.rds")))) {
   
   # ── ML-WBA SBC Generator ──────────────────────────────────────────
   sbc_gen_ml_wba <- SBC_generator_function(
@@ -3870,7 +3870,7 @@ if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_ml_wba.rds",
   
   sbc_results_ml_wba <- compute_SBC(sbc_datasets_ml_wba, sbc_backend_ml_wba,
                                      keep_fits = FALSE)
-  saveRDS(sbc_results_ml_wba, "simmodels/ch9_sbc_ml_wba.rds")
+  saveRDS(sbc_results_ml_wba, "simmodels/ch10_sbc_ml_wba.rds")
 
   # ── ML-PBA SBC Generator ──────────────────────────────────────────
   sbc_gen_ml_pba <- SBC_generator_function(
@@ -3930,11 +3930,11 @@ if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_sbc_ml_wba.rds",
   
   sbc_results_ml_pba <- compute_SBC(sbc_datasets_ml_pba, sbc_backend_ml_pba,
                                      keep_fits = FALSE)
-  saveRDS(sbc_results_ml_pba, "simmodels/ch9_sbc_ml_pba.rds")
+  saveRDS(sbc_results_ml_pba, "simmodels/ch10_sbc_ml_pba.rds")
   
 } else {
-  sbc_results_ml_wba <- readRDS("simmodels/ch9_sbc_ml_wba.rds")
-  sbc_results_ml_pba <- readRDS("simmodels/ch9_sbc_ml_pba.rds")
+  sbc_results_ml_wba <- readRDS("simmodels/ch10_sbc_ml_wba.rds")
+  sbc_results_ml_pba <- readRDS("simmodels/ch10_sbc_ml_pba.rds")
 }
 
 # Plot SBC calibration
@@ -3957,7 +3957,7 @@ If any parameter's ECDF difference line escapes the grey bands, the posterior fo
 
 ### Global Parameter Recovery from SBC
 
-```{r 09_ml_sbc_recovery, fig.width=10, fig.height=4}
+```{r ch10_ml_sbc_recovery, fig.width=10, fig.height=4}
 ml_wba_sbc_recovery <- sbc_results_ml_wba$stats |>
   filter(variable %in% c("mu[1]", "mu[2]", "sigma[1]", "sigma[2]", "Omega[1,2]")) |>
   mutate(model = "ML-WBA")
@@ -3986,7 +3986,7 @@ ggplot(sbc_ml_recovery_df, aes(x = simulated_value, y = median)) +
 
 Following the procedure from the single-agent comparison, we compare all three multilevel models via PSIS-LOO. Because the simulated population has agents with varying weights, we expect the ML-WBA to outperform the ML-SBA. Whether the ML-PBA or ML-WBA wins depends on whether the population s $\kappa$ variation provides sufficient predictive benefit to offset the additional complexity.
 
-```{r 09_multilevel_loo_comparison}
+```{r ch10_multilevel_loo_comparison}
 loo_ml_sba <- loo(fit_ml_sba$draws("log_lik", format = "matrix"))
 loo_ml_pba <- loo(fit_ml_pba$draws("log_lik", format = "matrix"))
 loo_ml_wba <- loo(fit_ml_wba$draws("log_lik", format = "matrix"))
@@ -4007,13 +4007,13 @@ print(ml_weights)
 
 Because the simulated agents were drawn from a population with varying $\rho$ and $\kappa$ (not all equal to 1), the ML-WBA should outperform the ML-SBA. The ELPD difference quantifies the predictive cost of assuming all agents are perfect Bayesians when they are not. However, given we set the simulation to be close to the SBA (balanced weighting), the ML-SBA ends up winning.
 
-Note that this is *trial-level LOO*: it measures generalisation to new *trials* from known agents. For the clinically relevant question — *can we predict a new participant's behaviour from the population distribution alone?* — we would need agent-level K-fold cross-validation, as discussed in Chapter 7.
+Note that this is *trial-level LOO*: it measures generalisation to new *trials* from known agents. For the clinically relevant question — *can we predict a new participant's behaviour from the population distribution alone?* — we would need agent-level K-fold cross-validation, as discussed in Chapter 8.
 
 ### Visualising Pointwise ELPD Differences
 
 To understand *where* the ML-WBA gains its advantage over the ML-SBA, we plot pointwise ELPD differences as a function of evidence conflict — the same diagnostic technique from the single-agent section.
 
-```{r 09_ml_pointwise_elpd}
+```{r ch10_ml_pointwise_elpd}
 pw_ml <- tibble(
   obs       = seq_len(stan_data_ml$N),
   agent_id  = stan_data_ml$agent_id,
@@ -4074,7 +4074,7 @@ Before the full simulation, we examine three instructive scenarios:
 
 3. **Full WBA Population:** Agents vary in both $\rho$ and $\kappa$. The full hierarchical model is needed.
 
-```{r 09_ml_scenario_generation}
+```{r ch10_ml_scenario_generation}
 # Helper: generate multilevel data from a parameter specification
 generate_ml_data <- function(agent_rhos, agent_kappas, ev, n_reps = 2) {
   J <- length(agent_rhos)
@@ -4122,7 +4122,7 @@ scen3_data <- generate_ml_data(
 )
 ```
 
-```{r 09_ml_scenario_fits, message=FALSE}
+```{r ch10_ml_scenario_fits, message=FALSE}
 fit_ml_scenario <- function(stan_data, label) {
   cat(sprintf("\n--- Fitting scenario: %s ---\n", label))
 
@@ -4150,21 +4150,21 @@ fit_ml_scenario <- function(stan_data, label) {
   )
 }
 
-if (regenerate_simulations || !file.exists("simmodels/ch9_ml_scenario_loos.rds")) {
+if (regenerate_simulations || !file.exists("simmodels/ch10_ml_scenario_loos.rds")) {
   loos_scen1 <- fit_ml_scenario(scen1_data, "SBA-Mimic Population")
   loos_scen2 <- fit_ml_scenario(scen2_data, "PBA Population")
   loos_scen3 <- fit_ml_scenario(scen3_data, "Full WBA Population")
   saveRDS(list(s1 = loos_scen1, s2 = loos_scen2, s3 = loos_scen3),
-          "simmodels/ch9_ml_scenario_loos.rds")
+          "simmodels/ch10_ml_scenario_loos.rds")
 } else {
-  loos_all   <- readRDS("simmodels/ch9_ml_scenario_loos.rds")
+  loos_all   <- readRDS("simmodels/ch10_ml_scenario_loos.rds")
   loos_scen1 <- loos_all$s1
   loos_scen2 <- loos_all$s2
   loos_scen3 <- loos_all$s3
 }
 ```
 
-```{r 09_ml_scenario_comparison}
+```{r ch10_ml_scenario_comparison}
 compute_ml_scenario <- function(loos, scenario_name) {
   cat(sprintf("\n=== %s ===\n", scenario_name))
   comp <- loo_compare(loos)
@@ -4236,7 +4236,7 @@ The expected pattern mirrors the single-agent case. In Scenario 1, the SBA-mimic
 
 ### LOO Pointwise Diagnostics Across Scenarios
 
-```{r 09_ml_scenario_pointwise, fig.width=10, fig.height=5}
+```{r ch10_ml_scenario_pointwise, fig.width=10, fig.height=5}
 make_ml_pw <- function(loos, stan_data, scenario_name, ref_model = "SBA") {
   elpd_wba <- loos$WBA$pointwise[, "elpd_loo"]
   elpd_ref <- loos[[ref_model]]$pointwise[, "elpd_loo"]
@@ -4286,11 +4286,11 @@ ggplot(ml_pw, aes(x = evidence_conflict, y = elpd_diff)) +
 
 We now scale up to a full model recovery simulation at the multilevel level. For each of the three generating models (ML-SBA, ML-PBA, ML-WBA), we generate multiple synthetic populations, cross-fit all three candidates, and examine the confusion matrix and calibration.
 
-```{r 09_ml_model_recovery_setup}
+```{r ch10_ml_model_recovery_setup}
 n_ml_sims <- 30  # Per generating model
 J_recovery <- 12  # Agents per simulated population
 
-if (regenerate_simulations || !file.exists("simmodels/ch9_ml_model_recovery.rds")) {
+if (regenerate_simulations || !file.exists("simmodels/ch10_ml_model_recovery.rds")) {
   
   ml_recovery_results <- list()
   counter <- 0
@@ -4367,16 +4367,16 @@ if (regenerate_simulations || !file.exists("simmodels/ch9_ml_model_recovery.rds"
   }
   
   ml_recovery_df <- bind_rows(ml_recovery_results)
-  saveRDS(ml_recovery_df, "simmodels/ch9_ml_model_recovery.rds")
+  saveRDS(ml_recovery_df, "simmodels/ch10_ml_model_recovery.rds")
   
 } else {
-  ml_recovery_df <- readRDS("simmodels/ch9_ml_model_recovery.rds")
+  ml_recovery_df <- readRDS("simmodels/ch10_ml_model_recovery.rds")
 }
 ```
 
 ### Confusion Matrix
 
-```{r 09_ml_confusion_matrix}
+```{r ch10_ml_confusion_matrix}
 # Binary confusion matrix (max-weight winner)
 ml_binary <- ml_recovery_df |>
   pivot_longer(starts_with("weight_"),
@@ -4417,7 +4417,7 @@ ml_binary |>
   theme(panel.grid = element_blank())
 ```
 
-```{r 09_ml_probabilistic_confusion}
+```{r ch10_ml_probabilistic_confusion}
 # Probabilistic confusion matrix (average stacking weights)
 ml_prob_confusion <- ml_recovery_df |>
   group_by(true_model) |>
@@ -4458,7 +4458,7 @@ The expected pattern: the diagonal should dominate. Because the models are neste
 
 A well-calibrated comparison procedure assigns a stacking weight of, say, 0.7 to a model that turns out to be the true generator roughly 70% of the time. We assess this by binning stacking weights and computing the empirical frequency with which the candidate was the true model.
 
-```{r 09_ml_model_calibration}
+```{r ch10_ml_model_calibration}
 ml_cal_long <- ml_recovery_df |>
   pivot_longer(starts_with("weight_"),
                names_to = "candidate", values_to = "stacking_weight") |>
@@ -4534,7 +4534,7 @@ This section merges data from two generating models — half the participants be
 Because no single hierarchical model can correctly represent a bimodal population distribution, we should *not* expect population-level parameters to be meaningful. The scientific question shifts from "what does the average person do?" to "which strategy does *each* person use?" This motivates a focus on **individual-level parameter recovery** and **per-agent model comparison**, skipping the usual population-level parameter interpretation.
 
 ### Generating the Mixed Population
-```{r 09_mixed_population_setup}
+```{r ch10_mixed_population_setup}
 set.seed(2026)
 J_mix <- 40  # 20 SBA + 20 WBA agents
 
@@ -4579,7 +4579,7 @@ cat(sprintf("Total trials: %d | Trials per agent: %d\n",
 ```
 
 
-```{r 09_mixed_population_viz}
+```{r ch10_mixed_population_viz}
 ggplot(mixed_truth, aes(x = true_wd, y = true_ws,
                          colour = true_strategy, shape = true_strategy)) +
   geom_point(size = 3.5, alpha = 0.8) +
@@ -4601,8 +4601,8 @@ ggplot(mixed_truth, aes(x = true_wd, y = true_ws,
 The SBA agents form a tight cluster at $(w_d, w_s) = (1, 1)$ — they are all identical by construction. The WBA agents scatter around $(w_d, w_s) \approx (0.6, 1.9)$, each with their own idiosyncratic weights drawn from the population distribution. No single Gaussian population on the $(\text{logit}(\rho), \log(\kappa))$ scale can represent this bimodal structure.
 
 ### Fitting All Three Multilevel Models
-```{r 09_mixed_fit, message=FALSE}
-if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_fit_mix_sba.rds", "simmodels/ch9_fit_mix_pba.rds", "simmodels/ch9_fit_mix_wba.rds")))) {
+```{r ch10_mixed_fit, message=FALSE}
+if (regenerate_simulations || !all(file.exists(c("simmodels/ch10_fit_mix_sba.rds", "simmodels/ch10_fit_mix_pba.rds", "simmodels/ch10_fit_mix_wba.rds")))) {
   
   fit_mix_sba <- mod_ml_sba$sample(
     data = mixed_stan_data, chains = 4, parallel_chains = 4,
@@ -4623,14 +4623,14 @@ if (regenerate_simulations || !all(file.exists(c("simmodels/ch9_fit_mix_sba.rds"
   )
 
   # Save each fit individually with $save_object() so draws survive sessions
-  fit_mix_sba$save_object("simmodels/ch9_fit_mix_sba.rds")
-  fit_mix_pba$save_object("simmodels/ch9_fit_mix_pba.rds")
-  fit_mix_wba$save_object("simmodels/ch9_fit_mix_wba.rds")
+  fit_mix_sba$save_object("simmodels/ch10_fit_mix_sba.rds")
+  fit_mix_pba$save_object("simmodels/ch10_fit_mix_pba.rds")
+  fit_mix_wba$save_object("simmodels/ch10_fit_mix_wba.rds")
 
 } else {
-  fit_mix_sba <- readRDS("simmodels/ch9_fit_mix_sba.rds")
-  fit_mix_pba <- readRDS("simmodels/ch9_fit_mix_pba.rds")
-  fit_mix_wba <- readRDS("simmodels/ch9_fit_mix_wba.rds")
+  fit_mix_sba <- readRDS("simmodels/ch10_fit_mix_sba.rds")
+  fit_mix_pba <- readRDS("simmodels/ch10_fit_mix_pba.rds")
+  fit_mix_wba <- readRDS("simmodels/ch10_fit_mix_wba.rds")
 }
 
 cat("=== Mixed Population: Model Diagnostics ===\n")
@@ -4642,7 +4642,7 @@ check_diagnostics(fit_mix_wba, "ML-WBA (mixed)")
 ### Why Population Parameters Are Misleading
 
 Before turning to individual-level analysis, let's check what the ML-WBA's population parameters say about this mixed population.
-```{r 09_mixed_population_misleading}
+```{r ch10_mixed_population_misleading}
 draws_mix <- as_draws_df(fit_mix_wba$draws())
 
 # Population-level summaries
@@ -4685,7 +4685,7 @@ ggplot() +
 
 
 ### Individual Parameter Recovery
-```{r 09_mixed_individual_recovery, fig.width=10, fig.height=5}
+```{r ch10_mixed_individual_recovery, fig.width=10, fig.height=5}
 # Extract individual posteriors
 mix_recovery <- mixed_truth |>
   mutate(
@@ -4727,7 +4727,7 @@ p_mix_rho + p_mix_kappa +
 ### Per-Agent Model Comparison
 
 The population-level LOO comparison tells us which model best predicts *the aggregate dataset*. But the more informative question is: which model best predicts *each individual agent's* behaviour? We decompose the total LOO into agent-level contributions.
-```{r 09_mixed_agent_loo}
+```{r ch10_mixed_agent_loo}
 # Compute trial-level LOO for all three models
 loo_mix_sba <- loo(fit_mix_sba$draws("log_lik", format = "matrix"))
 loo_mix_pba <- loo(fit_mix_pba$draws("log_lik", format = "matrix"))
@@ -4774,7 +4774,7 @@ agent_elpd <- tibble(
 ```
 
 
-```{r 09_mixed_agent_loo_viz, fig.width=10, fig.height=5}
+```{r ch10_mixed_agent_loo_viz, fig.width=10, fig.height=5}
 # Left: per-agent ELPD advantage coloured by true strategy
 p_agent_advantage <- ggplot(agent_elpd,
        aes(x = reorder(agent_id, elpd_advantage),
@@ -4819,7 +4819,7 @@ p_agent_advantage | p_agent_scatter
 The bar chart on the left reveals a clean separation. The WBA agents (purple) consistently show positive ELPD advantages — the flexible model predicts their behaviour much better than the SBA. The SBA agents (green) hover near zero or show slight negative advantages — the SBA is sufficient, and the flexible models' extra parameters represent wasted complexity. The scatter plot on the right makes the same point geometrically: WBA agents sit above the diagonal (ML-WBA predicts better), while SBA agents sit on or below it.
 
 ### Individual-Level Confusion Matrix
-```{r 09_mixed_confusion, fig.width=7, fig.height=4}
+```{r ch10_mixed_confusion, fig.width=7, fig.height=4}
 # Build the confusion matrix
 mix_confusion <- agent_elpd |>
   count(true_strategy, best_model) |>
@@ -4859,7 +4859,7 @@ ggplot(mix_confusion, aes(x = best_model, y = true_strategy, fill = proportion))
 ### Visualising the Classification Boundary
 
 What separates correctly classified agents from misclassified ones? We plot the agents in the estimated $(\rho, \kappa)$ space, marking classifications.
-```{r 09_mixed_classification_boundary}
+```{r ch10_mixed_classification_boundary}
 mix_class_data <- mix_recovery |>
   left_join(agent_elpd |> select(agent_id, best_model, elpd_advantage),
             by = "agent_id") |>
@@ -4893,9 +4893,9 @@ This analysis demonstrates three important lessons for applied cognitive modelli
 
 **1. Population parameters are misleading for heterogeneous groups.** The ML-WBA's estimated population mean $\rho$ averaged over two qualitatively different strategies to produce a summary that describes nobody. This is not a failure of the hierarchical model *per se* — it is a structural consequence of fitting a unimodal population distribution to a bimodal mixture. When you suspect strategy heterogeneity, do not interpret population means at face value.
 
-**2. Individual-level recovery succeeds despite population-level misspecification.** The ML-WBA, though structurally unable to represent a mixture population, still recovers individual $\rho_j$ and $\kappa_j$ values well enough to separate the two groups. The estimated population SD absorbs the between-group variance, and the partial pooling is mild enough that the bimodal structure in the individual estimates is preserved. A formal mixture model (as in Ch. 8) would be more appropriate — it would estimate the mixing proportion and the within-group population distributions directly — but the standard hierarchical model is a surprisingly robust approximation.
+**2. Individual-level recovery succeeds despite population-level misspecification.** The ML-WBA, though structurally unable to represent a mixture population, still recovers individual $\rho_j$ and $\kappa_j$ values well enough to separate the two groups. The estimated population SD absorbs the between-group variance, and the partial pooling is mild enough that the bimodal structure in the individual estimates is preserved. A formal mixture model (as in Ch. 9) would be more appropriate — it would estimate the mixing proportion and the within-group population distributions directly — but the standard hierarchical model is a surprisingly robust approximation.
 
-**3. Per-agent model comparison identifies strategy types.** By decomposing the overall LOO into agent-level contributions, we can classify individuals as SBA-type or WBA-type with reasonable accuracy. This connects directly to the mixture modelling approach from Ch. 8: where a mixture model infers strategy membership *within* the generative model, per-agent LOO achieves a similar classification *post hoc* through predictive comparison.
+**3. Per-agent model comparison identifies strategy types.** By decomposing the overall LOO into agent-level contributions, we can classify individuals as SBA-type or WBA-type with reasonable accuracy. This connects directly to the mixture modelling approach from Ch. 9: where a mixture model infers strategy membership *within* the generative model, per-agent LOO achieves a similar classification *post hoc* through predictive comparison.
 
 The practical implication for researchers: if you suspect your participants use different strategies, always look beyond population-level summaries. Examine individual parameter estimates for multimodality, and use per-agent model comparison to classify participants before interpreting group effects.
 
@@ -4911,7 +4911,7 @@ $$F(L,w) = \log \frac{w e^L + 1 - w}{(1 - w)e^L + w}$$
 
 Let's visualize how this function behaves in R.
 
-```{r 09_jardri_function, fig.height=4, fig.width=6}
+```{r ch10_jardri_function, fig.height=4, fig.width=6}
 # The core Jardri integration function
 JardriF <- function(L, w) {
   # L is evidence in log-odds
@@ -4958,7 +4958,7 @@ Circular inference claims that information reverberates in the network. We model
 
 The complete Jardri model notes that overcounted evidence causes interference. The reverberated information corrupts the original sources, rendering them non-separable. We first calculate the total interference $I$, and then add it to the base evidence inside the transformation function:$$I = F(\alpha_1 L_1, w_1) + F(\alpha_2 L_2, w_2)$$$$L_{post} = F(L_1 + I, w_1) + F(L_2 + I, w_2)$$Let's write generative R functions for all three stages.
 
-```{r 09_circular_inference_functions}
+```{r ch10_circular_inference_functions}
 # Stage 1: Weights Only
 model_weights_only <- function(L1, L2, w1, w2) {
   L_post <- JardriF(L1, w1) + JardriF(L2, w2)
@@ -5062,7 +5062,7 @@ Let's build the three models.
 
 This is our baseline. It strictly integrates the evidence without any reverberation (overcounting) or interference. 
 
-```{r 09_stan_ci_weights_only}
+```{r ch10_stan_ci_weights_only}
 CI_Weights_stan <- "
 functions {
   // The core Jardri transformation function
@@ -5128,7 +5128,7 @@ generated quantities {
 }
 "
 
-write_stan_file(CI_Weights_stan, dir = "stan/", basename = "ch9_ci_weights_only.stan")
+write_stan_file(CI_Weights_stan, dir = "stan/", basename = "ch10_ci_weights_only.stan")
 ```
 
 #### 2. Stage 2: Weights + Loops
@@ -5209,7 +5209,7 @@ generated quantities {
 }
 "
 
-write_stan_file(CI_Loops_stan, dir = "stan/", basename = "ch9_ci_loops.stan")
+write_stan_file(CI_Loops_stan, dir = "stan/", basename = "ch10_ci_loops.stan")
 ```
 
 ### 3. Stage 3: Weights + Loops + Interference
@@ -5295,7 +5295,7 @@ generated quantities {
 }
 "
 
-write_stan_file(CI_Interference_stan, dir = "stan/", basename = "ch9_ci_interference.stan")
+write_stan_file(CI_Interference_stan, dir = "stan/", basename = "ch10_ci_interference.stan")
 ```
 
 ### Simulation-Based Calibration (SBC): Pinpointing the Source of Complexity
@@ -5309,13 +5309,13 @@ When parameters interact multiplicatively inside non-linear bounds, **identifiab
 
 We will simulate datasets from the priors of each model, fit the corresponding Stan model to them, and compare their calibration and parameter recovery side-by-side.
 
-```{r 09_sbc_ci_all, message=FALSE}
+```{r ch10_sbc_ci_all, message=FALSE}
 # Ensure all models are compiled
-mod_ci_weights      <- cmdstan_model("stan/ch9_ci_weights_only.stan", dir = "simmodels")
-mod_ci_loops        <- cmdstan_model("stan/ch9_ci_loops.stan", dir = "simmodels")
-mod_ci_interference <- cmdstan_model("stan/ch9_ci_interference.stan", dir = "simmodels")
+mod_ci_weights      <- cmdstan_model("stan/ch10_ci_weights_only.stan", dir = "simmodels")
+mod_ci_loops        <- cmdstan_model("stan/ch10_ci_loops.stan", dir = "simmodels")
+mod_ci_interference <- cmdstan_model("stan/ch10_ci_interference.stan", dir = "simmodels")
 
-if (regenerate_simulations || !file.exists("simmodels/ch9_sbc_ci_all_results.rds")) {
+if (regenerate_simulations || !file.exists("simmodels/ch10_sbc_ci_all_results.rds")) {
   
   # 1. Define the R equivalent of the Jardri function for the generators
   jardri_f <- function(L, w) {
@@ -5420,10 +5420,10 @@ if (regenerate_simulations || !file.exists("simmodels/ch9_sbc_ci_all_results.rds
   sbc_res_interf  <- compute_SBC(datasets_interf, backend_interf, keep_fits = FALSE)
 
   saveRDS(list(weights = sbc_res_weights, loops = sbc_res_loops, interf = sbc_res_interf), 
-          "simmodels/ch9_sbc_ci_all_results.rds")
+          "simmodels/ch10_sbc_ci_all_results.rds")
 
 } else {
-  sbc_all <- readRDS("simmodels/ch9_sbc_ci_all_results.rds")
+  sbc_all <- readRDS("simmodels/ch10_sbc_ci_all_results.rds")
   sbc_res_weights <- sbc_all$weights
   sbc_res_loops   <- sbc_all$loops
   sbc_res_interf  <- sbc_all$interf
@@ -5457,7 +5457,7 @@ The ECDF plots generally stay within the blue envelopes, though you will likely 
 
 Calibration tells us if the posterior captures the true value on average, but Parameter Recovery tells us how precise those estimates are. By plotting all three models together, we can see exactly what structural feature destroys our precision.
 
-```{r 09_sbc_ci_recovery, fig.width=10, fig.height=10}
+```{r ch10_sbc_ci_recovery, fig.width=10, fig.height=10}
 # Extract and label recovery stats
 prep_recovery <- function(sbc_obj, model_name) {
   sbc_obj$stats |>
@@ -5561,9 +5561,9 @@ This pipeline is not bureaucracy. Without SBC, a subtle Stan implementation bug 
 **This is the end of the core modelling sequence.** Chapters 1–9 have
 traced the complete Bayesian cognitive modelling workflow: from pizza-stone
 physics (Ch. 1), through verbal and formal models of strategic behaviour
-(Chs. 2–3), parameter estimation (Ch. 4), model validation (Ch. 5),
-hierarchical extensions (Ch. 6), model comparison (Ch. 7), mixture
-structures (Ch. 8), and Bayesian cognitive theory (Ch. 9). The tools and
+(Chs. 2–3), parameter estimation (Ch. 5), model validation (Ch. 6),
+hierarchical extensions (Ch. 7), model comparison (Ch. 8), mixture
+structures (Ch. 9), and Bayesian cognitive theory (Ch. 10). The tools and
 habits of mind established here — generative modelling, principled
 validation, honest uncertainty — apply directly to any new domain or model
 you encounter.

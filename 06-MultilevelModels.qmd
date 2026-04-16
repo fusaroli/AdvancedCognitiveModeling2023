@@ -1,7 +1,7 @@
 
 # Individual Differences in Cognitive Strategies: The Hierarchical Architecture
 
-```{r setup-ch06, include=FALSE}
+```{r ch07_setup, include=FALSE}
 
 knitr::opts_chunk$set(
   echo = TRUE,
@@ -56,10 +56,10 @@ plan(sequential) # to ensure proper knitting.
 > differ from each other. This chapter builds hierarchical (multilevel)
 > models that estimate both individual parameters *and* the population
 > distribution they are drawn from — and validates the whole pipeline
-> with the same six-phase battery from Ch. 5.
+> with the same six-phase battery from Ch. 6.
 > The memory model fitted here uses the **reversal learning dataset from
-> Ch. 5**, which was the first dataset that cleanly separated `bias` from
-> `beta`. The fitted model and its LOO score are saved for Ch. 7.
+> Ch. 6**, which was the first dataset that cleanly separated `bias` from
+> `beta`. The fitted model and its LOO score are saved for Ch. 8.
 
 ## Introduction
 
@@ -115,7 +115,7 @@ After completing this chapter, you will be able to:
 * **Apply to Cognitive Questions**: Use multilevel modeling to investigate individual differences in cognitive strategies (e.g., bias, memory, WSLS).
 
 This chapter has two parts. The first applies the full Bayesian workflow to the **Hierarchical Biased Agent** — one parameter per person, one population distribution — and uses it to expose and fix the Centered Parameterization's pathological geometry (Neal's Funnel). The second applies the same workflow to the **Hierarchical Memory Agent**, which has two correlated parameters per person, requires a bivariate population distribution, and uses the reversal
-learning dataset from Ch. 5 that we validated there. The LOO score from the fitted memory model is saved for Ch. 7's model comparison.
+learning dataset from Ch. 6 that we validated there. The LOO score from the fitted memory model is saved for Ch. 8's model comparison.
 
 ### Biased Agent Model (Multilevel)
 
@@ -227,7 +227,7 @@ Let us build a unified generative function. In accordance with the rigorous Baye
 
 * Accept fixed "ground-truth" hyperparameters (for Parameter Recovery in Phase 2).
 
-```{r}
+```{r ch07_simulate_hierarchical_biased}
 #' Simulate Hierarchical Biased Agents
 #'
 #' @param n_agents Integer, number of agents (J).
@@ -288,7 +288,7 @@ When placing priors on an unbounded scale (logit) that will be transformed to a 
 
 Let us generate 12 datasets drawn entirely from our chosen priors ($\mu_\theta \sim N(0, 1.5), \sigma_\theta \sim \text{Exp}(1)$) to verify they generate scientifically plausible, heterogeneous populations.
 
-```{r}
+```{r ch07_prior_predictive_check_viz}
 # Generate 12 distinct "universes" from the priors
 prior_sims <- map_dfr(1:12, function(sim_id) {
   # We use a fixed seed per universe for stable workflow mapping
@@ -320,7 +320,7 @@ ggplot(prior_sims, aes(x = theta_prob)) +
 
 Before we unleash the Hamiltonian Monte Carlo (HMC) engine, we must format our simulated data structure to match the static typing of the Stan compiler. Because our agents have varying numbers of trials ($N_j$), we cannot pass a simple $J \times N$ matrix. Instead, we use a "long format" array indexing strategy, where a specific vector maps every trial $n \in \{1, \dots, N_{\text{total}}\}$ to its generating agent $j$.
 
-```{r}
+```{r ch07_prep_stan_data}
 #' Prepare Data for Stan
 #'
 #' Maps a tidy tibble into the strictly typed list required by CmdStanR.
@@ -367,7 +367,7 @@ This architecture mathematically instantiates partial pooling: the estimation of
 
 Let us write the Stan code.
 
-```{r 06 Stan Model Biased Agent}
+```{r ch07_stan_model_biased_cp}
 
 stan_biased_ml_cp_code <- "
 // Multilevel Biased Agent Model: Centered Parameterization (CP)
@@ -439,7 +439,7 @@ generated quantities {
 "
 
 # Save
-stan_file_biased_ml_cp <- here::here("stan", "ch6_multilevel_biased_cp.stan")
+stan_file_biased_ml_cp <- here::here("stan", "ch07_multilevel_biased_cp.stan")
 writeLines(stan_biased_ml_cp_code, stan_file_biased_ml_cp)
 
 # Compile the CP model utilizing the CmdStan C++ backend
@@ -452,8 +452,8 @@ mod_biased_ml_cp <- cmdstan_model(stan_file_biased_ml_cp)
 
 This not really necessary yet, but a rigorous workflow demands an explicit initialization strategy, so we have all the pieces in place for more complex models. We will initialize the NUTS algorithm by drawing starting values directly from our generative priors. This ensures the chains begin in scientifically plausible regions of the parameter space, rather than Stan's arbitrary default $U[-2, 2]$ on the unconstrained space.
 
-```{r 06_Fit_CP_Model}
-fit_cp_path <- here::here("simmodels", "ch6_fit_cp.rds")
+```{r ch07_Fit_CP_Model}
+fit_cp_path <- here::here("simmodels", "ch07_fit_cp.rds")
 
 if (regenerate_simulations || !file.exists(fit_cp_path)) {
   
@@ -506,7 +506,7 @@ We are looking for strict zeros in num_divergent. A divergent transition occurs 
 
 Did our independent Markov chains converge to the same stationary distribution? We visualize this using trace plots and quantify it using $\hat{R}$ (R-hat).
 
-```{r}
+```{r ch07_cp_diagnostics_trace}
 # Extract the posterior array
 draws_cp <- fit_cp$draws()
 
@@ -537,7 +537,7 @@ Markov chains are inherently autocorrelated. Stan might draw 4000 samples, but w
 #### Energy and E-BFMI
 Finally, we evaluate the Energy-Bayesian Fraction of Missing Information (E-BFMI). HMC relies on injecting kinetic energy (momentum) into the system to explore the tails of the target distribution.
 
-```{r}
+```{r ch07_cp_diagnostics_energy}
 # Assess the momentum resampling efficiency
 mcmc_nuts_energy(nuts_params(fit_cp)) +
   labs(
@@ -553,7 +553,7 @@ Bayesian inference is the mathematical process of allocating credibility across 
 
 Let us visualize how much the data narrowed our uncertainty about the population parameters. Because we explicitly generated prior draws in our Stan generated quantities block, this comparison is trivial.
 
-```{r}
+```{r ch07_cp_pp_update_viz}
 # Extract prior and posterior draws for the population mean and variance
 draws_df <- as_draws_df(draws_cp)
 
@@ -612,7 +612,7 @@ Parameters in hierarchical models are structurally correlated. By plotting the j
 
 We will use a pairs plot to examine the joint distribution of the population mean ($\mu_\theta$), population standard deviation ($\sigma_\theta$), and a single agent's latent bias ($\theta_{\text{logit}, 1}$).
 
-```{r}
+```{r ch07_cp_pairs_plot}
 # Visualize joint posterior geometries and identify structural correlations
 mcmc_pairs(
   draws_cp, 
@@ -628,7 +628,7 @@ Can our fitted model actually generate the reality we observed? If we simulate d
 
 We will compare the observed choice rate for each agent against the distribution of choice rates predicted by the posterior.
 
-```{r}
+```{r ch07_cp_ppc_viz}
 # Safely extract vectors
 y_obs <- as.numeric(stan_data_centered$h)
 agent_idx <- as.numeric(stan_data_centered$agent)
@@ -675,7 +675,7 @@ We have proven the model fits the data and generates plausible predictions. Now,
 
 Having validated the top of the hierarchy (in the prior-posterior update check), we move to the individual agents. We plot the posterior estimates against the ground truth. We expect the estimates to align with the diagonal identity line, but crucially, we expect agents with fewer trials to deviate from the raw truth, demonstrating shrinkage toward the estimated population mean.
 
-```{r}
+```{r ch07_cp_recovery_shrinkage}
 # 1. Extract the full summary (which defaults to including median, q5, and q95)
 recovery_summary <- draws_cp |> 
   posterior::subset_draws(variable = "theta_logit") |> 
@@ -706,7 +706,7 @@ ggplot(recovery_df, aes(x = theta_logit, y = median)) +
 
 ### Prior sensitivity
 
-```{r}
+```{r ch07_cp_prior_sensitivity}
 # 1. Calculate the sensitivity diagnostics
 # We target the hyperparameters, as they govern the hierarchical shrinkage
 sens_results <- powerscale_sensitivity(
@@ -756,7 +756,7 @@ The SBC package requires a strict data structure. It expects a generator functio
 
 Let us build a strict wrapper around our simulation and data preparation functions to satisfy this requirement.
 
-```{r}
+```{r ch07_sbc_generator}
 # Define the strict SBC generator wrapper
 generate_sbc_dataset <- function(n_agents = 50, n_trials_min = 20, n_trials_max = 120) {
   
@@ -794,9 +794,8 @@ generate_sbc_dataset <- function(n_agents = 50, n_trials_min = 20, n_trials_max 
 
 A production-grade SBC requires $N_{\text{sim}} \ge 1000$ to smooth the rank histograms. For computational feasibility in this chapter, we will run 200 simulations. Because we established our future parallel processing plan in the setup chunk, the SBC package will automatically distribute these models across your CPU cores.
 
-```{r}
-
-sbc_cp_path <- here::here("simmodels", "ch6_sbc_cp.rds")
+```{r ch07_sbc_cp_execution}
+sbc_cp_path <- here::here("simmodels", "ch07_sbc_cp.rds")
 
 generator_cp <- SBC_generator_function(
   generate_sbc_dataset,
@@ -884,7 +883,7 @@ print(knitr::kable(recovery_metrics, digits = 3))
 
 Let's explore the warnings we got.
 
-```{r}
+```{r ch07_sbc_cp_divergence_viz}
 # Extract diagnostics now so they are available for the targeted refit below
 diags_cp <- sbc_results_cp$backend_diagnostics
 cp_fail_rate <- mean(diags_cp$n_divergent > 0) * 100
@@ -940,8 +939,8 @@ ggplot(divergence_profile, aes(x = mu_theta, y = sigma_theta, color = had_diverg
   theme_classic()
 ```
 
-```{r}
-hard_universe_path <- here::here("simmodels", "ch6_fit_cp_hard.rds")
+```{r ch07_cp_hard_universe_fit}
+hard_universe_path <- here::here("simmodels", "ch07_fit_cp_hard.rds")
 
 hard_universe_idx <- divergence_profile |> 
   filter(had_divergence) |> 
@@ -1022,7 +1021,7 @@ Mathematically, this is identical to the CP ($z \sim N(0,1) \implies \mu + z\sig
 
 Here is the NCP version of the model. Note the changes in the parameters, transformed parameters, and model blocks compared to the CP version.
 
-```{r}
+```{r ch07_stan_model_biased_ncp}
 
 stan_biased_ml_ncp_code <- '
 // Multilevel Biased Agent Model (Non-Centered Parameterization)
@@ -1109,12 +1108,12 @@ generated quantities {
 }'
 
 # Write Stan code to file
-stan_file_ncp <- here::here("stan", "ch6_multilevel_biased_ncp.stan")
+stan_file_ncp <- here::here("stan", "ch07_multilevel_biased_ncp.stan")
 writeLines(stan_biased_ml_ncp_code, stan_file_ncp)
 
 mod_biased_ml_ncp <- cmdstan_model(stan_file_ncp)
 
-fit_ncp_path <- here::here("simmodels", "ch6_fit_ncp.rds")
+fit_ncp_path <- here::here("simmodels", "ch07_fit_ncp.rds")
 
 # Extract J safely
   J_val_ncp <- stan_data_centered$J
@@ -1156,7 +1155,7 @@ fit_ncp_path <- here::here("simmodels", "ch6_fit_ncp.rds")
 > two diagnostics that directly reveal the CP's failure and the NCP's fix:
 > sampling efficiency and the SBC rank histograms.
 
-```{r 06_Time_NCP_Model}
+```{r ch07_Time_NCP_Model}
 # Timing and ESS comparison 
 time_cp  <- fit_cp$time()$total
 time_ncp <- fit_ncp$time()$total
@@ -1186,8 +1185,8 @@ Yet, NCP might still end up exploring the space better. Let's see how it fares o
 
 We will generate 200 random universes from the priors, fit the NCP model to each, and plot the rank histograms.
 
-```{r}
-sbc_ncp_path <- here::here("simmodels", "ch6_sbc_ncp.rds")
+```{r ch07_sbc_ncp_execution}
+sbc_ncp_path <- here::here("simmodels", "ch07_sbc_ncp.rds")
 
 backend_ncp <- SBC_backend_cmdstan_sample(
   mod_biased_ml_ncp,
@@ -1316,7 +1315,7 @@ Prior SBC tested our sampler across the entire prior space — it asked whether 
 
 Posterior SBC (PSBC) is a complementary local diagnostic that directly targets this regime. The logic inverts the generative direction. Instead of drawing true parameters from the prior, we draw them from the *fitted posterior* — a distribution that has already been conditioned on our actual data and therefore concentrates in precisely the region the sampler will need to navigate in practice. Concretely: we sample a single draw $\tilde{\theta}^{(s)}$ from the posterior ($\theta \mid y_{\text{obs}}$), treat it as a ground truth, generate a synthetic dataset $\tilde{y}^{(s)} \sim p(y \mid \tilde{\theta}^{(s)})$ from the likelihood, fit the model to $\tilde{y}^{(s)}$, and record where $\tilde{\theta}^{(s)}$ falls in the resulting posterior. If the sampler is locally well-calibrated, these ranks are again uniform — but now over the concentrated geometry of the posterior, not the diffuse geometry of the prior. A U-shaped rank histogram here means the sampler is overconfident *specifically when the data are informative*, which is exactly the failure mode we need to detect. Implementing this requires us to write a *factory function*: a function that closes over a fitted model object and a data structure, and returns a new generator function that the `SBC` package can call repeatedly to produce fresh $({\tilde{\theta}}, \tilde{y})$ pairs. If this pattern is unfamiliar, read it as a function that *builds* generators rather than *being* one — `make_psbc_generator(fit_cp, stan_data_centered)` does not itself generate a dataset; it returns a self-contained callable that will do so every time the SBC machinery invokes it.
 
-```{r}
+```{r ch07_psbc_execution}
 # 1. Define a robust factory function for the PSBC generator
 make_psbc_generator <- function(fit, original_data) {
   # Extract the full posterior array as a flat data frame
@@ -1350,7 +1349,7 @@ make_psbc_generator <- function(fit, original_data) {
   }
 }
 
-psbc_path <- here::here("simmodels", "ch6_psbc.rds")
+psbc_path <- here::here("simmodels", "ch07_psbc.rds")
 
 if (regenerate_simulations || !file.exists(psbc_path)) {
   
@@ -1470,13 +1469,13 @@ Because typical cognitive tasks (like our Matching Pennies game) involve relativ
 ## The Epistemic Showdown: Visualizing Shrinkage
 
 We have theorized about the dangers of ignoring population structure (Complete Pooling) and the dangers of ignoring noise in small samples (No Pooling). In a rigorous Bayesian workflow, we do not rely on intuition; we compute the alternatives and visualize the geometric differences.We will quickly define and fit the two extreme models using our strictly typed stan_data_centered. 
-The complete and no-pooling models are included here solely as visual contrasts — they serve as the "wrong answer" endpoints that make the partial pooling solution legible. A full diagnostic battery on these two models would be redundant: complete pooling is trivially identifiable (one parameter, well-conditioned), and no-pooling is structurally identical to J independent Ch. 5 models we already validated. The NCP model, which actually matters, passed its full battery above.
+The complete and no-pooling models are included here solely as visual contrasts — they serve as the "wrong answer" endpoints that make the partial pooling solution legible. A full diagnostic battery on these two models would be redundant: complete pooling is trivially identifiable (one parameter, well-conditioned), and no-pooling is structurally identical to J independent Ch. 6 models we already validated. The NCP model, which actually matters, passed its full battery above.
 
 ### The Complete Pooling Model (Underfitting)
 
 This model assumes all agents are identical clones. The population variance is forced to exactly $0$. We estimate a single, universal bias parameter.
 
-```{r}
+```{r ch07_fit_complete_pooling}
 stan_full_pooling_code <- "
 data {
   int<lower=1> N;
@@ -1490,11 +1489,11 @@ model {
   target += bernoulli_logit_lpmf(h | theta_logit);
 }
 "
-stan_file_full <- here::here("stan", "ch6_biased_full_pooling.stan")
+stan_file_full <- here::here("stan", "ch07_biased_full_pooling.stan")
 writeLines(stan_full_pooling_code, stan_file_full)
 mod_full <- cmdstan_model(stan_file_full)
 
-fit_full_path <- here::here("simmodels", "ch6_fit_full_pool.rds")
+fit_full_path <- here::here("simmodels", "ch07_fit_full_pool.rds")
 
 if (regenerate_simulations || !file.exists(fit_full_path)) {
   fit_full <- mod_full$sample(
@@ -1513,7 +1512,7 @@ full_pool_est <- posterior::summarise_draws(fit_full$draws("theta_logit"), "medi
 
 This model assumes every agent is a completely isolated island. The population variance is implicitly assumed to be $\infty$. We estimate an independent parameter for each agent, equipped only with a static, weakly informative prior.
 
-```{r}
+```{r ch07_fit_no_pooling}
 stan_no_pooling_code <- "
 data {
   int<lower=1> N;
@@ -1530,12 +1529,12 @@ model {
   target += bernoulli_logit_lpmf(h | theta_logit[agent]);
 }
 "
-stan_file_no <- here::here("stan", "ch6_biased_no_pooling.stan")
+stan_file_no <- here::here("stan", "ch07_biased_no_pooling.stan")
 writeLines(stan_no_pooling_code, stan_file_no)
 mod_no <- cmdstan_model(stan_file_no)
 
 # Fit the No Pooling model
-fit_no_path <- here::here("simmodels", "ch6_fit_no_pool.rds")
+fit_no_path <- here::here("simmodels", "ch07_fit_no_pool.rds")
 
 if (regenerate_simulations || !file.exists(fit_no_path)) {
   fit_no <- mod_no$sample(
@@ -1560,7 +1559,7 @@ We now have three distinct sets of inferences:
 * Partial Pooling: Our hierarchical NCP model estimates (the precision-weighted Bayesian compromise).
 
 To truly evaluate the epistemological value of these models, we must plot them not just against each other, but against the True Generative Parameters (the hidden reality we simulated in R). We will also extract the naive arithmetic mean of the No Pooling estimates to contrast it with the precision-weighted Partial Pooling mean.
-```{r}
+```{r ch07_shrinkage_viz}
 # 1. Extract the Partial Pooling Population and Individual Estimates (from the NCP model)
 mu_partial_pool_est <- posterior::summarise_draws(fit_ncp$draws("mu_theta"), "median")$median
 
@@ -1686,7 +1685,7 @@ $$m_{ij} = \frac{1}{i-1}\sum_{k=1}^{i-1} o_{kj}$$
 
 There are now two individual-level parameters per agent: $\alpha_j$, the baseline directional bias, and $\beta_j$, the sensitivity to opponent history. They need not vary independently across the population. An agent who has a strong directional tendency might also track the opponent more aggressively — or might not. Fitting two separate univariate hierarchical models forecloses this question before the data can answer it. We model the parameters jointly.
 
-**Experimental design: the reversal paradigm.** In Ch. 5 we discovered that fitting the memory model to a *constant-bias* opponent produces a strong positive correlation between `bias` and `beta` in the posterior — both parameters explain the same rightward tendency and cannot be told apart. The reversal learning design (opponent plays 80% right for trials 1–120, then 20% right for trials 121–240) breaks this confound: in the second phase, a pure-bias agent continues right while a memory agent flips left, providing the discriminating contrast the two-parameter model needs. We therefore use the reversal schedule saved in Ch. 5 as the shared opponent sequence for all J agents here.
+**Experimental design: the reversal paradigm.** In Ch. 6 we discovered that fitting the memory model to a *constant-bias* opponent produces a strong positive correlation between `bias` and `beta` in the posterior — both parameters explain the same rightward tendency and cannot be told apart. The reversal learning design (opponent plays 80% right for trials 1–120, then 20% right for trials 121–240) breaks this confound: in the second phase, a pure-bias agent continues right while a memory agent flips left, providing the discriminating contrast the two-parameter model needs. We therefore use the reversal schedule saved in Ch. 6 as the shared opponent sequence for all J agents here.
 
 #### The Bivariate Population Distribution
 
@@ -1825,7 +1824,7 @@ In accordance with the rigorous Bayesian workflow, the simulation function is de
 
 * Accept fixed ground-truth hyperparameters (for Parameter Recovery).
 
-```{r}
+```{r ch07_simulate_hierarchical_memory}
 #' Simulate Hierarchical Memory Agents
 #'
 #' @param n_agents Integer, number of agents (J).
@@ -1933,7 +1932,7 @@ simulate_hierarchical_memory <- function(
 
 For a bivariate model, the most revealing prior predictive display is a scatter of individual $(\alpha_j, \beta_j)$ pairs across multiple prior universes. This simultaneously reveals how dispersed individual differences are ($\sigma_\alpha$, $\sigma_\beta$), how correlated the two cognitive dimensions tend to be ($\rho$), and whether any prior universe generates implausible populations (e.g., $|\beta_j| > 8$, meaning the memory signal completely overrides choice).
 
-```{r}
+```{r ch07_memory_prior_predictive_scatter}
 # Generate 12 prior universes
 prior_sims_mem <- map_dfr(1:12, function(sim_id) {
   sim <- simulate_hierarchical_memory(
@@ -1965,7 +1964,7 @@ A healthy prior generates a range of cloud shapes — some circular (low $|\rho|
 
 Having established from the biased agent workflow that NCP is our default architecture for cognitive tasks with sparse per-agent data, we implement it directly. We skip the Centered Parameterization entirely.
 
-```{r, 06_stan_memory_data_prep }
+```{r, ch07_stan_memory_data_prep }
 #' Prepare Memory Agent Data for Stan
 #'
 #' @param sim_data Tibble from simulate_hierarchical_memory().
@@ -1980,14 +1979,14 @@ prep_stan_data_memory <- function(sim_data) {
   )
 }
 
-# --- Load the reversal learning schedule from Ch. 5 ---
+# --- Load the reversal learning schedule from Ch. 6 ---
 # This 240-trial sequence (80% right → reversal → 20% right) was validated
-# in Ch. 5 to cleanly identify bias and beta. All agents play the same
+# in Ch. 6 to cleanly identify bias and beta. All agents play the same
 # opponent schedule, with variable trial counts (80–240 trials).
-reversal_obj      <- readRDS(here("simdata", "05_reversal_data.rds"))
+reversal_obj      <- readRDS(here("simdata", "ch06_reversal_data.rds"))
 opponent_reversal <- reversal_obj$opponent_choices  # 240-element integer vector
 
-cat("Loaded reversal schedule from Ch. 5:",
+cat("Loaded reversal schedule from Ch. 6:",
     length(opponent_reversal), "trials |",
     sum(opponent_reversal[1:120]), "right in phase 1 |",
     sum(opponent_reversal[121:240]), "right in phase 2\n")
@@ -2002,7 +2001,7 @@ sim_data_memory <- simulate_hierarchical_memory(
   sigma_alpha      =  0.3,
   sigma_beta       =  0.5,
   rho              =  0.3,  # Mild positive correlation
-  opponent_choices = opponent_reversal,  # <-- reversal schedule from Ch. 5
+  opponent_choices = opponent_reversal,  # <-- reversal schedule from Ch. 6
   seed             = 1981
 )
 
@@ -2021,7 +2020,7 @@ cat(sprintf(
 
 The only new structural element relative to the biased agent NCP is the bivariate extension. Instead of a scalar $z_j$, we have a $2 \times J$ matrix $\mathbf{Z}$. Instead of scaling by a single $\sigma$, we apply `diag_pre_multiply(sigma, L_Omega)` — which computes $\operatorname{diag}(\boldsymbol{\sigma})\mathbf{L}_\Omega$ and produces the full Cholesky scale matrix encoding both marginal SDs and the correlation structure.
 
-```{r, 06_stan_memory_ncp_code }
+```{r, ch07_stan_memory_ncp_code }
 stan_memory_ncp_code <- "
 // Hierarchical Memory Agent Model (Non-Centered Parameterization)
 // -------------------------------------------------------------------
@@ -2140,7 +2139,7 @@ generated quantities {
 }
 "
 
-stan_file_memory_ncp <- here::here("stan", "ch6_multilevel_memory_ncp.stan")
+stan_file_memory_ncp <- here::here("stan", "ch07_multilevel_memory_ncp.stan")
 writeLines(stan_memory_ncp_code, stan_file_memory_ncp)
 mod_memory_ncp <- cmdstan_model(stan_file_memory_ncp)
 ```
@@ -2149,8 +2148,8 @@ Two Stan details are worth noting. First, the local block `{ matrix[2,J] deviati
 
 #### Fitting the model
 
-```{r 06_Fit_Memory_NCP}
-fit_memory_path <- here::here("simmodels", "ch6_fit_memory_ncp.rds")
+```{r ch07_Fit_Memory_NCP}
+fit_memory_path <- here::here("simmodels", "ch07_fit_memory_ncp.rds")
 
 # Initialize at prior means. L_Omega starts at the identity Cholesky (rho = 0).
 # This is a neutral, numerically stable starting point for the correlation geometry.
@@ -2410,7 +2409,7 @@ Pay particular attention to the `rho` panel. Because the correlation is identifi
 Parameter recovery on a single dataset is anecdotal. We must prove that the sampler is globally unbiased across the entire prior space.
 
 ```{r 06-memory-sbc}
-sbc_memory_path <- here::here("simmodels", "ch6_sbc_memory.rds")
+sbc_memory_path <- here::here("simmodels", "ch07_sbc_memory.rds")
 
 generate_sbc_dataset_memory <- function(n_agents = 50, n_trials_min = 80, n_trials_max = 240) {
   # Use the same reversal schedule as the main fit.
@@ -2577,9 +2576,9 @@ print(loo_memory)
 ```
 
 ```{r 06-save-for-ch7}
-# Save everything Ch. 7 needs for model comparison.
-# Ch. 7 will load this object to avoid refitting.
-ch6_exports_file <- here("simmodels", "06_memory_exports_for_ch7.rds")
+# Save everything Ch. 8 needs for model comparison.
+# Ch. 8 will load this object to avoid refitting.
+ch07_exports_file <- here("simmodels", "ch07_memory_exports_for_ch7.rds")
 
 saveRDS(
   list(
@@ -2589,11 +2588,11 @@ saveRDS(
     sim_data_memory  = sim_data_memory,   # Full trial-level tibble
     reversal_schedule = opponent_reversal # 240-trial opponent sequence
   ),
-  ch6_exports_file
+  ch07_exports_file
 )
 
-cat("Ch. 6 exports saved to:", ch6_exports_file, "\n")
-cat("Load in Ch. 7 with: readRDS(here('simmodels', '06_memory_exports_for_ch7.rds'))\n")
+cat("Ch. 7 exports saved to:", ch07_exports_file, "\n")
+cat("Load in Ch. 8 with: readRDS(here('simmodels', 'ch07_memory_exports_for_ch7.rds'))\n")
 ```
 
 ## Conclusion: From One Agent to a Population
@@ -2604,4 +2603,4 @@ This chapter extended the Bayesian modeling workflow to multiple participants. T
 - **Centered vs. non-centered parameterization** is a geometric choice, not a philosophical one. CP fails when population variance is small (Neal's Funnel); NCP fixes the global geometry but can be locally inefficient when data are very informative. SBC revealed which regime we are in.
 - **The reversal learning design** is essential for the memory model. A constant-bias opponent makes `bias` and `beta` statistically inseparable; the reversal schedule provides the contrast that identifies them.
 
-**Coming up in Chapter 7:** We have now validated two models — the hierarchical biased agent and the hierarchical memory agent — and computed LOO scores for both. Chapter 7 introduces model comparison: given that both models have passed validation, which one better predicts held-out data? The answer will use the LOO scores and the `loo_compare()` function from the `loo` package.
+**Coming up in Chapter 8:** We have now validated two models — the hierarchical biased agent and the hierarchical memory agent — and computed LOO scores for both. Chapter 8 introduces model comparison: given that both models have passed validation, which one better predicts held-out data? The answer will use the LOO scores and the `loo_compare()` function from the `loo` package.

@@ -1,6 +1,6 @@
 # Assessing Model Quality
 
-```{r setup-ch05, include=FALSE}
+```{r ch06_setup, include=FALSE}
 knitr::opts_chunk$set(
   echo       = TRUE,
   warning    = FALSE,
@@ -18,7 +18,7 @@ regenerate_simulations <- FALSE
 ```
 
 > **📍 Where we are in the Bayesian modeling workflow:**
-> Ch. 4 fit a Stan model to one simulated dataset. Obtaining a posterior is
+> Ch. 5 fit a Stan model to one simulated dataset. Obtaining a posterior is
 > not the same as trusting it. This chapter is the validation gate: a
 > six-phase battery the model must pass before touching real human data.
 > These techniques reappear in every subsequent chapter — learn them once
@@ -26,7 +26,7 @@ regenerate_simulations <- FALSE
 
 ## Learning Objectives
 
-In Chapter 4, we learned how to write Stan code and infer parameters for a single simulated dataset. However, obtaining a posterior distribution does not mean the model is correct or the inference is reliable.
+In Chapter 5, we learned how to write Stan code and infer parameters for a single simulated dataset. However, obtaining a posterior distribution does not mean the model is correct or the inference is reliable.
 
 This chapter introduces the strict diagnostic battery required to validate any cognitive model. After completing this chapter, you will be able to:
 
@@ -55,7 +55,7 @@ you feel lost.
 | 5 | Sensitivity | Do conclusions change if we tweak the prior? | Large posterior shift under small prior perturbation |
 | 6 | Parameter Recovery + SBC | Can the engine find the truth? Are credible intervals calibrated? | Recovery off the diagonal; rank histogram U-shaped or skewed |
 
-**Note on terminology:** In Ch. 4 we used "parameter recovery" loosely to mean
+**Note on terminology:** In Ch. 5 we used "parameter recovery" loosely to mean
 fitting one simulated dataset and checking whether the posterior landed near
 the true value. Phases 6a–b here are the *rigorous* version: systematic
 recovery across many parameter values (6a) and formal calibration of the
@@ -63,7 +63,7 @@ posterior intervals across the full prior space (SBC, 6b).
 
 ## Introduction: Why Parameter Estimates Aren't Enough
 
-In the previous chapters, we journeyed from observing behavior (Chapter 2), formalizing strategies (Chapter 3), to fitting models and estimating parameters (Chapter 4).
+In the previous chapters, we journeyed from observing behavior (Chapter 2), formalizing strategies (Chapter 3), to fitting models and estimating parameters (Chapter 5).
 
 But how confident are we about the model, its assumptions, the way we coded it? The model itself, the structure we assumed could be mathematically misspecified (not do what we think it does), unidentifiable (produce similar behaviors with an infinite set of combinations of parameter values), and/or simply unable to capture the data (sometimes even the data that we simulated from it!).
 
@@ -89,9 +89,9 @@ identifiability problem and fix it.
 
 ## Loading Packages and Previous Results
 
-Let's start by loading the necessary packages and the fitted model object from Chapter 4. This avoids re-running the fitting process unnecessarily and ensures consistency.
+Let's start by loading the necessary packages and the fitted model object from Chapter 5. This avoids re-running the fitting process unnecessarily and ensures consistency.
 
-```{r adding priors, warning = F, message = F}
+```{r ch06_load_packages, warning = F, message = F}
 # Load required packages using pacman for efficient package management
 # pacman::p_load ensures packages are installed if missing, then loads them
 pacman::p_load(
@@ -146,7 +146,7 @@ We will now reproduce the Stan code for the model, and modify it to include the 
 
 Note that we are adding data for the prior parameters, so we can quickly change them without recompiling the model and that we will explain the different additional variables in detail throughout the chapter.
 
-```{r 05 - add generated quantities, warning = F, message = F}
+```{r ch06_simple_biased_agent_gq, warning = F, message = F}
 
 # Stan code of the model, adding generated quantities for predictive checks
 stan_model_gq_code <- "
@@ -192,19 +192,19 @@ generated quantities {
   lprior = normal_lpdf(theta_logit | prior_theta_m, prior_theta_sd);
 }
 "
-stan_file_gq <- file.path(stan_model_dir, "05_SimpleBernoulli_GQ.stan")
+stan_file_gq <- file.path(stan_model_dir, "ch07_SimpleBernoulli_GQ.stan")
 writeLines(stan_model_gq_code, stan_file_gq)
 
 # Define path for saving/loading the fitted model object that includes the generated quantities
-model_file_gq <- file.path(stan_results_dir, "05_SimpleBernoulli_GQ.rds")
+model_file_gq <- file.path(stan_results_dir, "ch07_SimpleBernoulli_GQ.rds")
 
 # Generate the required data
 
-# Load the simulation data used in Chapter 4
-sim_data_file <- file.path(sim_data_dir, "W4_randomnoise.csv") 
+# Load the simulation data used in Chapter 5
+sim_data_file <- file.path(sim_data_dir, "ch06_randomnoise.csv") 
 d <- read_csv(sim_data_file, show_col_types = FALSE) 
 
-# Subset data for the specific agent fitted in Chapter 4 (rate=0.8, noise=0)
+# Subset data for the specific agent fitted in Chapter 5 (rate=0.8, noise=0)
 d1 <- d %>% filter(true_rate == 0.8, true_noise == 0.0)
 
 trials <- nrow(d1)
@@ -253,12 +253,12 @@ if (regenerate_simulations || !file.exists(model_file_gq)) {
 ### The Mandatory MCMC Diagnostic Battery
 
 Before we even look at a posterior distribution, we must prove the geometry of the posterior was successfully explored. We have zero tolerance for divergences. If a divergence occurs, the NUTS trajectory has departed from the true posterior manifold, indicating a biased approximation.
-
-```{r 05-mandatory-diagnostics}
+```{r ch06_mcmc_diagnostics}
 # Extract the summary and diagnostics from our fitted model object
 fit_summary <- fit_gq$summary()
 diagnostic_summary <- fit_gq$diagnostic_summary()
-
+...
+```
 # 1. Check for Divergent Transitions (Zero Tolerance)
 divergences <- sum(diagnostic_summary$num_divergent)
 if (divergences > 0) {
@@ -318,7 +318,7 @@ This protocol reveals the limits of our assumptions. We must interrogate this sp
 
 We have already embedded the generative simulation (h_prior_rep) and the summary statistic calculation (prior_rep_sum) directly into the Stan generated quantities block. We will now extract these draws and visualize the geometry of our prior predictions.
 
-```{r}
+```{r ch06_prior_predictive_check}
 
 # Extract the summary statistic calculated from prior predictive simulations
 # 'prior_rep_sum' was calculated within the generated quantities block
@@ -377,7 +377,7 @@ We must interrogate these predictions critically. Our model assumes independent,
 
 We extract the replicated datasets (h_post_rep) generated simultaneously within the Stan generated quantities block. We will then systematically compare the test statistic distributions $T(y_{\text{rep}})$ against our empirical ground truth $T(y)$.
 
-```{r, 05 posteriior predictive checks, warning = F, message = F}
+```{r ch06_posterior_predictive_checks, warning = F, message = F}
 
 # Extract posterior predictive simulations from the fitted object
 # This matrix has dimensions: [number_of_draws, number_of_trials]
@@ -529,7 +529,7 @@ By explicitly plotting the marginal prior distribution against the marginal post
 
 We will inspect this transformation on both the unconstrained space defined by our model ($\theta_{\text{logit}} \in \mathbb{R}$) and the conceptually intuitive probability space ($\theta \in [0, 1]$).
 
-```{r 05 prior posterior update, warning = FALSE, message = FALSE}
+```{r ch06_prior_posterior_update, warning = FALSE, message = FALSE}
 # Extract MCMC draws into a structured dataframe
 draws_gq <- as_draws_df(fit_gq$draws())
 
@@ -640,7 +640,7 @@ However, it's also important to remember that in many contexts influential prior
 
 To execute this efficiently, we have modified our Stan model to accept the prior's mean and standard deviation directly via the data block. This parameterization allows us to loop through our grid of alternative $\sigma$ values in R, iteratively updating the posterior without forcing a costly C++ recompilation of the model at each step.
 
-```{r 05 - run sensitivity analysis, warning = F, message = F}
+```{r ch06_manual_sensitivity_analysis, warning = F, message = F}
 # We test 3 location parameters (means) and 10 scale parameters (SDs)
 prior_grid <- tidyr::expand_grid(
   prior_m = c(-1.5, 0, 1.5), 
@@ -648,7 +648,7 @@ prior_grid <- tidyr::expand_grid(
 )
 
 # Standardized filename variable
-sensitivity_draws_file <- file.path(here(stan_results_dir), "W5_sensitivity_draws.rds")
+sensitivity_draws_file <- file.path(here(stan_results_dir), "ch07_sensitivity_draws.rds")
 
 # Check if we need to re-run the sensitivity analysis (fixed variable name)
 if (regenerate_simulations || !file.exists(sensitivity_draws_file)) {
@@ -809,7 +809,7 @@ where $\alpha$ and $\beta$ are scaling factors.
 4. Epistemic Diagnosis: High sensitivity values (e.g., $\psi > 0.1$) indicate structural fragility. This suggests either that the prior is pathologically dominating the likelihood, or that the prior and likelihood are fundamentally in conflict (prior-data conflict).
 
 
-```{r 05 - priorsense analysis, warning = F, message = F}
+```{r ch06_priorsense_analysis, warning = F, message = F}
 
 # We run prior sense
 sensitivity_summary <- priorsense::powerscale_sensitivity(fit_gq, 
@@ -861,13 +861,13 @@ We must investigate two structural properties of our inference before we can tru
 
 We will simulate empirical data across an escalating grid of trial lengths (30, 60, 120, 240) for three distinct generative agents: a neutral agent ($\theta = 0.5$), a weakly right-biased agent ($\theta = 0.7$), and a strongly-biased agen ($\theta = 0.9$). We then fit our Stan model to each dataset and track the changes in mean and variance of the estimates.
 
-```{r}
+```{r ch06_parameter_recovery_grid}
 recovery_grid <- tidyr::expand_grid(
   n_trials = c(30, 60, 120, 240),
   true_theta = c(0.5, 0.7, 0.9)
 )
 
-recovery_file <- file.path(stan_results_dir, "W5_recovery_draws.rds")
+recovery_file <- file.path(stan_results_dir, "ch07_recovery_draws.rds")
 
 
 if (regenerate_simulations || !file.exists(recovery_file)) {
@@ -1025,9 +1025,9 @@ SBC relies on a fundamental self-consistency property of Bayesian inference. If 
 
 Then the rank of the true parameter $\tilde{\theta}$ within the posterior draws must be strictly Uniformly distributed. If we repeat this process 1,000 times, any deviation from uniformity mathematically proves that our computational engine is structurally biased or our model is misspecified.
 
-```{r 05-sbc-calibration, warning = FALSE, message = FALSE}
+```{r ch06_sbc_calibration, warning = FALSE, message = FALSE}
 
-sbc_results_file <- file.path(stan_results_dir, "W5_sbc_results.rds")
+sbc_results_file <- file.path(stan_results_dir, "ch07_sbc_results.rds")
 
 # ---------------------------------------------------------------------------
 # Backend is defined OUTSIDE the cache conditional so it is always available —
@@ -1148,7 +1148,7 @@ This is precisely the data we need for a **systematic parameter recovery study**
 
 The grid recovery shows the shrinkage structure around specific anchor points with interpretable coordinates. The SBC recovery shows the full recovery profile across the entire plausible parameter space (if we have set our priors correctly :-)). I set up the first to give you a concrete idea of what happens in the code, but the latter is more systematic and rigorous.
 
-```{r 05-sbc-recovery-plot, warning = FALSE, message = FALSE}
+```{r ch06_sbc_recovery_plot, warning = FALSE, message = FALSE}
 
 # Extract the lightweight stats dataframe — already computed as part of SBC above.
 sbc_stats <- sbc_results$stats
@@ -1235,7 +1235,7 @@ This is a Precision Analysis, the Bayesian analogue of a frequentist power analy
 
 3. **Precision, not rejection rate.** The outcome metric is credible interval width, not whether a $p$-value crosses a threshold.
 
-```{r 05-sbc-precision, warning = FALSE, message = FALSE}
+```{r ch06_sbc_precision_analysis, warning = FALSE, message = FALSE}
 # ---------------------------------------------------------------------------
 # precision-analysis generator: same logic as sbc_generator_fn above,
 # but parameterised on n_trials so we can loop over the design grid.
@@ -1270,7 +1270,7 @@ precision_stats <- purrr::map_dfr(trial_grid_precision, function(n_t) {
   cat(sprintf("  precision analysis: n_trials = %d ...\n", n_t))
 
   precision_file <- file.path(stan_results_dir,
-                          sprintf("W5_sbc_precision_n%d.rds", n_t))
+                          sprintf("ch07_sbc_precision_n%d.rds", n_t))
 
   if (regenerate_simulations || !file.exists(precision_file)) {
 
@@ -1364,7 +1364,7 @@ The self-consistency property of Bayes' theorem extends to any valid distributio
 
 If PSBC passes but Prior SBC fails, it means your model is only reliable for data similar to what you observed. If PSBC fails, you cannot trust the specific estimates for your current experiment, even if the model works "in general"
 
-```{r}
+```{r ch06_posterior_sbc}
 # 1. Extract posterior draws as the required 'draws_matrix' type
 post_draws_theta_raw <- posterior::as_draws_matrix(fit_gq$draws(c("theta", "theta_logit")))
 
@@ -1394,7 +1394,7 @@ generate_psbc_data_theta <- function(n_sims = 1000) {
   return(SBC::SBC_datasets(variables = sampled_vars, generated = gen_list))
 }
 
-psbc_results_file <- file.path(stan_results_dir, "W5_psbc_results.rds")
+psbc_results_file <- file.path(stan_results_dir, "ch07_psbc_results.rds")
 
 if (regenerate_simulations || !file.exists(psbc_results_file)) {
   psbc_datasets_theta <- generate_psbc_data_theta(n_sims = 100)
@@ -1416,7 +1416,7 @@ Once we have done all this work and we are satisfied it's time to either move on
 
 ## Extending Checks to the Memory Model
 
-The biased agent is a clean single-parameter model. Real cognitive models are messier. This section applies the same six-phase workflow to the memory model from Ch. 4 — a model with two parameters (`bias` and `beta`) where the choice probability on each trial depends on the opponent's cumulative history.
+The biased agent is a clean single-parameter model. Real cognitive models are messier. This section applies the same six-phase workflow to the memory model from Ch. 5 — a model with two parameters (`bias` and `beta`) where the choice probability on each trial depends on the opponent's cumulative history.
 
 The workflow will expose a genuine identifiability problem: `bias` and `beta` are correlated in the posterior when the opponent plays with a constant bias.
 We will diagnose why this happens, show that it is a property of the *experimental design* rather than the model, and fix it by simulating data from a reversal learning paradigm — an opponent who switches preference halfway through the session. The fixed dataset is then saved for use in Chapters 6 and 7.
@@ -1428,9 +1428,9 @@ When a model incorporates recursive memory — the agent's internal state at tim
 Before we can subject the Memory Model to our diagnostic battery, we must remind ourself of its mathematical architecture and build its isolated generative simulator in R. This simulator will serve as the invariant engine for our Prior Predictives, Parameter Recovery, and SBC.
 
 
-```{r 05-prep-memory-data}
+```{r ch06_prep_memory_data}
 # --- The Social Memory Generative Engine ---
-
+# 
 #' Simulate a Social Memory Agent
 #' 
 #' @param bias Numeric. Baseline log-odds of choosing Right.
@@ -1472,7 +1472,7 @@ Now, we define the Stan model for the memory agent. The memory state is calculat
 ```{r, 05 - memory model stan code}
 # Stan model for Memory Agent with Generated Quantities
 stan_memory_gq_code <- "
-// W5_MemoryBernoulli_GQ.stan
+// ch07_MemoryBernoulli_GQ.stan
 // Social Memory Agent: Estimates bias and memory sensitivity.
 
 data {
@@ -1546,7 +1546,7 @@ generated quantities {
                 normal_lpdf(beta | prior_beta_m, prior_beta_s);
 }
 "
-stan_file_mem_gq <- file.path(stan_model_dir, "05_Memory_GQ.stan")
+stan_file_mem_gq <- file.path(stan_model_dir, "ch07_Memory_GQ.stan")
 writeLines(stan_memory_gq_code, stan_file_mem_gq)
 ```
 
@@ -1572,7 +1572,7 @@ observed_data_list_mem <- list(
   prior_beta_m = 0, prior_beta_s = 1.0
 )
 
-model_file_mem_gq <- file.path(stan_results_dir, "05_Memory_GQ.rds")
+model_file_mem_gq <- file.path(stan_results_dir, "ch07_Memory_GQ.rds")
 
 # 3. Fit the model
 if (regenerate_simulations || !file.exists(model_file_mem_gq)) {
@@ -1757,7 +1757,7 @@ trial_grid <- c(30, 60, 120, 240, 480)
 true_bias_mem <- 0.0
 true_beta_mem <- 0.9
 
-cov_collapse_file <- file.path(stan_results_dir, "W5_cov_collapse_draws.rds")
+cov_collapse_file <- file.path(stan_results_dir, "ch07_cov_collapse_draws.rds")
 
 if (regenerate_simulations || !file.exists(cov_collapse_file)) {
   
@@ -1946,7 +1946,7 @@ data_reversal <- list(
   prior_beta_m = 0, prior_beta_s = 1.0
 )
 
-model_file_reversal <- file.path(stan_results_dir, "05_Memory_Reversal.rds")
+model_file_reversal <- file.path(stan_results_dir, "ch07_Memory_Reversal.rds")
 
 if (regenerate_simulations || !file.exists(model_file_reversal)) {
   # mod_mem_gq was compiled earlier in this chapter
@@ -2008,7 +2008,7 @@ memory dataset as their running example. We save the full reversal
 simulation object here so those chapters can load it directly without
 regenerating it.
 ```{r 05-save-reversal-data}
-reversal_data_file <- file.path(sim_data_dir, "05_reversal_data.rds")
+reversal_data_file <- file.path(sim_data_dir, "ch07_reversal_data.rds")
 
 saveRDS(
   list(
@@ -2027,7 +2027,7 @@ saveRDS(
 )
 
 cat("Reversal dataset saved to:", reversal_data_file, "\n")
-cat("Load in Ch. 6 and Ch. 7 with: readRDS(here('simdata', '05_reversal_data.rds'))\n")
+cat("Load in Ch. 7 and Ch. 8 with: readRDS(here('simdata', 'ch07_reversal_data.rds'))\n")
 ```
 
 Finally, we run Simulation-Based Calibration. We use the SBC package to guarantee that our logit(memory) parameterization doesn't introduce hidden biases in the sampler's rank statistics.
@@ -2079,6 +2079,6 @@ Fitting a model and obtaining parameter estimates is just the beginning. This ch
 
 Failing any check is not a setback — it is information. The memory model's `bias`/`beta` correlation failure in Phase 6 told us exactly what was wrong with the experimental design and how to fix it. That is the validation workflow working correctly: it caught a real problem before the model touched empirical data. 
 
-The reversal learning dataset generated in this chapter (`simdata/05_reversal_data.rds`) is the running example for the next two chapters. It is well-identified, validated against all six checks, and ready to be extended.
+The reversal learning dataset generated in this chapter (`simdata/ch07_reversal_data.rds`) is the running example for the next two chapters. It is well-identified, validated against all six checks, and ready to be extended.
 
-**Coming up in Chapter 6:** We take the memory model — now validated on the reversal paradigm — and scale it to many simulated participants using a hierarchical (multilevel) model. The central question shifts from "can we estimate parameters for one agent?" to "how do individuals vary, and how do we share information across them?"
+**Coming up in Chapter 7:** We take the memory model — now validated on the reversal paradigm — and scale it to many simulated participants using a hierarchical (multilevel) model. The central question shifts from "can we estimate parameters for one agent?" to "how do individuals vary, and how do we share information across them?"

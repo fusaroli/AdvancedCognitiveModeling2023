@@ -43,15 +43,15 @@ theme_set(theme_classic())
 > Chs. 1–7 modelled behaviour as arising from a *single* cognitive process
 > per agent. This chapter relaxes that assumption: behaviour can be a
 > weighted mixture of distinct processes (e.g., deliberate strategy and
-> attentional lapses). Mixture models extend the toolkit from Ch. 6
-> (hierarchical structures) and Ch. 7 (model comparison via LOO) to this
+> attentional lapses). Mixture models extend the toolkit from Ch. 7
+> (hierarchical structures) and Ch. 8 (model comparison via LOO) to this
 > new model class. The key new challenge is that discrete latent variables
 > — which process generated this trial? — cannot be sampled by HMC and must
 > be analytically integrated out before any Stan code is written. The full course roadmap is in Ch. 1, Section "The Course Roadmap".
 
 When we model human cognition and behavior, people do not always follow a single, consistent strategy. A participant in a matching-pennies game might sometimes carefully exploit a detected pattern in the opponent's behavior, and other times respond essentially at random when attention lapses. Traditional single-process models are structurally misspecified when this is the case: they attribute lapse-driven variance to the strategic parameter, inflating its uncertainty and biasing its location.
 
-Mixture models provide an elegant and principled solution. Rather than assuming behavior reflects one cognitive process, they represent observations as draws from a **weighted combination** of component distributions, each corresponding to a distinct process. This reframes the question addressed in Chapter 7 — *which model is correct?* — into a richer question: *how much does each process contribute, and for which observations?*
+Mixture models provide an elegant and principled solution. Rather than assuming behavior reflects one cognitive process, they represent observations as draws from a **weighted combination** of component distributions, each corresponding to a distinct process. This reframes the question addressed in Chapter 8 — *which model is correct?* — into a richer question: *how much does each process contribute, and for which observations?*
 
 Because each component must be marginalized analytically before writing Stan code, mixture models also serve as a concrete introduction to a class of computational constraint that applies broadly: **discrete parameters cannot be sampled by HMC and must be integrated out**. Mastering this principle is prerequisite for hidden Markov models, contamination models, and finite mixture clusters.
 
@@ -339,9 +339,9 @@ generated quantities {
 }
 "
 
-write_stan_file(single_mixture_stan, dir = "stan/", basename = "ch8_mixture_single.stan")
+write_stan_file(single_mixture_stan, dir = "stan/", basename = "ch09_mixture_single.stan")
 mod_single <- cmdstan_model(
-  "stan/ch8_mixture_single.stan"
+  "stan/ch09_mixture_single.stan"
 )
 ```
 
@@ -350,7 +350,7 @@ mod_single <- cmdstan_model(
 We use the simulated matching-pennies data introduced in earlier chapters, selecting the agent with rate 0.8 and noise 0.1. This gives us a ground truth against which to assess recovery: $\theta = 0.8$, $\pi = 0.1$.
 
 ```{r ch8-load-data}
-d    <- read_csv(here("simdata", "04_randomnoise.csv"), show_col_types = FALSE)
+d    <- read_csv(here("simdata", "ch05_randomnoise.csv"), show_col_types = FALSE)
 dd   <- d |> dplyr::filter(true_rate == 0.8, true_noise == 0.1)
 data <- list(n = nrow(dd), h = as.integer(dd$choice))
 
@@ -364,7 +364,7 @@ Mixture model posteriors can have multimodal or ridge-shaped geometry (see Secti
 If Pathfinder itself fails (e.g., because the variational approximation diverges near the ridge), the fallback must not be `NULL`. Passing `NULL` to `init` triggers Stan's Uniform(−2, 2) default, which places chains at random points that may lie far from the high-probability region and immediately generate divergent transitions. Instead we define an explicit per-chain jittered initialisation centred on the prior medians: $\alpha = 0$ (i.e., $\theta = 0.5$) and $\nu = -1$ (i.e., $\pi \approx 0.27$). A small Gaussian jitter of SD 0.1 ensures chains start at distinct points, which is necessary for $\hat{R}$ to be meaningful.
 
 ```{r ch8-fit-single}
-single_fit_file <- "simmodels/ch8_single_mixture.RDS"
+single_fit_file <- "simmodels/ch09_single_mixture.RDS"
 
 if (regenerate_simulations || !file.exists(single_fit_file)) {
 
@@ -483,7 +483,7 @@ sbc_backend <- SBC::SBC_backend_cmdstan_sample(
 ```
 
 ```{r ch8-sbc-run}
-sbc_file <- "simmodels/ch8_sbc_results.RDS"
+sbc_file <- "simmodels/ch09_sbc_results.RDS"
 
 if (regenerate_simulations || !file.exists(sbc_file)) {
   future::plan(future::multisession, workers = max(1, parallel::detectCores() - 2))
@@ -794,7 +794,7 @@ $$
 \tag{9}
 $$
 
-where $\mathbf{L} = \text{diag}(\tau) \cdot \mathbf{L}_\Omega$ is the Cholesky factor of the parameter covariance matrix, $\tau$ is the vector of population standard deviations, and $\mathbf{L}_\Omega$ is the Cholesky factor of the correlation matrix. This is the non-centred parameterisation (NCP) introduced in Chapter 6.
+where $\mathbf{L} = \text{diag}(\tau) \cdot \mathbf{L}_\Omega$ is the Cholesky factor of the parameter covariance matrix, $\tau$ is the vector of population standard deviations, and $\mathbf{L}_\Omega$ is the Cholesky factor of the correlation matrix. This is the non-centred parameterisation (NCP) introduced in Chapter 7.
 
 **Priors:**
 
@@ -904,9 +904,9 @@ generated quantities {
 "
 
 write_stan_file(multilevel_mixture_stan,
-                dir = "stan/", basename = "ch8_mixture_multilevel.stan")
+                dir = "stan/", basename = "ch09_mixture_multilevel.stan")
 mod_multi <- cmdstan_model(
-  "stan/ch8_mixture_multilevel.stan"
+  "stan/ch09_mixture_multilevel.stan"
 )
 ```
 
@@ -967,7 +967,7 @@ cat("Population noise (prob scale):", round(plogis(muN_true), 3), "\n")
 The same Pathfinder-with-safe-fallback pattern from §4.4 applies here, with one important difference: the multilevel model has additional structure that the fallback initialisation must respect. Setting `tau` to a small positive value (rather than drawing from the full half-normal prior) avoids starting near the funnel geometry. Setting `z_IDs` to near-zero ensures all individual parameters begin at their population means. Setting `L_Omega` to the identity matrix provides a neutral starting correlation. All values are jittered slightly across chains.
 
 ```{r ch8-fit-multilevel}
-multi_fit_file <- "simmodels/ch8_multilevel_mixture.RDS"
+multi_fit_file <- "simmodels/ch09_multilevel_mixture.RDS"
 
 if (regenerate_simulations || !file.exists(multi_fit_file)) {
 
@@ -1111,14 +1111,14 @@ generated quantities {
 }
 "
 
-write_stan_file(biased_stan, dir = "stan/", basename = "ch8_biased_single.stan")
+write_stan_file(biased_stan, dir = "stan/", basename = "ch09_biased_single.stan")
 mod_biased <- cmdstan_model(
-  "stan/ch8_biased_single.stan"
+  "stan/ch09_biased_single.stan"
 )
 ```
 
 ```{r ch8-fit-biased}
-biased_fit_file <- "simmodels/ch8_biased_single.RDS"
+biased_fit_file <- "simmodels/ch09_biased_single.RDS"
 
 if (regenerate_simulations || !file.exists(biased_fit_file)) {
   fit_biased <- mod_biased$sample(
@@ -1195,7 +1195,7 @@ Mixture models are a powerful and principled tool for cognitive modelling when b
 
 **A model that loses a LOO comparison is not necessarily wrong.** In the binary case, the mixture model and the biased model have equivalent ELPD because they are parameterisations of the same likelihood. Theory should guide model choice here, not predictive scores alone. Model comparison and theoretical justification are complementary, not competing, sources of evidence. The degeneracy-breaking strategies in Section 6.3 describe the experimental and modelling decisions that would, in a future study, make LOO comparison informative.
 
-**Coming up in Chapter 9:** We leave the matching-pennies domain entirely
+**Coming up in Chapter 10:** We leave the matching-pennies domain entirely
 and apply the same six-phase workflow to a social learning task — the marble
 task — where participants integrate direct evidence about a jar's composition
 with social information from another person. This introduces two genuinely

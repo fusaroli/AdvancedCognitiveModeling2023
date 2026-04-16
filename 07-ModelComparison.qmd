@@ -38,25 +38,25 @@ pacman::p_load(
 theme_set(theme_classic())
 plan(sequential)
 
-# Load the validated memory model, LOO score, and reversal schedule from Ch. 6.
-# These were saved by the final chunk of Ch. 6.
-ch6_exports_file <- here::here("simmodels", "06_memory_exports_for_ch7.rds")
+# Load the validated memory model, LOO score, and reversal schedule from Ch. 7.
+# These were saved by the final chunk of Ch. 7.
+ch07_exports_file <- here::here("simmodels", "ch07_memory_exports_for_ch7.rds")
 
-if (file.exists(ch6_exports_file)) {
-  ch6_exports       <- readRDS(ch6_exports_file)
-  opponent_reversal <- ch6_exports$reversal_schedule  # 240-trial binary vector
-  loo_memory_ch6    <- ch6_exports$loo_memory          # LOO from Ch. 6 memory fit
-  cat("Ch. 6 exports loaded.\n")
+if (file.exists(ch07_exports_file)) {
+  ch07_exports       <- readRDS(ch07_exports_file)
+  opponent_reversal <- ch07_exports$reversal_schedule  # 240-trial binary vector
+  loo_memory_ch6    <- ch07_exports$loo_memory          # LOO from Ch. 7 memory fit
+  cat("Ch. 7 exports loaded.\n")
   cat("  Reversal schedule:", length(opponent_reversal), "trials\n")
-  cat("  Ch. 6 memory ELPD:",
+  cat("  Ch. 7 memory ELPD:",
       round(loo_memory_ch6$estimates["elpd_loo", "Estimate"], 1), "\n")
 } else {
   warning(paste(
-    "Ch. 6 exports not found at", ch6_exports_file,
+    "Ch. 7 exports not found at", ch07_exports_file,
     "\nFalling back to a freshly generated reversal schedule.",
-    "\nRun Ch. 6 first to ensure consistency across chapters."
+    "\nRun Ch. 7 first to ensure consistency across chapters."
   ))
-  # Reproducible fallback so Ch. 7 can knit independently
+  # Reproducible fallback so Ch. 8 can knit independently
   set.seed(2025)
   opponent_reversal <- c(rbinom(120, 1, 0.8), rbinom(120, 1, 0.2))
   loo_memory_ch6    <- NULL
@@ -68,12 +68,12 @@ if (file.exists(ch6_exports_file)) {
 > Every model passed a six-phase quality battery before fitting real data.
 > This chapter asks the next question: when two validated models both fit
 > the data, which one better *predicts* data it has never seen? The answer
-> uses PSIS-LOO cross-validation and requires the validated fits from Ch. 6.
-> The reversal learning design introduced in Ch. 5 and used in Ch. 6 is
+> uses PSIS-LOO cross-validation and requires the validated fits from Ch. 7.
+> The reversal learning design introduced in Ch. 6 and used in Ch. 7 is
 > essential here too — it is the design that makes the two models
 > distinguishable in the first place.
 
-By Chapter 6 we had a working Bayesian workflow: specify a generative model, validate it with SBC and parameter recovery, fit it to data, and diagnose the posterior geometry, both in the case of single agent and hierarchical models. We now face a different question: we rarely have only one possible model of the cognitive processes underlying the observed behaviors.
+By Chapter 7 we had a working Bayesian workflow: specify a generative model, validate it with SBC and parameter recovery, fit it to data, and diagnose the posterior geometry, both in the case of single agent and hierarchical models. We now face a different question: we rarely have only one possible model of the cognitive processes underlying the observed behaviors.
 
 * Sometimes we have different models representing competing theoretical accounts of cognitive processes. For instance, a Gaussian filter model of learning regularities in one's opponent's behavior in the Matching Pennies game vs a Theory of Mind model of learning the model used by the opponent vs. an active inference model trying to actively deceive the opponent.
 
@@ -81,13 +81,13 @@ By Chapter 6 we had a working Bayesian workflow: specify a generative model, val
 
 In either case, once we have ensured that all models involved pass their individual quality checks, how do we decide which better accounts for the observed data?
 
-There are many ways to compare models, but here we develop a Bayesian predictive approach consistent with our approach in previous chapters. The core argument is that a model should be judged not by how well it explains the data it was *trained* on, but by how well it predicts data it has *never seen*. We formalize this as the Expected Log Predictive Density (ELPD), build an efficient computational approximation via PSIS-LOO, and apply the full workflow to the biased and memory agent models from Chapter 6. This approach also gives us a principled way to identify difficult to predict data points (sometimes called influential observations), which can tell us much about the limits of our models and different mechanisms at work in different portions of the data. However, note that focusing on predictive abilities does not directly equate to model most likely to be true! It is a useful pragmatic measure and we should keep it in mind.
+There are many ways to compare models, but here we develop a Bayesian predictive approach consistent with our approach in previous chapters. The core argument is that a model should be judged not by how well it explains the data it was *trained* on, but by how well it predicts data it has *never seen*. We formalize this as the Expected Log Predictive Density (ELPD), build an efficient computational approximation via PSIS-LOO, and apply the full workflow to the biased and memory agent models from Chapter 7. This approach also gives us a principled way to identify difficult to predict data points (sometimes called influential observations), which can tell us much about the limits of our models and different mechanisms at work in different portions of the data. However, note that focusing on predictive abilities does not directly equate to model most likely to be true! It is a useful pragmatic measure and we should keep it in mind.
 
 As in previous chapters, we heavily rely on simulations to understand these techniques and validate our model comparison procedure. Because we control the data-generating mechanism, we can evaluate not just whether model comparison produces a preference, but whether it produces the *correct* preference — the model recovery test.
 
 Remember, model comparison is not a fail-safe procedure to determine the absolute "truth". All models are simplifications. Instead, it helps us identify which of our candidate models provides the most useful or most plausible account of the data, given our current understanding and the available evidence. Model comparison should always be part of a larger principled scientific workflow using models as stepping stones to deeper understanding, not as final arbiters of truth.
 
-> CRITICAL PRECONDITION: Model comparison is only scientifically meaningful if all candidate models have already passed the individual quality checks established in Chapter 5. If Model A converges perfectly but Model B fails its SBC calibration or has persistent divergences, an ELPD comparison is a "garbage-in, garbage-out" exercise. We only compare models that have earned the right to be taken seriously.
+> CRITICAL PRECONDITION: Model comparison is only scientifically meaningful if all candidate models have already passed the individual quality checks established in Chapter 6. If Model A converges perfectly but Model B fails its SBC calibration or has persistent divergences, an ELPD comparison is a "garbage-in, garbage-out" exercise. We only compare models that have earned the right to be taken seriously.
 
 ## Learning Objectives
 
@@ -288,7 +288,7 @@ The mathematical weights that accomplish this reweighting are the *inverse* of t
 
 $$\log r_i^{(s)} = -\log p(y_i \mid \theta^{(s)})$$
 
-These are already stored in our Stan `log_lik` block from Chapter 6. So no additional computation is required: everything we need is already sitting in our existing model fits. 
+These are already stored in our Stan `log_lik` block from Chapter 7. So no additional computation is required: everything we need is already sitting in our existing model fits. 
 
 However, we should be careful. If the model's estimate would barely change when we removing observation $i$, then $i$ is not very influential, and we can approximate the LOO estimate cheaply. If the model's estimate would change a lot, then $i$ is influential, and our approximation is less reliable. We therefore need to use a diagnostic to flag such cases: the Pareto-$\hat{k}$, which we cover in detail in a later paragraph.
 
@@ -409,10 +409,10 @@ But first let's get to the thick of it and start simulating data.
 
 ## Simulation Setup for Model Recovery
 
-We simulate two populations of agents playing against a shared opponent using the **reversal design** first validated in Ch. 5 and used throughout Ch. 6: the opponent plays 80% right for the first half of the session, then switches to 20% right for the second half. We use the exact sequence loaded from Ch. 6 above (`opponent_reversal`), taking the first 120 trials (60 + 60) for this chapter's shorter sessions.
+We simulate two populations of agents playing against a shared opponent using the **reversal design** first validated in Ch. 6 and used throughout Ch. 7: the opponent plays 80% right for the first half of the session, then switches to 20% right for the second half. We use the exact sequence loaded from Ch. 7 above (`opponent_reversal`), taking the first 120 trials (60 + 60) for this chapter's shorter sessions.
 
 Why this design? If the opponent plays a constant bias, the memory agent's internal running average quickly settles near that value and stays flat.
-Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a biased agent — both produce a fixed right-leaning rate. The reversal forces the memory signal to change sign at trial 61: memory agents reverse their behavior while biased agents do not. This contrast is what makes the two models theoretically separable, and why Ch. 5 discovered that a constant-bias design made `bias` and `beta` unidentifiable.
+Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a biased agent — both produce a fixed right-leaning rate. The reversal forces the memory signal to change sign at trial 61: memory agents reverse their behavior while biased agents do not. This contrast is what makes the two models theoretically separable, and why Ch. 6 discovered that a constant-bias design made `bias` and `beta` unidentifiable.
 
 *Note on recovery failure:* We simulate a population with strong memory sensitivity ($\mu_\beta = 1.5$). With weak memory ($\mu_\beta \approx 0.3$), the behavioral difference would be subtle enough that the simpler biased model would win the ELPD comparison by default due to its lower complexity penalty — a correct finding, not a method failure.
 
@@ -442,7 +442,7 @@ simulate_model_recovery_data <- function(
   set.seed(seed)
 
   # Reversal block design: 80% right for t 1:60, 20% right for t 61:120.
-  # If a fixed sequence is supplied (from Ch. 6), use it directly so that
+  # If a fixed sequence is supplied (from Ch. 7), use it directly so that
   # all chapters share the same opponent history.
   if (!is.null(opponent_choices)) {
     stopifnot(length(opponent_choices) >= n_trials)
@@ -507,11 +507,11 @@ simulate_model_recovery_data <- function(
                           rho = rho))
 }
 
-sim_data_path <- here::here("simdata", "ch7_model_recovery_data.rds")
+sim_data_path <- here::here("simdata", "ch08_model_recovery_data.rds")
 
 if (regenerate_simulations || !file.exists(sim_data_path)) {
   sim_data <- simulate_model_recovery_data(
-    opponent_choices = opponent_reversal   # Use Ch. 6 reversal schedule
+    opponent_choices = opponent_reversal   # Use Ch. 7 reversal schedule
   )
   saveRDS(sim_data, sim_data_path)
 } else {
@@ -575,10 +575,10 @@ sd_biased_on_memory <- make_stan_biased(d_memory)
 sd_memory_on_memory <- make_stan_memory(d_memory)
 ```
 
-We reuse the NCP Stan models from Chapter 6. The key feature we need for model comparison is the `log_lik` vector in the `generated quantities` block - this is the pointwise log-likelihood for each observation that PSIS-LOO requires. This is why we designed those models with `log_lik` from the beginning: the Chapter 6 workflow was already leading here.
+We reuse the NCP Stan models from Chapter 7. The key feature we need for model comparison is the `log_lik` vector in the `generated quantities` block - this is the pointwise log-likelihood for each observation that PSIS-LOO requires. This is why we designed those models with `log_lik` from the beginning: the Chapter 7 workflow was already leading here.
 
 ```{r 07-load-stan-models}
-stan_file_biased <- here::here("stan", "ch6_multilevel_biased_ncp.stan")
+stan_file_biased <- here::here("stan", "ch07_multilevel_biased_ncp.stan")
 
 if (!file.exists(stan_file_biased)) {
   writeLines('
@@ -602,7 +602,7 @@ generated quantities {
     stan_file_biased)
 }
 
-stan_file_memory <- here::here("stan", "ch6_multilevel_memory_ncp.stan")
+stan_file_memory <- here::here("stan", "ch07_multilevel_memory_ncp.stan")
 if (!file.exists(stan_file_memory)) {
   writeLines('
 data { int<lower=1> N; int<lower=1> J;
@@ -692,17 +692,17 @@ init_memory <- function(data_list) {
 }
 
 fit_b_on_b <- fit_or_load("Biased->Biased", mod_biased_ncp, sd_biased_on_biased,
-  here::here("simmodels","ch7_fit_b_on_b.rds"), init_biased)
+  here::here("simmodels","ch08_fit_b_on_b.rds"), init_biased)
 fit_m_on_b <- fit_or_load("Memory->Biased", mod_memory_ncp, sd_memory_on_biased,
-  here::here("simmodels","ch7_fit_m_on_b.rds"), init_memory)
+  here::here("simmodels","ch08_fit_m_on_b.rds"), init_memory)
 fit_b_on_m <- fit_or_load("Biased->Memory", mod_biased_ncp, sd_biased_on_memory,
-  here::here("simmodels","ch7_fit_b_on_m.rds"), init_biased)
+  here::here("simmodels","ch08_fit_b_on_m.rds"), init_biased)
 fit_m_on_m <- fit_or_load("Memory->Memory", mod_memory_ncp, sd_memory_on_memory,
-  here::here("simmodels","ch7_fit_m_on_m.rds"), init_memory)
+  here::here("simmodels","ch08_fit_m_on_m.rds"), init_memory)
 
 ```
 
-Before computing any model comparison statistics, we verify that all four fits pass the standard geometry diagnostics from Chapter 5. This step matters especially for the misspecified fits. When we fit the memory model to biased data, we are asking a model to find a memory-tracking signal where none exists - it may strain to do so, which can sometimes produce divergences or poor mixing.
+Before computing any model comparison statistics, we verify that all four fits pass the standard geometry diagnostics from Chapter 6. This step matters especially for the misspecified fits. When we fit the memory model to biased data, we are asking a model to find a memory-tracking signal where none exists - it may strain to do so, which can sometimes produce divergences or poor mixing.
 
 If we find issues, we need to think critically. On the one hand, comparing a well fitted model to a poorly fitted one is not a strong test of their relative performance. On the other hand, if the misspecified model is so difficult to fit that it fails basic diagnostics, that is itself a sign of poor performance. So as we investigate the sources of the issues, we need to critically evaluate whether they are a sign of a fundamental mismatch between the model and the data-generating mechanism or just a technical issue that can be resolved with more careful fitting.
 
@@ -765,18 +765,18 @@ get_raw_loo <- function(fit_obj, file_path) {
   }
 }
 
-loo_b_on_b <- get_raw_loo(fit_b_on_b, here::here("simmodels", "ch7_loo_raw_b_on_b.rds"))
-loo_m_on_b <- get_raw_loo(fit_m_on_b, here::here("simmodels", "ch7_loo_raw_m_on_b.rds"))
-loo_b_on_m <- get_raw_loo(fit_b_on_m, here::here("simmodels", "ch7_loo_raw_b_on_m.rds"))
-loo_m_on_m <- get_raw_loo(fit_m_on_m, here::here("simmodels", "ch7_loo_raw_m_on_m.rds"))
+loo_b_on_b <- get_raw_loo(fit_b_on_b, here::here("simmodels", "ch08_loo_raw_b_on_b.rds"))
+loo_m_on_b <- get_raw_loo(fit_m_on_b, here::here("simmodels", "ch08_loo_raw_m_on_b.rds"))
+loo_b_on_m <- get_raw_loo(fit_b_on_m, here::here("simmodels", "ch08_loo_raw_b_on_m.rds"))
+loo_m_on_m <- get_raw_loo(fit_m_on_m, here::here("simmodels", "ch08_loo_raw_m_on_m.rds"))
 
 summarise_pareto_k <- function(loo_obj, label) {
   k     <- loo_obj$diagnostics$pareto_k
   p_loo <- loo_obj$estimates["p_loo","Estimate"]
   n     <- length(k)
   tibble(Combination=label, N=n,
-         k_below_05=sum(k<0.5), k_05_07=sum(k>=0.5&k<0.7),
-         k_07_10=sum(k>=0.7&k<1), k_above_10=sum(k>=1),
+         k_below_05=sum(k<0.5), k_ch06_07=sum(k>=0.5&k<0.7),
+         k_ch08_10=sum(k>=0.7&k<1), k_above_10=sum(k>=1),
          Max_k=round(max(k),3),
          p_hat_loo=round(p_loo,1), ratio=round(p_loo/n,3),
          ELPD=round(loo_obj$estimates["elpd_loo","Estimate"],1),
@@ -1012,10 +1012,10 @@ apply_moment_match_if_needed <- function(loo_obj, fit_obj, label, file_path) {
 }
 
 # Execute the caching function 
-loo_b_on_b <- apply_moment_match_if_needed(loo_b_on_b, fit_b_on_b, "Biased->Biased", here::here("simmodels", "ch7_loo_mm_b_on_b.rds"))
-loo_m_on_b <- apply_moment_match_if_needed(loo_m_on_b, fit_m_on_b, "Memory->Biased", here::here("simmodels", "ch7_loo_mm_m_on_b.rds"))
-loo_b_on_m <- apply_moment_match_if_needed(loo_b_on_m, fit_b_on_m, "Biased->Memory", here::here("simmodels", "ch7_loo_mm_b_on_m.rds"))
-loo_m_on_m <- apply_moment_match_if_needed(loo_m_on_m, fit_m_on_m, "Memory->Memory", here::here("simmodels", "ch7_loo_mm_m_on_m.rds"))
+loo_b_on_b <- apply_moment_match_if_needed(loo_b_on_b, fit_b_on_b, "Biased->Biased", here::here("simmodels", "ch08_loo_mm_b_on_b.rds"))
+loo_m_on_b <- apply_moment_match_if_needed(loo_m_on_b, fit_m_on_b, "Memory->Biased", here::here("simmodels", "ch08_loo_mm_m_on_b.rds"))
+loo_b_on_m <- apply_moment_match_if_needed(loo_b_on_m, fit_b_on_m, "Biased->Memory", here::here("simmodels", "ch08_loo_mm_b_on_m.rds"))
+loo_m_on_m <- apply_moment_match_if_needed(loo_m_on_m, fit_m_on_m, "Memory->Memory", here::here("simmodels", "ch08_loo_mm_m_on_m.rds"))
 ```
 
 ### The Limits of PSIS: Agent-Level LOO
@@ -1111,7 +1111,7 @@ generated quantities {
   for (n in 1:N_test) {
     log_lik_test[n] = bernoulli_logit_lpmf(h_test[n] | theta_new[agent_test[n]]);
   }
-}", here::here("stan", "ch7_biased_kfold.stan"))
+}", here::here("stan", "ch08_biased_kfold.stan"))
 
 # 2. Memory K-Fold Model
 # Samples correlated parameter pairs for each test agent from the population prior.
@@ -1182,13 +1182,13 @@ generated quantities {
               new_indiv[2, agent_test[n]] * logit(opp_rate_prev_test[n]);
     log_lik_test[n] = bernoulli_logit_lpmf(h_test[n] | lp);
   }
-}", here::here("stan", "ch7_memory_kfold.stan"))
+}", here::here("stan", "ch08_memory_kfold.stan"))
 
-mod_biased_kfold <- cmdstan_model(here::here("stan", "ch7_biased_kfold.stan"))
-mod_memory_kfold <- cmdstan_model(here::here("stan", "ch7_memory_kfold.stan"))
+mod_biased_kfold <- cmdstan_model(here::here("stan", "ch08_biased_kfold.stan"))
+mod_memory_kfold <- cmdstan_model(here::here("stan", "ch08_memory_kfold.stan"))
 cat("Both K-fold Stan models compiled.\n")
 
-kfold_path <- here::here("simmodels","ch7_kfold_comparison.rds")
+kfold_path <- here::here("simmodels","ch08_kfold_comparison.rds")
 K <- 5; set.seed(21)
 
 # We will run this on the Memory data to see the true model win out of sample
@@ -1744,9 +1744,9 @@ ggplot(elpd_matrix, aes(x=Data, y=Model, fill=ELPD)) +
 
 Each column of this matrix answers a different scientific question. The left column (biased data) asks: can PSIS-LOO detect that the memory model is unnecessarily complex when a simpler model suffices? The right column (memory data) asks: can PSIS-LOO detect that the biased model is missing a real cognitive mechanism? Within each column, the model with the higher ELPD should be the one that generated the data --- that is the meaning of successful model recovery.
 
-For context, the Ch. 6 memory model (fitted to the full 50-agent reversal dataset with 80–240 trials per agent) had
-`r if (!is.null(loo_memory_ch6)) paste0("ELPD = ", round(loo_memory_ch6$estimates["elpd_loo","Estimate"], 1), " (SE = ", round(loo_memory_ch6$estimates["elpd_loo","SE"], 1), ")") else "ELPD = [load Ch. 6 exports to see this value]"`.
-The Ch. 7 memory-on-memory fit uses a shorter, fixed-length session (120 trials vs. 80–240), so its absolute ELPD is not directly comparable — but the sign and direction of all comparisons should be consistent.
+For context, the Ch. 7 memory model (fitted to the full 50-agent reversal dataset with 80–240 trials per agent) had
+`r if (!is.null(loo_memory_ch6)) paste0("ELPD = ", round(loo_memory_ch6$estimates["elpd_loo","Estimate"], 1), " (SE = ", round(loo_memory_ch6$estimates["elpd_loo","SE"], 1), ")") else "ELPD = [load Ch. 7 exports to see this value]"`.
+The Ch. 8 memory-on-memory fit uses a shorter, fixed-length session (120 trials vs. 80–240), so its absolute ELPD is not directly comparable — but the sign and direction of all comparisons should be consistent.
 
 ```{r 07-final-summary-table}
 final_table <- tibble(
@@ -2133,7 +2133,7 @@ Imagine the SBC process selects the Memory model, and then draws a population me
 
 ## Prior Sensitivity at the Comparison Level
 
-We applied prior sensitivity analysis to individual models in Chapter 5. At the model comparison stage, the question becomes slightly different: even if each model's individual parameters are sensitive to prior choices, does the *comparison* between models remain stable?
+We applied prior sensitivity analysis to individual models in Chapter 6. At the model comparison stage, the question becomes slightly different: even if each model's individual parameters are sensitive to prior choices, does the *comparison* between models remain stable?
 
 Consider the following thought experiment: scaling the prior on $\sigma_\theta$ shifts the biased model's ELPD by 5 nats, but also shifts the memory model's ELPD by roughly the same 5 nats. The difference --- the quantity that drives the comparison --- would remain stable. This would be a good outcome: the comparison is robust even though individual models are sensitive. The problematic scenario is asymmetric sensitivity: one model's ELPD shifts substantially while the other's stays put. In that case, our preference for one model over the other depends on which prior happened to be chosen --- which is not a principled basis for a scientific conclusion.
 
@@ -2223,14 +2223,14 @@ models:
    the prior space.
 
 Two design lessons cut across all of these tools:
-- The **reversal design** (validated in Ch. 5, extended in Ch. 6) was
+- The **reversal design** (validated in Ch. 6, extended in Ch. 7) was
   essential — a constant-bias opponent makes the biased and memory models
   statistically inseparable, and no amount of data fixes a confounded design.
 - **All models must pass their individual quality checks before comparison**.
   Comparing a well-fitted model against one with divergences is not a fair
   scientific test.
 
-Chapter 8 introduces a new model type — mixture models — that extends the
+Chapter 9 introduces a new model type — mixture models — that extends the
 toolkit beyond single-process accounts and applies the same PSIS-LOO
 machinery to a qualitatively different identifiability problem.
 

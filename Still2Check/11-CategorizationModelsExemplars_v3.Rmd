@@ -10,7 +10,7 @@ output:
 date: "2025-04-28"
 ---
 
-```{r, W11 load packages, include=FALSE}
+```{r, ch12 load packages, include=FALSE}
 # Set to TRUE to run computationally intensive simulations/fits.
 # Set to FALSE to load pre-computed results.
 regenerate_simulations <- TRUE
@@ -494,11 +494,11 @@ if (regenerate_simulations) {
     subject_seed  = simulation_plan$agent_id,  # unique seed per agent
     .options = furrr_options(seed = TRUE)
   )
-  write_csv(simulated_responses, "simdata/W11_gcm_simulated_responses.csv")
+  write_csv(simulated_responses, "simdata/ch12_gcm_simulated_responses.csv")
   cat("Simulation complete. Results saved.\n")
 } else {
-  if (file.exists("simdata/W11_gcm_simulated_responses.csv")) {
-    simulated_responses <- read_csv("simdata/W11_gcm_simulated_responses.csv",
+  if (file.exists("simdata/ch12_gcm_simulated_responses.csv")) {
+    simulated_responses <- read_csv("simdata/ch12_gcm_simulated_responses.csv",
                                     show_col_types = FALSE)
     cat("Loaded existing simulation results.\n")
   } else {
@@ -783,8 +783,8 @@ generated quantities {
 }
 "
 
-stan_file_gcm_single <- "stan/W11_gcm_single.stan"
-write_stan_file(gcm_single_stan, dir = "stan/", basename = "W11_gcm_single.stan")
+stan_file_gcm_single <- "stan/ch12_gcm_single.stan"
+write_stan_file(gcm_single_stan, dir = "stan/", basename = "ch12_gcm_single.stan")
 mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 ```
 
@@ -839,7 +839,7 @@ gcm_data_single <- list(
   bias_prior_beta  = 1
 )
 
-fit_filepath_single <- "simmodels/W11_gcm_single_fit.rds"
+fit_filepath_single <- "simmodels/ch12_gcm_single_fit.rds"
 if (regenerate_simulations) {
   pf_single <- mod_gcm_single$pathfinder(
     data      = gcm_data_single,
@@ -1173,7 +1173,7 @@ psis_lfo_gcm <- function(stan_model,
 }
 
 # Run on the single-subject fit
-lfo_filepath <- "simdata/W11_lfo_single.rds"
+lfo_filepath <- "simdata/ch12_lfo_single.rds"
 if (regenerate_simulations || !file.exists(lfo_filepath)) {
   lfo_single <- psis_lfo_gcm(
     stan_model = mod_gcm_single,
@@ -1228,7 +1228,7 @@ The gap between the two lines on any specific trial tells you exactly how much t
 ```{r, 11 exact lfo validation, eval=run_intensive_checks}
 exact_lfo_grid <- seq(16, length(gcm_data_single$y) - 1, by = 8)
 
-exact_lfo_filepath <- "simdata/W11_exact_lfo_single.rds"
+exact_lfo_filepath <- "simdata/ch12_exact_lfo_single.rds"
 if (regenerate_simulations || !file.exists(exact_lfo_filepath)) {
   exact_results <- map_dfr(exact_lfo_grid, function(n_train) {
     sub_data <- gcm_data_single
@@ -1456,7 +1456,7 @@ sbc_results_single <- compute_SBC(
   gcm_single_datasets,
   gcm_single_sbc_backend,
   cache_mode = "results",
-  cache_location = "simdata/W11_sbc_single_cache",
+  cache_location = "simdata/ch12_sbc_single_cache",
   keep_fits  = FALSE
 )
 
@@ -1576,20 +1576,31 @@ The multilevel (hierarchical) approach bridges this gap. It assumes that individ
 Before developing the multilevel model, let's demonstrate why it is needed. We fit the single-subject model to several agents separately and examine the spread of their posteriors:
 
 ```{r, 11 motivate multilevel, eval=run_intensive_checks}
-# Fit the single-subject model to 6 agents with equal attention weights
-# to see how much c and bias vary across individuals
+n_demo_agents <- 10
+demo_pop_log_c_mean <- log(2.0)
+demo_pop_log_c_sd   <- 0.5
 
-agents_for_demo <- simulated_responses |>
-  filter(round(w1_true, 1) == 0.5) |>
-  distinct(agent_id, log_c_true) |>
-  slice_head(n = 6)
+# Generate true individual log_c values
+demo_true_log_c <- rnorm(n_demo_agents, demo_pop_log_c_mean, demo_pop_log_c_sd)
 
-demo_fits <- pmap(
-  list(
-    agent_id = agents_for_demo$agent_id
-  ),
+# 2. Simulate these specific agents
+demo_agent_data <- purrr::map_dfr(seq_len(n_demo_agents), function(j) {
+  simulate_gcm_agent(
+    agent_id      = j,
+    w_true        = c(0.5, 0.5), # Keep attention fixed to isolate c variance
+    c_true        = exp(demo_true_log_c[j]),
+    bias_true     = 0.5,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    subject_seed  = 8000 + j
+  )
+})
+
+# 3. Fit the single-subject model to each of these hierarchical agents separately
+demo_fits <- purrr::map(
+  seq_len(n_demo_agents),
   function(agent_id) {
-    agent_dat <- simulated_responses |> filter(agent_id == !!agent_id)
+    agent_dat <- demo_agent_data |> filter(agent_id == !!agent_id)
     dat <- list(
       ntrials          = nrow(agent_dat),
       nfeatures        = 2,
@@ -1602,6 +1613,7 @@ demo_fits <- pmap(
       bias_prior_alpha = 1,
       bias_prior_beta  = 1
     )
+    
     pf <- mod_gcm_single$pathfinder(data = dat, seed = agent_id,
                                     num_paths = 4, refresh = 0)
     fit <- mod_gcm_single$sample(data = dat, init = pf, seed = agent_id,
@@ -1625,11 +1637,66 @@ ggplot(demo_estimates, aes(x = factor(agent_id), y = mean,
   geom_pointrange(position = position_dodge(0.4)) +
   facet_wrap(~variable, scales = "free_y") +
   labs(
-    title = "Individual Posterior Estimates: 6 Agents Fitted Separately",
+    title = "Individual Posterior Estimates: 10 Agents Fitted Separately",
     subtitle = "Points: posterior mean; ranges: 90% CrI. Substantial spread motivates the multilevel approach.",
     x = "Agent", y = "Estimated Value"
   ) +
   theme(legend.position = "none")
+
+
+# Extract the raw posterior draws for c, w[1], and bias from each fit
+demo_draws <- purrr::map_dfr(demo_fits, function(x) {
+  draws <- as_draws_df(x$fit$draws(variables = c("c", "w[1]", "bias")))
+  # Convert agent_id to factor for discrete coloring in ggplot
+  draws$agent_id <- factor(x$agent_id) 
+  return(draws)
+})
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Plot the joint distributions
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Plot 1: Joint distribution of Attention (w1) vs Sensitivity (c)
+p_joint_cw <- ggplot(demo_draws, aes(x = `w[1]`, y = c, group = agent_id)) +
+  # Layer 1: Transparent filled shade inside
+  stat_ellipse(geom = "polygon", aes(fill = agent_id), 
+               level = 0.50, alpha = 0.15, color = NA) +
+  # Layer 2: Dashed outer contour
+  stat_ellipse(geom = "path", aes(color = agent_id), 
+               level = 0.50, alpha = 0.8, linetype = "dashed", linewidth = 0.8) + 
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50") +
+  scale_x_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Joint Posterior: w[1] vs c",
+    subtitle = "50% credible ellipses. Note the varying uncertainties.",
+    x = "Attention Weight w[1]",
+    y = "Sensitivity (c)"
+  ) +
+  theme(legend.position = "none")
+
+# Plot 2: Joint distribution of Bias vs Sensitivity (c)
+p_joint_cbias <- ggplot(demo_draws, aes(x = bias, y = c, group = agent_id)) +
+  # Layer 1: Transparent filled shade inside
+  stat_ellipse(geom = "polygon", aes(fill = agent_id), 
+               level = 0.50, alpha = 0.15, color = NA) +
+  # Layer 2: Dashed outer contour
+  stat_ellipse(geom = "path", aes(color = agent_id), 
+               level = 0.50, alpha = 0.8, linetype = "dashed", linewidth = 0.8) +
+  geom_vline(xintercept = 0.5, linetype = "dotted", color = "grey50") +
+  scale_x_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Joint Posterior: Bias vs c",
+    subtitle = "Distinct clusters motivate the need for a population model.",
+    x = "Response Bias",
+    y = "Sensitivity (c)"
+  ) +
+  # Combine the legends for fill and color so we just get one "Agent" legend
+  guides(color = guide_legend(title = "Agent"), 
+         fill = guide_legend(title = "Agent")) +
+  theme(legend.position = "right")
+
+# Display the plots side-by-side
+print(p_joint_cw | p_joint_cbias)
 ```
 
 The spread in posterior means across agents — even though all were generated from the same population distribution — illustrates the individual variability that a multilevel model is designed to characterize. Complete pooling (one fit to all agents) would attribute this variance to noise; no pooling (separate fits) would treat it as fully reliable. The multilevel model achieves principled partial pooling.
@@ -1745,8 +1812,8 @@ pop_params_sim <- list(
   pop_logit_bias_sd  = 0.3
 )
 
-sim_file_ml        <- "simdata/W11_gcm_multilevel_sim_data.csv"
-true_params_file_ml <- "simdata/W11_gcm_multilevel_true_params.csv"
+sim_file_ml        <- "simdata/ch12_gcm_multilevel_sim_data.csv"
+true_params_file_ml <- "simdata/ch12_gcm_multilevel_true_params.csv"
 
 if (regenerate_simulations) {
   set.seed(42)
@@ -1795,13 +1862,17 @@ The spread in individual learning trajectories reflects both parameter heterogen
 
 ### Implementing the Multilevel GCM in Stan
 
-The key advances over the single-subject model are:
+The key changes from the single-subject model are:
 
 * **Population distributions** for $\log c$, attention weights, and bias.
+
 * **Non-centred parameterizations** for $\log c$ and $\text{logit}(\beta)$, which improves HMC geometry by decorrelating individual deviations from group-level parameters.
+
 * **Subject-indexed loop structure** with `subj_start[j]`/`subj_end[j]` slices, which is both correct for arbitrary data orderings and correct when subjects have different numbers of trials.
+
 * **`prob_cat1` in `transformed parameters`** — same architectural fix as the single-subject model. The sequential GCM recursion runs once per leapfrog step, and both `model{}` and `generated quantities{}` read from the resulting per-trial probability vector.
-* **All prior hyperparameters in the data block** — including `pop_logit_bias_mean_prior_mean` and `pop_logit_bias_mean_prior_sd`, which were hard-coded in the previous version of this chapter. Lifting them allows prior sweeps without recompiling, as the persona's Phase 2.1 requires.
+
+* **All prior hyperparameters in the data block** — including `pop_logit_bias_mean_prior_mean` and `pop_logit_bias_mean_prior_sd`, which were hard-coded in the previous version of this chapter. Lifting them allows prior sweeps without recompiling.
 
 ```{r, 11 multilevel GCM in Stan}
 gcm_ml_stan <- "
@@ -1954,8 +2025,8 @@ generated quantities {
 }
 "
 
-stan_file_gcm_ml <- "stan/W11_gcm_ml.stan"
-write_stan_file(gcm_ml_stan, dir = "stan/", basename = "W11_gcm_ml.stan")
+stan_file_gcm_ml <- "stan/ch12_gcm_ml.stan"
+write_stan_file(gcm_ml_stan, dir = "stan/", basename = "ch12_gcm_ml.stan")
 mod_gcm_ml <- cmdstan_model(stan_file_gcm_ml)
 ```
 
@@ -1964,7 +2035,7 @@ mod_gcm_ml <- cmdstan_model(stan_file_gcm_ml)
 The data preparation step requires a mandatory `arrange()` before constructing the Stan list. This ensures that the contiguous slice assumption — that all rows for subject $j$ appear in indices `subj_start[j]` through `subj_end[j]` in the order they were observed — holds exactly. Without this sort, any interleaving of subjects by `bind_rows` would write trial $t$ of subject $j_2$ into subject $j_1$'s memory slot, silently corrupting both subjects' memory states.
 
 ```{r, 11 fit gcm ML}
-# CRITICAL: sort by (subj_id_stan, trial_within_subject) before Stan.
+# Sort by (subj_id_stan, trial_within_subject) before Stan.
 gcm_ml_data_sorted <- multilevel_sim_data |>
   mutate(subj_id_stan = as.integer(factor(agent_id))) |>
   arrange(subj_id_stan, trial_within_subject)
@@ -1999,12 +2070,12 @@ gcm_ml_data <- list(
   pop_log_c_mean_prior_sd         = 1.0,
   pop_log_c_sd_prior_rate         = 1.0,
   kappa_prior_rate                = 0.1,
-  pop_logit_bias_mean_prior_mean  = 0,    # NEW: lifted
-  pop_logit_bias_mean_prior_sd    = 1.5,  # NEW: lifted
+  pop_logit_bias_mean_prior_mean  = 0,    
+  pop_logit_bias_mean_prior_sd    = 1.5,  
   pop_logit_bias_sd_prior_rate    = 2.0
 )
 
-fit_filepath_ml <- "simmodels/W11_gcm_ml_fit.rds"
+fit_filepath_ml <- "simmodels/ch12_gcm_ml_fit.rds"
 if (regenerate_simulations) {
   pf_ml <- mod_gcm_ml$pathfinder(
     data      = gcm_ml_data,
@@ -2072,48 +2143,80 @@ if (!is.null(fit_gcm_ml)) {
 }
 ```
 
-A triangular wedge in any panel involving `pop_log_c_sd` or `pop_logit_bias_sd` is the canonical signature of a reverse funnel under NCP. The persona's Phase 5 prescription is to switch the affected parameters to centred parameterisation — this is *not* a job for `adapt_delta = 0.99`. We do not encounter this here under the chosen population priors and 20 simulated subjects, but the pairs plot is shown so that a reader applying this code to a different dataset has the diagnostic in front of them.
+A triangular wedge in any panel involving `pop_log_c_sd` or `pop_logit_bias_sd` would be the canonical signature of a reverse funnel under NCP. 
 
 ```{r, 11 multilevel posterior visualisation}
-if (!is.null(fit_gcm_ml)) {
+
+  # 1. Extract Posterior Draws
   draws_ml <- as_draws_df(fit_gcm_ml$draws(variables = c(
     "pop_w", "kappa", "pop_log_c_mean", "pop_log_c_sd",
     "pop_logit_bias_mean", "pop_logit_bias_sd"
   )))
+  
+  # 2. Generate Prior Draws (matching the hyperparameters in your stan_dat)
+  n_prior <- nrow(draws_ml)
+  prior_ml <- tibble(
+    `pop_w[1]`          = runif(n_prior),                  # Dirichlet(1,1) marginal
+    `pop_w[2]`          = 1 - `pop_w[1]`,
+    kappa               = rexp(n_prior, 0.1),              # kappa_prior_rate
+    pop_log_c_mean      = rnorm(n_prior, LOG_C_PRIOR_MEAN, 1.0),
+    pop_log_c_sd        = rexp(n_prior, 1.0),              # pop_log_c_sd_prior_rate
+    pop_logit_bias_mean = rnorm(n_prior, 0, 1.5),          # pop_logit_bias_mean_prior
+    pop_logit_bias_sd   = rexp(n_prior, 2.0)               # pop_logit_bias_sd_prior_rate
+  )
 
-  p_pop_w1  <- ggplot(draws_ml, aes(x = `pop_w[1]`)) +
-    geom_histogram(fill = "#56B4E9", alpha = 0.8, bins = 30) +
-    geom_vline(xintercept = pop_params_sim$pop_w[1], color = "red", linetype = "dashed") +
-    labs(title = "Pop w[1]")
+  # 3. Helper function to plot Prior vs Posterior overlays cleanly
+  plot_pop_update <- function(param_name, prior_vec, post_vec, true_val, fill_color) {
+    df <- tibble(
+      value = c(prior_vec, post_vec),
+      Distribution = rep(c("Prior", "Posterior"), each = length(prior_vec))
+    )
+    
+    ggplot(df, aes(x = value, fill = Distribution, color = Distribution)) +
+      geom_density(alpha = 0.5, linewidth = 0.5) +
+      geom_vline(xintercept = true_val, color = "red", linetype = "dashed", linewidth = 1) +
+      scale_fill_manual(values = c("Prior" = "grey70", "Posterior" = fill_color)) +
+      scale_color_manual(values = c("Prior" = "grey50", "Posterior" = fill_color)) +
+      labs(title = param_name, x = NULL, y = "Density") +
+      theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  }
 
-  p_pop_w2  <- ggplot(draws_ml, aes(x = `pop_w[2]`)) +
-    geom_histogram(fill = "#56B4E9", alpha = 0.8, bins = 30) +
-    geom_vline(xintercept = pop_params_sim$pop_w[2], color = "red", linetype = "dashed") +
-    labs(title = "Pop w[2]")
+  # Generate individual plots
+  p_pop_w1 <- plot_pop_update("Pop w[1]", prior_ml$`pop_w[1]`, draws_ml$`pop_w[1]`, 
+                              pop_params_sim$pop_w[1], "#56B4E9")
+  p_pop_w2 <- plot_pop_update("Pop w[2]", prior_ml$`pop_w[2]`, draws_ml$`pop_w[2]`, 
+                              pop_params_sim$pop_w[2], "#56B4E9")
+  p_kappa  <- plot_pop_update("Kappa", prior_ml$kappa, draws_ml$kappa, 
+                              pop_params_sim$kappa, "#E69F00")
+  p_logcm  <- plot_pop_update("Pop log(c) mean", prior_ml$pop_log_c_mean, draws_ml$pop_log_c_mean, 
+                              pop_params_sim$pop_log_c_mean, "#009E73")
+  p_logcsd <- plot_pop_update("Pop log(c) SD", prior_ml$pop_log_c_sd, draws_ml$pop_log_c_sd, 
+                              pop_params_sim$pop_log_c_sd, "#009E73")
+  p_biasm  <- plot_pop_update("Pop logit(bias) mean", prior_ml$pop_logit_bias_mean, draws_ml$pop_logit_bias_mean, 
+                              pop_params_sim$pop_logit_bias_mean, "#CC79A7")
+  p_biassd <- plot_pop_update("Pop logit(bias) SD", prior_ml$pop_logit_bias_sd, draws_ml$pop_logit_bias_sd, 
+                              pop_params_sim$pop_logit_bias_sd, "#CC79A7")
 
-  p_kappa   <- ggplot(draws_ml, aes(x = kappa)) +
-    geom_histogram(fill = "#E69F00", alpha = 0.8, bins = 30) +
-    geom_vline(xintercept = pop_params_sim$kappa, color = "red", linetype = "dashed") +
-    labs(title = "Kappa")
+  # Arrange with patchwork, collecting the legend to the bottom
+  layout_grid <- (p_pop_w1 | p_pop_w2 | p_kappa) / 
+                 (p_logcm  | p_logcsd | plot_spacer()) / 
+                 (p_biasm  | p_biassd | plot_spacer()) +
+                 plot_layout(guides = "collect") & theme(legend.position = "bottom")
+  
+  cat("=== Population Parameter Prior-Posterior Updates ===\n")
+  print(layout_grid)
 
-  p_logcm   <- ggplot(draws_ml, aes(x = pop_log_c_mean)) +
-    geom_histogram(fill = "#009E73", alpha = 0.8, bins = 30) +
-    geom_vline(xintercept = pop_params_sim$pop_log_c_mean, color = "red", linetype = "dashed") +
-    labs(title = "Pop log(c) mean")
+  # 4. Joint Posterior Geometry (Pairplots)
+  cat("\n=== Joint Posterior Geometry (Pairplots) ===\n")
+  # We select the most structurally important population parameters to check for funnels
+  p_pairs <- bayesplot::mcmc_pairs(
+    fit_gcm_ml$draws(c("pop_w[1]", "kappa", "pop_log_c_mean", "pop_log_c_sd", "pop_logit_bias_sd")),
+    diag_fun = "dens",
+    off_diag_fun = "hex"
+  )
+  print(p_pairs)
 
-  p_logcsd  <- ggplot(draws_ml, aes(x = pop_log_c_sd)) +
-    geom_histogram(fill = "#009E73", alpha = 0.8, bins = 30) +
-    geom_vline(xintercept = pop_params_sim$pop_log_c_sd, color = "red", linetype = "dashed") +
-    labs(title = "Pop log(c) SD")
-
-  p_biasm   <- ggplot(draws_ml, aes(x = pop_logit_bias_mean)) +
-    geom_histogram(fill = "#CC79A7", alpha = 0.8, bins = 30) +
-    geom_vline(xintercept = pop_params_sim$pop_logit_bias_mean, color = "red", linetype = "dashed") +
-    labs(title = "Pop logit(bias) mean")
-
-  print((p_pop_w1 | p_pop_w2 | p_kappa) / (p_logcm | p_logcsd | p_biasm))
-
-  # Individual parameter recovery: sensitivity c
+  # 5. Individual parameter recovery: sensitivity c
   subj_c_summary <- fit_gcm_ml$summary(variables = "subj_c") |>
     mutate(agent_id = readr::parse_number(
       stringr::str_extract(variable, "\\[\\d+\\]")
@@ -2128,7 +2231,7 @@ if (!is.null(fit_gcm_ml)) {
          x = "True c", y = "Estimated c (posterior mean)") +
     coord_cartesian(xlim = c(0, 8), ylim = c(0, 8))
 
-  # Individual attention weight recovery
+  # 6. Individual attention weight recovery
   subj_w_summary <- fit_gcm_ml$summary(variables = "subj_w") |>
     mutate(
       agent_id = readr::parse_number(stringr::str_extract(variable, "\\[\\d+")),
@@ -2155,8 +2258,8 @@ if (!is.null(fit_gcm_ml)) {
          x = "True w", y = "Estimated w (posterior mean)") +
     coord_fixed(xlim = c(0, 1), ylim = c(0, 1))
 
+  cat("\n=== Individual Parameter Recovery ===\n")
   print(p_recov_c | p_recov_w)
-}
 ```
 
 The initial multilevel fit allows us to examine estimated population distributions and check individual parameter recovery. A more rigorous validation requires the extensive recovery and SBC analyses below.
@@ -2167,7 +2270,7 @@ The initial multilevel fit allows us to examine estimated population distributio
 
 As established in Chapter 5, a single recovery check is a weak sanity test. An extensive recovery study assesses reliability across a *range* of true population parameters, asking whether the model can identify the generating structure across the full plausible space of experimental designs. The procedure: (1) define a grid of true population parameters, (2) simulate multiple datasets per grid point (each with its own per-subject seeds), (3) fit the multilevel Stan model, (4) compare estimated against true values.
 
-> **A note on precision analysis (Phase 6d).** The grid below sweeps population parameters at a fixed trial count of 64 trials per subject. A *precision analysis* in the persona's sense (Phase 6d) would add a trial-count axis $N \in \{32, 64, 128, 256\}$ and track median CI width and empirical coverage as a function of $N$. This is the Bayesian analogue of frequentist power analysis. We do not run it in the rendered chapter (the additional cost is roughly 4×) but the recovery loop below is structured so that adding the trial-count axis is a one-line change to `param_grid_ml`.
+> **A note on precision analysis.** The grid below sweeps population parameters at a fixed trial count of 64 trials per subject. A *precision analysis* in the persona's sense (Phase 6d) would add a trial-count axis $N \in \{32, 64, 128, 256\}$ and track median CI width and empirical coverage as a function of $N$. This is the Bayesian analogue of frequentist power analysis. We do not run it in the rendered chapter (the additional cost is roughly 4×) but the recovery loop below is structured so that adding the trial-count axis is a one-line change to `param_grid_ml`.
 
 ```{r, 11 extensive recovery setup, eval=run_intensive_checks}
 param_grid_ml <- expand_grid(
@@ -2187,7 +2290,7 @@ n_subjects_recov <- 15
 run_recovery_iteration <- function(grid_id, pop_log_c_mean, pop_log_c_sd,
                                    pop_w, kappa, sim_iteration) {
   cat("Grid", grid_id, "Iter", sim_iteration, "\n")
-
+  mod_gcm_ml <- cmdstanr::cmdstan_model("stan/ch12_gcm_ml.stan")
   sim_out <- tryCatch(
     simulate_multilevel_gcm(
       n_subjects          = n_subjects_recov,
@@ -2298,7 +2401,7 @@ recovery_results_raw <- future_pmap_dfr(
 )
 plan(sequential)
 
-write_csv(recovery_results_raw, "simdata/W11_gcm_ml_recovery_raw.csv")
+write_csv(recovery_results_raw, "simdata/ch12_gcm_ml_recovery_raw.csv")
 
 # Visualize population parameter recovery
 recovery_labeled <- recovery_results_raw |>
@@ -2423,7 +2526,7 @@ gcm_ml_sbc_backend <- SBC_backend_cmdstan_sample(
 sbc_results_ml <- compute_SBC(
   gcm_ml_sbc_generator,
   gcm_ml_sbc_backend,
-  cache_path = "simdata/W11_sbc_multilevel_cache",
+  cache_path = "simdata/ch12_sbc_multilevel_cache",
   keep_fits  = FALSE
 )
 

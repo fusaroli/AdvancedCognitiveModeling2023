@@ -1,6 +1,6 @@
 # The Pizza Experiment
 
-```{r setup-ch01, include=FALSE}
+```{r ch02_setup, include=FALSE}
 knitr::opts_chunk$set(
   warning    = FALSE,
   message    = FALSE,
@@ -55,7 +55,7 @@ Oh, and you'll probably get hungry as well!
 
 Required Packages
 
-```{r, required packages 01}
+```{r ch02_required_packages}
 
 # 1. Ensure 'pacman' is installed
 if (!require("pacman")) install.packages("pacman")
@@ -78,7 +78,7 @@ In this study, we collected temperature measurements from a pizza stone in a gas
 
 The measurements were taken as follows:
 
-```{r, 01 data}
+```{r ch02_data}
 # Load and examine the data
 data <- tibble(
   Order = rep(0:18, 3),
@@ -115,7 +115,7 @@ knitr::kable(summary_stats, digits = 1)
 
 Let's visualize how the temperature evolves over time for each rater:
 
-```{r, 01 datav}
+```{r ch02_visualize_data}
 ggplot(data, aes(x = Seconds/60, y = Temperature, color = Rater)) +
   geom_point(size = 3, alpha = 0.7) +
   geom_line(alpha = 0.5) +
@@ -152,7 +152,7 @@ Several interesting patterns emerge from our data:
 
 Let's examine the rate of temperature change:
 
-```{r, 01 temp change}
+```{r ch02_temp_change_rate}
 # --- Calculate Rate of Temperature Change ---
 # To understand how quickly the stone heats up, calculate the change rate per minute.
 data_with_rate <- data %>%
@@ -195,18 +195,16 @@ Before developing our physics-based model, let's explore how standard statistica
 ### Model Setup and Priors
 First, let's ensure we have a directory for our models and set up our computational parameters:
 
-```{r, 01 regr model setup}
+```{r ch02_regr_model_setup}
 # --- Model Fitting Setup ---
 # Define relative paths for saving model objects and Stan code.
-linear_model_path <- here("models", "01_pizza_linear_model")
-lognormal_model_path <- here("models", "01_pizza_lognormal_model")
-stan_model_path <- here("models", "pizza_physics_model.stan")
+linear_model_path <- here("simmodels", "ch02_pizza_linear_model")
+lognormal_model_path <- here("simmodels", "ch02_pizza_lognormal_model")
+stan_model_path <- here("stan", "ch02_pizza_physics.stan")
 
-# Create the 'models' directory if it doesn't already exist
-if (!dir.exists("models")) {
-  dir.create("models")
-  message("Created 'models' directory.")
-}
+# Create the required directories if they don't already exist
+if (!dir.exists("simmodels")) dir.create("simmodels")
+if (!dir.exists("stan")) dir.create("stan")
 
 # Define computational parameters
 mc_settings <- list(
@@ -223,7 +221,7 @@ mc_settings <- list(
 
 We begin with a linear mixed-effects model, which assumes that temperature increases linearly with time but allows for different patterns across raters. This model includes both fixed effects (overall time trend) and random effects (rater-specific variations).
 
-```{r, 01 linear model}
+```{r ch02_linear_model}
 data_scaled <- data %>%
   mutate(Minutes = Seconds / 60)
 
@@ -273,7 +271,7 @@ linear_preds <- fitted(
 
 The lognormal model accounts for the fact that temperature changes might be proportional rather than additive, and ensures predictions cannot go below zero (I don't bring my oven out in the freezing cold!).
 
-```{r, 01 lognormal model}
+```{r ch02_lognormal_model}
 # Define priors for lognormal model
 lognormal_priors <- c(
   prior(normal(2.7, 0.5), class = "Intercept"),     # Log scale for room temperature
@@ -314,7 +312,7 @@ lognormal_preds <- fitted(
 
 ### Model Comparison and Visualization
 Let's compare how these models fit our data:
-```{r, 01 model comparison}
+```{r ch02_model_comparison}
 # Compare models using LOO
 model_comparison <- loo_compare(
   loo(linear_model),
@@ -459,7 +457,7 @@ This equation retains the essential physics while providing a practical model fo
 Having established the theoretical foundation, we now face a practical challenge: we cannot measure $h$, $A$, or $c_p$ directly during the bake. Instead, we must infer the aggregate parameter HOT from the noisy temperature data collected by our raters. This is where Stan comes in, enabling us to create a Bayesian implementation of our physics-based model, and to account for measurement uncertainty and variation between raters.
 First, we prepare our data for the Stan model. Our model requires initial temperatures, time measurements, and observed temperatures from each rater:
 
-```{r, 01 stan data}
+```{r ch02_stan_data}
 # Create data structure for Stan
 stan_data <- list(
   N = nrow(data %>% filter(!is.na(Temperature))),
@@ -476,7 +474,7 @@ stan_data <- list(
 
 Next, we implement our physics-based model in Stan. The model incorporates our derived equation while allowing for rater-specific heating coefficients:
 
-```{r, 01 stan model}
+```{r ch02_stan_model}
 stan_code <- "
 data {
   int<lower=0> N;                   // Number of observations
@@ -511,12 +509,12 @@ writeLines(stan_code, stan_model_path)
 
 # Compile and fit the Stan model using the relative path
 # Compilation happens once; subsequent runs load the compiled object if unchanged.
-mod <- cmdstan_model("models/pizza_physics_model.stan", quiet = TRUE)
+mod <- cmdstan_model("stan/ch02_pizza_physics.stan", quiet = TRUE)
 ```
 ### Prior Predictive Check
 Before fitting our model to empirical data, we must ensure our priors generate physically plausible heating curves (Simulation Validation). If our `normal(0.005, 0.005)` prior on `HOT` is appropriate, simulated temperatures should gradually approach $T_{\infty}$ without exceeding it or dropping below absolute zero.
 
-```{r, 01 prior predictive}
+```{r ch02_prior_predictive}
 # Simulate HOT parameters from the prior
 set.seed(123)
 prior_hot <- rnorm(100, mean = 0.005, sd = 0.005)
@@ -537,7 +535,7 @@ ggplot(prior_preds, aes(x = time/60, y = temp, group = sim_id)) +
   theme_bw()
 ```
 
-```{r, 01 fitting the model}
+```{r ch02_fitting_model}
 fit <- mod$sample(
   data = stan_data,
   seed = 123,
@@ -551,7 +549,7 @@ fit <- mod$sample(
 The Stan implementation translates our mathematical model into a computational framework. We assign informative priors to our parameters based on physical understanding: the heating coefficient (HOT) is expected to be small but positive, while measurement error (sigma) follows an exponential distribution to ensure positivity while allowing for varying levels of uncertainty between raters.
 To visualize our model's predictions and assess its performance, we extract posterior samples and generate predictions across our time range:
 
-```{r, 01 physics model preds}
+```{r ch02_physics_model_preds}
 # Extract draws
 post <- as_draws_df(fit$draws()) %>%
   dplyr::select(starts_with("HOT"), starts_with("sigma")) %>%
@@ -619,7 +617,7 @@ $$t = -\frac{1}{HOT} \ln\left( \frac{T_{\text{target}} - T_{\infty}}{T_{\text{in
 
 We will now implement this function in R to calculate precise waiting times under different conditions.
 
-```{r, 01 heating time function}
+```{r ch02_heating_time_function}
 time_to_temp <- function(target_temp, HOT, Ti, Tinf) {
   # Solve: target = Tinf + (Ti - Tinf) * exp(-HOT * t)
   # for t
@@ -630,7 +628,7 @@ time_to_temp <- function(target_temp, HOT, Ti, Tinf) {
 
 To understand heating times across different oven conditions, we examine how varying flame temperatures affect the time needed to reach pizza-making temperatures. We extract the heating coefficients from our fitted model and analyze temperature scenarios:
 
-```{r, 01 heating time preds}
+```{r ch02_heating_time_preds}
 # Extract HOT samples from our posterior
 hot_samples <- as_draws_df(fit$draws()) %>%
   dplyr::select(starts_with("HOT"))
@@ -720,8 +718,8 @@ The pizza stone experiment also demonstrated the importance of rigorous methodol
 
 As we progress through the course, the principles from this chapter will
 resurface at every step: a generative model driven by theory (Ch. 3),
-parameter estimation via Bayesian inference (Ch. 4), validation of that
-inference (Ch. 5), and scaling to many participants (Ch. 6). The pizza stone
+parameter estimation via Bayesian inference (Ch. 5), validation of that
+inference (Ch. 6), and scaling to many participants (Ch. 7). The pizza stone
 is not a detour — it is the template.
 
 Every chapter is one step in a single pipeline [NOW COVERING UP TO MODEL COMPARISON. MORE TO COME]. Use this table to orient yourself whenever you feel lost.
@@ -737,7 +735,7 @@ Every chapter is one step in a single pipeline [NOW COVERING UP TO MODEL COMPARI
 | **7 — Model Comparison** | Choose between theories | Of several plausible models, which one best predicts unseen data? |
 
 **The key insight:** steps 1–3 build models; steps 4–7 test them. A model only earns
-the right to touch real human data after passing the validation battery in Chapter 5.
+the right to touch real human data after passing the validation battery in Chapter 6.
 
 **Coming up in Chapter 2:** We shift focus from stones to minds. You have
 already played the Matching Pennies game in class. Chapter 2 helps you

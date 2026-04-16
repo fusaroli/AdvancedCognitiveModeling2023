@@ -343,19 +343,19 @@ window.Quarto = {
 
 
 <blockquote class="blockquote">
-<p><strong>📍 Where we are in the Bayesian modeling workflow:</strong> Chs. 1–6 built models, validated them, and scaled them to populations. Every model passed a six-phase quality battery before fitting real data. This chapter asks the next question: when two validated models both fit the data, which one better <em>predicts</em> data it has never seen? The answer uses PSIS-LOO cross-validation and requires the validated fits from Ch. 6. The reversal learning design introduced in Ch. 5 and used in Ch. 6 is essential here too — it is the design that makes the two models distinguishable in the first place.</p>
+<p><strong>📍 Where we are in the Bayesian modeling workflow:</strong> Chs. 1–6 built models, validated them, and scaled them to populations. Every model passed a six-phase quality battery before fitting real data. This chapter asks the next question: when two validated models both fit the data, which one better <em>predicts</em> data it has never seen? The answer uses PSIS-LOO cross-validation and requires the validated fits from Ch. 7. The reversal learning design introduced in Ch. 6 and used in Ch. 7 is essential here too — it is the design that makes the two models distinguishable in the first place.</p>
 </blockquote>
-<p>By Chapter 6 we had a working Bayesian workflow: specify a generative model, validate it with SBC and parameter recovery, fit it to data, and diagnose the posterior geometry, both in the case of single agent and hierarchical models. We now face a different question: we rarely have only one possible model of the cognitive processes underlying the observed behaviors.</p>
+<p>By Chapter 7 we had a working Bayesian workflow: specify a generative model, validate it with SBC and parameter recovery, fit it to data, and diagnose the posterior geometry, both in the case of single agent and hierarchical models. We now face a different question: we rarely have only one possible model of the cognitive processes underlying the observed behaviors.</p>
 <ul>
 <li><p>Sometimes we have different models representing competing theoretical accounts of cognitive processes. For instance, a Gaussian filter model of learning regularities in one’s opponent’s behavior in the Matching Pennies game vs a Theory of Mind model of learning the model used by the opponent vs.&nbsp;an active inference model trying to actively deceive the opponent.</p></li>
 <li><p>Sometimes we have simpler and more complex versions of the same model: should we assume we equally learn from all feedback (using a reinforcement learning model) or should we assume different learning from positive and negative feedback (using a dual learning rate model)?</p></li>
 </ul>
 <p>In either case, once we have ensured that all models involved pass their individual quality checks, how do we decide which better accounts for the observed data?</p>
-<p>There are many ways to compare models, but here we develop a Bayesian predictive approach consistent with our approach in previous chapters. The core argument is that a model should be judged not by how well it explains the data it was <em>trained</em> on, but by how well it predicts data it has <em>never seen</em>. We formalize this as the Expected Log Predictive Density (ELPD), build an efficient computational approximation via PSIS-LOO, and apply the full workflow to the biased and memory agent models from Chapter 6. This approach also gives us a principled way to identify difficult to predict data points (sometimes called influential observations), which can tell us much about the limits of our models and different mechanisms at work in different portions of the data. However, note that focusing on predictive abilities does not directly equate to model most likely to be true! It is a useful pragmatic measure and we should keep it in mind.</p>
+<p>There are many ways to compare models, but here we develop a Bayesian predictive approach consistent with our approach in previous chapters. The core argument is that a model should be judged not by how well it explains the data it was <em>trained</em> on, but by how well it predicts data it has <em>never seen</em>. We formalize this as the Expected Log Predictive Density (ELPD), build an efficient computational approximation via PSIS-LOO, and apply the full workflow to the biased and memory agent models from Chapter 7. This approach also gives us a principled way to identify difficult to predict data points (sometimes called influential observations), which can tell us much about the limits of our models and different mechanisms at work in different portions of the data. However, note that focusing on predictive abilities does not directly equate to model most likely to be true! It is a useful pragmatic measure and we should keep it in mind.</p>
 <p>As in previous chapters, we heavily rely on simulations to understand these techniques and validate our model comparison procedure. Because we control the data-generating mechanism, we can evaluate not just whether model comparison produces a preference, but whether it produces the <em>correct</em> preference — the model recovery test.</p>
 <p>Remember, model comparison is not a fail-safe procedure to determine the absolute “truth”. All models are simplifications. Instead, it helps us identify which of our candidate models provides the most useful or most plausible account of the data, given our current understanding and the available evidence. Model comparison should always be part of a larger principled scientific workflow using models as stepping stones to deeper understanding, not as final arbiters of truth.</p>
 <blockquote class="blockquote">
-<p>CRITICAL PRECONDITION: Model comparison is only scientifically meaningful if all candidate models have already passed the individual quality checks established in Chapter 5. If Model A converges perfectly but Model B fails its SBC calibration or has persistent divergences, an ELPD comparison is a “garbage-in, garbage-out” exercise. We only compare models that have earned the right to be taken seriously.</p>
+<p>CRITICAL PRECONDITION: Model comparison is only scientifically meaningful if all candidate models have already passed the individual quality checks established in Chapter 6. If Model A converges perfectly but Model B fails its SBC calibration or has persistent divergences, an ELPD comparison is a “garbage-in, garbage-out” exercise. We only compare models that have earned the right to be taken seriously.</p>
 </blockquote>
 <section id="learning-objectives" class="level2" data-number="8.1">
 <h2 data-number="8.1" class="anchored" data-anchor-id="learning-objectives"><span class="header-section-number">8.1</span> Learning Objectives</h2>
@@ -536,7 +536,7 @@ window.Quarto = {
 <p>Fortunately, there is an elegant mathematical shortcut, which is analogous to what we have seen when assessing prior sensitivity. The idea is to use the <em>single</em> full-data posterior we already have and to <em>reweight</em> its draws to approximate what the posterior would have looked like had we omitted observation <span class="math inline">\(i\)</span>. .</p>
 <p>The mathematical weights that accomplish this reweighting are the <em>inverse</em> of the likelihood contributions: observations that the model fits well (high likelihood) get down-weighted when computing what the model “would have” predicted without them. These log-scale importance weights are simply the negative pointwise log-likelihoods:</p>
 <p><span class="math display">\[\log r_i^{(s)} = -\log p(y_i \mid \theta^{(s)})\]</span></p>
-<p>These are already stored in our Stan <code>log_lik</code> block from Chapter 6. So no additional computation is required: everything we need is already sitting in our existing model fits.</p>
+<p>These are already stored in our Stan <code>log_lik</code> block from Chapter 7. So no additional computation is required: everything we need is already sitting in our existing model fits.</p>
 <p>However, we should be careful. If the model’s estimate would barely change when we removing observation <span class="math inline">\(i\)</span>, then <span class="math inline">\(i\)</span> is not very influential, and we can approximate the LOO estimate cheaply. If the model’s estimate would change a lot, then <span class="math inline">\(i\)</span> is influential, and our approximation is less reliable. We therefore need to use a diagnostic to flag such cases: the Pareto-<span class="math inline">\(\hat{k}\)</span>, which we cover in detail in a later paragraph.</p>
 <p>This combination of LOO cross-validation with Pareto-Smoothed Importance Sampling is called <strong>PSIS-LOO</strong> (Vehtari, Gelman &amp; Gabry, 2017), and it is our primary tool for model comparison, so we’ll go through it step by step.</p>
 <blockquote class="blockquote">
@@ -655,8 +655,8 @@ window.Quarto = {
 </section>
 <section id="simulation-setup-for-model-recovery" class="level2" data-number="8.4">
 <h2 data-number="8.4" class="anchored" data-anchor-id="simulation-setup-for-model-recovery"><span class="header-section-number">8.4</span> Simulation Setup for Model Recovery</h2>
-<p>We simulate two populations of agents playing against a shared opponent using the <strong>reversal design</strong> first validated in Ch. 5 and used throughout Ch. 6: the opponent plays 80% right for the first half of the session, then switches to 20% right for the second half. We use the exact sequence loaded from Ch. 6 above (<code>opponent_reversal</code>), taking the first 120 trials (60 + 60) for this chapter’s shorter sessions.</p>
-<p>Why this design? If the opponent plays a constant bias, the memory agent’s internal running average quickly settles near that value and stays flat. Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a biased agent — both produce a fixed right-leaning rate. The reversal forces the memory signal to change sign at trial 61: memory agents reverse their behavior while biased agents do not. This contrast is what makes the two models theoretically separable, and why Ch. 5 discovered that a constant-bias design made <code>bias</code> and <code>beta</code> unidentifiable.</p>
+<p>We simulate two populations of agents playing against a shared opponent using the <strong>reversal design</strong> first validated in Ch. 6 and used throughout Ch. 7: the opponent plays 80% right for the first half of the session, then switches to 20% right for the second half. We use the exact sequence loaded from Ch. 7 above (<code>opponent_reversal</code>), taking the first 120 trials (60 + 60) for this chapter’s shorter sessions.</p>
+<p>Why this design? If the opponent plays a constant bias, the memory agent’s internal running average quickly settles near that value and stays flat. Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a biased agent — both produce a fixed right-leaning rate. The reversal forces the memory signal to change sign at trial 61: memory agents reverse their behavior while biased agents do not. This contrast is what makes the two models theoretically separable, and why Ch. 6 discovered that a constant-bias design made <code>bias</code> and <code>beta</code> unidentifiable.</p>
 <p><em>Note on recovery failure:</em> We simulate a population with strong memory sensitivity (<span class="math inline">\(\mu_\beta = 1.5\)</span>). With weak memory (<span class="math inline">\(\mu_\beta \approx 0.3\)</span>), the behavioral difference would be subtle enough that the simpler biased model would win the ELPD comparison by default due to its lower complexity penalty — a correct finding, not a method failure.</p>
 <p>The key insight for model recovery is that we fit <em>both</em> models to <em>both</em> datasets, giving a 2×2 matrix of fits:</p>
 <ul>
@@ -679,7 +679,7 @@ window.Quarto = {
 <span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">set.seed</span>(seed)</span>
 <span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Reversal block design: 80% right for t 1:60, 20% right for t 61:120.</span></span>
-<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>  <span class="co"># If a fixed sequence is supplied (from Ch. 6), use it directly so that</span></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>  <span class="co"># If a fixed sequence is supplied (from Ch. 7), use it directly so that</span></span>
 <span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>  <span class="co"># all chapters share the same opponent history.</span></span>
 <span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> (<span class="sc">!</span><span class="fu">is.null</span>(opponent_choices)) {</span>
 <span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>    <span class="fu">stopifnot</span>(<span class="fu">length</span>(opponent_choices) <span class="sc">&gt;=</span> n_trials)</span>
@@ -744,11 +744,11 @@ window.Quarto = {
 <span id="cb9-75"><a href="#cb9-75" aria-hidden="true" tabindex="-1"></a>                          <span class="at">rho =</span> rho))</span>
 <span id="cb9-76"><a href="#cb9-76" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb9-77"><a href="#cb9-77" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-78"><a href="#cb9-78" aria-hidden="true" tabindex="-1"></a>sim_data_path <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simdata"</span>, <span class="st">"ch7_model_recovery_data.rds"</span>)</span>
+<span id="cb9-78"><a href="#cb9-78" aria-hidden="true" tabindex="-1"></a>sim_data_path <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simdata"</span>, <span class="st">"ch08_model_recovery_data.rds"</span>)</span>
 <span id="cb9-79"><a href="#cb9-79" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-80"><a href="#cb9-80" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (regenerate_simulations <span class="sc">||</span> <span class="sc">!</span><span class="fu">file.exists</span>(sim_data_path)) {</span>
 <span id="cb9-81"><a href="#cb9-81" aria-hidden="true" tabindex="-1"></a>  sim_data <span class="ot">&lt;-</span> <span class="fu">simulate_model_recovery_data</span>(</span>
-<span id="cb9-82"><a href="#cb9-82" aria-hidden="true" tabindex="-1"></a>    <span class="at">opponent_choices =</span> opponent_reversal   <span class="co"># Use Ch. 6 reversal schedule</span></span>
+<span id="cb9-82"><a href="#cb9-82" aria-hidden="true" tabindex="-1"></a>    <span class="at">opponent_choices =</span> opponent_reversal   <span class="co"># Use Ch. 7 reversal schedule</span></span>
 <span id="cb9-83"><a href="#cb9-83" aria-hidden="true" tabindex="-1"></a>  )</span>
 <span id="cb9-84"><a href="#cb9-84" aria-hidden="true" tabindex="-1"></a>  <span class="fu">saveRDS</span>(sim_data, sim_data_path)</span>
 <span id="cb9-85"><a href="#cb9-85" aria-hidden="true" tabindex="-1"></a>} <span class="cf">else</span> {</span>
@@ -817,9 +817,9 @@ window.Quarto = {
 <span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a>sd_biased_on_memory <span class="ot">&lt;-</span> <span class="fu">make_stan_biased</span>(d_memory)</span>
 <span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a>sd_memory_on_memory <span class="ot">&lt;-</span> <span class="fu">make_stan_memory</span>(d_memory)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<p>We reuse the NCP Stan models from Chapter 6. The key feature we need for model comparison is the <code>log_lik</code> vector in the <code>generated quantities</code> block - this is the pointwise log-likelihood for each observation that PSIS-LOO requires. This is why we designed those models with <code>log_lik</code> from the beginning: the Chapter 6 workflow was already leading here.</p>
+<p>We reuse the NCP Stan models from Chapter 7. The key feature we need for model comparison is the <code>log_lik</code> vector in the <code>generated quantities</code> block - this is the pointwise log-likelihood for each observation that PSIS-LOO requires. This is why we designed those models with <code>log_lik</code> from the beginning: the Chapter 7 workflow was already leading here.</p>
 <div class="cell" data-layout-align="center">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>stan_file_biased <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch6_multilevel_biased_ncp.stan"</span>)</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>stan_file_biased <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch07_multilevel_biased_ncp.stan"</span>)</span>
 <span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (<span class="sc">!</span><span class="fu">file.exists</span>(stan_file_biased)) {</span>
 <span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">writeLines</span>(<span class="st">'</span></span>
@@ -843,7 +843,7 @@ window.Quarto = {
 <span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a>    stan_file_biased)</span>
 <span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>stan_file_memory <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch6_multilevel_memory_ncp.stan"</span>)</span>
+<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>stan_file_memory <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch07_multilevel_memory_ncp.stan"</span>)</span>
 <span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (<span class="sc">!</span><span class="fu">file.exists</span>(stan_file_memory)) {</span>
 <span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a>  <span class="fu">writeLines</span>(<span class="st">'</span></span>
 <span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a><span class="st">data { int&lt;lower=1&gt; N; int&lt;lower=1&gt; J;</span></span>
@@ -929,15 +929,15 @@ window.Quarto = {
 <span id="cb17-29"><a href="#cb17-29" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb17-30"><a href="#cb17-30" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb17-31"><a href="#cb17-31" aria-hidden="true" tabindex="-1"></a>fit_b_on_b <span class="ot">&lt;-</span> <span class="fu">fit_or_load</span>(<span class="st">"Biased-&gt;Biased"</span>, mod_biased_ncp, sd_biased_on_biased,</span>
-<span id="cb17-32"><a href="#cb17-32" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch7_fit_b_on_b.rds"</span>), init_biased)</span>
+<span id="cb17-32"><a href="#cb17-32" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch08_fit_b_on_b.rds"</span>), init_biased)</span>
 <span id="cb17-33"><a href="#cb17-33" aria-hidden="true" tabindex="-1"></a>fit_m_on_b <span class="ot">&lt;-</span> <span class="fu">fit_or_load</span>(<span class="st">"Memory-&gt;Biased"</span>, mod_memory_ncp, sd_memory_on_biased,</span>
-<span id="cb17-34"><a href="#cb17-34" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch7_fit_m_on_b.rds"</span>), init_memory)</span>
+<span id="cb17-34"><a href="#cb17-34" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch08_fit_m_on_b.rds"</span>), init_memory)</span>
 <span id="cb17-35"><a href="#cb17-35" aria-hidden="true" tabindex="-1"></a>fit_b_on_m <span class="ot">&lt;-</span> <span class="fu">fit_or_load</span>(<span class="st">"Biased-&gt;Memory"</span>, mod_biased_ncp, sd_biased_on_memory,</span>
-<span id="cb17-36"><a href="#cb17-36" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch7_fit_b_on_m.rds"</span>), init_biased)</span>
+<span id="cb17-36"><a href="#cb17-36" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch08_fit_b_on_m.rds"</span>), init_biased)</span>
 <span id="cb17-37"><a href="#cb17-37" aria-hidden="true" tabindex="-1"></a>fit_m_on_m <span class="ot">&lt;-</span> <span class="fu">fit_or_load</span>(<span class="st">"Memory-&gt;Memory"</span>, mod_memory_ncp, sd_memory_on_memory,</span>
-<span id="cb17-38"><a href="#cb17-38" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch7_fit_m_on_m.rds"</span>), init_memory)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb17-38"><a href="#cb17-38" aria-hidden="true" tabindex="-1"></a>  here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch08_fit_m_on_m.rds"</span>), init_memory)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<p>Before computing any model comparison statistics, we verify that all four fits pass the standard geometry diagnostics from Chapter 5. This step matters especially for the misspecified fits. When we fit the memory model to biased data, we are asking a model to find a memory-tracking signal where none exists - it may strain to do so, which can sometimes produce divergences or poor mixing.</p>
+<p>Before computing any model comparison statistics, we verify that all four fits pass the standard geometry diagnostics from Chapter 6. This step matters especially for the misspecified fits. When we fit the memory model to biased data, we are asking a model to find a memory-tracking signal where none exists - it may strain to do so, which can sometimes produce divergences or poor mixing.</p>
 <p>If we find issues, we need to think critically. On the one hand, comparing a well fitted model to a poorly fitted one is not a strong test of their relative performance. On the other hand, if the misspecified model is so difficult to fit that it fails basic diagnostics, that is itself a sign of poor performance. So as we investigate the sources of the issues, we need to critically evaluate whether they are a sign of a fundamental mismatch between the model and the data-generating mechanism or just a technical issue that can be resolved with more careful fitting.</p>
 <p>Remember that we already run the full bayesian workflow on these models in the previous chapters, so here we only briefly check whether these new fitting processes show any sign of issues. If these were new models, we would need to do a thorough validation first!</p>
 <div class="cell" data-layout-align="center">
@@ -1030,18 +1030,18 @@ window.Quarto = {
 <span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a>  }</span>
 <span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a>loo_b_on_b <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_b_on_b, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_raw_b_on_b.rds"</span>))</span>
-<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a>loo_m_on_b <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_m_on_b, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_raw_m_on_b.rds"</span>))</span>
-<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a>loo_b_on_m <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_b_on_m, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_raw_b_on_m.rds"</span>))</span>
-<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a>loo_m_on_m <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_m_on_m, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_raw_m_on_m.rds"</span>))</span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a>loo_b_on_b <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_b_on_b, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_raw_b_on_b.rds"</span>))</span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a>loo_m_on_b <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_m_on_b, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_raw_m_on_b.rds"</span>))</span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a>loo_b_on_m <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_b_on_m, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_raw_b_on_m.rds"</span>))</span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a>loo_m_on_m <span class="ot">&lt;-</span> <span class="fu">get_raw_loo</span>(fit_m_on_m, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_raw_m_on_m.rds"</span>))</span>
 <span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a>summarise_pareto_k <span class="ot">&lt;-</span> <span class="cf">function</span>(loo_obj, label) {</span>
 <span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a>  k     <span class="ot">&lt;-</span> loo_obj<span class="sc">$</span>diagnostics<span class="sc">$</span>pareto_k</span>
 <span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a>  p_loo <span class="ot">&lt;-</span> loo_obj<span class="sc">$</span>estimates[<span class="st">"p_loo"</span>,<span class="st">"Estimate"</span>]</span>
 <span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a>  n     <span class="ot">&lt;-</span> <span class="fu">length</span>(k)</span>
 <span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">tibble</span>(<span class="at">Combination=</span>label, <span class="at">N=</span>n,</span>
-<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a>         <span class="at">k_below_05=</span><span class="fu">sum</span>(k<span class="sc">&lt;</span><span class="fl">0.5</span>), <span class="at">k_05_07=</span><span class="fu">sum</span>(k<span class="sc">&gt;=</span><span class="fl">0.5</span><span class="sc">&amp;</span>k<span class="sc">&lt;</span><span class="fl">0.7</span>),</span>
-<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a>         <span class="at">k_07_10=</span><span class="fu">sum</span>(k<span class="sc">&gt;=</span><span class="fl">0.7</span><span class="sc">&amp;</span>k<span class="sc">&lt;</span><span class="dv">1</span>), <span class="at">k_above_10=</span><span class="fu">sum</span>(k<span class="sc">&gt;=</span><span class="dv">1</span>),</span>
+<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a>         <span class="at">k_below_05=</span><span class="fu">sum</span>(k<span class="sc">&lt;</span><span class="fl">0.5</span>), <span class="at">k_ch06_07=</span><span class="fu">sum</span>(k<span class="sc">&gt;=</span><span class="fl">0.5</span><span class="sc">&amp;</span>k<span class="sc">&lt;</span><span class="fl">0.7</span>),</span>
+<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a>         <span class="at">k_ch08_10=</span><span class="fu">sum</span>(k<span class="sc">&gt;=</span><span class="fl">0.7</span><span class="sc">&amp;</span>k<span class="sc">&lt;</span><span class="dv">1</span>), <span class="at">k_above_10=</span><span class="fu">sum</span>(k<span class="sc">&gt;=</span><span class="dv">1</span>),</span>
 <span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a>         <span class="at">Max_k=</span><span class="fu">round</span>(<span class="fu">max</span>(k),<span class="dv">3</span>),</span>
 <span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a>         <span class="at">p_hat_loo=</span><span class="fu">round</span>(p_loo,<span class="dv">1</span>), <span class="at">ratio=</span><span class="fu">round</span>(p_loo<span class="sc">/</span>n,<span class="dv">3</span>),</span>
 <span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a>         <span class="at">ELPD=</span><span class="fu">round</span>(loo_obj<span class="sc">$</span>estimates[<span class="st">"elpd_loo"</span>,<span class="st">"Estimate"</span>],<span class="dv">1</span>),</span>
@@ -1061,11 +1061,11 @@ window.Quarto = {
 <table class="caption-top table table-sm table-striped small">
 <caption>Pareto-k diagnostics. ratio = p_hat_loo/N measures model complexity relative to dataset size - we will use this for LOO-PIT below.</caption>
 <colgroup>
-<col style="width: 16%">
+<col style="width: 15%">
 <col style="width: 5%">
 <col style="width: 11%">
-<col style="width: 8%">
-<col style="width: 8%">
+<col style="width: 10%">
+<col style="width: 10%">
 <col style="width: 11%">
 <col style="width: 6%">
 <col style="width: 10%">
@@ -1078,8 +1078,8 @@ window.Quarto = {
 <th style="text-align: left;">Combination</th>
 <th style="text-align: right;">N</th>
 <th style="text-align: right;">k_below_05</th>
-<th style="text-align: right;">k_05_07</th>
-<th style="text-align: right;">k_07_10</th>
+<th style="text-align: right;">k_ch06_07</th>
+<th style="text-align: right;">k_ch08_10</th>
 <th style="text-align: right;">k_above_10</th>
 <th style="text-align: right;">Max_k</th>
 <th style="text-align: right;">p_hat_loo</th>
@@ -1375,50 +1375,50 @@ window.Quarto = {
 <td style="text-align: right;">1</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.518</td>
-<td style="text-align: right;">0.11</td>
+<td style="text-align: right;">-0.02</td>
 <td style="text-align: left;">0.17 [-0.13, 0.48]</td>
-<td style="text-align: right;">1.37</td>
+<td style="text-align: right;">1.59</td>
 <td style="text-align: left;">1.33 [0.77, 1.93]</td>
-<td style="text-align: right;">0.88</td>
+<td style="text-align: right;">0.90</td>
 <td style="text-align: left;">0.88 [0.80, 0.95]</td>
-<td style="text-align: right;">0.14</td>
+<td style="text-align: right;">0.10</td>
 <td style="text-align: left;">0.16 [0.05, 0.30]</td>
 </tr>
 <tr class="even">
 <td style="text-align: right;">7</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.620</td>
-<td style="text-align: right;">-0.15</td>
+<td style="text-align: right;">-0.16</td>
 <td style="text-align: left;">-0.12 [-0.40, 0.16]</td>
-<td style="text-align: right;">1.12</td>
+<td style="text-align: right;">1.56</td>
 <td style="text-align: left;">1.27 [0.74, 1.82]</td>
-<td style="text-align: right;">0.80</td>
+<td style="text-align: right;">0.88</td>
 <td style="text-align: left;">0.84 [0.74, 0.92]</td>
-<td style="text-align: right;">0.15</td>
+<td style="text-align: right;">0.09</td>
 <td style="text-align: left;">0.13 [0.05, 0.25]</td>
 </tr>
 <tr class="odd">
 <td style="text-align: right;">9</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.651</td>
-<td style="text-align: right;">-0.32</td>
+<td style="text-align: right;">-0.12</td>
 <td style="text-align: left;">-0.40 [-0.70, -0.08]</td>
-<td style="text-align: right;">1.28</td>
+<td style="text-align: right;">1.58</td>
 <td style="text-align: left;">1.58 [0.97, 2.17]</td>
-<td style="text-align: right;">0.81</td>
+<td style="text-align: right;">0.89</td>
 <td style="text-align: left;">0.86 [0.77, 0.94]</td>
-<td style="text-align: right;">0.11</td>
+<td style="text-align: right;">0.09</td>
 <td style="text-align: left;">0.07 [0.01, 0.14]</td>
 </tr>
 <tr class="even">
 <td style="text-align: right;">14</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.673</td>
-<td style="text-align: right;">-0.17</td>
+<td style="text-align: right;">-0.01</td>
 <td style="text-align: left;">-0.20 [-0.50, 0.10]</td>
-<td style="text-align: right;">1.95</td>
+<td style="text-align: right;">2.12</td>
 <td style="text-align: left;">1.91 [1.29, 2.51]</td>
-<td style="text-align: right;">0.93</td>
+<td style="text-align: right;">0.95</td>
 <td style="text-align: left;">0.92 [0.86, 0.97]</td>
 <td style="text-align: right;">0.05</td>
 <td style="text-align: left;">0.06 [0.01, 0.11]</td>
@@ -1427,52 +1427,52 @@ window.Quarto = {
 <td style="text-align: right;">16</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.714</td>
-<td style="text-align: right;">0.26</td>
+<td style="text-align: right;">0.07</td>
 <td style="text-align: left;">0.19 [-0.12, 0.48]</td>
-<td style="text-align: right;">1.45</td>
+<td style="text-align: right;">1.24</td>
 <td style="text-align: left;">1.78 [1.17, 2.40]</td>
-<td style="text-align: right;">0.91</td>
+<td style="text-align: right;">0.86</td>
 <td style="text-align: left;">0.93 [0.88, 0.98]</td>
-<td style="text-align: right;">0.15</td>
+<td style="text-align: right;">0.16</td>
 <td style="text-align: left;">0.09 [0.03, 0.19]</td>
 </tr>
 <tr class="even">
 <td style="text-align: right;">18</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.511</td>
-<td style="text-align: right;">0.04</td>
+<td style="text-align: right;">-0.29</td>
 <td style="text-align: left;">0.13 [-0.16, 0.42]</td>
-<td style="text-align: right;">1.47</td>
+<td style="text-align: right;">1.65</td>
 <td style="text-align: left;">1.38 [0.81, 1.97]</td>
-<td style="text-align: right;">0.89</td>
+<td style="text-align: right;">0.88</td>
 <td style="text-align: left;">0.89 [0.81, 0.95]</td>
-<td style="text-align: right;">0.12</td>
+<td style="text-align: right;">0.07</td>
 <td style="text-align: left;">0.14 [0.05, 0.27]</td>
 </tr>
 <tr class="odd">
 <td style="text-align: right;">19</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.759</td>
-<td style="text-align: right;">-0.08</td>
+<td style="text-align: right;">0.37</td>
 <td style="text-align: left;">-0.35 [-0.69, -0.03]</td>
-<td style="text-align: right;">1.65</td>
+<td style="text-align: right;">0.97</td>
 <td style="text-align: left;">2.20 [1.58, 2.91]</td>
-<td style="text-align: right;">0.90</td>
+<td style="text-align: right;">0.85</td>
 <td style="text-align: left;">0.94 [0.89, 0.98]</td>
-<td style="text-align: right;">0.09</td>
+<td style="text-align: right;">0.28</td>
 <td style="text-align: left;">0.03 [0.01, 0.07]</td>
 </tr>
 <tr class="even">
 <td style="text-align: right;">25</td>
 <td style="text-align: right;">2</td>
 <td style="text-align: right;">0.702</td>
-<td style="text-align: right;">0.43</td>
+<td style="text-align: right;">-0.29</td>
 <td style="text-align: left;">0.26 [-0.06, 0.57]</td>
-<td style="text-align: right;">1.90</td>
+<td style="text-align: right;">1.02</td>
 <td style="text-align: left;">2.04 [1.36, 2.66]</td>
-<td style="text-align: right;">0.96</td>
+<td style="text-align: right;">0.75</td>
 <td style="text-align: left;">0.96 [0.92, 0.99]</td>
-<td style="text-align: right;">0.10</td>
+<td style="text-align: right;">0.15</td>
 <td style="text-align: left;">0.07 [0.02, 0.16]</td>
 </tr>
 </tbody>
@@ -1518,10 +1518,10 @@ window.Quarto = {
 <span id="cb22-31"><a href="#cb22-31" aria-hidden="true" tabindex="-1"></a>}</span>
 <span id="cb22-32"><a href="#cb22-32" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb22-33"><a href="#cb22-33" aria-hidden="true" tabindex="-1"></a><span class="co"># Execute the caching function </span></span>
-<span id="cb22-34"><a href="#cb22-34" aria-hidden="true" tabindex="-1"></a>loo_b_on_b <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_b_on_b, fit_b_on_b, <span class="st">"Biased-&gt;Biased"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_mm_b_on_b.rds"</span>))</span>
-<span id="cb22-35"><a href="#cb22-35" aria-hidden="true" tabindex="-1"></a>loo_m_on_b <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_m_on_b, fit_m_on_b, <span class="st">"Memory-&gt;Biased"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_mm_m_on_b.rds"</span>))</span>
-<span id="cb22-36"><a href="#cb22-36" aria-hidden="true" tabindex="-1"></a>loo_b_on_m <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_b_on_m, fit_b_on_m, <span class="st">"Biased-&gt;Memory"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_mm_b_on_m.rds"</span>))</span>
-<span id="cb22-37"><a href="#cb22-37" aria-hidden="true" tabindex="-1"></a>loo_m_on_m <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_m_on_m, fit_m_on_m, <span class="st">"Memory-&gt;Memory"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch7_loo_mm_m_on_m.rds"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb22-34"><a href="#cb22-34" aria-hidden="true" tabindex="-1"></a>loo_b_on_b <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_b_on_b, fit_b_on_b, <span class="st">"Biased-&gt;Biased"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_mm_b_on_b.rds"</span>))</span>
+<span id="cb22-35"><a href="#cb22-35" aria-hidden="true" tabindex="-1"></a>loo_m_on_b <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_m_on_b, fit_m_on_b, <span class="st">"Memory-&gt;Biased"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_mm_m_on_b.rds"</span>))</span>
+<span id="cb22-36"><a href="#cb22-36" aria-hidden="true" tabindex="-1"></a>loo_b_on_m <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_b_on_m, fit_b_on_m, <span class="st">"Biased-&gt;Memory"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_mm_b_on_m.rds"</span>))</span>
+<span id="cb22-37"><a href="#cb22-37" aria-hidden="true" tabindex="-1"></a>loo_m_on_m <span class="ot">&lt;-</span> <span class="fu">apply_moment_match_if_needed</span>(loo_m_on_m, fit_m_on_m, <span class="st">"Memory-&gt;Memory"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>, <span class="st">"ch08_loo_mm_m_on_m.rds"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
 <section id="the-limits-of-psis-agent-level-loo" class="level3" data-number="8.6.4">
@@ -1625,7 +1625,7 @@ See help('pareto-k-diagnostic') for details.</code></pre>
 <span id="cb25-41"><a href="#cb25-41" aria-hidden="true" tabindex="-1"></a><span class="st">  for (n in 1:N_test) {</span></span>
 <span id="cb25-42"><a href="#cb25-42" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik_test[n] = bernoulli_logit_lpmf(h_test[n] | theta_new[agent_test[n]]);</span></span>
 <span id="cb25-43"><a href="#cb25-43" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb25-44"><a href="#cb25-44" aria-hidden="true" tabindex="-1"></a><span class="st">}"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch7_biased_kfold.stan"</span>))</span>
+<span id="cb25-44"><a href="#cb25-44" aria-hidden="true" tabindex="-1"></a><span class="st">}"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch08_biased_kfold.stan"</span>))</span>
 <span id="cb25-45"><a href="#cb25-45" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-46"><a href="#cb25-46" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. Memory K-Fold Model</span></span>
 <span id="cb25-47"><a href="#cb25-47" aria-hidden="true" tabindex="-1"></a><span class="co"># Samples correlated parameter pairs for each test agent from the population prior.</span></span>
@@ -1696,15 +1696,15 @@ See help('pareto-k-diagnostic') for details.</code></pre>
 <span id="cb25-112"><a href="#cb25-112" aria-hidden="true" tabindex="-1"></a><span class="st">              new_indiv[2, agent_test[n]] * logit(opp_rate_prev_test[n]);</span></span>
 <span id="cb25-113"><a href="#cb25-113" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik_test[n] = bernoulli_logit_lpmf(h_test[n] | lp);</span></span>
 <span id="cb25-114"><a href="#cb25-114" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb25-115"><a href="#cb25-115" aria-hidden="true" tabindex="-1"></a><span class="st">}"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch7_memory_kfold.stan"</span>))</span>
+<span id="cb25-115"><a href="#cb25-115" aria-hidden="true" tabindex="-1"></a><span class="st">}"</span>, here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch08_memory_kfold.stan"</span>))</span>
 <span id="cb25-116"><a href="#cb25-116" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb25-117"><a href="#cb25-117" aria-hidden="true" tabindex="-1"></a>mod_biased_kfold <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch7_biased_kfold.stan"</span>))</span>
-<span id="cb25-118"><a href="#cb25-118" aria-hidden="true" tabindex="-1"></a>mod_memory_kfold <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch7_memory_kfold.stan"</span>))</span>
+<span id="cb25-117"><a href="#cb25-117" aria-hidden="true" tabindex="-1"></a>mod_biased_kfold <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch08_biased_kfold.stan"</span>))</span>
+<span id="cb25-118"><a href="#cb25-118" aria-hidden="true" tabindex="-1"></a>mod_memory_kfold <span class="ot">&lt;-</span> <span class="fu">cmdstan_model</span>(here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"stan"</span>, <span class="st">"ch08_memory_kfold.stan"</span>))</span>
 <span id="cb25-119"><a href="#cb25-119" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Both K-fold Stan models compiled.</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Both K-fold Stan models compiled.</code></pre>
 </div>
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>kfold_path <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch7_kfold_comparison.rds"</span>)</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb27"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>kfold_path <span class="ot">&lt;-</span> here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"simmodels"</span>,<span class="st">"ch08_kfold_comparison.rds"</span>)</span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>K <span class="ot">&lt;-</span> <span class="dv">5</span>; <span class="fu">set.seed</span>(<span class="dv">21</span>)</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a><span class="co"># We will run this on the Memory data to see the true model win out of sample</span></span>
@@ -2048,27 +2048,27 @@ model2 -301.7      22.2 </code></pre>
 <tbody>
 <tr class="odd">
 <td style="text-align: left;">Biased-&gt;Biased</td>
-<td style="text-align: right;">0.8441</td>
-<td style="text-align: right;">-1.88</td>
-<td style="text-align: left;">Fail to reject – acceptable</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">2.096002e+09</td>
+<td style="text-align: left;">REJECT – miscalibrated</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Memory-&gt;Biased</td>
-<td style="text-align: right;">0.8742</td>
-<td style="text-align: right;">-2.40</td>
-<td style="text-align: left;">Fail to reject – acceptable</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">2.242040e+09</td>
+<td style="text-align: left;">REJECT – miscalibrated</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">Biased-&gt;Memory</td>
-<td style="text-align: right;">0.8599</td>
-<td style="text-align: right;">-2.12</td>
-<td style="text-align: left;">Fail to reject – acceptable</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1.243144e+16</td>
+<td style="text-align: left;">REJECT – miscalibrated</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Memory-&gt;Memory</td>
-<td style="text-align: right;">0.9617</td>
-<td style="text-align: right;">-8.26</td>
-<td style="text-align: left;">Fail to reject – acceptable</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1.206140e+16</td>
+<td style="text-align: left;">REJECT – miscalibrated</td>
 </tr>
 </tbody>
 </table>
@@ -2355,7 +2355,7 @@ model2 -337.9      23.4 </code></pre>
 </div>
 </div>
 <p>Each column of this matrix answers a different scientific question. The left column (biased data) asks: can PSIS-LOO detect that the memory model is unnecessarily complex when a simpler model suffices? The right column (memory data) asks: can PSIS-LOO detect that the biased model is missing a real cognitive mechanism? Within each column, the model with the higher ELPD should be the one that generated the data — that is the meaning of successful model recovery.</p>
-<p>For context, the Ch. 6 memory model (fitted to the full 50-agent reversal dataset with 80–240 trials per agent) had ELPD = -4233 (SE = 44.3). The Ch. 7 memory-on-memory fit uses a shorter, fixed-length session (120 trials vs.&nbsp;80–240), so its absolute ELPD is not directly comparable — but the sign and direction of all comparisons should be consistent.</p>
+<p>For context, the Ch. 7 memory model (fitted to the full 50-agent reversal dataset with 80–240 trials per agent) had ELPD = -4233 (SE = 44.3). The Ch. 8 memory-on-memory fit uses a shorter, fixed-length session (120 trials vs.&nbsp;80–240), so its absolute ELPD is not directly comparable — but the sign and direction of all comparisons should be consistent.</p>
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a>final_table <span class="ot">&lt;-</span> <span class="fu">tibble</span>(</span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">Fit</span><span class="st">`</span>           <span class="ot">=</span> <span class="fu">c</span>(<span class="st">"Biased-&gt;Biased"</span>,<span class="st">"Memory-&gt;Biased"</span>,<span class="st">"Biased-&gt;Memory"</span>,<span class="st">"Memory-&gt;Memory"</span>),</span>
@@ -2418,7 +2418,7 @@ model2 -337.9      23.4 </code></pre>
 <td style="text-align: right;">-3393.8</td>
 <td style="text-align: right;">36.0</td>
 <td style="text-align: right;">0.007</td>
-<td style="text-align: right;">0.844</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: left;">YES</td>
 <td style="text-align: left;">YES</td>
 </tr>
@@ -2427,7 +2427,7 @@ model2 -337.9      23.4 </code></pre>
 <td style="text-align: right;">-3395.1</td>
 <td style="text-align: right;">36.0</td>
 <td style="text-align: right;">0.008</td>
-<td style="text-align: right;">0.874</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: left;">no</td>
 <td style="text-align: left;">no</td>
 </tr>
@@ -2436,7 +2436,7 @@ model2 -337.9      23.4 </code></pre>
 <td style="text-align: right;">-4038.3</td>
 <td style="text-align: right;">15.4</td>
 <td style="text-align: right;">0.006</td>
-<td style="text-align: right;">0.860</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: left;">no</td>
 <td style="text-align: left;">no</td>
 </tr>
@@ -2445,7 +2445,7 @@ model2 -337.9      23.4 </code></pre>
 <td style="text-align: right;">-3700.3</td>
 <td style="text-align: right;">27.3</td>
 <td style="text-align: right;">0.010</td>
-<td style="text-align: right;">0.962</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: left;">YES</td>
 <td style="text-align: left;">YES</td>
 </tr>
@@ -2805,7 +2805,7 @@ model2 -337.9      23.4 </code></pre>
 </section>
 <section id="prior-sensitivity-at-the-comparison-level" class="level2" data-number="8.11">
 <h2 data-number="8.11" class="anchored" data-anchor-id="prior-sensitivity-at-the-comparison-level"><span class="header-section-number">8.11</span> Prior Sensitivity at the Comparison Level</h2>
-<p>We applied prior sensitivity analysis to individual models in Chapter 5. At the model comparison stage, the question becomes slightly different: even if each model’s individual parameters are sensitive to prior choices, does the <em>comparison</em> between models remain stable?</p>
+<p>We applied prior sensitivity analysis to individual models in Chapter 6. At the model comparison stage, the question becomes slightly different: even if each model’s individual parameters are sensitive to prior choices, does the <em>comparison</em> between models remain stable?</p>
 <p>Consider the following thought experiment: scaling the prior on <span class="math inline">\(\sigma_\theta\)</span> shifts the biased model’s ELPD by 5 nats, but also shifts the memory model’s ELPD by roughly the same 5 nats. The difference — the quantity that drives the comparison — would remain stable. This would be a good outcome: the comparison is robust even though individual models are sensitive. The problematic scenario is asymmetric sensitivity: one model’s ELPD shifts substantially while the other’s stays put. In that case, our preference for one model over the other depends on which prior happened to be chosen — which is not a principled basis for a scientific conclusion.</p>
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb55"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"=== Prior sensitivity: Biased model ===</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
@@ -2902,8 +2902,8 @@ Likelihood selection: all data
 <li><strong>Bayesian stacking</strong> finds the optimal predictive mixture and provides a continuous measure of model evidence.</li>
 <li><strong>Model SBC</strong> tests the full comparison pipeline’s calibration across the prior space.</li>
 </ol>
-<p>Two design lessons cut across all of these tools: - The <strong>reversal design</strong> (validated in Ch. 5, extended in Ch. 6) was essential — a constant-bias opponent makes the biased and memory models statistically inseparable, and no amount of data fixes a confounded design. - <strong>All models must pass their individual quality checks before comparison</strong>. Comparing a well-fitted model against one with divergences is not a fair scientific test.</p>
-<p>Chapter 8 introduces a new model type — mixture models — that extends the toolkit beyond single-process accounts and applies the same PSIS-LOO machinery to a qualitatively different identifiability problem.</p>
+<p>Two design lessons cut across all of these tools: - The <strong>reversal design</strong> (validated in Ch. 6, extended in Ch. 7) was essential — a constant-bias opponent makes the biased and memory models statistically inseparable, and no amount of data fixes a confounded design. - <strong>All models must pass their individual quality checks before comparison</strong>. Comparing a well-fitted model against one with divergences is not a fair scientific test.</p>
+<p>Chapter 9 introduces a new model type — mixture models — that extends the toolkit beyond single-process accounts and applies the same PSIS-LOO machinery to a qualitatively different identifiability problem.</p>
 </section>
 <section id="references" class="level2" data-number="8.15">
 <h2 data-number="8.15" class="anchored" data-anchor-id="references"><span class="header-section-number">8.15</span> References</h2>

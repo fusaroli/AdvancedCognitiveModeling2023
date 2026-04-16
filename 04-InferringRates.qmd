@@ -1,7 +1,7 @@
 
 # From simulation to model fitting
 
-```{r setup-ch04, include=FALSE}
+```{r ch05_setup, include=FALSE}
 knitr::opts_chunk$set(
   warning    = FALSE,
   message    = FALSE,
@@ -37,7 +37,7 @@ theme_set(theme_classic())
 > that most plausibly produced them. This is **Bayesian parameter estimation**, and
 > it is the engine at the heart of all remaining chapters. We fit to *simulated*
 > data here precisely because we know the ground truth — a sanity check before the
-> engine is handed real human data in Ch. 5.
+> engine is handed real human data in Ch. 6.
 
 In Chapter 3, we formalized verbal models into computational agents and explored their behavior through simulation by *setting* their parameters (like bias `rate` or WSLS rules). However, when analyzing real experimental data, we don't know the true parameter values underlying a participant's behavior. The core task shifts from simulation to **parameter estimation**: inferring the plausible values of model parameters *given* the observed data.
 
@@ -78,12 +78,12 @@ As a crucial validation step, we will first apply these methods to **simulated d
 > Here and in the conclusion of this chapter, we use "parameter recovery" loosely
 > to mean: *fitting a model to one simulated dataset and checking whether the
 > posterior lands near the true value.* This is a useful first sanity check.
-> In Ch. 5 we will use the term more precisely to mean a *systematic* study that
+> In Ch. 6 we will use the term more precisely to mean a *systematic* study that
 > repeats this across dozens of datasets at many different true parameter values
 > and noise levels. That is a qualitatively different (and stronger) validation.
 > The even stricter test — Simulation-Based Calibration (SBC) — checks whether
 > posterior *intervals* are correctly calibrated across the entire prior space.
-> These distinctions will matter a lot in Ch. 5, so don't worry about them too much now, you'll hear more about them.
+> These distinctions will matter a lot in Ch. 6, so don't worry about them too much now, you'll hear more about them.
 
 ## Simulating data
 
@@ -120,7 +120,7 @@ RandomAgentNoise_f <- function(rate, noise) {
 # --- Generate Data Across Different Conditions ---
 # Define relative paths for saving/loading simulation data
 sim_data_dir <- "simdata" # Assumes a 'simdata' subdirectory
-sim_data_file <- here(sim_data_dir, "04_randomnoise.csv") 
+sim_data_file <- here(sim_data_dir, "ch06_randomnoise.csv") 
 
 # Create directory if it doesn't exist
 if (!dir.exists(sim_data_dir)) dir.create(sim_data_dir)
@@ -494,7 +494,7 @@ generated quantities {
 "
 # Define relative path for Stan model file
 stan_model_dir <- "stan"
-stan_file_bernoulli <- here(stan_model_dir, "04_SimpleBernoulli.stan")
+stan_file_bernoulli <- here(stan_model_dir, "ch06_SimpleBernoulli.stan")
 
 # Create directory if needed
 if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir)
@@ -513,10 +513,10 @@ Now we use cmdstanr to compile this model (translating it into efficient C++ cod
 ```{r 04 fit the biased model}
 ## --- Compile and Fit ---
 # Specify model file path
-stan_file_bernoulli <- here("stan", "04_SimpleBernoulli.stan")
+stan_file_bernoulli <- here("stan", "ch06_SimpleBernoulli.stan")
 # Define path for saving fitted model object
 stan_results_dir <- "simmodels"
-model_file_bernoulli <- here(stan_results_dir, "04_SimpleBernoulli.rds")
+model_file_bernoulli <- here(stan_results_dir, "ch06_SimpleBernoulli.rds")
 
 if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir)
 
@@ -664,17 +664,17 @@ generated quantities {
 }
 "
 # Define file path
-stan_file_logit <- here(stan_model_dir, "04_SimpleBernoulli_logodds.stan")
+stan_file_logit <- here(stan_model_dir, "ch06_SimpleBernoulli_logodds.stan")
 # Write the Stan code to the file
 writeLines(stan_model_logit_code, stan_file_logit)
 cat("Stan model (logit) written to:", stan_file_logit, "\n")
 
 ## With the logit format
 ## Specify where the model is
-file <- here("stan", "04_SimpleBernoulli_logodds.stan")
+file <- here("stan", "ch06_SimpleBernoulli_logodds.stan")
 
 # File path for saved model
-model_file <- here("simmodels","04_SimpleBernoulli_logodds.rds")
+model_file <- here("simmodels","ch06_SimpleBernoulli_logodds.rds")
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
@@ -751,11 +751,11 @@ We can see that the results are very similar.
 # 3. NUTS initialized with Pathfinder
 
 # Define file paths for all three models
-file_nuts_std  <- here("simmodels", "04_benchmark_nuts_std.rds")
-file_pathfinder <- here("simmodels", "04_benchmark_pathfinder.rds")
-file_nuts_init  <- here("simmodels", "04_benchmark_nuts_init.rds")
+file_nuts_std  <- here("simmodels", "ch06_benchmark_nuts_std.rds")
+file_pathfinder <- here("simmodels", "ch06_benchmark_pathfinder.rds")
+file_nuts_init  <- here("simmodels", "ch06_benchmark_nuts_init.rds")
 
-stan_file_logit <- here::here("stan", "04_SimpleBernoulli_logodds.stan")
+stan_file_logit <- here::here("stan", "ch06_SimpleBernoulli_logodds.stan")
 mod <- cmdstan_model(
   stan_file_logit, 
   cpp_options = list(stan_threads = FALSE),
@@ -935,13 +935,13 @@ generated quantities {
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "04_MemoryBernoulli.stan")
+  basename = "ch06_MemoryBernoulli.stan")
 
 ## Specify where the model is
-file <- here("stan","04_MemoryBernoulli.stan")
+file <- here("stan","ch06_MemoryBernoulli.stan")
 
 # File path for saved model
-model_file_memory <- here("simmodels", "04_MemoryBernoulli.rds")
+model_file_memory <- here("simmodels", "ch06_MemoryBernoulli.rds")
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file_memory)) {
@@ -980,7 +980,7 @@ if (regenerate_simulations || !file.exists(model_file_memory)) {
 # Check if samples_memory exists
 if (!exists("samples_memory")) {
   cat("Loading memory model samples...\n")
-  samples_memory <- readRDS(here("simmodels", "04_MemoryBernoulli.rds"))
+  samples_memory <- readRDS(here("simmodels", "ch06_MemoryBernoulli.rds"))
   cat("Available parameters:", paste(colnames(as_draws_df(samples_memory$draws())), collapse = ", "), "\n")
 }
 
@@ -1033,7 +1033,7 @@ samples_memory$summary()
 ```
 
 
-The trace plots should show the same "hairy caterpillar" pattern as before — well-mixed chains with no systematic drift. The prior-posterior update plots tell the story: the posterior for `bias` should be narrow and centred near 0 (log-odds of 0.5 = unbiased), and the posterior for `beta` should be centred near 1 (the true generating value). The data have meaningfully updated both parameters away from their priors. Formal quality checks — prior predictive checks, systematic parameter recovery, and SBC — come in Ch. 5.
+The trace plots should show the same "hairy caterpillar" pattern as before — well-mixed chains with no systematic drift. The prior-posterior update plots tell the story: the posterior for `bias` should be narrow and centred near 0 (log-odds of 0.5 = unbiased), and the posterior for `beta` should be centred near 1 (the true generating value). The data have meaningfully updated both parameters away from their priors. Formal quality checks — prior predictive checks, systematic parameter recovery, and SBC — come in Ch. 6.
 
 ### Memory Model 2: Internal State Variable
 
@@ -1118,13 +1118,13 @@ generated quantities {
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "04_InternalMemory.stan")
+  basename = "ch06_InternalMemory.stan")
 
 ## Specify where the model is
-file <- here("stan", "04_InternalMemory.stan")
+file <- here("stan", "ch06_InternalMemory.stan")
 
 # File path for saved model
-model_file <- here("simmodels", "04_InternalMemory.rds")
+model_file <- here("simmodels", "ch06_InternalMemory.rds")
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
@@ -1243,13 +1243,13 @@ model {
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "04_InternalMemory2.stan")
+  basename = "ch06_InternalMemory2.stan")
 
 ## Specify where the model is
-file <- here("stan","04_InternalMemory2.stan")
+file <- here("stan","ch06_InternalMemory2.stan")
 
 # File path for saved model
-model_file <- here("simmodels","04_InternalMemory2.rds")
+model_file <- here("simmodels","ch06_InternalMemory2.rds")
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
@@ -1337,7 +1337,7 @@ model {
 }
 
 generated quantities {
-  // We strictly reserve posterior predictive checks for Chapter 5.
+  // We strictly reserve posterior predictive checks for Chapter 6.
   // Here, we just calculate the initial expected rate for reference.
   real initial_rate = alpha_prior / (alpha_prior + beta_prior);
 }
@@ -1345,13 +1345,13 @@ generated quantities {
 write_stan_file(
   stan_model,
   dir = "stan/",
-  basename = "04_BayesianMemory.stan")
+  basename = "ch06_BayesianMemory.stan")
 
 ## Specify where the model is
-file <- here("stan","04_BayesianMemory.stan")
+file <- here("stan","ch06_BayesianMemory.stan")
 
 # File path for saved model
-model_file <- here("simmodels","04_BayesianMemory.rds")
+model_file <- here("simmodels","ch06_BayesianMemory.rds")
 
 # Check if we need to rerun the simulation
 if (regenerate_simulations || !file.exists(model_file)) {
@@ -1475,7 +1475,7 @@ Our memory model updates beliefs about the probability of right-hand choices usi
 
 * Our forgetting model uses a fixed weighting scheme (1/trial or the forgetting parameter)
 
-* The Bayesian Agent (`04_BayesianMemory.stan`) captures uncertainty via the Beta distribution, similar in spirit but simpler than a Kalman filter.
+* The Bayesian Agent (`ch06_BayesianMemory.stan`) captures uncertainty via the Beta distribution, similar in spirit but simpler than a Kalman filter.
 
 
 ### Connection to Hierarchical Gaussian Filter (HGF)
@@ -1534,7 +1534,7 @@ It does not tell us whether the model behaves well across a wide range of
 parameter values, whether our credible intervals are correctly calibrated, or
 whether the fitted model can actually reproduce the patterns in the data.
 
-**Coming up in Chapter 5:** We take the Stan models built in this chapter and
+**Coming up in Chapter 6:** We take the Stan models built in this chapter and
 subject them to a four-phase validation battery before they are allowed near
 real human data:
 
