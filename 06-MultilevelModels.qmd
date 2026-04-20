@@ -494,7 +494,7 @@ Let us systematically unpack the computational diagnostics of our Centered Param
 1. The Diagnostic Summary: Integration Stability
 First, we ask cmdstanr for a high-level summary of the NUTS sampler's performance.
 
-```{r}
+```{r ch07_cp_diagnostic_summary}
 #fit_cp$cmdstan_diagnose()
 fit_cp$diagnostic_summary()
 
@@ -1964,7 +1964,7 @@ A healthy prior generates a range of cloud shapes — some circular (low $|\rho|
 
 Having established from the biased agent workflow that NCP is our default architecture for cognitive tasks with sparse per-agent data, we implement it directly. We skip the Centered Parameterization entirely.
 
-```{r, ch07_stan_memory_data_prep }
+```{r ch07_stan_memory_data_prep}
 #' Prepare Memory Agent Data for Stan
 #'
 #' @param sim_data Tibble from simulate_hierarchical_memory().
@@ -2020,7 +2020,7 @@ cat(sprintf(
 
 The only new structural element relative to the biased agent NCP is the bivariate extension. Instead of a scalar $z_j$, we have a $2 \times J$ matrix $\mathbf{Z}$. Instead of scaling by a single $\sigma$, we apply `diag_pre_multiply(sigma, L_Omega)` — which computes $\operatorname{diag}(\boldsymbol{\sigma})\mathbf{L}_\Omega$ and produces the full Cholesky scale matrix encoding both marginal SDs and the correlation structure.
 
-```{r, ch07_stan_memory_ncp_code }
+```{r ch07_stan_memory_ncp_code}
 stan_memory_ncp_code <- "
 // Hierarchical Memory Agent Model (Non-Centered Parameterization)
 // -------------------------------------------------------------------
@@ -2188,7 +2188,7 @@ We raise `adapt_delta` to 0.90. The bivariate NCP is well-behaved globally, but 
 
 Even if the Stan compiler finishes without explicit warnings, our workflow demands that we systematically verify the geometry of the posterior and the efficiency of the sampler.
 
-```{r 06-memory-cmddiagnostics}
+```{r ch07_memory_diagnostics}
 #fit_memory$cmdstan_diagnose()
 fit_memory$diagnostic_summary()
 ```
@@ -2197,7 +2197,7 @@ We are looking for strict zeros in `num_divergent`. With the NCP, this should ho
 
 #### Chain Mixing and Stationarity ($\hat{R}$)
 
-```{r 06-memory-chain-mixing}
+```{r ch07_memory_chain_mixing}
 draws_memory <- fit_memory$draws()
 
 mcmc_trace(
@@ -2225,7 +2225,7 @@ Monitor `ess_tail` for `sigma[1]` and `sigma[2]`. Population SDs can develop mil
 
 ##### Energy (E-BFMI)
 
-```{r 06-memory-energy}
+```{r ch07_memory_energy}
 mcmc_nuts_energy(nuts_params(fit_memory)) +
   labs(
     title    = "Energy Transitions: Memory Agent NCP",
@@ -2235,7 +2235,7 @@ mcmc_nuts_energy(nuts_params(fit_memory)) +
 
 #### Posterior Parameter Correlations
 
-```{r 06-memory-posterior-correlations}
+```{r ch07_memory_posterior_correlations}
 mcmc_pairs(
   draws_memory,
   pars         = c("mu_alpha", "mu_beta", "sigma[1]", "sigma[2]", "rho"),
@@ -2249,7 +2249,7 @@ The critical panels are $(\sigma_\alpha, \mu_\alpha)$ and $(\sigma_\beta, \mu_\b
 
 ### Prior-Posterior Update Checks: Quantifying Learning
 
-```{r 06-memory-prior-posterior-update}
+```{r ch07_memory_pp_update}
 draws_df_memory <- as_draws_df(draws_memory)
 
 # Extract true generative hyperparameters saved as attributes
@@ -2303,7 +2303,7 @@ A healthy update shows a posterior significantly narrower than the prior and com
 
 3### Posterior Predictive Checks (PPC): Generative Adequacy
 
-```{r 06-memory-posterior-pc}
+```{r ch07_memory_ppc}
 y_obs_mem     <- as.numeric(stan_data_memory$h)
 agent_idx_mem <- as.numeric(stan_data_memory$agent)
 y_rep_mem     <- fit_memory$draws("h_post_rep", format = "matrix")
@@ -2333,7 +2333,7 @@ We have proven the model fits the data and generates plausible predictions. Now 
 
 ##### Individual-Level Recovery
 
-```{r 06-memory-individual-recovery}
+```{r ch07_memory_recovery}
 recovery_alpha <- draws_memory |>
   subset_draws(variable = "alpha") |>
   summarise_draws() |>
@@ -2376,7 +2376,7 @@ Recovery for $\beta_j$ is typically noisier than for $\alpha_j$ at any given tri
 
 #### Prior sensitivity
 
-```{r 06-memory-priorsense}
+```{r ch07_memory_prior_sensitivity}
 sens_results_mem <- powerscale_sensitivity(
   fit_memory,
   variable = c("mu_alpha", "mu_beta", "sigma[1]", "sigma[2]", "rho")
@@ -2408,7 +2408,7 @@ Pay particular attention to the `rho` panel. Because the correlation is identifi
 
 Parameter recovery on a single dataset is anecdotal. We must prove that the sampler is globally unbiased across the entire prior space.
 
-```{r 06-memory-sbc}
+```{r ch07_sbc_memory}
 sbc_memory_path <- here::here("simmodels", "ch07_sbc_memory.rds")
 
 generate_sbc_dataset_memory <- function(n_agents = 50, n_trials_min = 80, n_trials_max = 240) {
@@ -2515,7 +2515,7 @@ cat("=== PARAMETER RECOVERY QUANTIFICATION ===\n")
 print(knitr::kable(recovery_metrics, digits = 3))
 ```
 
-```{r 06-memory-sbc-diagnostics}
+```{r ch07_sbc_memory_diagnostics}
 diags_memory  <- sbc_results_memory$backend_diagnostics
 mem_fail_rate <- mean(diags_memory$n_divergent > 0) * 100
 
@@ -2570,12 +2570,12 @@ None of these interpretations follow from the model alone. The model provides a 
 
 We retain the LOO-CV score here for the model comparison section at the end of the chapter.
 
-```{r 06-loo-memory}
+```{r ch07_loo_memory}
 loo_memory <- loo(fit_memory$draws("log_lik", format = "matrix"))
 print(loo_memory)
 ```
 
-```{r 06-save-for-ch7}
+```{r ch07_save_exports}
 # Save everything Ch. 8 needs for model comparison.
 # Ch. 8 will load this object to avoid refitting.
 ch07_exports_file <- here("simmodels", "ch07_memory_exports_for_ch7.rds")

@@ -1,15 +1,13 @@
 
 // Generalized Context Model — Multilevel (refactored architecture)
 //
-// New in this version relative to the single-subject model:
+// New relative to the single-subject model:
 //   1. log_c parameterization with logit-normal hierarchy for bias.
 //   2. Subject-indexed loop: outer over subjects, inner over each subject's
-//      contiguous slice [subj_start[j]:subj_end[j]] of the sorted array.
-//      n_mem is a LOCAL variable — it resets for each subject automatically.
+//      contiguous slice [subj_start[j]:subj_end[j]].
 //   3. prob_cat1[i] in transformed parameters; model{} and generated quantities
 //      both read from it without re-running the loop.
-//   4. ALL prior hyperparameters (including the bias-mean prior) are passed
-//      through the data block — no hardcoded constants in the model block.
+//   4. ALL prior hyperparameters passed through the data block.
 
 data {
   int<lower=1> N_total;
@@ -17,7 +15,6 @@ data {
   int<lower=1> N_features;
   int<lower=1> max_trials_per_subject;
 
-  // Subject slice indices (data must be sorted by subj_id, then trial_within_subject)
   array[N_subjects] int<lower=1, upper=N_total> subj_start;
   array[N_subjects] int<lower=1, upper=N_total> subj_end;
 
@@ -25,19 +22,17 @@ data {
   array[N_total, N_features] real obs;
   array[N_total] int<lower=0, upper=1> cat_feedback;
 
-  // Prior hyperparameters — all of them, including the bias mean
   vector[N_features] pop_w_prior_alpha;
   real pop_log_c_mean_prior_mean;
   real<lower=0> pop_log_c_mean_prior_sd;
   real<lower=0> pop_log_c_sd_prior_rate;
   real<lower=0> kappa_prior_rate;
-  real pop_logit_bias_mean_prior_mean;          // NEW: lifted from hardcoded
-  real<lower=0> pop_logit_bias_mean_prior_sd;   // NEW: lifted from hardcoded
+  real pop_logit_bias_mean_prior_mean;
+  real<lower=0> pop_logit_bias_mean_prior_sd;
   real<lower=0> pop_logit_bias_sd_prior_rate;
 }
 
 parameters {
-  // Population
   simplex[N_features] pop_w;
   real<lower=0> kappa;
   real pop_log_c_mean;
@@ -45,11 +40,9 @@ parameters {
   real pop_logit_bias_mean;
   real<lower=0> pop_logit_bias_sd;
 
-  // Non-centred individual deviations
   vector[N_subjects] z_log_c;
   vector[N_subjects] z_logit_bias;
 
-  // Individual weights (centred; prior encoded in model block)
   array[N_subjects] simplex[N_features] subj_w;
 }
 
@@ -58,7 +51,6 @@ transformed parameters {
   vector<lower=0>[N_subjects] subj_c;
   vector<lower=0, upper=1>[N_subjects] subj_bias;
 
-  // Per-trial choice probability — computed once per leapfrog step.
   vector<lower=1e-9, upper=1-1e-9>[N_total] prob_cat1;
 
   for (j in 1:N_subjects) {
@@ -70,6 +62,9 @@ transformed parameters {
   {
     array[N_subjects, max_trials_per_subject, N_features] real memory_obs;
     array[N_subjects, max_trials_per_subject] int memory_cat;
+    array[N_subjects] int n_mem_subj;
+
+    for (j in 1:N_subjects) n_mem_subj[j] = 0;
 
     for (j in 1:N_subjects) {
       int n_mem = 0;
@@ -116,7 +111,6 @@ transformed parameters {
 }
 
 model {
-  // Population priors (all hyperparameters from the data block)
   target += dirichlet_lpdf(pop_w           | pop_w_prior_alpha);
   target += exponential_lpdf(kappa         | kappa_prior_rate);
   target += normal_lpdf(pop_log_c_mean     | pop_log_c_mean_prior_mean,
@@ -126,18 +120,15 @@ model {
                                               pop_logit_bias_mean_prior_sd);
   target += exponential_lpdf(pop_logit_bias_sd | pop_logit_bias_sd_prior_rate);
 
-  // Non-centred individual deviations ~ Normal(0,1)
   target += std_normal_lpdf(z_log_c);
   target += std_normal_lpdf(z_logit_bias);
 
-  // Hierarchical Dirichlet prior for individual weights
   for (j in 1:N_subjects) {
     vector[N_features] alpha = kappa * pop_w;
     for (f in 1:N_features) alpha[f] = fmax(1e-9, alpha[f]);
     target += dirichlet_lpdf(subj_w[j] | alpha);
   }
 
-  // Vectorised likelihood — one line, no recomputation.
   target += bernoulli_lpmf(y | prob_cat1);
 }
 

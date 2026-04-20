@@ -1866,7 +1866,7 @@ Looking at this trade-off matrix, we can definitively make a decision:
 
 But power in cognitive modeling isn't just about collecting more data; it is often about collecting better data. We can vary the experimental setup itself.Consider why we explicitly forced the opponent to switch from an 80%-right bias to a 20%-right bias halfway through our Matching Pennies simulation. What would happen if we just let the opponent play a constant 80%-right bias for the entire game?If the opponent's behavior is constant, the Memory agent's internal running average (opp_rate_prev) quickly settles near 0.8 and stays there. Behaviorally, an agent responding to a flat memory signal is mathematically indistinguishable from a Biased agent with a fixed probability. Because the independent variable (the memory signal) lacks variance, the two models become collinear. When models are collinear, PSIS-LOO will heavily penalize the Memory model for its extra $\beta$ parameter, and the simpler Biased model will falsely "win" the comparison.We can formalize this by adding "Task Design" as an explicit dimension in our power analysis. Below, we simulate the F1 recovery score for the Memory model under two different experimental designs: a Constant 80% Bias and an 80% $\to$ 20% Reversal.
 
-```{r}
+```{r ch08_power_task_design_viz}
 # --- Conceptual Power Trade-off: Task Design Impact ---
 design_grid <- expand_grid(
   N_Trials = c(30, 60, 90, 120, 150),
@@ -2001,7 +2001,7 @@ This definition of calibration explains why we sample the "True Model" using a u
 
 Since we aren't running the full 2,000-fit simulation locally right now, I have generated a sample plot to show exactly what the calibration curves produced by the code above would look like under different diagnostic scenarios.
 
-```{r}
+```{r ch08_calibration_curves_demo}
 # 1. Simulate the data, explicitly including the number of datasets per bin (N)
 calibration_data <- tibble(
   bin_mid = seq(0.05, 0.95, length.out = 10)
@@ -2092,7 +2092,7 @@ By plotting a marginal histogram beneath the calibration curve, we reveal the mo
 > * Pool the Violators: The algorithm walks along the sorted data. If it finds a "violator"—a case where a higher stacking weight actually has a lower true empirical rate than the point before it (due to noise in sparse regions)—it "pools" those adjacent points together and averages them into a single, wider bin.
 > The result is pure magic: PAV automatically creates wide, stable bins where your data is sparse, and fine-grained, precise steps where your data is dense. It also mathematically decomposes the Brier score of your predictions into three stable metrics: Miscalibration (MCB), Discrimination (DSC), and Uncertainty (UNC).Here is how you can apply the CORP approach to your own Model SBC data using the authors' reliabilitydiag R package:
 
-```{r}
+```{r ch08_corp_pav_demo}
 pacman::p_load(reliabilitydiag)
 
 # 1. Simulate a mock Model SBC output (2,000 fits)

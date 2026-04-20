@@ -257,8 +257,7 @@ Before we even look at a posterior distribution, we must prove the geometry of t
 # Extract the summary and diagnostics from our fitted model object
 fit_summary <- fit_gq$summary()
 diagnostic_summary <- fit_gq$diagnostic_summary()
-...
-```
+
 # 1. Check for Divergent Transitions (Zero Tolerance)
 divergences <- sum(diagnostic_summary$num_divergent)
 if (divergences > 0) {
@@ -1469,7 +1468,7 @@ simulate_memory <- function(bias, beta, opponent_choices) {
 
 Now, we define the Stan model for the memory agent. The memory state is calculated internally within the transformed parameters block based on the opponent's choices (other). Crucially, we include simulations in the generated quantities block for both prior and posterior predictive checks, and calculate log-likelihood and joint log prior for sensitivity analyses. 
 
-```{r, 05 - memory model stan code}
+```{r ch06_memory_model_stan_code}
 # Stan model for Memory Agent with Generated Quantities
 stan_memory_gq_code <- "
 // ch07_MemoryBernoulli_GQ.stan
@@ -1608,7 +1607,7 @@ print(plot_memory_trace)
 
 The transition from a static bias to a dynamic memory sensitivity ($\beta$) introduces nonlinearities in the posterior. Our first step is to verify that the NUTS sampler navigated this geometry without pathology.
 
-```{r}
+```{r ch06_fit_memory_diagnostics}
 fit_mem_gq$summary(c("bias", "beta"))
 diagnostic_summary <- fit_mem_gq$diagnostic_summary()
 
@@ -1708,7 +1707,7 @@ priorsense::powerscale_plot_dens(fit_mem_gq, variables = c("bias", "beta")) +
 ```
 
 While the marginal updates show that we recovered the parameters, we must also inspect the joint posterior distribution. If Bias and Beta are highly correlated, our experimental design may not be strong enough to pull these two cognitive strategies apart.
-```{r, 05 memory correlation}
+```{r ch06_memory_correlation}
 # --- Phase 10b: Parameter Correlation & Joint Posterior ---
 
 # 1. Extract the posterior draws (excluding prior simulations)
@@ -1945,8 +1944,8 @@ data_reversal <- list(
   prior_bias_m = 0, prior_bias_s = 0.5,
   prior_beta_m = 0, prior_beta_s = 1.0
 )
-
-model_file_reversal <- file.path(stan_results_dir, "ch07_Memory_Reversal.rds")
+```{r ch06_fit_memory_reversal}
+model_file_reversal <- file.path(stan_results_dir, "ch06_Memory_Reversal.rds")
 
 if (regenerate_simulations || !file.exists(model_file_reversal)) {
   # mod_mem_gq was compiled earlier in this chapter
@@ -2032,7 +2031,7 @@ cat("Load in Ch. 7 and Ch. 8 with: readRDS(here('simdata', 'ch07_reversal_data.r
 
 Finally, we run Simulation-Based Calibration. We use the SBC package to guarantee that our logit(memory) parameterization doesn't introduce hidden biases in the sampler's rank statistics.
 
-```{r, 05 memory sbc}
+```{r ch06_memory_sbc}
 # 1. Define the Generator using our simulate_function
 sbc_memory_generator_fn <- function() {
   # Draw true params from priors

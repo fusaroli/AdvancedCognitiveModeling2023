@@ -1,7 +1,7 @@
 
 # Mixture Models
 
-```{r setup-ch08, include=FALSE}
+```{r ch09_setup, include=FALSE}
 knitr::opts_chunk$set(
   echo      = TRUE,
   warning   = FALSE,
@@ -71,7 +71,7 @@ After completing this chapter you will be able to:
 
 Before developing the mathematics, consider a concrete case where a mixture is visually transparent. In many response-time tasks, a participant sometimes deliberates carefully (producing a log-normal RT distribution) and sometimes responds inattentively (producing a roughly uniform RT distribution). The resulting marginal distribution is a weighted blend.
 
-```{r ch8-rt-motivation}
+```{r ch09_rt-motivation}
 set.seed(8)
 n_obs     <- 500
 pi_delib  <- 0.80       # 80 % deliberate
@@ -210,7 +210,7 @@ Before writing any Stan code, we simulate from the prior to verify that the impl
 
 > Why check priors before writing Stan code? A prior that assigns >30% mass to noise rates above π = 0.5 means we expect most trials to be random — a scientifically implausible starting point that would corrupt the posterior before data are ever observed.
 
-```{r ch8-prior-predictive}
+```{r ch09_prior-predictive}
 set.seed(8)
 n_prior <- 10000
 
@@ -288,7 +288,7 @@ which requires iterating `log_mix()` **inside a loop over observations**.
 
 > Why must discrete parameters be marginalised? Stan's HMC sampler requires a continuous, differentiable log-posterior. The latent component indicator z_i is discrete. Marginalising it — summing over its two possible values inside log_mix() — converts the model into a purely continuous problem that HMC can handle.
 
-```{r ch8-write-single-stan}
+```{r ch09_write-single-stan}
 single_mixture_stan <- "
 data {
   int<lower=1> n;
@@ -349,7 +349,7 @@ mod_single <- cmdstan_model(
 
 We use the simulated matching-pennies data introduced in earlier chapters, selecting the agent with rate 0.8 and noise 0.1. This gives us a ground truth against which to assess recovery: $\theta = 0.8$, $\pi = 0.1$.
 
-```{r ch8-load-data}
+```{r ch09_load-data}
 d    <- read_csv(here("simdata", "ch05_randomnoise.csv"), show_col_types = FALSE)
 dd   <- d |> dplyr::filter(true_rate == 0.8, true_noise == 0.1)
 data <- list(n = nrow(dd), h = as.integer(dd$choice))
@@ -363,7 +363,7 @@ Mixture model posteriors can have multimodal or ridge-shaped geometry (see Secti
 
 If Pathfinder itself fails (e.g., because the variational approximation diverges near the ridge), the fallback must not be `NULL`. Passing `NULL` to `init` triggers Stan's Uniform(−2, 2) default, which places chains at random points that may lie far from the high-probability region and immediately generate divergent transitions. Instead we define an explicit per-chain jittered initialisation centred on the prior medians: $\alpha = 0$ (i.e., $\theta = 0.5$) and $\nu = -1$ (i.e., $\pi \approx 0.27$). A small Gaussian jitter of SD 0.1 ensures chains start at distinct points, which is necessary for $\hat{R}$ to be meaningful.
 
-```{r ch8-fit-single}
+```{r ch09_fit-single}
 single_fit_file <- "simmodels/ch09_single_mixture.RDS"
 
 if (regenerate_simulations || !file.exists(single_fit_file)) {
@@ -409,7 +409,7 @@ fit_single$summary(c("alpha", "nu", "theta", "pi_hat"))
 
 ###  Geometry Diagnostics
 
-```{r ch8-single-diagnostics}
+```{r ch09_single-diagnostics}
 draws_single <- as_draws_df(fit_single$draws())
 
 # Required diagnostic thresholds (cheatsheet):
@@ -425,7 +425,7 @@ mcmc_trace(draws_single, pars = c("alpha", "nu")) +
   scale_colour_viridis_d(option = "mako", begin = 0.15, end = 0.85, guide = "none")
 ```
 
-```{r ch8-single-pairs}
+```{r ch09_single-pairs}
 # Pairwise geometry on the probability scale — reveals ridge if present
 mcmc_pairs(
   fit_single$draws(),
@@ -447,7 +447,7 @@ SBC simultaneously certifies two properties. When rank statistics are uniform, t
 
 > Why SBC for mixture models specifically? Mixture posteriors are often ridge-shaped or multimodal, which means the sampler can fail silently — producing low divergences but biased posteriors. SBC's rank-uniformity test catches this structural failure that standard diagnostics miss.
 
-```{r ch8-sbc-setup}
+```{r ch09_sbc-setup}
 sbc_gen_fn <- function() {
   # Draw from prior (logit scale — must match Stan parameter names exactly)
   alpha_true <- rnorm(1, 0, 1)
@@ -482,7 +482,7 @@ sbc_backend <- SBC::SBC_backend_cmdstan_sample(
 )
 ```
 
-```{r ch8-sbc-run}
+```{r ch09_sbc-run}
 sbc_file <- "simmodels/ch09_sbc_results.RDS"
 
 if (regenerate_simulations || !file.exists(sbc_file)) {
@@ -504,7 +504,7 @@ if (regenerate_simulations || !file.exists(sbc_file)) {
 
 The primary calibration diagnostic is the ECDF-difference plot (Säilynoja et al. 2022). A well-calibrated sampler produces rank statistics that are uniform on $\{0, 1, \ldots, S\}$, so the ECDF should fall along the horizontal zero line. Deviations outside the 95 % envelope indicate structural bias or over/underconfidence.
 
-```{r ch8-sbc-ecdf-diff, fig.height=4}
+```{r ch09_sbc-ecdf-diff, fig.height=4}
 SBC::plot_ecdf_diff(sbc_results, variables = c("alpha", "nu")) +
   labs(title    = "SBC calibration: ECDF-difference plots",
        subtitle = "Deviations outside the grey band indicate a miscalibrated sampler") +
@@ -512,7 +512,7 @@ SBC::plot_ecdf_diff(sbc_results, variables = c("alpha", "nu")) +
         strip.text = element_text(face = "bold"))
 ```
 
-```{r ch8-sbc-rank-hist, fig.height=4}
+```{r ch09_sbc-rank-hist, fig.height=4}
 SBC::plot_rank_hist(sbc_results, variables = c("alpha", "nu")) +
   labs(title    = "SBC calibration: rank histograms",
        subtitle = "U-shape → overconfident; hump → underconfident; skew → biased") +
@@ -524,7 +524,7 @@ SBC::plot_rank_hist(sbc_results, variables = c("alpha", "nu")) +
 
 The `stats` component of the SBC output contains the `simulated_value` (the true prior draw) alongside posterior summaries for each simulation. Plotting posterior mean against true value directly provides the recovery assessment — no separate grid-based recovery study is required.
 
-```{r ch8-sbc-recovery, fig.height=4}
+```{r ch09_sbc-recovery, fig.height=4}
 recovery_df <- sbc_results$stats |>
   dplyr::filter(variable %in% c("alpha", "nu")) |>
   dplyr::mutate(
@@ -602,7 +602,7 @@ The mixture model is not wrong — it is simply not identified from the marginal
 
 ###  Visualising the Posterior Ridge
 
-```{r ch8-aliasing-manifold}
+```{r ch09_aliasing-manifold}
 draws_prob <- as_draws_df(fit_single$draws()) |>
   dplyr::select(theta, pi_hat)
 
@@ -679,7 +679,7 @@ The `priorsense` workflow requires a `lprior` variable in the Stan model's `gene
 
 > Why expect high sensitivity for the noise parameter? Section 6 showed algebraically that binary i.i.d. data constrain only θ_eff = (1-π)θ + 0.5π. The noise weight π therefore receives almost no direct information from the data — its posterior is largely proportional to its prior. A high ψ̂ for ν is not a model failure; it is the quantitative fingerprint of this degeneracy.
 
-```{r ch8-priorsense}
+```{r ch09_priorsense}
 # powerscale_sensitivity works with CmdStanFit objects via the posterior package.
 # It reads 'lprior' and 'log_lik' from generated quantities automatically.
 sensitivity <- priorsense::powerscale_sensitivity(
@@ -690,7 +690,7 @@ sensitivity <- priorsense::powerscale_sensitivity(
 print(sensitivity)
 ```
 
-```{r ch8-priorsense-plot, fig.height=5}
+```{r ch09_priorsense-plot, fig.height=5}
 # Density deformation under power-scaling shows which parameters are affected.
 priorsense::powerscale_plot_dens(fit_single, variables = c("alpha", "nu")) +
   labs(
@@ -718,7 +718,7 @@ The expected pattern is instructive: $\hat{\psi}$ for $\nu$ (noise, logit scale)
 
 Posterior predictive draws are computed in the `generated quantities` block and extracted directly from the fitted object. This avoids the manual simulation loop in the original chapter, which re-implemented in R what Stan already computed.
 
-```{r ch8-ppc}
+```{r ch09_ppc}
 # S x n matrix of posterior predictive choices (0/1)
 yrep <- fit_single$draws("pred_choice", format = "matrix")
 y    <- as.integer(data$h)
@@ -752,7 +752,7 @@ p_mean / p_run
 
 ###  PSIS-LOO and Pareto-$\hat{k}$ Diagnostics
 
-```{r ch8-loo}
+```{r ch09_loo}
 log_lik_mat <- fit_single$draws("log_lik", format = "matrix")
 r_eff       <- loo::relative_eff(exp(log_lik_mat),
                                   chain_id = rep(1:4, each = 2000))
@@ -769,7 +769,7 @@ Pareto-$\hat{k}$ values above 0.7 indicate observations for which the full-data 
 
 For continuous outcomes, LOO-PIT values should be uniform. For binary outcomes the CDF is a step function, so the standard PIT is discrete and requires randomisation to achieve uniformity. The `rstantools`::loo_pit()` function applies this randomisation automatically.
 
-```{r ch8-loo-pit}
+```{r ch09_loo-pit}
 psis_obj <- loo_single$psis_object
 lw       <- weights(psis_obj, log = TRUE, normalize = TRUE)  # draws × obs
 
@@ -817,7 +817,7 @@ $$
 
 ###  Stan Code
 
-```{r ch8-write-multilevel-stan}
+```{r ch09_write-multilevel-stan}
 multilevel_mixture_stan <- "
 data {
   int<lower=1> trials;
@@ -912,7 +912,7 @@ mod_multi <- cmdstan_model(
 
 ###  Simulating Multilevel Data
 
-```{r ch8-simulate-multilevel}
+```{r ch09_simulate-multilevel}
 set.seed(801)
 n_agents <- 30
 n_trials <- 120
@@ -966,7 +966,7 @@ cat("Population noise (prob scale):", round(plogis(muN_true), 3), "\n")
 
 The same Pathfinder-with-safe-fallback pattern from §4.4 applies here, with one important difference: the multilevel model has additional structure that the fallback initialisation must respect. Setting `tau` to a small positive value (rather than drawing from the full half-normal prior) avoids starting near the funnel geometry. Setting `z_IDs` to near-zero ensures all individual parameters begin at their population means. Setting `L_Omega` to the identity matrix provides a neutral starting correlation. All values are jittered slightly across chains.
 
-```{r ch8-fit-multilevel}
+```{r ch09_fit-multilevel}
 multi_fit_file <- "simmodels/ch09_multilevel_mixture.RDS"
 
 if (regenerate_simulations || !file.exists(multi_fit_file)) {
@@ -1010,7 +1010,7 @@ if (regenerate_simulations || !file.exists(multi_fit_file)) {
 fit_multi$summary(c("pop_bias", "pop_noise", "tau", "bias_noise_corr"))
 ```
 
-```{r ch8-multilevel-diagnostics}
+```{r ch09_multilevel-diagnostics}
 diag_m <- fit_multi$diagnostic_summary()
 cat("Divergences:", sum(diag_m$num_divergent), "\n")
 cat("Max R-hat:  ",
@@ -1025,7 +1025,7 @@ cat("Min ESS:    ",
 
 A hallmark of hierarchical models is that individual estimates are shrunk toward the group mean, with more shrinkage for agents whose data are less informative. The shrinkage plot below compares the raw per-agent data mean (no-pooling) with the posterior mean of `agent_bias[j]` (partial pooling).
 
-```{r ch8-shrinkage}
+```{r ch09_shrinkage}
 draws_multi <- as_draws_df(fit_multi$draws())
 
 # Extract posterior means of individual bias parameters
@@ -1070,7 +1070,7 @@ Agents whose raw data means are far from the group mean are pulled back more str
 
 ###  Population Parameter Recovery
 
-```{r ch8-multilevel-recovery}
+```{r ch09_multilevel-recovery}
 pop_params <- c("pop_bias", "pop_noise")
 fit_multi$summary(pop_params) |>
   dplyr::mutate(
@@ -1087,7 +1087,7 @@ fit_multi$summary(pop_params) |>
 
 We fit a simple biased-agent model — no noise component — to the same data used in Section 4. This is the model that emerges when we constrain $\pi = 0$.
 
-```{r ch8-biased-stan}
+```{r ch09_biased-stan}
 biased_stan <- "
 data {
   int<lower=1> n;
@@ -1117,7 +1117,7 @@ mod_biased <- cmdstan_model(
 )
 ```
 
-```{r ch8-fit-biased}
+```{r ch09_fit-biased}
 biased_fit_file <- "simmodels/ch09_biased_single.RDS"
 
 if (regenerate_simulations || !file.exists(biased_fit_file)) {
@@ -1140,7 +1140,7 @@ fit_biased$summary("theta")
 
 ###  ELPD Comparison
 
-```{r ch8-loo-compare}
+```{r ch09_loo-compare}
 log_lik_b <- fit_biased$draws("log_lik", format = "matrix")
 r_eff_b   <- loo::relative_eff(exp(log_lik_b), chain_id = rep(1:4, each = 2000))
 loo_biased <- loo::loo(log_lik_b, r_eff = r_eff_b)
@@ -1149,7 +1149,7 @@ comparison <- loo::loo_compare(loo_single, loo_biased)
 print(comparison)
 ```
 
-```{r ch8-stacking-weights}
+```{r ch09_stacking-weights}
 weights_stacking <- loo::loo_model_weights(
   list(mixture = loo_single, biased = loo_biased),
   method = "stacking"

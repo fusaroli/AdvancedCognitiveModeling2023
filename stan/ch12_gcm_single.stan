@@ -19,7 +19,6 @@ data {
   array[ntrials, nfeatures] real obs;
   array[ntrials] int<lower=0, upper=1> cat_feedback;
 
-  // Prior hyperparameters (passed as data for flexibility)
   vector[nfeatures] w_prior_alpha;
   real log_c_prior_mean;
   real<lower=0> log_c_prior_sd;
@@ -28,10 +27,8 @@ data {
 }
 
 transformed data {
-  // Precompute absolute differences between all trials for all features
-  // abs_diff[i, j, f] holds the absolute difference between trial i and trial j on feature f
   array[ntrials, ntrials, nfeatures] real abs_diff;
-  
+
   for (i in 1:ntrials) {
     for (j in 1:ntrials) {
       for (f in 1:nfeatures) {
@@ -50,7 +47,6 @@ parameters {
 transformed parameters {
   real<lower=0> c = exp(log_c);
 
-  // Per-trial choice probability — computed once per leapfrog step.
   vector<lower=1e-9, upper=1-1e-9>[ntrials] prob_cat1;
 
   {
@@ -69,7 +65,6 @@ transformed parameters {
       }
 
       if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
-        // Cold-start branch — answers Q1 of Phase 0.
         p_i = bias;
       } else {
         vector[n_mem] sims;
@@ -93,7 +88,6 @@ transformed parameters {
 
       prob_cat1[i] = fmax(1e-9, fmin(1 - 1e-9, p_i));
 
-      // Memory update
       n_mem += 1;
       memory_trial_idx[n_mem] = i;
       memory_cat[n_mem] = cat_feedback[i];
@@ -102,18 +96,14 @@ transformed parameters {
 }
 
 model {
-  // Priors
   target += dirichlet_lpdf(w    | w_prior_alpha);
   target += normal_lpdf(log_c   | log_c_prior_mean, log_c_prior_sd);
   target += beta_lpdf(bias      | bias_prior_alpha, bias_prior_beta);
 
-  // Vectorised Bernoulli likelihood — one line, no duplicated loop.
   target += bernoulli_lpmf(y | prob_cat1);
 }
 
 generated quantities {
-  // log_lik reads from prob_cat1 — the loop is not re-run.
-  // This is the architectural payoff of the transformed-parameters layout.
   vector[ntrials] log_lik;
   real lprior;
   for (i in 1:ntrials)
