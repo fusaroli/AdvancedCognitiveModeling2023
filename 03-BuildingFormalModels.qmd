@@ -13,7 +13,7 @@ knitr::opts_chunk$set(
   dpi        = 300
 )
 
-pacman::p_load(tidyverse, patchwork)
+pacman::p_load(tidyverse, patchwork, here)
 ```
 
 > **📍 Where we are in the Bayesian modeling workflow:**
@@ -78,13 +78,16 @@ In this chapter, we will:
 
 # Load necessary packages
 # patchwork helps combine multiple plots
-pacman::p_load(tidyverse, patchwork)
+pacman::p_load(tidyverse, patchwork, here)
 
 # Number of trials per simulation
 trials <- 120  
 
 # Number of agents to simulate
 agents <- 100  
+
+# Set to TRUE to rerun everything (takes time!), FALSE to load saved results.
+regenerate_simulations <- FALSE 
 
 # Optional: Set random seed for reproducibility
 # set.seed(123)
@@ -489,34 +492,41 @@ run_simulation <- function(n_trials, agent_strategy, agent_params, opponent_stra
 }
 
 # --- Running Scaled Simulations ---
-cat("Running scaled simulations...\n")
+sim_data_file <- here("simdata", "ch03_scaled_simulations.rds")
 
-# Default WSLS parameters (Only 'noise' is used by our simple WSLS agent)
-wsls_params_default <- list(noise = 0)
+if (regenerate_simulations || !file.exists(sim_data_file)) {
+  cat("Running scaled simulations...\n")
 
-# Simulation 1: WSLS vs. Random agents with varying biases
-opponent_rates <- seq(from = 0.5, to = 1, by = 0.05)
-results_vs_random <- list() 
+  # Default WSLS parameters (Only 'noise' is used by our simple WSLS agent)
+  wsls_params_default <- list(noise = 0)
 
-for (rate in opponent_rates) {
-  # Create a list to store runs for this specific rate
-  rate_runs <- list()
-  
-  for (agent_i in 1:agents) {
-     opponent_params_rand <- list(rate = rate, noise = 0)
-     
-     # CORRECTED CALL: Added "WSLS" as the second argument
-     sim_run <- run_simulation(trials, "WSLS", wsls_params_default, "Random", opponent_params_rand)
-     
-     sim_run$agent <- agent_i
-     sim_run$opponent_rate <- rate
-     rate_runs[[agent_i]] <- sim_run
+  # Simulation 1: WSLS vs. Random agents with varying biases
+  opponent_rates <- seq(from = 0.5, to = 1, by = 0.05)
+  results_vs_random <- list() 
+
+  for (rate in opponent_rates) {
+    # Create a list to store runs for this specific rate
+    rate_runs <- list()
+    
+    for (agent_i in 1:agents) {
+       opponent_params_rand <- list(rate = rate, noise = 0)
+       
+       # CORRECTED CALL: Added "WSLS" as the second argument
+       sim_run <- run_simulation(trials, "WSLS", wsls_params_default, "Random", opponent_params_rand)
+       
+       sim_run$agent <- agent_i
+       sim_run$opponent_rate <- rate
+       rate_runs[[agent_i]] <- sim_run
+    }
+    # Combine all agents for this rate and store in main list
+    results_vs_random[[as.character(rate)]] <- bind_rows(rate_runs)
   }
-  # Combine all agents for this rate and store in main list
-  results_vs_random[[as.character(rate)]] <- bind_rows(rate_runs)
+  # Combine everything into one big dataframe
+  df_scaled_vs_random <- bind_rows(results_vs_random)
+  saveRDS(df_scaled_vs_random, sim_data_file)
+} else {
+  df_scaled_vs_random <- readRDS(sim_data_file)
 }
-# Combine everything into one big dataframe
-df_scaled_vs_random <- bind_rows(results_vs_random)
 
 ```
 

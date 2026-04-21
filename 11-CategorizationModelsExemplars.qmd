@@ -109,15 +109,15 @@ diagnostic_summary_table <- function(fit, params = NULL) {
 > MCMC (we'll see why), so we need to introduce a new slower method: Approximate
 > Bayesian Computation (ABC).
 
-# Introduction to Categorization Models
+## Introduction to Categorization Models
 
-## The Fundamental Problem of Categorization
+### The Fundamental Problem of Categorization
 
 Categorization is one of the most fundamental cognitive abilities that humans possess. From early childhood, we learn to organize the world around us into meaningful categories: distinguishing food from non-food, safe from dangerous, or one letter from another. This process of assigning objects to categories is complex, involving perception, memory, attention, and decision-making.
 
 How do humans learn categories and make categorization decisions? This seemingly simple question has generated decades of research and theoretical debate in cognitive science.
 
-## Why Model Categorization?
+### Why Model Categorization?
 
 As we have seen in previous chapters, computational models offer powerful ways to formalize theories about categorization. By implementing these theories as computer algorithms, we can:
 
@@ -137,9 +137,9 @@ In this chapter, we will explore three major approaches to modeling categorizati
 
 Each approach captures different aspects of human categorization and has generated substantial empirical research. We'll implement computational versions of each model type, allowing us to compare their behavior and predictions.
 
-## Historical Development of Categorization Models
+### Historical Development of Categorization Models
 
-### Early Views: The Classical Approach
+#### Early Views: The Classical Approach
 
 Early theories of categorization followed what is now called the classical view, where categories were defined by necessary and sufficient features. In this view, category membership is an all-or-nothing affair: an object either satisfies the logical criteria or it doesn't. While intuitive, this approach struggled to explain many aspects of human categorization, such as:
 
@@ -151,25 +151,25 @@ Early theories of categorization followed what is now called the classical view,
 
 * Family resemblance structures (where no single feature is necessary)
 
-### The Prototype Revolution
+#### The Prototype Revolution
 
 In the 1970s, Eleanor Rosch's pioneering work on prototypes challenged the classical view. She demonstrated that categories appear to be organized around central tendencies or "prototypes," with membership determined by similarity to these prototypes. Objects closer to the prototype are categorized more quickly and consistently.
 
-### The Exemplar Alternative
+#### The Exemplar Alternative
 
 In the late 1970s and 1980s, researchers like Douglas Medin and Robert Nosofsky proposed that rather than abstracting prototypes, people might store individual exemplars of categories and make judgments based on similarity to these stored examples.
 
 The Generalized Context Model (GCM), developed by Nosofsky, became the standard exemplar model. It proposes that categorization decisions are based on the **summed** similarity of a new stimulus to all stored exemplars of each category, weighted by attention to different stimulus dimensions.
 
-### Rule-Based Models
+#### Rule-Based Models
 
 While similarity-based approaches gained prominence, other researchers argued that people sometimes use explicit rules for categorization. Models like Bayesian particle filters, multinomial trees, COVIS and RULEX formalize these ideas, suggesting that rule learning and application form a core part of human categorization, particularly for well-defined categories.
 
-### Hybrid Approaches
+#### Hybrid Approaches
 
 More recent work has focused on hybrid models that incorporate elements of multiple approaches. Models like SUSTAIN and ATRIUM propose that humans can flexibly switch between strategies or that different systems operate in parallel.
 
-## A Systematization Framework for Categorization Models
+### A Systematization Framework for Categorization Models
 
 To pedagogically navigate and compare the different approaches, we can deconstruct the cognitive process of categorization into a sequential six-step pipeline:
 
@@ -180,7 +180,7 @@ To pedagogically navigate and compare the different approaches, we can deconstru
 5. **Decision Rules:** How is evidence translated into a choice? (e.g., maximum similarity, or a probabilistic Luce choice axiom).
 6. **Learning:** How do representations, attentional weights, or rule structures update over time through exposure, memory accumulation, and feedback?
 
-### The Three Model Classes Through the Pipeline
+#### The Three Model Classes Through the Pipeline
 
 We can map our three theoretical model classes directly onto this processing pipeline:
 
@@ -193,7 +193,7 @@ We can map our three theoretical model classes directly onto this processing pip
 | **5. Decision Rules** | Luce choice axiom (probabilistic assignment). | Luce choice axiom (probabilistic assignment). | Maximum similarity or probabilistic rule combination. |
 | **6. Learning** | Accumulation of distinct exemplars in memory (path-dependent). | Updating the centroid/summary representation (e.g., via a Kalman filter). | Updating weights for sampled rules based on feedback. |
 
-## Our Implementation Approach
+### Our Implementation Approach
 
 We'll implement three models representing each major theoretical approach:
 
@@ -216,7 +216,7 @@ These course notes are designed as a partial, pedagogical contribution to this o
 :::
 
 
-## Categorization (Cognitive Science) vs. Classification (Machine Learning)
+### Categorization (Cognitive Science) vs. Classification (Machine Learning)
 
 Because the mathematical tools are often identical, it is tempting to view cognitive models of categorization simply as early, inefficient machine learning classifiers. Both fields rely on the exact same underlying mechanics to map inputs to outputs: calculating distances in multi-dimensional feature space, applying functions (like Luce or softmax) to translate evidence into probabilities, and using gradient-based weight updates or Bayesian filters to learn from feedback. 
 
@@ -237,13 +237,13 @@ In short: A machine learning classifier asks, *"What is the best mathematical wa
 
 ---
 
-# The Generalized Context Model (GCM)
+## The Generalized Context Model (GCM)
 
-## Mathematical Foundations and Cognitive Principles
+### Mathematical Foundations and Cognitive Principles
 
 The Generalized Context Model (GCM), developed by Robert Nosofsky in the 1980s, represents one of the most influential exemplar-based approaches to categorization. Unlike models that abstract category information into prototypes or rules, the GCM proposes that people store individual exemplars in memory and make categorization decisions based on similarity to these stored examples.
 
-### The GCM Mapped to the Categorization Pipeline
+#### The GCM Mapped to the Categorization Pipeline
 
 The GCM translates the 6-step cognitive pipeline into a formal mathematical structure as follows:
 
@@ -254,7 +254,7 @@ The GCM translates the 6-step cognitive pipeline into a formal mathematical stru
 * **5. Decision Rules (Choice Probability):** The decision relies on the Luce choice axiom. The probability of assigning a stimulus to a category is proportional to its summed similarity to exemplars of that category, modified by a baseline category bias $\beta$.
 * **6. Learning (Memory Accumulation):** The model learns sequentially by adding each newly categorized and feedback-evaluated stimulus directly into its exemplar memory store, altering the evidential landscape for future trials.
 
-### Parameters: Cognitive Commitment, Algebraic Role, Stan Parameterization
+#### Parameters: Cognitive Commitment, Algebraic Role, Stan Parameterization
 
 **Attention weights $w$.** Cognitively, $w$ is a simplex of dimension-specific attention weights. Algebraically, $w$ enters the distance formula as the per-dimension coefficient in the attention-weighted city-block metric. At the Stan level $w$ is declared as `simplex[nfeatures]`, which enforces $w_m \ge 0$ and $\sum_m w_m = 1$ directly.
 
@@ -262,7 +262,7 @@ The GCM translates the 6-step cognitive pipeline into a formal mathematical stru
 
 **Response bias $\beta$.** Cognitively, $\beta$ is a baseline preference for category A independent of stimulus similarity; $\beta = 0.5$ is unbiased. In this chapter $\beta$ also serves as the cold-start fallback. At the Stan level $\beta$ is declared as `real<lower=0, upper=1>` with a Beta prior.
 
-## Mathematical Formulation
+### Mathematical Formulation
 
 **1. Distance Calculation**
 
@@ -373,7 +373,7 @@ gcm_simulate <- function(w,            # attention weights (sums to 1)
 
 ---
 
-## Experimental Setup: Kruschke (1993)
+### Experimental Setup: Kruschke (1993)
 
 ```{r ch12_experimental_setup}
 stimulus_info <- tibble(
@@ -398,7 +398,7 @@ total_trials     <- n_blocks * n_stim_per_block
 
 ---
 
-## Per-Subject Schedule Generation
+### Per-Subject Schedule Generation
 
 ```{r ch12_subject_schedule}
 make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
@@ -423,7 +423,7 @@ make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
 
 ---
 
-## Simulating Behavior with the GCM
+### Simulating Behavior with the GCM
 
 ```{r ch12_gcm_agent_wrapper}
 simulate_gcm_agent <- function(agent_id, w_true, c_true, bias_true,
@@ -549,7 +549,7 @@ p_w_effect
 
 ---
 
-## Prior Predictive Check
+### Prior Predictive Check
 
 We need to define the priors for the Stan model already here:
 
@@ -619,11 +619,43 @@ ggplot(prior_pred_summary, aes(x = trial)) +
 
 ---
 
-## Implementing the GCM in Stan for Parameter Estimation
+### Implementing the GCM in Stan for Parameter Estimation
 
-### Architectural choice: `prob_cat1[i]` in `transformed parameters`
+#### Architectural choice: `prob_cat1[i]` in `transformed parameters`
 
 Because the GCM's per-trial choice probability $p_i$ is a deterministic function of the parameters $(w, c, \beta)$ and the data sequence, it belongs in `transformed parameters` as a single source of truth. The `model{}` block then becomes a one-line vectorised Bernoulli likelihood, and `generated quantities{}` becomes a lookup against the already-computed `prob_cat1` vector.
+
+```{tikz gcm-single-dag, fig.cap = "DAG for the Single-Subject GCM. Hyperparameters (dots) feed into latent parameters (circles): attention weights $\\mathbf{w}$, log sensitivity $\\log c$, and response bias $\\beta$. Inside the plate, the stimulus $\\mathbf{x}_i$ and accumulated exemplar memory $z_{<i}$ (past category feedback) combine with the parameters to yield the deterministic choice probability $p_i$ (double circle), from which the response $y_i$ is drawn.", fig.align = "center", out.width = "70%"}
+\usetikzlibrary{bayesnet}
+\begin{tikzpicture}
+  % ── Hyperparameters (const) ─────────────────────────────
+  \node[const] (alpha_w) at (0, 0)   {$\boldsymbol{\alpha}_w$};
+  \node[const] (hyp_c)   at (4, 0)   {$\mu_c,\,\sigma_c$};
+  \node[const] (hyp_b)   at (8, 0)   {$\alpha_\beta,\,\beta_\beta$};
+
+  % ── Latent parameters ───────────────────────────────────
+  \node[latent] (w)    at (0, -2)  {$\mathbf{w}$};
+  \node[latent] (logc) at (4, -2)  {$\log c$};
+  \node[latent] (bias) at (8, -2)  {$\beta$};
+
+  % ── Trial-level nodes (inside plate) ────────────────────
+  \node[obs] (xi) at (2, -4.5) {$\mathbf{x}_i$};
+  \node[obs] (zi) at (4, -4.5) {$z_{<i}$};
+  \node[det] (pi) at (6, -4.5) {$p_i$};
+  \node[obs] (yi) at (6, -6.5) {$y_i$};
+
+  % ── Edges ───────────────────────────────────────────────
+  \edge {alpha_w}        {w};
+  \edge {hyp_c}          {logc};
+  \edge {hyp_b}          {bias};
+  \edge {w, logc, bias}  {pi};
+  \edge {xi, zi}         {pi};
+  \edge {pi}             {yi};
+
+  % ── Plate ───────────────────────────────────────────────
+  \plate {trial} {(xi)(zi)(pi)(yi)} {$N$ trials};
+\end{tikzpicture}
+```
 
 ```{r ch12_gcm_stan_model}
 gcm_single_stan <- "
@@ -747,7 +779,7 @@ write_stan_file(gcm_single_stan, dir = "stan/", basename = "ch12_gcm_single.stan
 mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 ```
 
-### What each block does:
+#### What each block does:
 
 * **`transformed data`**: Builds the `abs_diff[i, j, f]` tensor. Evaluated exactly once per chain.
 * **`parameters`**: `simplex[nfeatures] w`, unconstrained `real log_c`, and `real<lower=0, upper=1> bias`.
@@ -759,7 +791,7 @@ mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 > with reduce_sum because trial $t$'s contribution to target depends on the memory state
 > accumulated sequentially from trials $1, \ldots, t-1$.
 
-### Fitting the Single-Subject GCM
+#### Fitting the Single-Subject GCM
 
 ```{r ch12_fitting_gcm_single}
 # Select one simulated agent: w ≈ (0.9, 0.1), c ≈ 2
@@ -821,7 +853,7 @@ if (regenerate_simulations || !file.exists(fit_filepath_single)) {
 }
 ```
 
-### MCMC Diagnostic Battery
+#### MCMC Diagnostic Battery
 
 ```{r ch12_single_diagnostic_battery}
 if (!is.null(fit_gcm_single)) {
@@ -846,7 +878,7 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-### Posterior Predictive Check (single subject)
+#### Posterior Predictive Check (single subject)
 
 ```{r ch12_ppc_single}
 if (!is.null(fit_gcm_single)) {
@@ -887,7 +919,7 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-### Prior–Posterior Update Plot
+#### Prior–Posterior Update Plot
 
 ```{r ch12_prior_posterior_single}
 if (!is.null(fit_gcm_single)) {
@@ -938,7 +970,7 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-### Joint Posterior Geometry: $c$ vs $w$
+#### Joint Posterior Geometry: $c$ vs $w$
 
 ```{r ch12_cw_identifiability_pairs}
 if (!is.null(fit_gcm_single)) {
@@ -952,7 +984,7 @@ if (!is.null(fit_gcm_single)) {
 
 ---
 
-### LOO with Pareto-$\hat{k}$ Diagnostics
+#### LOO with Pareto-$\hat{k}$ Diagnostics
 
 Standard PSIS-LOO is computed for completeness and for comparison against LFO-CV below. We do not interpret it as a valid measure of out-of-sample predictive accuracy for a sequential model — see the next subsection for why — but the Pareto-$\hat{k}$ diagnostic still localises trials where the path-dependence concern bites hardest.
 
@@ -967,7 +999,7 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-### Leave-Future-Out Cross-Validation
+#### Leave-Future-Out Cross-Validation
 
 **Why standard LOO is invalid here.** Standard PSIS-LOO assumes observations are conditionally exchangeable given the parameters. In the GCM, this assumption is violated: leaving out observation $t$ also conceptually removes the memory trace that observation $t$ contributed to trials $t+1, \ldots, T$.
 
@@ -1171,7 +1203,7 @@ ggplot(agreement_df, aes(x = elpd_exact, y = elpd_psis)) +
   coord_fixed()
 ```
 
-### Randomised LOO-PIT
+#### Randomised LOO-PIT
 
 ```{r ch12_randomized_loo_pit}
 if (!is.null(fit_gcm_single)) {
@@ -1209,7 +1241,7 @@ if (!is.null(fit_gcm_single)) {
 }
 ```
 
-### Prior Sensitivity Analysis
+#### Prior Sensitivity Analysis
 
 ```{r ch12_prior_sensitivity_single}
 if (!is.null(fit_gcm_single)) {
@@ -1225,7 +1257,7 @@ if (!is.null(fit_gcm_single)) {
 
 ---
 
-## Single-Subject Simulation-Based Calibration (SBC)
+### Single-Subject Simulation-Based Calibration (SBC)
 
 SBC checks the internal consistency and calibration of the entire Bayesian inference procedure across the *whole* prior. It asks: "If the true parameters really came from our specified priors, would our inference procedure produce posteriors that are statistically consistent with those priors?"
 
@@ -1360,13 +1392,13 @@ When the true log(c) is above 0 the model computes similarity using exponential 
 
 ---
 
-# Multilevel Generalized Context Model (GCM)
+## Multilevel Generalized Context Model (GCM)
 
-## The Need for a Multilevel Approach
+### The Need for a Multilevel Approach
 
 The multilevel (hierarchical) approach assumes that individual participant parameters are drawn from overarching group-level distributions, allowing us to estimate parameters for each individual informed by the group trend (partial pooling).
 
-### Motivation: Visualizing Individual Differences
+#### Motivation: Visualizing Individual Differences
 
 ```{r ch12_motivate_multilevel, eval=run_intensive_checks}
 motivate_ml_filepath <- here("simdata", "ch12_motivate_multilevel.rds")
@@ -1479,7 +1511,7 @@ p_joint_cbias <- ggplot(demo_draws, aes(x = bias, y = c, group = agent_id)) +
 print(p_joint_cw | p_joint_cbias)
 ```
 
-## Mathematical Formulation of the Multilevel GCM
+### Mathematical Formulation of the Multilevel GCM
 
 **Population-level distributions:**
 
@@ -1489,7 +1521,7 @@ $$\text{logit}(\beta_j) \sim \text{Normal}(\mu_{\text{logit}\,\beta}, \sigma_{\t
 
 **A note on NCP and the reverse funnel.** Non-centred parameterisation is the safer default for cognitive experiments with ~100 trials per participant. But NCP can develop a *reverse funnel* when the data are very informative for individual parameters. The multilevel SBC at the end of this chapter is the diagnostic that catches this.
 
-### Simulating Data for the Multilevel GCM
+#### Simulating Data for the Multilevel GCM
 
 ```{r ch12_simulate_hierarchical_weights}
 simulate_hierarchical_dirichlet <- function(pop_weights, kappa, n_agents) {
@@ -1618,7 +1650,55 @@ ggplot(multilevel_sim_data,
   ylim(0, 1)
 ```
 
-### Implementing the Multilevel GCM in Stan
+#### Implementing the Multilevel GCM in Stan
+
+```{tikz gcm-ml-dag, fig.cap = "DAG for the Multilevel GCM. Population-level hyperparameters (dots) feed into population parameters (top circles): attention weight centroid $\\bar{\\mathbf{w}}$, Dirichlet concentration $\\kappa$, and population means and SDs for $\\log c$ and logit-$\\beta$. Inside the subject plate, individual attention weights $\\mathbf{w}_j$, sensitivity $c_j$, and bias $\\beta_j$ are drawn from the population distributions (non-centred parameterisation). Inside the nested trial plate, the stimulus $\\mathbf{x}_i$ and exemplar memory $z_{<i}$ combine with individual parameters to produce the deterministic choice probability $p_i$ (double circle), from which the response $y_i$ is drawn.", fig.align = "center", out.width = "75%"}
+\usetikzlibrary{bayesnet}
+\begin{tikzpicture}
+  % ── Population hyperparameters (const) ──────────────────
+  \node[const] (alpha_w) at (0, 0)   {$\boldsymbol{\alpha}_w$};
+  \node[const] (lam_k)   at (2, 0)   {$\lambda_\kappa$};
+  \node[const] (hyp_c)   at (5, 0)   {$\mu_c,\,\sigma_c$};
+  \node[const] (hyp_b)   at (9, 0)   {$\mu_\beta,\,\sigma_\beta$};
+
+  % ── Population parameters (latent) ──────────────────────
+  \node[latent] (pop_w) at (0, -2)   {$\bar{\mathbf{w}}$};
+  \node[latent] (kappa) at (2, -2)   {$\kappa$};
+  \node[latent] (pop_c) at (5, -2)   {$\bar{\mu}_c,\,\bar{\sigma}_c$};
+  \node[latent] (pop_b) at (9, -2)   {$\bar{\mu}_\beta,\,\bar{\sigma}_\beta$};
+
+  % ── Individual parameters (latent, inside subject plate) ─
+  \node[latent] (wj) at (1,   -4.5) {$\mathbf{w}_j$};
+  \node[latent] (cj) at (5,   -4.5) {$c_j$};
+  \node[latent] (bj) at (9,   -4.5) {$\beta_j$};
+
+  % ── Trial-level nodes (inside nested trial plate) ────────
+  \node[obs] (xi) at (2.5, -7)  {$\mathbf{x}_i$};
+  \node[obs] (zi) at (4.5, -7)  {$z_{<i}$};
+  \node[det] (pi) at (6.5, -7)  {$p_i$};
+  \node[obs] (yi) at (6.5, -9)  {$y_i$};
+
+  % ── Edges: hyperparams → pop params ─────────────────────
+  \edge {alpha_w}  {pop_w};
+  \edge {lam_k}    {kappa};
+  \edge {hyp_c}    {pop_c};
+  \edge {hyp_b}    {pop_b};
+
+  % ── Edges: pop params → individual params ────────────────
+  \edge {pop_w, kappa}  {wj};
+  \edge {pop_c}         {cj};
+  \edge {pop_b}         {bj};
+
+  % ── Edges: individual + data → probability ───────────────
+  \edge {wj, cj, bj}  {pi};
+  \edge {xi, zi}       {pi};
+  \edge {pi}           {yi};
+
+  % ── Plates (nested) ──────────────────────────────────────
+  \plate {trial}   {(xi)(zi)(pi)(yi)}         {$N$ trials};
+  \plate {subject} {(wj)(cj)(bj)(trial)}      {$J$ subjects};
+\end{tikzpicture}
+```
 
 ```{r ch12_multilevel_gcm_stan}
 gcm_ml_stan <- "
@@ -1767,7 +1847,7 @@ write_stan_file(gcm_ml_stan, dir = "stan/", basename = "ch12_gcm_ml.stan")
 mod_gcm_ml <- cmdstan_model(stan_file_gcm_ml)
 ```
 
-### Fitting the Multilevel GCM
+#### Fitting the Multilevel GCM
 
 ```{r ch12_fit_gcm_ml}
 gcm_ml_data_sorted <- multilevel_sim_data |>
@@ -1856,7 +1936,7 @@ if (regenerate_simulations || !file.exists(fit_filepath_ml)) {
 }
 ```
 
-### Mandatory MCMC Diagnostic Battery (Multilevel)
+#### MCMC Diagnostic Battery (Multilevel)
 
 ```{r ch12_multilevel_diagnostic_battery}
 if (!is.null(fit_gcm_ml)) {
@@ -2001,7 +2081,7 @@ if (!is.null(fit_gcm_ml)) {
 
 ---
 
-## Extensive Parameter Recovery for the Multilevel GCM
+### Extensive Parameter Recovery for the Multilevel GCM
 
 ```{r ch12_extensive_recovery, eval=run_intensive_checks}
 param_grid_ml <- expand_grid(
@@ -2157,7 +2237,7 @@ ggplot(recovery_labeled |> filter(!is.na(true_value)),
 
 ---
 
-## Multilevel SBC
+### Multilevel SBC
 
 ```{r ch12_sbc_multilevel, eval=run_intensive_checks}
 sbc_ml_filepath <- here("simdata", "ch12_sbc_multilevel_results.rds")
@@ -2329,9 +2409,9 @@ print(p_sbc_recovery_indiv)
 
 ---
 
-## GCM in Context: Strengths and Limitations
+### GCM in Context: Strengths and Limitations
 
-### Strengths
+#### Strengths
 
 * **Empirical support**: The GCM has successfully fit human categorization data across numerous experiments.
 * **Psychological plausibility**: The model's parameters correspond to psychologically meaningful constructs (attention, sensitivity/generalization, bias).

@@ -70,6 +70,9 @@ pacman::p_load(
   here        # For constructing file paths relative to project root
 )
 
+# Set to TRUE to rerun everything (takes time!), FALSE to load saved results.
+regenerate_simulations <- FALSE 
+
 ```
 
 ## Part 1: Exploring the Pizza Stone Temperature Data
@@ -247,7 +250,7 @@ linear_model <- brm(
   seed = mc_settings$seed, # Ensures reproducibility of MCMC sampling
   backend = mc_settings$backend,
   file = linear_model_path, # Use relative path
-  file_refit = "on_change", # Refit if model code or data changes
+  file_refit = ifelse(regenerate_simulations, "always", "on_change"), # Refit if model code or data changes
   cores = 2, # Specify cores used for parallel chains
   # Increased adapt_delta and max_treedepth help prevent divergent transitions
   adapt_delta = 0.99,
@@ -297,7 +300,7 @@ lognormal_model <- brm(
   seed = mc_settings$seed, # Use the same seed for comparison if desired
   backend = mc_settings$backend,
   file = lognormal_model_path, # Use relative path
-  file_refit = "on_change"
+  file_refit = ifelse(regenerate_simulations, "always", "on_change")
 )
 
 # Generate predictions
@@ -536,14 +539,20 @@ ggplot(prior_preds, aes(x = time/60, y = temp, group = sim_id)) +
 ```
 
 ```{r ch02_fitting_model}
-fit <- mod$sample(
-  data = stan_data,
-  seed = 123,
-  chains = 2,
-  parallel_chains = 2,
-  refresh = 0,
-  show_messages = FALSE
-)
+fit_physics_path <- here("simmodels", "ch02_pizza_physics_fit.rds")
+if (regenerate_simulations || !file.exists(fit_physics_path)) {
+  fit <- mod$sample(
+    data = stan_data,
+    seed = 123,
+    chains = 2,
+    parallel_chains = 2,
+    refresh = 0,
+    show_messages = FALSE
+  )
+  fit$save_object(fit_physics_path)
+} else {
+  fit <- readRDS(fit_physics_path)
+}
 ```
 
 The Stan implementation translates our mathematical model into a computational framework. We assign informative priors to our parameters based on physical understanding: the heating coefficient (HOT) is expected to be small but positive, while measurement error (sigma) follows an exponential distribution to ensure positivity while allowing for varying levels of uncertainty between raters.
