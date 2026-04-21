@@ -15,7 +15,7 @@ knitr::opts_chunk$set(
 # Set to TRUE to rerun all Stan fits and heavy simulations; FALSE loads saved results.
 regenerate_simulations <- FALSE
 # Set to TRUE to rerun SBC, extensive recovery, exact LFO validation.
-run_intensive_checks   <- FALSE
+run_intensive_checks   <- regenerate_simulations
 
 # Directory scaffolding
 for (d in c("stan", "simdata", "simmodels")) {
@@ -203,7 +203,7 @@ We'll implement three models representing each major theoretical approach:
 
 * **Bayesian Particle Filter for Rules** — A rule-based model (Ch. 13)
 
-Each implementation follows a similar structure: core model function as a forward simulator, Stan implementation for parameter estimation, the mandatory MCMC diagnostic battery, prior/posterior predictive checks, parameter recovery, prior sensitivity, and SBC.
+Each implementation follows a similar structure: core model function as a forward simulator, Stan implementation for parameter estimation, the MCMC diagnostic battery, prior/posterior predictive checks, parameter recovery, prior sensitivity, and SBC.
 
 ::: {.callout-note title="The Conceptual Need for Shared Implementations"}
 A major challenge in evaluating cognitive theories is the "hidden implementation" problem. If different research groups write their own custom code for a GCM or a prototype model, subtle differences in how the math is translated into an algorithm can lead to conflicting theoretical conclusions. To genuinely compare models, the field conceptually requires shared, open-source implementations tested against standardized empirical benchmarks. 
@@ -1005,7 +1005,7 @@ if (!is.null(fit_gcm_single)) {
 
 **What LFO-CV does instead.** LFO-CV (Bürkner, Gabry, & Vehtari, 2020) estimates the *one-step-ahead* predictive density. The PSIS approximation refits only when the importance sampling deteriorates ($\hat{k} > k_\text{thresh}$) and uses importance reweighting otherwise.
 
-```{r ch12_lfo_cv_implementation, eval=run_intensive_checks}
+```{r ch12_lfo_cv_implementation}
 # ─────────────────────────────────────────────────────────────────────────────
 # psis_lfo_gcm: PSIS-approximated leave-future-out CV for the GCM.
 # Follows Bürkner, Gabry, & Vehtari (2020), Algorithm 1.
@@ -1148,7 +1148,7 @@ if (!is.null(fit_gcm_single)) {
 
 **Validation against exact one-step-ahead refits.**
 
-```{r ch12_exact_lfo_validation, eval=run_intensive_checks}
+```{r ch12_exact_lfo_validation}
 exact_lfo_grid     <- seq(16, length(gcm_data_single$y) - 1, by = 8)
 exact_lfo_filepath <- here("simdata", "ch12_exact_lfo_single.rds")
 
@@ -1261,7 +1261,7 @@ if (!is.null(fit_gcm_single)) {
 
 SBC checks the internal consistency and calibration of the entire Bayesian inference procedure across the *whole* prior. It asks: "If the true parameters really came from our specified priors, would our inference procedure produce posteriors that are statistically consistent with those priors?"
 
-```{r ch12_sbc_single, eval=run_intensive_checks}
+```{r ch12_sbc_single}
 sbc_single_filepath <- here("simdata", "ch12_sbc_single_results.rds")
 
 if (regenerate_simulations || !file.exists(sbc_single_filepath)) {
@@ -1400,7 +1400,7 @@ The multilevel (hierarchical) approach assumes that individual participant param
 
 #### Motivation: Visualizing Individual Differences
 
-```{r ch12_motivate_multilevel, eval=run_intensive_checks}
+```{r ch12_motivate_multilevel}
 motivate_ml_filepath <- here("simdata", "ch12_motivate_multilevel.rds")
 
 if (regenerate_simulations || !file.exists(motivate_ml_filepath)) {
@@ -2083,7 +2083,7 @@ if (!is.null(fit_gcm_ml)) {
 
 ### Extensive Parameter Recovery for the Multilevel GCM
 
-```{r ch12_extensive_recovery, eval=run_intensive_checks}
+```{r ch12_extensive_recovery}
 param_grid_ml <- expand_grid(
   pop_log_c_mean = c(log(1.0), log(1.5), log(2.5)),
   pop_log_c_sd   = c(0.1, 0.3),   # within constrained prior (Exp(5), 39th–78th pctile)
@@ -2222,8 +2222,8 @@ recovery_labeled <- recovery_results_raw |>
   left_join(param_grid_ml |> dplyr::select(grid_id, pop_log_c_mean, pop_log_c_sd,
                                             pop_w1, kappa), by = "grid_id")
 
-ggplot(recovery_labeled |> filter(!is.na(true_value)),
-       aes(x = true_value, y = mean)) +
+ggplot(recovery_labeled |> filter(!is.na(true_value) & !is.na(variable)),
+       aes(x = true_value, y = est_value)) +               # <--- Changed 'mean' to 'est_value' here
   geom_point(aes(color = had_divergence), alpha = 0.5) +
   geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
   geom_smooth(method = lm, color = "#0072B2", linewidth = 0.7) +
@@ -2239,7 +2239,7 @@ ggplot(recovery_labeled |> filter(!is.na(true_value)),
 
 ### Multilevel SBC
 
-```{r ch12_sbc_multilevel, eval=run_intensive_checks}
+```{r ch12_sbc_multilevel}
 sbc_ml_filepath <- here("simdata", "ch12_sbc_multilevel_results.rds")
 
 if (regenerate_simulations || !file.exists(sbc_ml_filepath)) {
@@ -2394,6 +2394,8 @@ p_sbc_recovery_indiv <- ggplot(recovery_df_indiv, aes(x = simulated_value, y = m
   geom_point(alpha = 0.5, color = "#D55E00") +
   geom_abline(intercept = 0, slope = 1, color = "grey30", linetype = "dashed") +
   facet_wrap(~variable, scales = "free") +
+  scale_y_continuous(limits = function(x) c(x[1], min(15, x[2], na.rm = TRUE))) + 
+  scale_x_continuous(limits = function(x) c(x[1], min(15, x[2], na.rm = TRUE))) + 
   labs(
     title    = "Individual Parameter Recovery (Subject 1) Across SBC",
     subtitle = "Posterior mean vs True generated value",

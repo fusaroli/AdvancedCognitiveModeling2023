@@ -22,7 +22,7 @@ regenerate_simulations <- FALSE
 # Set to TRUE to run the long-running validation chunks
 # (rule-set sensitivity, real SBC for the Stan proxy, NPE pipeline,
 # coverage validation, NPE-vs-Stan comparison).
-run_intensive_checks   <- FALSE
+run_intensive_checks   <- regenerate_simulations
 
 library(here)
 pacman::p_load(
@@ -1575,7 +1575,7 @@ We define three alternative candidate rule sets and refit Model B on the same da
 * **Set B** — 5 rules generated *blind* by running Model A on a separately-simulated training dataset and taking its top-weighted rules at the end of training. The training data is generated with $\varepsilon = 0.1$ on a different schedule than the fitting data. This is the "honest" version of the candidate set.
 * **Set C** — 5 rules deliberately chosen to be *bad* (rules that disagree with most stimuli), as a stress test.
 
-```{r ch14_rule_set_sensitivity, eval=run_intensive_checks}
+```{r ch14_rule_set_sensitivity}
 # Helper to build a Stan model from a list of (predictor function) rules
 build_stan_with_rules <- function(rule_predictors, name_suffix) {
   R <- length(rule_predictors)
@@ -1736,7 +1736,7 @@ if (exists("rule_set_results")) {
 
 ### Sensitivity to `max_dims` (Rule Grammar Depth)
 
-```{r ch14_max_dims_sensitivity, eval=run_intensive_checks}
+```{r ch14_max_dims_sensitivity}
 max_dims_results_file <- here("simdata", "ch14_max_dims_sensitivity.rds")
 if (regenerate_simulations || !file.exists(max_dims_results_file)) {
   cat("Sweeping max_dims...\n")
@@ -1775,7 +1775,7 @@ if (exists("max_dims_results")) {
 
 Phase 0 Q4 committed to `RESAMPLE_THRESHOLD = 0.5`. This controls how aggressively the particle filter reorganises its hypothesis set: lower values allow more particle degeneracy before resampling; higher values trigger resampling earlier. The cognitive interpretation is something like "how quickly the learner abandons low-performing hypotheses."
 
-```{r ch14_resample_threshold_sensitivity, eval=run_intensive_checks}
+```{r ch14_resample_threshold_sensitivity}
 resample_sensitivity_file <- here("simdata", "ch14_resample_threshold_sensitivity.rds")
 if (regenerate_simulations || !file.exists(resample_sensitivity_file)) {
   cat("Sweeping resampling threshold...\n")
@@ -1830,7 +1830,7 @@ We split the misnamed block into two correctly-labelled checks: (1) a **Cross-Mo
 
 **Why we run it anyway.** Because it answers a useful practical question: "when I fit Model B to data that came from a richer generative process (Model A), are the resulting credible intervals approximately well-calibrated for the *cognitive* parameter $\varepsilon$?" The answer to that question is informative even though it is not what SBC is technically supposed to answer.
 
-```{r ch14_cross_model_check, eval=run_intensive_checks}
+```{r ch14_cross_model_check}
 n_cross_iters <- 500   # use >= 1000 for production
 
 cross_generator <- SBC_generator_function(
@@ -1890,7 +1890,7 @@ plot_rank_hist(cross_results) +
 
 For a proper Talts–Vehtari SBC of Model B, the generator must use Model B itself: draw $\varepsilon$ from the prior, draw a rule index from $\{1, \ldots, 5\}$ uniformly (mirroring Model B's mixture prior), and generate Bernoulli responses accordingly. Then fit Model B and check the rank distribution.
 
-```{r ch14_real_sbc_model_B, eval=run_intensive_checks}
+```{r ch14_real_sbc_model_B}
 n_real_sbc_iters <- 500   # use >= 1000 for production
 
 real_sbc_generator <- SBC_generator_function(
@@ -1958,7 +1958,7 @@ plot_rank_hist(real_sbc_results) +
 
 The persona's Phase 6c calls for **Posterior SBC (PSBC)**: instead of drawing true parameters from the prior, draw them from the *fitted posterior*. This tests calibration in the specific high-probability region the actual data force us into. A sampler can be globally unbiased (prior SBC passes) yet struggle locally (PSBC fails) or vice versa.
 
-```{r ch14_psbc_model_B, eval=run_intensive_checks}
+```{r ch14_psbc_model_B}
 n_psbc_iters <- 500  # use >= 1000 for production
 
 if (!is.null(fit_rule_stan)) {
@@ -2047,7 +2047,7 @@ This is the section that does what earlier drafts of this material avoided with 
 
 We use the `sbi` package (Tejero-Cantero et al. 2020; Boelts et al. 2024) via `reticulate`. The key components are: a prior, a simulator wrapper, and an inference network (a normalising flow with a learned embedding network).
 
-```{r ch14_npe_setup, eval=run_intensive_checks}
+```{r ch14_npe_setup}
 # ── Python environment ────────────────────────────────────────────────────────
 # Requires: pip install sbi torch numpy
 # If using a conda environment: use_condaenv("sbi_env")
@@ -2078,7 +2078,7 @@ We infer two parameters jointly:
 
 The data representation for NPE is the full per-trial response vector $y \in \{0, 1\}^T$, concatenated with the per-trial stimulus features and feedback. The embedding network learns what to attend to.
 
-```{r ch14_npe_simulator, eval=run_intensive_checks}
+```{r ch14_npe_simulator}
 # The observed schedule — used for ALL simulations (schedule-fix)
 npe_schedule <- fit_schedule
 npe_obs_mat  <- as.matrix(npe_schedule[, c("height", "position")])
@@ -2119,7 +2119,7 @@ cat("Test simulation: eps =", round(plogis(test_theta[1]), 3),
 
 NPE training requires a dataset of $(\theta, x)$ pairs where $x$ includes both the response vector and the stimulus context. We generate this dataset in R (leveraging `furrr` parallelism) and pass it to Python as tensors.
 
-```{r ch14_npe_training_data, eval=run_intensive_checks}
+```{r ch14_npe_training_data}
 n_train_sims   <- 20000   # 20k sims; increase to 50k for production
 npe_cache_file <- here("simdata", "ch14_npe_training_data.rds")
 
@@ -2158,7 +2158,7 @@ if (regenerate_simulations || !file.exists(npe_cache_file)) {
 
 We use SNPE with a neural spline flow. The embedding network is a small MLP that processes the concatenation of `[response, height, position, feedback]` per trial into a learned summary vector.
 
-```{r ch14_npe_train, eval=run_intensive_checks}
+```{r ch14_npe_train}
 npe_model_file <- here("simdata", "ch14_npe_trained_posterior.pkl")
 
 if (regenerate_simulations || !file.exists(npe_model_file)) {
@@ -2219,7 +2219,7 @@ if (regenerate_simulations || !file.exists(npe_model_file)) {
 
 After training, inference is instantaneous: evaluate the trained network at the observed data $x_{\text{obs}}$.
 
-```{r ch14_npe_inference, eval=run_intensive_checks}
+```{r ch14_npe_inference}
 # Build the observed data tensor (same format as training)
 obs_responses <- as.integer(fit_sim$sim_response)
 obs_x_vec     <- as.numeric(t(cbind(obs_responses, context_per_trial)))
@@ -2269,7 +2269,7 @@ print(p_eps / p_npart)
 
 The persona's Phase 6 requires calibration checks. For NPE, the standard diagnostics are marginal SBC (Talts et al. 2018) and expected coverage (Hermans et al. 2022). Because NPE is amortized, running 1000 calibration checks takes seconds — each requires only a forward pass through the trained network.
 
-```{r ch14_npe_validation, eval=run_intensive_checks}
+```{r ch14_npe_validation}
 n_cal <- 1000L
 
 cat("Running NPE calibration diagnostics (", as.integer(n_cal), " checks)...\n")
@@ -2367,7 +2367,7 @@ cat("95% nominal coverage: empirical =",
 
 Here is the comparison the chapter has been building toward. We fit the same observed dataset under both Model A (via NPE) and Model B (via HMC) and overlay the two posteriors on $\varepsilon$. **The gap between them is the structural bias you accept when you replace the cognitive theory with a tractable proxy.**
 
-```{r ch14_npe_vs_stan, eval=run_intensive_checks}
+```{r ch14_npe_vs_stan}
 if (exists("npe_eps") && !is.null(fit_rule_stan)) {
   stan_eps <- as_draws_df(fit_rule_stan$draws("error_prob"))$error_prob
 
@@ -2404,7 +2404,7 @@ if (exists("npe_eps") && !is.null(fit_rule_stan)) {
 
 The headline claim — "the gap is structural bias, not inference noise" — requires an experiment. We generate datasets from multiple seeds and compare the NPE-vs-Stan gap. The gap should be small when Model A converges to a rule that is in Model B's candidate set, and large when it does not.
 
-```{r ch14_gap_demonstration, eval=run_intensive_checks}
+```{r ch14_gap_demonstration}
 if (exists("npe_posterior") && !is.null(mod_rule_stan)) {
   gap_seeds <- c(42, 123, 7, 99, 55)
   gap_results <- map_dfr(gap_seeds, function(s) {
