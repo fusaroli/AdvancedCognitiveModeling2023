@@ -67,22 +67,24 @@ transformed parameters {
       if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
         p_i = bias;
       } else {
-        vector[n_mem] sims;
+        real s1 = 0;
+        real s0 = 0;
+        int n1 = 0;
+        int n0 = 0;
         for (e in 1:n_mem) {
           real d = 0;
           int past_i = memory_trial_idx[e];
           for (f in 1:nfeatures)
             d += w[f] * abs_diff[i, past_i, f];
-          sims[e] = exp(-c * d);
+          real sim = exp(-c * d);
+          if (memory_cat[e] == 1) { s1 += sim; n1 += 1; }
+          else                    { s0 += sim; n0 += 1; }
         }
-        real s1 = 0;
-        real s0 = 0;
-        for (e in 1:n_mem) {
-          if (memory_cat[e] == 1) s1 += sims[e];
-          else                    s0 += sims[e];
-        }
-        real num = bias * s1;
-        real den = num + (1 - bias) * s0;
+        // Mean similarity per category (n1, n0 > 0 here).
+        real m1 = s1 / n1;
+        real m0 = s0 / n0;
+        real num = bias * m1;
+        real den = num + (1 - bias) * m0;
         p_i = (den > 1e-9) ? num / den : bias;
       }
 

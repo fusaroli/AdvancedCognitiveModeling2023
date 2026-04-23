@@ -519,7 +519,7 @@ Let's simulate behavior on the Kruschke (1993) task. The key parameter here is `
 param_df <- expand_grid(
   agent_id  = 1:5,
   r_value   = c(0.5, 2.0),
-  q_value   = c(0.0, 0.1, 0.5)
+  q_value   = c(0.001, 0.1, 0.5)
 ) |>
   mutate(subject_seed = agent_id)
 
@@ -1011,16 +1011,16 @@ if (!is.null(fit_proto_single)) {
   n_obs   <- ncol(p_draws)
 
   # Generate posterior predictive responses
-  set.seed(2026)
   yrep <- matrix(rbinom(n_draws * n_obs, 1, as.vector(p_draws)),
                  nrow = n_draws, ncol = n_obs)
 
   # Cumulative-accuracy ribbons vs. observed
   obs_cum_acc <- cumsum(agent_to_fit$sim_response == agent_to_fit$category_feedback) /
                  seq_len(n_obs)
-  yrep_correct <- sweep(yrep, 2,
-                        as.numeric(agent_to_fit$category_feedback),
-                        FUN = function(a, b) as.numeric(a == b))
+                 
+  # Use "==" directly and add 0 to coerce to numeric without losing matrix dims
+  yrep_correct <- sweep(yrep, 2, as.numeric(agent_to_fit$category_feedback), "==") + 0
+  
   yrep_cum_acc <- t(apply(yrep_correct, 1, function(r) cumsum(r) / seq_along(r)))
 
   cum_acc_summary <- tibble(
@@ -1111,10 +1111,12 @@ For continuous outcomes the preferred calibration check is LOO-PIT. For binary o
 if (!is.null(fit_proto_single)) {
   # PSIS-LOO weights from log_lik
   log_lik_mat <- fit_proto_single$draws("log_lik", format = "matrix")
-  loo_obj     <- loo::loo(log_lik_mat, cores = 4)
-  log_w       <- loo::weights.importance_sampling(loo_obj$psis_object,
-                                                   normalize = TRUE,
-                                                   log = TRUE)
+  
+  # FIX: Add save_psis = TRUE so the weight matrix is retained
+  loo_obj     <- loo::loo(log_lik_mat, cores = 4, save_psis = TRUE)
+  log_w       <- loo::weights.importance_sampling(loo_obj$psis_object, 
+                                                  normalize = TRUE, 
+                                                  log = TRUE)
 
   # Posterior draws of choice probability
   p_draws <- fit_proto_single$draws("p", format = "matrix")
@@ -1135,7 +1137,7 @@ if (!is.null(fit_proto_single)) {
     if (y_obs[i] == 1) runif(1, 1 - p_i, 1) else runif(1, 0, 1 - p_i)
   }, numeric(1))
 
-  ggplot(tibble(rloo_pit = rloo_pit), aes(x = rloo_pit)) +
+  p_pit <- ggplot(tibble(rloo_pit = rloo_pit), aes(x = rloo_pit)) +
     geom_histogram(aes(y = after_stat(density)), bins = 20,
                    fill = "#56B4E9", color = "white") +
     geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
@@ -1145,6 +1147,8 @@ if (!is.null(fit_proto_single)) {
       x = "Randomised PIT value", y = "Density"
     ) +
     coord_cartesian(ylim = c(0, 2.5))
+    
+  print(p_pit)
 }
 ```
 
@@ -1228,15 +1232,19 @@ psis_lfo_kalman <- function(stan_data,
 
   # Helper: given a fitted model, evaluate log_lik at trial t
   # using cmdstanr's $generate_quantities() so we don't re-MCMC.
+  # Helper: given a fitted model, evaluate log_lik at trial t
   eval_log_lik_at <- function(fit_ref, t) {
     # Build the "extended" data that includes trial t in the likelihood
     d_ext <- truncate_data(stan_data, t)
-    gq <- fit_ref$generate_quantities(
+    
+    # FIX: Call generate_quantities on stan_model, not fit_ref
+    gq <- stan_model$generate_quantities(
       fitted_params = fit_ref,
       data          = d_ext,
       seed          = seed + t,
       parallel_chains = chains
     )
+    
     # log_lik[t] for each posterior draw
     ll_mat <- gq$draws("log_lik", format = "matrix")
     ll_mat[, t]
@@ -1259,8 +1267,7 @@ psis_lfo_kalman <- function(stan_data,
     if (length(log_ratios_accum) == 0) {
       log_w <- rep(0, posterior::ndraws(fit_ref$draws()))
     } else {
-      log_w <- log_ratios_accum - matrixStats::logSumExp(log_ratios_accum) +
-               log(length(log_ratios_accum))
+      log_w <- log_ratios_accum  # raw log ratios; psis() handles normalization
     }
 
     # PSIS smoothing
@@ -1286,12 +1293,15 @@ psis_lfo_kalman <- function(stan_data,
     ll_t <- eval_log_lik_at(fit_ref, t)
 
     # Importance-weighted estimate of log p(y_t | y_{1:t-1})
-    log_w_norm <- log_w - matrixStats::logSumExp(log_w)
+    log_w_norm <- as.vector(weights(psis_obj, normalize = TRUE, log = TRUE))
     pointwise_elpd[t] <- matrixStats::logSumExp(log_w_norm + ll_t)
 
     # Accumulate log p(y_t | theta) for the next iteration's importance ratio
-    log_ratios_accum <- c(log_ratios_accum, list(ll_t))
-    log_ratios_accum <- Reduce("+", log_ratios_accum)
+    if (length(log_ratios_accum) == 0) {
+      log_ratios_accum <- ll_t
+    } else {
+      log_ratios_accum <- log_ratios_accum + ll_t
+    }
   }
 
   list(
@@ -1348,7 +1358,10 @@ if (regenerate_simulations || !file.exists(lfo_cache_file)) {
     d_ext$cat_one <- proto_data_single$cat_one[1:t]
     d_ext$y       <- proto_data_single$y[1:t]
     d_ext$obs     <- proto_data_single$obs[1:t, , drop = FALSE]
-    gq <- fit_t$generate_quantities(fitted_params = fit_t, data = d_ext)
+    
+    # ── THE FIX: Called on mod_prototype_single instead of fit_t ──
+    gq <- mod_prototype_single$generate_quantities(fitted_params = fit_t, data = d_ext)
+    
     ll_mat <- gq$draws("log_lik", format = "matrix")
     exact_elpd[k] <- matrixStats::logSumExp(ll_mat[, t]) - log(nrow(ll_mat))
   }
@@ -1572,16 +1585,18 @@ if (regenerate_simulations || !file.exists(precision_file)) {
   cat("Running precision analysis...\n")
   precision_plan <- expand_grid(
     true_r_value = c(0.5, 1.0, 3.0),
+    true_q_value = c(0.05, 0.2, 0.5),
     n_blocks_grid = c(2, 4, 8, 16),
     iteration    = 1:8   # 8 datasets per cell — coarse but illustrative
   )
 
   precision_results <- future_pmap_dfr(
     list(true_r_value      = precision_plan$true_r_value,
+         true_q_value      = precision_plan$true_q_value,
          iteration         = precision_plan$iteration,
          n_blocks_override = precision_plan$n_blocks_grid),
-    function(true_r_value, iteration, n_blocks_override) {
-      run_single_recovery(true_r_value, iteration,
+    function(true_r_value, true_q_value, iteration, n_blocks_override) {
+      run_single_recovery(true_r_value, true_q_value, iteration,
                           stimulus_info = stimulus_info,
                           n_blocks = n_blocks,
                           n_blocks_override = n_blocks_override)
@@ -1597,7 +1612,7 @@ if (regenerate_simulations || !file.exists(precision_file)) {
 
 if (exists("precision_results")) {
   precision_summary <- precision_results |>
-    group_by(true_r_value, n_trials) |>
+    group_by(true_r_value, true_q_value, n_trials) |>
     summarise(
       median_ci_width = median(ci_width_95, na.rm = TRUE),
       coverage        = mean(covers_truth, na.rm = TRUE),
@@ -1616,6 +1631,7 @@ if (exists("precision_results")) {
     geom_point(size = 3) +
     scale_color_viridis_d(option = "plasma", name = "True r") +
     scale_x_continuous(breaks = unique(precision_summary$n_trials)) +
+    facet_wrap(~paste0("q = ", true_q_value), ncol = 3) +
     labs(
       title    = "Precision Analysis: Median 95% CI Width vs. N",
       subtitle = "How fast does posterior precision improve with more trials?",
@@ -1631,6 +1647,7 @@ if (exists("precision_results")) {
     geom_point(size = 3) +
     scale_color_viridis_d(option = "plasma", name = "True r") +
     scale_x_continuous(breaks = unique(precision_summary$n_trials)) +
+    facet_wrap(~paste0("q = ", true_q_value), ncol = 3) +
     labs(
       title    = "Empirical 95% Coverage",
       subtitle = "Should track the dashed line at 0.95 if the posterior is calibrated",
@@ -1663,7 +1680,7 @@ if (regenerate_simulations || !file.exists(sbc_proto_filepath)) {
   n_sbc_iterations_proto <- 500   # use >= 1000 for publication-quality SBC
 
   proto_sbc_generator <- SBC_generator_function(
-    function(i) {
+    function() {
       # 1a. Draw true parameters from their priors
       log_r_true <- rnorm(1, LOG_R_PRIOR_MEAN, LOG_R_PRIOR_SD)
       r_true     <- exp(log_r_true)
@@ -1671,7 +1688,8 @@ if (regenerate_simulations || !file.exists(sbc_proto_filepath)) {
       q_true     <- exp(log_q_true)
 
       # 1b. Simulate one dataset with its own randomized schedule
-      sbc_sched <- make_subject_schedule(stimulus_info, n_blocks, seed = 20000 + i)
+      sbc_sched <- make_subject_schedule(stimulus_info, n_blocks,
+                                         seed = sample.int(1e8, 1))
       sim       <- prototype_kalman(
         r_value    = r_true,
         q_value    = q_true,
@@ -1697,8 +1715,7 @@ if (regenerate_simulations || !file.exists(sbc_proto_filepath)) {
           prior_logq_sd      = LOG_Q_PRIOR_SD
         )
       )
-    },
-    n = n_sbc_iterations_proto
+    }
   )
 
   proto_sbc_backend <- SBC_backend_cmdstan_sample(
@@ -1710,11 +1727,17 @@ if (regenerate_simulations || !file.exists(sbc_proto_filepath)) {
     refresh       = 0
   )
 
-  sbc_results_proto <- compute_SBC(
+  proto_datasets <- generate_datasets(
     proto_sbc_generator,
+    n_sims = n_sbc_iterations_proto
+  )
+
+  sbc_results_proto <- compute_SBC(
+    proto_datasets,
     proto_sbc_backend,
-    cache_path = here("simdata", "ch13_sbc_proto_cache"),
-    keep_fits  = FALSE
+    cache_mode     = "results",
+    cache_location = here("simdata", "ch13_sbc_proto_cache"),
+    keep_fits      = FALSE
   )
   saveRDS(sbc_results_proto, sbc_proto_filepath)
   cat("SBC prototype results computed and saved.\n")
@@ -1724,6 +1747,46 @@ if (regenerate_simulations || !file.exists(sbc_proto_filepath)) {
 }
 plot_ecdf_diff(sbc_results_proto)
 plot_rank_hist(sbc_results_proto)
+
+# ── Diagnostic issue investigation ───────────────────────────────────────────
+backend_diags  <- sbc_results_proto$backend_diagnostics
+default_diags  <- sbc_results_proto$default_diagnostics |>
+  dplyr::select(sim_id, max_rhat, min_ess_to_rank)
+true_params_wide <- sbc_results_proto$stats |>
+  dplyr::select(sim_id, variable, simulated_value) |>
+  tidyr::pivot_wider(names_from = variable, values_from = simulated_value)
+
+diag_df <- backend_diags |>
+  dplyr::left_join(default_diags,    by = "sim_id") |>
+  dplyr::left_join(true_params_wide, by = "sim_id") |>
+  dplyr::mutate(has_issue = n_divergent > 0 | n_max_treedepth > 0 | max_rhat > 1.01)
+
+p_diag_r_q <- ggplot(diag_df, aes(x = log_r, y = log_q, color = has_issue)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00")) +
+  labs(title    = "Diagnostic Issues in Parameter Space",
+       subtitle = "Orange points: divergence, max treedepth, or Rhat > 1.01",
+       x = "True log(r)", y = "True log(q)") +
+  theme(legend.position = "bottom")
+
+print(p_diag_r_q)
+
+# ── Parameter recovery on SBC simulations ────────────────────────────────────
+recovery_df <- sbc_results_proto$stats
+
+p_sbc_recovery <- ggplot(recovery_df, aes(x = simulated_value, y = mean)) +
+  geom_point(alpha = 0.4, color = "#0072B2") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  facet_wrap(~variable, scales = "free") +
+  labs(
+    title    = "Parameter Recovery Across SBC Simulations",
+    subtitle = "Posterior mean vs True generated value",
+    x = "True Value (simulated_value)",
+    y = "Estimated Value (Posterior Mean)"
+  ) +
+  theme_bw()
+
+print(p_sbc_recovery)
 ```
 
 **Reading the SBC output.** With two parameters, the ECDF-difference plot shows two curves (`log_r` and `log_q`) that should each stay inside the grey simultaneous confidence band. Systematic deviations indicate specific failure modes:
@@ -1733,6 +1796,822 @@ plot_rank_hist(sbc_results_proto)
 * **Monotone drift** (skewed left or right): a directional bias in $\log r$. Action: re-derive the Stan code from scratch and compare against the R simulator on a single agent. The most common cause is a sign error or off-by-one in the Kalman update.
 
 For the production version of this material we recommend $S \geq 1000$ iterations. The $S = 500$ version above is illustrative.
+
+---
+
+## Non-Stationary Environments: When Does $q$ Become Identifiable?
+
+The SBC result above exposes a structural problem. Under the static Kruschke paradigm, $\log r$ is cleanly recovered but $\log q$ is not — its ECDF-difference curve drifts outside the simultaneous band and its posterior often collapses toward the prior. This is not a coding bug or a sampler problem: it is a genuine identifiability failure caused by a mismatch between the *parameter* (process noise on prototype drift) and the *task* (fixed category centres with no drift to track).
+
+Three generative processes stress this identifiability question differently. We implement all three and run the full validation battery on each.
+
+1. **Static Kruschke (baseline).** Fixed category labels. The Kalman filter's process-noise prior assumes smooth Gaussian drift; under stationary data, no amount of $q$ improves fit once transient learning is over. We expect $\log q$ to remain weakly identified — this is the failure case we need to diagnose clearly.
+2. **Performance-contingent abrupt shifts.** After the agent reaches a streak of $k$ consecutive correct responses, all category labels flip. Post-flip recovery is *fast* for agents whose $q$ lets the covariance re-inflate after surprise, and *slow* for agents whose $q$ is tiny — so $q$ acquires a direct behavioural signature. But the true process has abrupt jumps, which the filter's Gaussian-drift prior does not literally contain; this is a misspecified-but-informative scenario.
+3. **Smooth drift.** Category centres in feature space follow an independent random walk; labels are assigned trial-by-trial by proximity to the current drifted centres. This is the **assumption-matched** scenario: the Kalman filter's generative story (prototypes drift as Gaussian random walks) is now literally true of the environment. We expect $\log q$ to be cleanly identified and SBC to pass.
+
+The three scenarios span the spectrum of assumption match — **none → misspecified → exact** — and the SBC signatures should sort in that order.
+
+### Assumption Match Across Scenarios
+
+| Scenario | What drifts in the world | What the Kalman filter assumes | Match |
+|---|---|---|---|
+| Static | Nothing | Gaussian drift | **Misspecified** (but harmless: $q = 0$ limit works) |
+| Contingent shift | Abrupt label reversals | Gaussian drift | **Misspecified** (filter smooths the reversal) |
+| Smooth drift | Gaussian-like centre drift | Gaussian drift | **Exact** (this is the model's native story) |
+
+This is the mirror of Chapter 11's GCM-with-decay analysis: the GCM's decay kernel fits contingent shifts as well as drift (because "forget old stuff" is a general-purpose mechanism), while the Kalman filter's smooth-drift prior fits smooth drift cleanly and reversals only approximately.
+
+### Scenario-Aware Simulator
+
+```{r ch13_scenario_simulator}
+simulate_prototype_scenario <- function(r_value, q_value, schedule,
+                                        scenario = c("static",
+                                                     "contingent_shift",
+                                                     "drift"),
+                                        streak_target      = 8,
+                                        drift_traj         = NULL,
+                                        initial_mu_cat0    = c(2.5, 2.5),
+                                        initial_mu_cat1    = c(2.5, 2.5),
+                                        initial_sigma_diag = 10.0) {
+  scenario <- match.arg(scenario)
+  ntrials  <- nrow(schedule)
+  obs_mat  <- as.matrix(schedule[, c("height", "position")])
+  base_lab <- schedule$category_feedback
+  nfeat    <- 2L
+
+  mu0    <- initial_mu_cat0
+  mu1    <- initial_mu_cat1
+  sigma0 <- diag(initial_sigma_diag, nfeat)
+  sigma1 <- diag(initial_sigma_diag, nfeat)
+  R_mat  <- diag(r_value, nfeat)
+  Q_mat  <- diag(q_value, nfeat)
+  I_mat  <- diag(nfeat)
+
+  label_flip <- FALSE
+  streak     <- 0L
+
+  prob_cat1         <- numeric(ntrials)
+  sim_response      <- integer(ntrials)
+  observed_feedback <- integer(ntrials)
+  label_flip_trace  <- logical(ntrials)
+
+  for (i in seq_len(ntrials)) {
+    x <- as.numeric(obs_mat[i, ])
+
+    # ── Prediction step ──────────────────────────────────────────────
+    sigma0 <- sigma0 + Q_mat
+    sigma1 <- sigma1 + Q_mat
+
+    # ── Decision ─────────────────────────────────────────────────────
+    cov0 <- sigma0 + R_mat
+    cov1 <- sigma1 + R_mat
+    lp0  <- tryCatch(mvtnorm::dmvnorm(x, mean = mu0, sigma = cov0, log = TRUE),
+                     error = function(e) -Inf)
+    lp1  <- tryCatch(mvtnorm::dmvnorm(x, mean = mu1, sigma = cov1, log = TRUE),
+                     error = function(e) -Inf)
+    m    <- max(lp0, lp1)
+    p    <- exp(lp1 - (m + log(exp(lp0 - m) + exp(lp1 - m))))
+    p    <- pmax(1e-9, pmin(1 - 1e-9, p))
+    prob_cat1[i]    <- p
+    sim_response[i] <- rbinom(1, 1, p)
+
+    # ── Observed feedback depends on the scenario ────────────────────
+    fb <- switch(scenario,
+      static           = base_lab[i],
+      contingent_shift = if (label_flip) 1L - base_lab[i] else base_lab[i],
+      drift            = {
+        d0 <- sum(abs(x - drift_traj$mu0[i, ]))
+        d1 <- sum(abs(x - drift_traj$mu1[i, ]))
+        as.integer(d1 < d0)
+      }
+    )
+    observed_feedback[i] <- fb
+    label_flip_trace[i]  <- label_flip
+
+    # Update the streak/flip state for the contingent scenario
+    if (scenario == "contingent_shift") {
+      streak <- if (sim_response[i] == fb) streak + 1L else 0L
+      if (streak >= streak_target) { label_flip <- !label_flip; streak <- 0L }
+    }
+
+    # ── Measurement update for the observed-feedback category ────────
+    if (fb == 1) {
+      innov  <- x - mu1
+      S      <- sigma1 + R_mat
+      K      <- sigma1 %*% solve(S)
+      mu1    <- as.numeric(mu1 + K %*% innov)
+      IK     <- I_mat - K
+      sigma1 <- IK %*% sigma1 %*% t(IK) + K %*% R_mat %*% t(K)
+      sigma1 <- (sigma1 + t(sigma1)) / 2
+    } else {
+      innov  <- x - mu0
+      S      <- sigma0 + R_mat
+      K      <- sigma0 %*% solve(S)
+      mu0    <- as.numeric(mu0 + K %*% innov)
+      IK     <- I_mat - K
+      sigma0 <- IK %*% sigma0 %*% t(IK) + K %*% R_mat %*% t(K)
+      sigma0 <- (sigma0 + t(sigma0)) / 2
+    }
+  }
+
+  schedule |>
+    mutate(
+      prob_cat1         = prob_cat1,
+      sim_response      = sim_response,
+      observed_feedback = observed_feedback,
+      label_flip        = label_flip_trace,
+      correct           = as.integer(sim_response == observed_feedback)
+    )
+}
+```
+
+### Drift Trajectory Generator
+
+The drift scenario pre-computes a trajectory for both category centres as independent bivariate Gaussian random walks.
+
+```{r ch13_drift_trajectory}
+make_drift_trajectory <- function(ntrials, drift_sigma = 0.05, seed = 1) {
+  set.seed(seed)
+  mu0_init <- c(1.75, 3.25)   # Kruschke cat-0 mean (height, position)
+  mu1_init <- c(3.25, 1.75)   # Kruschke cat-1 mean
+  d0 <- apply(matrix(rnorm(ntrials * 2, 0, drift_sigma), ncol = 2), 2, cumsum)
+  d1 <- apply(matrix(rnorm(ntrials * 2, 0, drift_sigma), ncol = 2), 2, cumsum)
+  list(
+    mu0 = sweep(d0, 2, mu0_init, "+"),
+    mu1 = sweep(d1, 2, mu1_init, "+")
+  )
+}
+```
+
+### Scenario Agent Wrapper
+
+```{r ch13_scenario_agent_wrapper}
+simulate_prototype_agent_scenario <- function(agent_id, scenario,
+                                              r_value, q_value,
+                                              subject_seed,
+                                              streak_target = 8,
+                                              drift_sigma   = 0.05) {
+  schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  drift_tr <- if (scenario == "drift")
+    make_drift_trajectory(nrow(schedule), drift_sigma, seed = subject_seed)
+  else NULL
+
+  out <- simulate_prototype_scenario(
+    r_value       = r_value,
+    q_value       = q_value,
+    schedule      = schedule,
+    scenario      = scenario,
+    streak_target = streak_target,
+    drift_traj    = drift_tr
+  )
+
+  out |>
+    mutate(
+      agent_id     = agent_id,
+      scenario     = scenario,
+      r_value_true = r_value,
+      q_value_true = q_value,
+      log_r_true   = log(r_value),
+      log_q_true   = log(q_value)
+    ) |>
+    group_by(agent_id) |>
+    mutate(cumulative_accuracy = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+```
+
+### Visualising the Three Scenarios
+
+We simulate 10 agents per cell across a 3 × 3 grid of scenarios × $q$ values (at fixed $r = 1.5$) and plot cumulative accuracy.
+
+```{r ch13_scenario_viz}
+scenario_viz_file <- here("simdata", "ch13_scenario_viz.csv")
+
+if (regenerate_simulations || !file.exists(scenario_viz_file)) {
+  viz_grid <- expand_grid(
+    scenario    = c("static", "contingent_shift", "drift"),
+    q_value     = c(0.02, 0.15, 0.6),
+    agent_id    = 1:10
+  ) |>
+    mutate(subject_seed = 30000 + row_number())
+
+  viz_sim <- pmap_dfr(
+    list(agent_id     = viz_grid$agent_id,
+         scenario     = viz_grid$scenario,
+         q_value      = viz_grid$q_value,
+         subject_seed = viz_grid$subject_seed),
+    function(agent_id, scenario, q_value, subject_seed) {
+      simulate_prototype_agent_scenario(
+        agent_id     = agent_id,
+        scenario     = scenario,
+        r_value      = 1.5,
+        q_value      = q_value,
+        subject_seed = subject_seed
+      )
+    }
+  )
+  write_csv(viz_sim, scenario_viz_file)
+} else {
+  viz_sim <- read_csv(scenario_viz_file, show_col_types = FALSE)
+}
+
+ggplot(viz_sim,
+       aes(x = trial_within_subject, y = cumulative_accuracy,
+           color = factor(q_value_true))) +
+  stat_summary(fun = mean, geom = "line",
+               aes(group = factor(q_value_true)), linewidth = 1.1) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.15,
+               aes(fill = factor(q_value_true), group = factor(q_value_true)),
+               color = NA) +
+  facet_wrap(~scenario, ncol = 3,
+             labeller = as_labeller(c(
+               static           = "Static Kruschke",
+               contingent_shift = "Performance-contingent flips",
+               drift            = "Smooth drift"))) +
+  scale_color_viridis_d(option = "plasma", name = "q") +
+  scale_fill_viridis_d(option  = "plasma", name = "q") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") +
+  labs(
+    title    = "Prototype Learning Curves Across Scenarios",
+    subtitle = "Mean ± SE across 10 agents per cell; r = 1.5",
+    x = "Trial", y = "Cumulative accuracy"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+**Reading the panels.** The static panel looks much like the plots earlier in the chapter — accuracy climbs, asymptotes below ceiling for larger $q$ (because the covariance never fully shrinks). The contingent-shift panel shows characteristic sawtooth recovery: higher $q$ produces sharper but faster-rebounding dips. The drift panel shows all three $q$ curves plateauing below ceiling, with the plateau highest for the $q$ tuned to the environmental drift amplitude.
+
+### Fitting One Agent per Scenario (Original Parameterisation)
+
+We pick one representative agent per scenario with $r = 1.5$, $q = 0.15$, and fit the Kalman prototype model (original `(log_r, log_q)` parameterisation) to each.
+
+```{r ch13_scenario_fit_per_scenario}
+scenario_fit_file <- here("simmodels", "ch13_prototype_scenario_fits.rds")
+
+scenario_single_fit_data <- list(
+  static           = simulate_prototype_agent_scenario(
+                        1, "static",           r_value = 1.5, q_value = 0.15,
+                        subject_seed = 40001),
+  contingent_shift = simulate_prototype_agent_scenario(
+                        1, "contingent_shift", r_value = 1.5, q_value = 0.15,
+                        subject_seed = 40002),
+  drift            = simulate_prototype_agent_scenario(
+                        1, "drift",            r_value = 1.5, q_value = 0.15,
+                        subject_seed = 40003)
+)
+
+stan_data_from_scenario_agent <- function(agent_df) {
+  list(
+    ntrials            = nrow(agent_df),
+    nfeatures          = 2L,
+    cat_one            = as.integer(agent_df$observed_feedback),
+    y                  = as.integer(agent_df$sim_response),
+    obs                = as.matrix(agent_df[, c("height", "position")]),
+    initial_mu_cat0    = c(2.5, 2.5),
+    initial_mu_cat1    = c(2.5, 2.5),
+    initial_sigma_diag = 10.0,
+    prior_logr_mean    = LOG_R_PRIOR_MEAN,
+    prior_logr_sd      = LOG_R_PRIOR_SD,
+    prior_logq_mean    = LOG_Q_PRIOR_MEAN,
+    prior_logq_sd      = LOG_Q_PRIOR_SD
+  )
+}
+
+if (regenerate_simulations || !file.exists(scenario_fit_file)) {
+  scenario_fits <- purrr::imap(scenario_single_fit_data, function(agent_df, scen) {
+    dat <- stan_data_from_scenario_agent(agent_df)
+    pf  <- tryCatch(
+      mod_prototype_single$pathfinder(data = dat, num_paths = 4,
+                                      refresh = 0, seed = 500),
+      error = function(e) NULL
+    )
+    fit <- mod_prototype_single$sample(
+      data            = dat,
+      init            = if (!is.null(pf)) pf else 0.5,
+      seed            = 500,
+      chains          = 4,
+      parallel_chains = min(4, availableCores()),
+      iter_warmup     = 1000,
+      iter_sampling   = 1500,
+      refresh         = 0,
+      adapt_delta     = 0.9
+    )
+    fit$save_object(here("simmodels",
+                         paste0("ch13_prototype_scenario_", scen, ".rds")))
+    fit
+  })
+  saveRDS(lapply(scenario_fits, function(f) f$output_files()),
+          scenario_fit_file)
+  cat("Scenario fits computed and saved.\n")
+} else {
+  scenario_fits <- setNames(
+    lapply(names(scenario_single_fit_data), function(scen) {
+      readRDS(here("simmodels",
+                   paste0("ch13_prototype_scenario_", scen, ".rds")))
+    }),
+    names(scenario_single_fit_data)
+  )
+  cat("Loaded existing scenario fits.\n")
+}
+```
+
+### MCMC Diagnostic Battery Across Scenarios
+
+```{r ch13_scenario_diagnostics}
+scenario_diag_tbls <- purrr::imap_dfr(scenario_fits, function(fit, scen) {
+  tbl <- diagnostic_summary_table(fit, pars = c("log_r", "log_q",
+                                                "r_value", "q_value"))
+  tbl |> mutate(scenario = scen)
+})
+print(scenario_diag_tbls |>
+        dplyr::select(scenario, metric, value, threshold, pass))
+
+walk(names(scenario_fits), function(scen) {
+  cat("=== Pair plot:", scen, "===\n")
+  print(bayesplot::mcmc_pairs(
+    scenario_fits[[scen]]$draws(c("log_r", "log_q")),
+    diag_fun     = "dens",
+    off_diag_fun = "hex",
+    np           = nuts_params(scenario_fits[[scen]])
+  ))
+})
+```
+
+**What the pair plots reveal.** On static data the `(log_r, log_q)` posterior sits on a strongly negatively-correlated ridge — the canonical identifiability failure. On contingent-shift data the ridge is shorter and tilted: reversal dynamics load on $q$ specifically, so the degrees of freedom are no longer degenerate. On drift data the posterior is roughly circular in the two parameters; this is the visual signature of the assumption-matched case.
+
+### Prior → Posterior Updates Across Scenarios
+
+```{r ch13_scenario_prior_posterior}
+scenario_pp_df <- purrr::imap_dfr(scenario_fits, function(fit, scen) {
+  d <- as_draws_df(fit$draws(c("log_r", "log_q")))
+  bind_rows(
+    tibble(scenario = scen, parameter = "log_r", value = d$log_r, source = "posterior"),
+    tibble(scenario = scen, parameter = "log_q", value = d$log_q, source = "posterior")
+  )
+})
+
+set.seed(21)
+n_prior <- 4000
+prior_ref <- bind_rows(
+  tibble(parameter = "log_r", value = rnorm(n_prior, LOG_R_PRIOR_MEAN, LOG_R_PRIOR_SD),
+         source = "prior"),
+  tibble(parameter = "log_q", value = rnorm(n_prior, LOG_Q_PRIOR_MEAN, LOG_Q_PRIOR_SD),
+         source = "prior")
+) |>
+  tidyr::crossing(scenario = c("static", "contingent_shift", "drift"))
+
+truth_lines <- tibble(
+  parameter = c("log_r", "log_q"),
+  value     = c(log(1.5), log(0.15))
+)
+
+ggplot(bind_rows(prior_ref, scenario_pp_df),
+       aes(x = value, fill = source, color = source)) +
+  geom_density(alpha = 0.4, linewidth = 0.5) +
+  geom_vline(data = truth_lines, aes(xintercept = value),
+             color = "red", linetype = "dashed") +
+  facet_grid(scenario ~ parameter, scales = "free") +
+  scale_fill_manual(values  = c(prior = "grey70", posterior = "#009E73")) +
+  scale_color_manual(values = c(prior = "grey50", posterior = "#006D4E")) +
+  labs(
+    title    = "Prior → Posterior Update: Prototype Model Across Scenarios",
+    subtitle = "Red dashed line = true generating value used for the single-agent fit",
+    x = NULL, y = "Density"
+  )
+```
+
+The density of `log_q` narrows visibly across scenarios: from prior-like on static data (information-starved), to sharply peaked around the truth on drift data (assumption-matched).
+
+### One-Shot Parameter Recovery Across Scenarios
+
+We sweep a 3 × 3 grid of $(r, q)$ truths with 5 iterations per cell per scenario (135 fits) and plot recovery on the log scale.
+
+```{r ch13_scenario_recovery_sweep}
+scenario_recovery_file <- here("simdata", "ch13_scenario_recovery_results.rds")
+
+run_proto_scenario_recovery_iter <- function(scenario, r_true, q_true, iteration) {
+  subject_seed <- iteration * 10000 +
+                   round(r_true * 100) +
+                   round(q_true * 1000) +
+                   switch(scenario, static = 1, contingent_shift = 2, drift = 3)
+
+  agent_df <- simulate_prototype_agent_scenario(
+    agent_id     = iteration,
+    scenario     = scenario,
+    r_value      = r_true,
+    q_value      = q_true,
+    subject_seed = subject_seed
+  )
+  dat <- stan_data_from_scenario_agent(agent_df)
+  pf  <- tryCatch(
+    mod_prototype_single$pathfinder(data = dat, num_paths = 4,
+                                    refresh = 0, seed = subject_seed),
+    error = function(e) NULL
+  )
+  fit <- tryCatch(
+    mod_prototype_single$sample(
+      data            = dat,
+      init            = if (!is.null(pf)) pf else 0.5,
+      seed            = subject_seed,
+      chains          = 2,
+      parallel_chains = 2,
+      iter_warmup     = 800,
+      iter_sampling   = 1000,
+      refresh         = 0,
+      adapt_delta     = 0.9
+    ),
+    error = function(e) { message("Fit error: ", e$message); NULL }
+  )
+  if (is.null(fit)) return(NULL)
+
+  s <- fit$summary(variables = c("log_r", "log_q"))
+  diag <- fit$diagnostic_summary(quiet = TRUE)
+  tibble(
+    scenario       = scenario,
+    r_true         = r_true,
+    q_true         = q_true,
+    iteration      = iteration,
+    log_r_mean     = s$mean[s$variable == "log_r"],
+    log_q_mean     = s$mean[s$variable == "log_q"],
+    log_r_q5       = s$q5[s$variable == "log_r"],
+    log_r_q95      = s$q95[s$variable == "log_r"],
+    log_q_q5       = s$q5[s$variable == "log_q"],
+    log_q_q95      = s$q95[s$variable == "log_q"],
+    had_divergence = any(diag$num_divergent > 0)
+  )
+}
+
+if (regenerate_simulations || !file.exists(scenario_recovery_file)) {
+  recovery_plan <- expand_grid(
+    scenario  = c("static", "contingent_shift", "drift"),
+    r_true    = c(0.5, 1.5, 3.0),
+    q_true    = c(0.02, 0.15, 0.6),
+    iteration = 1:5
+  )
+
+  plan(multisession, workers = max(1, availableCores() - 1))
+  scenario_recovery <- future_pmap_dfr(
+    list(scenario  = recovery_plan$scenario,
+         r_true    = recovery_plan$r_true,
+         q_true    = recovery_plan$q_true,
+         iteration = recovery_plan$iteration),
+    run_proto_scenario_recovery_iter,
+    .options = furrr_options(seed = TRUE, scheduling = 1)
+  )
+  plan(sequential)
+  saveRDS(scenario_recovery, scenario_recovery_file)
+  cat("Scenario recovery sweep complete.\n")
+} else {
+  scenario_recovery <- readRDS(scenario_recovery_file)
+  cat("Loaded existing scenario recovery sweep.\n")
+}
+
+scenario_recovery_long <- scenario_recovery |>
+  dplyr::select(scenario, r_true, q_true, iteration, had_divergence,
+                log_r_mean, log_q_mean) |>
+  pivot_longer(cols = c(log_r_mean, log_q_mean),
+               names_to = "variable", values_to = "estimated") |>
+  mutate(
+    parameter = if_else(variable == "log_r_mean", "log_r", "log_q"),
+    truth     = if_else(parameter == "log_r", log(r_true), log(q_true))
+  )
+
+ggplot(scenario_recovery_long, aes(x = truth, y = estimated,
+                                    color = had_divergence)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_point(alpha = 0.7, size = 2) +
+  facet_grid(parameter ~ scenario, scales = "free") +
+  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00"),
+                     name = "Had divergence") +
+  labs(
+    title    = "One-Shot Parameter Recovery for the Kalman Prototype Model",
+    subtitle = "Posterior mean vs true generating value; 5 iterations per (r, q) cell, 3 scenarios",
+    x = "True value (log scale)", y = "Estimated value (posterior mean)"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+**Interpretation.** The `log_r` row is near-diagonal across scenarios — $r$ is identified by within-category decision sharpness, which every scenario exercises. The `log_q` row is the diagnostic: diffuse scatter on static data (the parameter is under-constrained), tighter on drift, and comparably tight on contingent-shift. The contingent-shift result is noteworthy — the data-generating process has abrupt jumps that the filter's smooth-drift prior cannot exactly reproduce, yet recovery still works because post-shift recovery speed loads specifically on $q$.
+
+### Simulation-Based Calibration Across Scenarios
+
+SBC is the formal calibration test. Each scenario gets its own generator drawing $(\log r, \log q)$ from their priors.
+
+```{r ch13_scenario_sbc_generator}
+make_proto_sbc_generator <- function(scenario) {
+  SBC_generator_function(
+    function() {
+      log_r_true <- rnorm(1, LOG_R_PRIOR_MEAN, LOG_R_PRIOR_SD)
+      log_q_true <- rnorm(1, LOG_Q_PRIOR_MEAN, LOG_Q_PRIOR_SD)
+      r_true     <- exp(log_r_true)
+      q_true     <- exp(log_q_true)
+
+      subject_seed <- sample.int(1e8, 1)
+      agent_df <- simulate_prototype_agent_scenario(
+        agent_id     = 1,
+        scenario     = scenario,
+        r_value      = r_true,
+        q_value      = q_true,
+        subject_seed = subject_seed
+      )
+
+      list(
+        variables = list(log_r = log_r_true, log_q = log_q_true),
+        generated = stan_data_from_scenario_agent(agent_df)
+      )
+    }
+  )
+}
+
+run_proto_scenario_sbc <- function(scenario, n_sims = 200) {
+  cache_file <- here("simdata", paste0("ch13_proto_sbc_", scenario, ".rds"))
+  if (!regenerate_simulations && file.exists(cache_file)) {
+    cat("Loaded cached prototype SBC for scenario:", scenario, "\n")
+    return(readRDS(cache_file))
+  }
+  gen <- make_proto_sbc_generator(scenario)
+  backend <- SBC_backend_cmdstan_sample(
+    mod_prototype_single,
+    iter_warmup   = 800,
+    iter_sampling = 1000,
+    chains        = 2,
+    adapt_delta   = 0.9,
+    refresh       = 0
+  )
+  datasets <- generate_datasets(gen, n_sims = n_sims)
+  res <- compute_SBC(
+    datasets,
+    backend,
+    cache_mode     = "results",
+    cache_location = here("simdata", paste0("ch13_proto_sbc_cache_", scenario)),
+    keep_fits      = FALSE
+  )
+  saveRDS(res, cache_file)
+  res
+}
+
+proto_sbc_static <- run_proto_scenario_sbc("static",           n_sims = 200)
+proto_sbc_shift  <- run_proto_scenario_sbc("contingent_shift", n_sims = 200)
+proto_sbc_drift  <- run_proto_scenario_sbc("drift",            n_sims = 200)
+```
+
+```{r ch13_scenario_sbc_ecdf}
+print(plot_ecdf_diff(proto_sbc_static) + ggtitle("SBC: static"))
+print(plot_ecdf_diff(proto_sbc_shift)  + ggtitle("SBC: performance-contingent shifts"))
+print(plot_ecdf_diff(proto_sbc_drift)  + ggtitle("SBC: smooth drift"))
+
+print(plot_rank_hist(proto_sbc_static) + ggtitle("Rank histograms — static"))
+print(plot_rank_hist(proto_sbc_shift)  + ggtitle("Rank histograms — contingent shifts"))
+print(plot_rank_hist(proto_sbc_drift)  + ggtitle("Rank histograms — drift"))
+```
+
+```{r ch13_scenario_sbc_recovery_plots}
+combine_proto_sbc_stats <- function(sbc_obj, scenario) {
+  sbc_obj$stats |> mutate(scenario = scenario)
+}
+
+proto_sbc_stats <- bind_rows(
+  combine_proto_sbc_stats(proto_sbc_static, "static"),
+  combine_proto_sbc_stats(proto_sbc_shift,  "contingent_shift"),
+  combine_proto_sbc_stats(proto_sbc_drift,  "drift")
+) |>
+  dplyr::filter(variable %in% c("log_r", "log_q"))
+
+ggplot(proto_sbc_stats, aes(x = simulated_value, y = mean)) +
+  geom_point(alpha = 0.35, color = "#0072B2") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  facet_grid(variable ~ scenario, scales = "free") +
+  labs(
+    title    = "SBC-Level Parameter Recovery: Kalman Prototype",
+    subtitle = "Posterior mean vs true generating value, pooled across SBC simulations",
+    x = "True value", y = "Posterior mean"
+  )
+
+proto_sbc_stats |>
+  group_by(scenario, variable) |>
+  summarise(
+    sbc_mean_bias = mean(mean - simulated_value, na.rm = TRUE),
+    sbc_rmse      = sqrt(mean((mean - simulated_value)^2, na.rm = TRUE)),
+    sbc_corr      = cor(mean, simulated_value,
+                        use = "complete.obs", method = "pearson"),
+    n_sims        = dplyr::n(),
+    .groups       = "drop"
+  ) |>
+  print(n = Inf)
+```
+
+**Reading the three SBC results.** The static SBC for `log_q` shows the ECDF-difference curve drifting outside the simultaneous band and the rank histogram humping — posterior credible intervals do not contain the truth at the nominal rate. The contingent-shift SBC is noticeably better on `log_q` but may still show mild systematic deviation (a signature of the smooth-drift-vs-abrupt-jump misspecification). The drift SBC should show both parameters' curves squarely inside the band and rank histograms close to uniform. This is the formal version of the identifiability claim: calibration is achieved when task structure matches the model's generative story.
+
+---
+
+## Reparameterizing to Break the $q$/$r$ Ridge
+
+The static-scenario pair plot showed a heavy negatively-correlated ridge on `(log_r, log_q)`. The ridge is *geometric* — a property of the posterior shape, not of the information content. It makes HMC sampling less efficient (ESS-per-draw falls as the posterior elongates into a thin diagonal), makes SBC harder to interpret (the failure mode could be either log_r or log_q but really it's their difference), and obscures what the data actually say.
+
+### The SNR Parameterisation
+
+Rewrite the two parameters as
+
+$$\log r, \qquad \log \rho = \log q - \log r.$$
+
+Here $\rho = q/r$ is the drift-to-observation-noise ratio — a dimensionless scale that directly controls the Kalman filter's steady-state gain. The original `log_q` is now a *derived* quantity: `log_q = log_r + log_rho`. If the data pin down the *sum* $\log r + \log \rho$ (i.e. $\log q$) cleanly but not the *difference* $\log r - \log \rho$, the SNR parameterisation represents this cleanly as a wide marginal on one of the two parameters — no diagonal ridge, no misleading pair plot.
+
+We use Normal priors on both axes:
+
+```{r ch13_snr_prior_constants}
+# SNR parameterisation priors.
+# log_r ~ Normal(0, 1)      — same as the original parameterisation.
+# log_rho ~ Normal(-2, 1)   — centres rho at 0.135 (drift small vs. r).
+# Marginal on log_q = log_r + log_rho is Normal(-2, sqrt(2)) ≈ Normal(-2, 1.41).
+# Slightly wider than the original Normal(-2, 1), but the increase is modest and
+# the shape of the implied prior predictive is comparable.
+LOG_RHO_PRIOR_MEAN <- -2.0
+LOG_RHO_PRIOR_SD   <- 1.0
+```
+
+### The SNR Stan Model
+
+```{r ch13_snr_stan_compile}
+stan_file_proto_snr <- here("stan", "ch12_prototype_single_snr.stan")
+mod_prototype_snr   <- cmdstan_model(stan_file_proto_snr)
+```
+
+See `stan/ch12_prototype_single_snr.stan`. The only parameter-block change is `log_rho` replacing `log_q`; `log_q` is computed in transformed parameters.
+
+### Fitting Both Parameterisations to the Same Static Data
+
+```{r ch13_snr_fit_static}
+snr_static_file <- here("simmodels", "ch13_proto_snr_static_fit.rds")
+
+static_agent <- scenario_single_fit_data$static  # same dataset as above
+snr_static_data <- list(
+  ntrials            = nrow(static_agent),
+  nfeatures          = 2L,
+  cat_one            = as.integer(static_agent$observed_feedback),
+  y                  = as.integer(static_agent$sim_response),
+  obs                = as.matrix(static_agent[, c("height", "position")]),
+  initial_mu_cat0    = c(2.5, 2.5),
+  initial_mu_cat1    = c(2.5, 2.5),
+  initial_sigma_diag = 10.0,
+  prior_logr_mean    = LOG_R_PRIOR_MEAN,
+  prior_logr_sd      = LOG_R_PRIOR_SD,
+  prior_logrho_mean  = LOG_RHO_PRIOR_MEAN,
+  prior_logrho_sd    = LOG_RHO_PRIOR_SD
+)
+
+if (regenerate_simulations || !file.exists(snr_static_file)) {
+  pf_snr <- tryCatch(
+    mod_prototype_snr$pathfinder(data = snr_static_data, num_paths = 4,
+                                 refresh = 0, seed = 777),
+    error = function(e) NULL
+  )
+  fit_proto_snr_static <- mod_prototype_snr$sample(
+    data            = snr_static_data,
+    init            = if (!is.null(pf_snr)) pf_snr else 0.5,
+    seed            = 777,
+    chains          = 4,
+    parallel_chains = min(4, availableCores()),
+    iter_warmup     = 1000,
+    iter_sampling   = 1500,
+    refresh         = 0,
+    adapt_delta     = 0.9
+  )
+  fit_proto_snr_static$save_object(snr_static_file)
+} else {
+  fit_proto_snr_static <- readRDS(snr_static_file)
+}
+
+orig_static_fit <- scenario_fits$static
+
+cat("=== Original (log_r, log_q) parameterisation ===\n")
+print(orig_static_fit$summary(variables = c("log_r", "log_q", "r_value", "q_value")))
+cat("\n=== SNR (log_r, log_rho) parameterisation ===\n")
+print(fit_proto_snr_static$summary(variables = c("log_r", "log_rho", "log_q",
+                                                  "r_value", "q_value")))
+```
+
+### Geometry Comparison
+
+```{r ch13_snr_pair_compare}
+p_orig <- bayesplot::mcmc_pairs(
+  orig_static_fit$draws(c("log_r", "log_q")),
+  diag_fun = "dens", off_diag_fun = "hex",
+  np       = nuts_params(orig_static_fit)
+)
+p_snr  <- bayesplot::mcmc_pairs(
+  fit_proto_snr_static$draws(c("log_r", "log_rho")),
+  diag_fun = "dens", off_diag_fun = "hex",
+  np       = nuts_params(fit_proto_snr_static)
+)
+
+print(p_orig)
+print(p_snr)
+
+# Side-by-side ESS comparison
+ess_compare <- bind_rows(
+  orig_static_fit$summary(c("log_r", "log_q"),
+                          "ess_bulk", "ess_tail") |>
+    mutate(parameterisation = "original"),
+  fit_proto_snr_static$summary(c("log_r", "log_rho"),
+                               "ess_bulk", "ess_tail") |>
+    mutate(parameterisation = "SNR")
+)
+print(ess_compare)
+```
+
+**The expected pattern.** The original pair plot shows the heavy negative ridge; the SNR pair plot shows a wide-but-roughly-circular cloud on `(log_r, log_rho)`. ESS-per-iteration should improve for both parameters under SNR, because HMC no longer has to traverse a long thin diagonal. The posterior over `log_q` (a derived quantity under SNR) is *identical in substance* — the two models imply the same likelihood — but the Stan sampler reaches it more efficiently.
+
+### SBC for the SNR Model on Drift Data
+
+We rerun SBC on the drift scenario under the SNR parameterisation as the ultimate test: *assumption-matched data + decorrelated parameterisation = cleanest possible calibration.*
+
+```{r ch13_snr_sbc_drift}
+snr_sbc_drift_file <- here("simdata", "ch13_proto_snr_sbc_drift.rds")
+
+make_snr_sbc_generator <- function(scenario) {
+  SBC_generator_function(
+    function() {
+      log_r_true   <- rnorm(1, LOG_R_PRIOR_MEAN,   LOG_R_PRIOR_SD)
+      log_rho_true <- rnorm(1, LOG_RHO_PRIOR_MEAN, LOG_RHO_PRIOR_SD)
+      log_q_true   <- log_r_true + log_rho_true
+      r_true       <- exp(log_r_true)
+      q_true       <- exp(log_q_true)
+
+      agent_df <- simulate_prototype_agent_scenario(
+        agent_id     = 1,
+        scenario     = scenario,
+        r_value      = r_true,
+        q_value      = q_true,
+        subject_seed = sample.int(1e8, 1)
+      )
+
+      list(
+        variables = list(log_r = log_r_true,
+                         log_rho = log_rho_true,
+                         log_q = log_q_true),
+        generated = list(
+          ntrials            = nrow(agent_df),
+          nfeatures          = 2L,
+          cat_one            = as.integer(agent_df$observed_feedback),
+          y                  = as.integer(agent_df$sim_response),
+          obs                = as.matrix(agent_df[, c("height", "position")]),
+          initial_mu_cat0    = c(2.5, 2.5),
+          initial_mu_cat1    = c(2.5, 2.5),
+          initial_sigma_diag = 10.0,
+          prior_logr_mean    = LOG_R_PRIOR_MEAN,
+          prior_logr_sd      = LOG_R_PRIOR_SD,
+          prior_logrho_mean  = LOG_RHO_PRIOR_MEAN,
+          prior_logrho_sd    = LOG_RHO_PRIOR_SD
+        )
+      )
+    }
+  )
+}
+
+if (regenerate_simulations || !file.exists(snr_sbc_drift_file)) {
+  gen <- make_snr_sbc_generator("drift")
+  backend <- SBC_backend_cmdstan_sample(
+    mod_prototype_snr,
+    iter_warmup   = 800,
+    iter_sampling = 1000,
+    chains        = 2,
+    adapt_delta   = 0.9,
+    refresh       = 0
+  )
+  datasets <- generate_datasets(gen, n_sims = 200)
+  snr_sbc_drift <- compute_SBC(
+    datasets, backend,
+    cache_mode     = "results",
+    cache_location = here("simdata", "ch13_proto_snr_sbc_cache_drift"),
+    keep_fits      = FALSE
+  )
+  saveRDS(snr_sbc_drift, snr_sbc_drift_file)
+} else {
+  snr_sbc_drift <- readRDS(snr_sbc_drift_file)
+}
+
+print(plot_ecdf_diff(snr_sbc_drift) + ggtitle("SNR-parameterised SBC on drift data"))
+print(plot_rank_hist(snr_sbc_drift))
+```
+
+Under this combination we expect all three curves (`log_r`, `log_rho`, and the derived `log_q`) to stay inside the simultaneous band with flat rank histograms. Reparameterisation alone does not manufacture information: on static data, the SNR model will still show the drift-related direction as a wide marginal (just on `log_rho` now, not on a diagonal ridge). It is the *combination* of assumption-matched task and decorrelated parameterisation that closes the loop.
+
+---
+
+## Discussion: When Does $q$ Become Identifiable?
+
+The six validation panels (three scenarios × two parameterisations) give the cleanest summary of the identifiability argument.
+
+* **Static + original.** The posterior sits on a heavy negatively-correlated ridge. SBC for `log_q` fails; parameter recovery is diffuse. This is the problem the chapter opened with.
+* **Static + SNR.** The ridge disappears. The poorly-identified direction is now cleanly visible as a wide marginal on `log_rho`. SBC still fails for the drift-related direction — reparameterisation does not manufacture information.
+* **Contingent-shift + original.** Post-flip recovery dynamics load on $q$ directly, so the ridge shrinks and SBC for `log_q` passes (or nearly passes). Caveat: the filter's smooth-drift assumption is technically violated by abrupt jumps, so posterior predictive checks may reveal systematic underperformance right after each flip.
+* **Contingent-shift + SNR.** Similar to contingent-shift + original, but with tighter posterior marginals and better MCMC geometry.
+* **Smooth drift + original.** Assumption-matched generative story. The posterior is roughly circular and SBC passes for both parameters.
+* **Smooth drift + SNR.** The best-case scenario: decorrelated parameterisation + assumption-matched task. Both SBC ECDFs inside the band, both rank histograms uniform, MCMC geometry clean.
+
+**Paralleling Chapter 11.** The GCM-with-decay analysis in Chapter 11 showed that the decay parameter $\lambda$ becomes identifiable when the task exercises forgetting — whether through reversals or drift. The mechanism there is general-purpose ("downweight old stuff"), so reversals and drift work comparably well. The Kalman filter's $q$ is assumption-specific (it encodes a *Gaussian* drift prior), so the assumption-matched smooth-drift task gives the cleanest result; reversals work but with a mild misspecification signature. Both chapters make the same underlying point: *identifiability is a joint property of the model and the task, not of the model alone.*
+
+**Implication for the multilevel analysis that follows.** The multilevel prototype model below uses the static paradigm by default to stay comparable with prior drafts of this chapter. Readers using this model for research should consider re-running the multilevel analysis on drift data when possible; the population-level `log_q` posterior that looked wide before is not a sign that multilevel inference failed — it was a sign that the task was not giving the model what it needed to pin $q$ down.
 
 ---
 

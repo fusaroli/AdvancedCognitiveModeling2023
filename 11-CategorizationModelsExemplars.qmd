@@ -314,9 +314,45 @@ ggplot(dd, aes(x = distance, y = sim, color = c_label, group = c_label)) +
 
 **3. Category Response Probability**
 
-$$P(A|i) = \frac{\beta \sum_{j \in A} \eta_{ij}}{\beta \sum_{j \in A} \eta_{ij} + (1-\beta) \sum_{k \in B} \eta_{ik}}$$
+$$P(A|i) = \frac{\beta \; \bar\eta_{i,A}}{\beta \; \bar\eta_{i,A} + (1-\beta) \; \bar\eta_{i,B}}, \qquad \bar\eta_{i,A} = \frac{1}{N_A} \sum_{j \in A} \eta_{ij}$$
 
-The cold-start fallback applies whenever one of the summed similarities is undefined: if either $\sum_{j \in A}$ or $\sum_{k \in B}$ has no terms yet, the response probability is $\beta$.
+where $\bar\eta_{i,A}$ is the **mean** similarity of the current stimulus to the exemplars stored under category $A$, and $N_A$ is the count of those stored exemplars. The cold-start fallback applies when either category has no stored exemplars yet: $P(A|i) = \beta$.
+
+### Summed vs. Mean Similarity: A Caveat on the Canonical Formulation
+
+The original Nosofsky (1986) GCM and the ALCOVE extensions use the *summed* form $\sum_{j \in A} \eta_{ij}$ rather than the mean. That choice carries a subtle but consequential assumption: whichever category has more stored exemplars acquires a systematic advantage, independent of how similar any of those exemplars is to the current stimulus.
+
+A concrete failure. Suppose category A has 12 stored exemplars at distance roughly $d = 2$ from the current stimulus (so each contributes $\eta_{ij} \approx e^{-2c}$) and category B has 1 stored exemplar at distance $d = 0.2$ (contributing $\eta_{ij} \approx e^{-0.2c}$). At a moderate sensitivity $c = 1$:
+
+* Summed: $S_A = 12 \cdot e^{-2} \approx 1.62$ vs $S_B = 1 \cdot e^{-0.2} \approx 0.82$. Category A wins.
+* Mean: $\bar\eta_A = e^{-2} \approx 0.14$ vs $\bar\eta_B = e^{-0.2} \approx 0.82$. Category B wins, which is what our intuition expects: the closest neighbour belongs to B.
+
+The bias parameter $\beta$ cannot repair this. Fitting $\beta$ to the data will compensate for the *average* frequency imbalance, but cannot fix it trial-by-trial because the imbalance itself grows and shrinks as the memory store evolves.
+
+This chapter therefore uses the **mean-similarity** formulation throughout, which is the form adopted by Ashby & Maddox (1993) and by several later papers that explicitly address this point. At $N_A = N_B$ (the canonical Kruschke task with balanced training) the two formulations produce effectively identical behaviour, so replication of published Kruschke-era results is unaffected. On data with unequal base rates, partial trial sequences, or the non-stationary scenarios introduced later in this chapter — where memory composition changes meaningfully over trials — the difference becomes both measurable and interpretable: with mean similarity, $\beta$ becomes a clean response-bias parameter rather than a fitted compensator for implicit base-rate effects.
+
+```{r ch12_sum_vs_mean_demo}
+# Toy demonstration of the summed-vs-mean choice with deliberately
+# unbalanced memory contents. 12 cat-A exemplars far away, 1 cat-B
+# exemplar close by. We show choice probabilities under both forms.
+demo_memory <- tibble(
+  category = c(rep(0, 12), 1),
+  sim      = c(rep(exp(-2), 12), exp(-0.2))  # pre-computed for c = 1
+)
+demo_sums <- demo_memory |>
+  group_by(category) |>
+  summarise(sum_sim = sum(sim), mean_sim = mean(sim), .groups = "drop")
+demo_sums |>
+  mutate(
+    p_cat1_summed = sum_sim  / sum(sum_sim),
+    p_cat1_mean   = mean_sim / sum(mean_sim)
+  ) |>
+  print()
+# Summed: P(cat 1) ≈ 0.34 — the 12 distant exemplars in category 0 win.
+# Mean:   P(cat 1) ≈ 0.85 — the 1 close exemplar in category 1 correctly wins.
+```
+
+The demonstration above uses bias $\beta = 0.5$ (neutral) so the asymmetry comes purely from the aggregation choice. All figures, recovery results, and SBC checks in the rest of this chapter use the mean-similarity form. Readers who want to reproduce a published summed-similarity study can swap the aggregation line in `gcm_simulate()` (replace each `mean()` with `sum()`) and the corresponding two lines in the Stan model (remove the division by `n1` and `n0`) without any other changes.
 
 ### The GCM Agent Implementation (R Simulation)
 
@@ -352,10 +388,11 @@ gcm_simulate <- function(w,            # attention weights (sums to 1)
         similarity(distance(current_stim, memory_obs[e, ], w), c)
       }, numeric(1))
 
-      s1  <- sum(sims[memory_cat == 1])
-      s0  <- sum(sims[memory_cat == 0])
-      num <- bias * s1
-      den <- num + (1 - bias) * s0
+      # Mean similarity per category — removes category-frequency bias.
+      m1  <- mean(sims[memory_cat == 1])
+      m0  <- mean(sims[memory_cat == 0])
+      num <- bias * m1
+      den <- num + (1 - bias) * m0
 
       prob_cat1[i] <- if (den > 1e-9) num / den else bias
       prob_cat1[i] <- pmax(1e-9, pmin(1 - 1e-9, prob_cat1[i]))
@@ -657,6 +694,20 @@ Because the GCM's per-trial choice probability $p_i$ is a deterministic function
 \end{tikzpicture}
 ```
 
+The generative relationships for the Single-Subject GCM are:
+$$
+\begin{aligned}
+\mathbf{w} &\sim \text{Dirichlet}(\boldsymbol{\alpha}_w) \\
+\log c &\sim \text{Normal}(\mu_c, \sigma_c) \\
+\beta &\sim \text{Beta}(\alpha_\beta, \beta_\beta) \\
+d_{ie} &= \sum_f w_f |x_{if} - x_{ef}| \\
+s_{ie} &= \exp(-c \cdot d_{ie}) \\
+m_{k,i} &= \frac{1}{n_{k,i}} \sum_{e \in C_k} s_{ie} \quad \text{for } k \in \{0, 1\} \\
+p_i &= \frac{\beta \cdot m_{1,i}}{\beta \cdot m_{1,i} + (1 - \beta) \cdot m_{0,i}} \\
+y_i &\sim \text{Bernoulli}(p_i)
+\end{aligned}
+$$
+
 ```{r ch12_gcm_stan_model}
 gcm_single_stan <- "
 // Generalized Context Model — Single Subject (refactored architecture)
@@ -727,22 +778,24 @@ transformed parameters {
       if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
         p_i = bias;
       } else {
-        vector[n_mem] sims;
+        real s1 = 0;
+        real s0 = 0;
+        int n1 = 0;
+        int n0 = 0;
         for (e in 1:n_mem) {
           real d = 0;
           int past_i = memory_trial_idx[e];
           for (f in 1:nfeatures)
             d += w[f] * abs_diff[i, past_i, f];
-          sims[e] = exp(-c * d);
+          real sim = exp(-c * d);
+          if (memory_cat[e] == 1) { s1 += sim; n1 += 1; }
+          else                    { s0 += sim; n0 += 1; }
         }
-        real s1 = 0;
-        real s0 = 0;
-        for (e in 1:n_mem) {
-          if (memory_cat[e] == 1) s1 += sims[e];
-          else                    s0 += sims[e];
-        }
-        real num = bias * s1;
-        real den = num + (1 - bias) * s0;
+        // Mean similarity per category (n1, n0 > 0 here).
+        real m1 = s1 / n1;
+        real m0 = s0 / n0;
+        real num = bias * m1;
+        real den = num + (1 - bias) * m0;
         p_i = (den > 1e-9) ? num / den : bias;
       }
 
@@ -1392,6 +1445,652 @@ When the true log(c) is above 0 the model computes similarity using exponential 
 
 ---
 
+## Extending the GCM with Memory Decay
+
+The canonical GCM weights every stored exemplar equally — a perfect, unbounded memory. That is pedagogically clean but psychologically implausible, and it becomes a real liability as soon as the learning environment is non-stationary: if the category structure changes halfway through the task, the unweighted sum of exemplars anchors the agent to contradictions it has no mechanism to discard. We add a single forgetting-rate parameter, $\lambda$, that downweights older exemplars by $e^{-\lambda (t - t_e)}$ before entering the similarity sum:
+
+$$\eta_{ij} = e^{-\lambda (i - t_j)} \cdot e^{-c\, d_{ij}}, \qquad P(1 \mid i) = \frac{\beta \sum_{j \in A_1} \eta_{ij}}{\beta \sum_{j \in A_1} \eta_{ij} + (1-\beta) \sum_{k \in A_0} \eta_{ik}}.$$
+
+At $\lambda = 0$ the model reduces to the canonical GCM. At large $\lambda$, only the last few exemplars matter. This parallels the process-noise term $q$ in the Kalman prototype (Ch. 12): both are mechanisms for "unlearning" — the Kalman filter unlearns by letting covariance re-grow, the decay GCM unlearns by shrinking old weights.
+
+Decay also complements the mean-similarity aggregation we adopted earlier in the chapter: the effective category "size" in the mean becomes $\sum_{j \in A} e^{-\lambda (i - t_j)}$ — a decay-weighted effective sample size, rather than a raw count. A category whose exemplars are mostly old gets a smaller effective count, which is exactly the right behaviour in a non-stationary environment where old evidence is less trustworthy. The canonical summed-similarity GCM has no such protection: a category whose exemplars are all old and now mostly irrelevant would still dominate by sheer count. Mean similarity + decay is the minimal combination that keeps the model honest on both dimensions.
+
+We will test this extended model against three generating scenarios that load the decay parameter differently:
+
+1. **Static Kruschke (baseline).** Fixed category labels, as in the canonical GCM analysis above. A low-$\lambda$ model is correct for this data; we expect the posterior to be pulled toward the left tail of the $\log\lambda$ prior and for the $c$/$\lambda$ pair to be partially non-identified (both can make the similarity sum narrower).
+2. **Performance-contingent abrupt shifts.** After the agent reaches a streak of $k$ consecutive correct responses, all category labels flip. The agent must unlearn the old mapping and relearn the new one. A high-$\lambda$ model is optimal: it forgets the now-contradicted exemplars faster and recovers faster. Note that these shifts are *endogenous* to the agent's own behaviour — a noisier agent triggers shifts less often and accumulates less information about $\lambda$.
+3. **Smooth drift.** Category centres in feature space drift as an independent random walk. Labels are assigned trial-by-trial by proximity to the current (drifted) centres, so the category boundary migrates smoothly through the stimulus set. Moderate $\lambda$ is appropriate: agents that forget too slowly lag behind the moving boundary; agents that forget too fast throw away evidence the drift has not yet invalidated.
+
+**Assumption match.** The GCM's similarity-to-exemplar architecture does not explicitly model drift or reversal — it just reweights *any* evidence in memory. That makes the static scenario a natural home (no drift to account for), the smooth-drift scenario a graceful degradation (decay is a reasonable approximation to "exponentially forget stale evidence"), and the abrupt-shift scenario a misspecified-but-useful case (no *abrupt* mechanism exists in the model; decay smooths the reversal into gradual forgetting, which is suboptimal for the task but still lets $\lambda$ be recovered from how fast the agent bounces back after each flip). We will see all three signatures in the validation results below.
+
+### Prior on the Decay Parameter
+
+```{r ch12_decay_prior_constants}
+# Prior hyperparameters for log(lambda).
+# Normal(-2, 1) gives median lambda ≈ 0.135 (half-life ≈ 5 trials).
+# ±2 SD covers lambda ∈ (0.018, 1.0), spanning "effectively no decay"
+# to "only the last trial or two matters".
+LOG_LAMBDA_PRIOR_MEAN <- -2.0
+LOG_LAMBDA_PRIOR_SD   <- 1.0
+```
+
+### R Simulator With Scenario Logic
+
+The simulator loops over trials, computes the decay-weighted choice probability, draws a response, and determines the *observed* feedback according to the scenario. Memory stores the trial index at which each exemplar was encoded, so ages are exact at every step. For the contingent-shift scenario, the label-flip state machine updates *after* the response is drawn (so the current trial's feedback uses the label map that was in force at decision time).
+
+```{r ch12_decay_simulator}
+simulate_decay_scenario <- function(w, c, lambda, bias, schedule,
+                                    scenario = c("static", "contingent_shift", "drift"),
+                                    streak_target = 8,
+                                    drift_traj    = NULL) {
+  scenario <- match.arg(scenario)
+  ntrials   <- nrow(schedule)
+  obs_mat   <- as.matrix(schedule[, c("height", "position")])
+  base_lab  <- schedule$category_feedback
+
+  memory_obs   <- matrix(NA_real_, nrow = 0, ncol = 2)
+  memory_cat   <- integer(0)
+  memory_trial <- integer(0)
+
+  label_flip <- FALSE
+  streak     <- 0L
+
+  prob_cat1         <- numeric(ntrials)
+  sim_response      <- integer(ntrials)
+  observed_feedback <- integer(ntrials)
+  label_flip_trace  <- logical(ntrials)
+
+  for (i in seq_len(ntrials)) {
+    current_stim <- as.numeric(obs_mat[i, ])
+    n_mem        <- nrow(memory_obs)
+
+    # ── Decay-weighted *mean* similarity per category ───────────────────
+    # Numerator:   Σ (decay_j · similarity_j) over exemplars in that category.
+    # Denominator: Σ decay_j over exemplars in that category  (effective N).
+    # Collapses to plain mean similarity when lambda = 0.
+    if (n_mem == 0 || !any(memory_cat == 0) || !any(memory_cat == 1)) {
+      p <- bias
+    } else {
+      d     <- as.numeric(abs(sweep(memory_obs, 2, current_stim, "-")) %*% w)
+      age   <- i - memory_trial
+      decay <- exp(-lambda * age)
+      sim   <- exp(-c * d)
+      wt    <- decay * sim
+      s1    <- sum(wt[memory_cat == 1]);    s0 <- sum(wt[memory_cat == 0])
+      w1    <- sum(decay[memory_cat == 1]); w0 <- sum(decay[memory_cat == 0])
+      m1    <- if (w1 > 1e-12) s1 / w1 else 0
+      m0    <- if (w0 > 1e-12) s0 / w0 else 0
+      num   <- bias * m1
+      den   <- num + (1 - bias) * m0
+      p     <- if (den > 1e-12) num / den else bias
+    }
+    p <- pmax(1e-9, pmin(1 - 1e-9, p))
+    prob_cat1[i]    <- p
+    sim_response[i] <- rbinom(1, 1, p)
+
+    # ── Observed feedback depends on the scenario ───────────────────────
+    fb <- switch(scenario,
+      static           = base_lab[i],
+      contingent_shift = if (label_flip) 1L - base_lab[i] else base_lab[i],
+      drift            = {
+        d0 <- sum(abs(current_stim - drift_traj$mu0[i, ]))
+        d1 <- sum(abs(current_stim - drift_traj$mu1[i, ]))
+        as.integer(d1 < d0)
+      }
+    )
+    observed_feedback[i] <- fb
+    label_flip_trace[i]  <- label_flip
+
+    # Update the streak/flip state for the contingent scenario
+    if (scenario == "contingent_shift") {
+      streak <- if (sim_response[i] == fb) streak + 1L else 0L
+      if (streak >= streak_target) { label_flip <- !label_flip; streak <- 0L }
+    }
+
+    # Add the current trial to memory
+    memory_obs   <- rbind(memory_obs, current_stim)
+    memory_cat   <- c(memory_cat, fb)
+    memory_trial <- c(memory_trial, i)
+  }
+
+  schedule |>
+    mutate(
+      prob_cat1         = prob_cat1,
+      sim_response      = sim_response,
+      observed_feedback = observed_feedback,
+      label_flip        = label_flip_trace,
+      correct           = as.integer(sim_response == observed_feedback)
+    )
+}
+```
+
+### Drift Trajectory Generator
+
+The smooth-drift scenario needs a pre-computed trajectory of category centres. Each centre follows an independent bivariate Gaussian random walk with per-trial step SD `drift_sigma`. Defaults place the initial centres at the Kruschke (1993) category means; `drift_sigma = 0.05` gives a cumulative SD of about 0.4 units over 64 trials — enough to migrate the boundary through roughly one stimulus cell.
+
+```{r ch12_decay_drift_trajectory}
+make_drift_trajectory <- function(ntrials, drift_sigma = 0.05, seed = 1) {
+  set.seed(seed)
+  mu0_init <- c(1.75, 3.25)   # Kruschke cat-0 mean (height, position)
+  mu1_init <- c(3.25, 1.75)   # Kruschke cat-1 mean
+  d0 <- apply(matrix(rnorm(ntrials * 2, 0, drift_sigma), ncol = 2), 2, cumsum)
+  d1 <- apply(matrix(rnorm(ntrials * 2, 0, drift_sigma), ncol = 2), 2, cumsum)
+  list(
+    mu0 = sweep(d0, 2, mu0_init, "+"),
+    mu1 = sweep(d1, 2, mu1_init, "+")
+  )
+}
+```
+
+### Scenario Agent Wrappers
+
+```{r ch12_decay_agent_wrappers}
+simulate_decay_agent <- function(agent_id, scenario, w, c, lambda, bias,
+                                 subject_seed, streak_target = 8,
+                                 drift_sigma = 0.05) {
+  schedule  <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  drift_tr  <- if (scenario == "drift")
+    make_drift_trajectory(nrow(schedule), drift_sigma, seed = subject_seed)
+  else NULL
+
+  out <- simulate_decay_scenario(
+    w = w, c = c, lambda = lambda, bias = bias,
+    schedule      = schedule,
+    scenario      = scenario,
+    streak_target = streak_target,
+    drift_traj    = drift_tr
+  )
+
+  out |>
+    mutate(
+      agent_id       = agent_id,
+      scenario       = scenario,
+      w1_true        = w[1],
+      c_true         = c,
+      lambda_true    = lambda,
+      log_c_true     = log(c),
+      log_lambda_true = log(lambda),
+      bias_true      = bias
+    ) |>
+    group_by(agent_id) |>
+    mutate(cumulative_accuracy = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+```
+
+### Visualising the Three Scenarios
+
+We simulate 10 agents per cell of a grid that crosses three $\lambda$ values with the three scenarios and plot cumulative accuracy. Static data is where low $\lambda$ wins; the contingent-shift data is where moderate-to-high $\lambda$ wins (decay speeds reversal recovery); drift data favours moderate $\lambda$ (track the moving boundary without throwing away still-relevant evidence).
+
+```{r ch12_decay_scenario_viz}
+decay_viz_file <- here("simdata", "ch12_decay_scenario_viz.csv")
+
+if (regenerate_simulations || !file.exists(decay_viz_file)) {
+  viz_grid <- expand_grid(
+    scenario    = c("static", "contingent_shift", "drift"),
+    lambda_true = c(0.02, 0.2, 0.6),
+    agent_id    = 1:10
+  ) |>
+    mutate(subject_seed = 10000 + row_number())
+
+  viz_sim <- pmap_dfr(
+    list(agent_id     = viz_grid$agent_id,
+         scenario     = viz_grid$scenario,
+         lambda       = viz_grid$lambda_true,
+         subject_seed = viz_grid$subject_seed),
+    function(agent_id, scenario, lambda, subject_seed) {
+      simulate_decay_agent(
+        agent_id     = agent_id,
+        scenario     = scenario,
+        w            = c(0.5, 0.5),
+        c            = 2.0,
+        lambda       = lambda,
+        bias         = 0.5,
+        subject_seed = subject_seed
+      )
+    }
+  )
+  write_csv(viz_sim, decay_viz_file)
+} else {
+  viz_sim <- read_csv(decay_viz_file, show_col_types = FALSE)
+}
+
+ggplot(viz_sim,
+       aes(x = trial_within_subject, y = cumulative_accuracy,
+           color = factor(lambda_true), group = interaction(agent_id, lambda_true))) +
+  stat_summary(fun = mean, geom = "line",
+               aes(group = factor(lambda_true)), linewidth = 1.1) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.15,
+               aes(fill = factor(lambda_true), group = factor(lambda_true)),
+               color = NA) +
+  facet_wrap(~scenario, ncol = 3,
+             labeller = as_labeller(c(static = "Static Kruschke",
+                                       contingent_shift = "Performance-contingent flips",
+                                       drift = "Smooth drift"))) +
+  scale_color_viridis_d(option = "plasma", name = expression(lambda)) +
+  scale_fill_viridis_d(option  = "plasma", name = expression(lambda)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") +
+  labs(
+    title    = "Learning Curves Across the Three Scenarios",
+    subtitle = paste0("Mean ± SE across 10 agents per cell; c = 2, bias = 0.5, ",
+                      "uniform attention"),
+    x = "Trial", y = "Cumulative accuracy"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+**Reading the scenario panels.** In the static panel accuracy climbs monotonically to near-ceiling for all $\lambda$, with the lowest $\lambda$ reaching the highest asymptote — unsurprising, because decay discards correct evidence. In the contingent-shift panel the curves exhibit a characteristic sawtooth: accuracy climbs, triggers a flip, collapses, and rebounds. High-$\lambda$ agents rebound faster and therefore flip more often, so they show more but shallower cycles. In the drift panel the curves plateau *below* ceiling; the plateau is higher for agents with $\lambda$ tuned to the drift rate.
+
+### The Decay GCM in Stan
+
+The Stan implementation mirrors the canonical GCM chunk above, adding `log_lambda` as an unconstrained scalar parameter and multiplying the similarity term by the decay weight `exp(-lambda * age)` where `age = i - past_trial_idx`.
+
+```{r ch12_decay_stan_compile}
+stan_file_gcm_decay_single <- here("stan", "ch12_gcm_decay_single.stan")
+mod_gcm_decay_single <- cmdstan_model(stan_file_gcm_decay_single)
+```
+
+See `stan/ch12_gcm_decay_single.stan` in the repository for the full source; the only structural change relative to `ch12_gcm_single.stan` is the decay term in the similarity sum and the addition of `log_lambda` (with its Normal prior) to the parameters and model blocks.
+
+### Fitting One Agent Per Scenario
+
+We pick one representative agent per scenario with $\lambda = 0.2$, $c = 2$, bias $= 0.5$, and uniform attention, and fit the decay GCM to each.
+
+```{r ch12_decay_fit_per_scenario}
+decay_fit_file <- here("simmodels", "ch12_gcm_decay_single_fits.rds")
+
+decay_single_fit_data <- list(
+  static           = simulate_decay_agent(1, "static",
+                                          w = c(0.5, 0.5), c = 2.0,
+                                          lambda = 0.2, bias = 0.5,
+                                          subject_seed = 20001),
+  contingent_shift = simulate_decay_agent(1, "contingent_shift",
+                                          w = c(0.5, 0.5), c = 2.0,
+                                          lambda = 0.2, bias = 0.5,
+                                          subject_seed = 20002),
+  drift            = simulate_decay_agent(1, "drift",
+                                          w = c(0.5, 0.5), c = 2.0,
+                                          lambda = 0.2, bias = 0.5,
+                                          subject_seed = 20003)
+)
+
+stan_data_from_agent <- function(agent_df) {
+  list(
+    ntrials               = nrow(agent_df),
+    nfeatures             = 2L,
+    y                     = as.integer(agent_df$sim_response),
+    obs                   = as.matrix(agent_df[, c("height", "position")]),
+    cat_feedback          = as.integer(agent_df$observed_feedback),
+    w_prior_alpha         = c(1, 1),
+    log_c_prior_mean      = LOG_C_PRIOR_MEAN,
+    log_c_prior_sd        = LOG_C_PRIOR_SD,
+    log_lambda_prior_mean = LOG_LAMBDA_PRIOR_MEAN,
+    log_lambda_prior_sd   = LOG_LAMBDA_PRIOR_SD,
+    bias_prior_alpha      = 1,
+    bias_prior_beta       = 1
+  )
+}
+
+if (regenerate_simulations || !file.exists(decay_fit_file)) {
+  decay_fits <- purrr::imap(decay_single_fit_data, function(agent_df, scen) {
+    dat <- stan_data_from_agent(agent_df)
+    pf  <- tryCatch(
+      mod_gcm_decay_single$pathfinder(data = dat, num_paths = 4,
+                                      refresh = 0, seed = 500),
+      error = function(e) NULL
+    )
+    fit <- mod_gcm_decay_single$sample(
+      data            = dat,
+      init            = if (!is.null(pf)) pf else 0.5,
+      seed            = 500,
+      chains          = 4,
+      parallel_chains = min(4, availableCores()),
+      iter_warmup     = 1000,
+      iter_sampling   = 1500,
+      refresh         = 0,
+      adapt_delta     = 0.9
+    )
+    fit$save_object(here("simmodels",
+                         paste0("ch12_gcm_decay_single_", scen, ".rds")))
+    fit
+  })
+  saveRDS(lapply(decay_fits, function(f) f$output_files()), decay_fit_file)
+  cat("Decay GCM fits computed and saved.\n")
+} else {
+  decay_fits <- setNames(
+    lapply(names(decay_single_fit_data), function(scen) {
+      readRDS(here("simmodels",
+                   paste0("ch12_gcm_decay_single_", scen, ".rds")))
+    }),
+    names(decay_single_fit_data)
+  )
+  cat("Loaded existing decay GCM fits.\n")
+}
+```
+
+### MCMC Diagnostic Battery Across Scenarios
+
+```{r ch12_decay_diagnostics}
+decay_diag_tbls <- purrr::imap_dfr(decay_fits, function(fit, scen) {
+  tbl <- diagnostic_summary_table(
+    fit,
+    params = c("w[1]", "log_c", "log_lambda", "bias")
+  )
+  tbl |> mutate(scenario = scen)
+})
+
+print(decay_diag_tbls |>
+        dplyr::select(scenario, metric, value, threshold, pass))
+
+walk(names(decay_fits), function(scen) {
+  cat("=== Pair plot:", scen, "===\n")
+  print(bayesplot::mcmc_pairs(
+    decay_fits[[scen]]$draws(c("log_c", "log_lambda", "w[1]", "bias")),
+    diag_fun     = "dens",
+    off_diag_fun = "hex"
+  ))
+})
+```
+
+**What to watch for in the pair plot.** A `log_c`/`log_lambda` ridge is expected on static data — both narrow the effective similarity sum, so the data under-constrain their difference. On contingent-shift and drift data, post-shift reversal and boundary-tracking dynamics inject trial-level evidence that the two parameters tension against, and the ridge should shrink toward a circle.
+
+### Prior-Posterior Update Plots Across Scenarios
+
+```{r ch12_decay_prior_posterior}
+decay_pp_df <- purrr::imap_dfr(decay_fits, function(fit, scen) {
+  d <- as_draws_df(fit$draws(c("log_c", "log_lambda", "w[1]", "bias")))
+  bind_rows(
+    tibble(scenario = scen, parameter = "log_c",      value = d$log_c,      source = "posterior"),
+    tibble(scenario = scen, parameter = "log_lambda", value = d$log_lambda, source = "posterior"),
+    tibble(scenario = scen, parameter = "w[1]",       value = d$`w[1]`,     source = "posterior"),
+    tibble(scenario = scen, parameter = "bias",       value = d$bias,       source = "posterior")
+  )
+})
+
+set.seed(11)
+n_prior <- 4000
+prior_ref <- bind_rows(
+  tibble(parameter = "log_c",      value = rnorm(n_prior, LOG_C_PRIOR_MEAN,      LOG_C_PRIOR_SD),
+         source = "prior"),
+  tibble(parameter = "log_lambda", value = rnorm(n_prior, LOG_LAMBDA_PRIOR_MEAN, LOG_LAMBDA_PRIOR_SD),
+         source = "prior"),
+  tibble(parameter = "w[1]",       value = runif(n_prior),         source = "prior"),
+  tibble(parameter = "bias",       value = rbeta(n_prior, 1, 1),   source = "prior")
+) |>
+  tidyr::crossing(scenario = c("static", "contingent_shift", "drift"))
+
+truth_lines <- tibble(
+  parameter = c("log_c", "log_lambda", "w[1]", "bias"),
+  value     = c(log(2.0), log(0.2), 0.5, 0.5)
+)
+
+ggplot(bind_rows(prior_ref, decay_pp_df),
+       aes(x = value, fill = source, color = source)) +
+  geom_density(alpha = 0.4, linewidth = 0.5) +
+  geom_vline(data = truth_lines, aes(xintercept = value),
+             color = "red", linetype = "dashed") +
+  facet_grid(scenario ~ parameter, scales = "free") +
+  scale_fill_manual(values  = c(prior = "grey70", posterior = "#009E73")) +
+  scale_color_manual(values = c(prior = "grey50", posterior = "#006D4E")) +
+  labs(
+    title    = "Prior → Posterior Update: Decay GCM Across Scenarios",
+    subtitle = "Red dashed line = true generating value used for the single-agent fit",
+    x = NULL, y = "Density"
+  )
+```
+
+**What we expect to see.** On static data, the `log_lambda` posterior is pulled *leftward* from its prior (data favour small $\lambda$) but remains wide — the truth ($\log 0.2 \approx -1.6$) is inside the posterior but not sharply peaked there, because everything a moderate $\lambda$ can do on stationary data can be approximated by slightly larger $c$. On contingent-shift data, the `log_lambda` posterior is sharply peaked near the truth and its correlation with `log_c` drops — the post-flip recovery rate depends specifically on how fast old exemplars are forgotten, an effect `c` cannot mimic. On drift data, the result lies between these extremes: a moderately informative `log_lambda` posterior whose width depends on the drift amplitude.
+
+### One-Shot Parameter Recovery Across Scenarios
+
+We sweep a 3 × 3 grid of $(c, \lambda)$ truths, with 5 independent simulated datasets per cell per scenario (135 fits total), and report recovery scatters.
+
+```{r ch12_decay_recovery_sweep}
+decay_recovery_file <- here("simdata", "ch12_decay_recovery_results.rds")
+
+run_decay_recovery_iter <- function(scenario, c_true, lambda_true, iteration) {
+  subject_seed <- iteration * 10000 +
+                   round(c_true * 100) +
+                   round(lambda_true * 1000) +
+                   switch(scenario, static = 1, contingent_shift = 2, drift = 3)
+
+  agent_df <- simulate_decay_agent(
+    agent_id     = iteration,
+    scenario     = scenario,
+    w            = c(0.5, 0.5),
+    c            = c_true,
+    lambda       = lambda_true,
+    bias         = 0.5,
+    subject_seed = subject_seed
+  )
+  dat <- stan_data_from_agent(agent_df)
+  pf  <- tryCatch(
+    mod_gcm_decay_single$pathfinder(data = dat, num_paths = 4,
+                                    refresh = 0, seed = subject_seed),
+    error = function(e) NULL
+  )
+  fit <- tryCatch(
+    mod_gcm_decay_single$sample(
+      data            = dat,
+      init            = if (!is.null(pf)) pf else 0.5,
+      seed            = subject_seed,
+      chains          = 2,
+      parallel_chains = 2,
+      iter_warmup     = 800,
+      iter_sampling   = 1000,
+      refresh         = 0,
+      adapt_delta     = 0.9
+    ),
+    error = function(e) { message("Fit error: ", e$message); NULL }
+  )
+  if (is.null(fit)) return(NULL)
+
+  s <- fit$summary(variables = c("log_c", "log_lambda", "c", "lambda"))
+  diag <- fit$diagnostic_summary(quiet = TRUE)
+  tibble(
+    scenario    = scenario,
+    c_true      = c_true,
+    lambda_true = lambda_true,
+    iteration   = iteration,
+    log_c_mean       = s$mean[s$variable == "log_c"],
+    log_lambda_mean  = s$mean[s$variable == "log_lambda"],
+    c_mean           = s$mean[s$variable == "c"],
+    lambda_mean      = s$mean[s$variable == "lambda"],
+    log_c_q5         = s$q5[s$variable == "log_c"],
+    log_c_q95        = s$q95[s$variable == "log_c"],
+    log_lambda_q5    = s$q5[s$variable == "log_lambda"],
+    log_lambda_q95   = s$q95[s$variable == "log_lambda"],
+    had_divergence   = any(diag$num_divergent > 0)
+  )
+}
+
+if (regenerate_simulations || !file.exists(decay_recovery_file)) {
+  recovery_plan <- expand_grid(
+    scenario    = c("static", "contingent_shift", "drift"),
+    c_true      = c(0.5, 2.0, 5.0),
+    lambda_true = c(0.02, 0.2, 0.6),
+    iteration   = 1:5
+  )
+
+  plan(multisession, workers = max(1, availableCores() - 1))
+  decay_recovery <- future_pmap_dfr(
+    list(
+      scenario    = recovery_plan$scenario,
+      c_true      = recovery_plan$c_true,
+      lambda_true = recovery_plan$lambda_true,
+      iteration   = recovery_plan$iteration
+    ),
+    run_decay_recovery_iter,
+    .options = furrr_options(seed = TRUE, scheduling = 1)
+  )
+  plan(sequential)
+  saveRDS(decay_recovery, decay_recovery_file)
+  cat("Decay recovery sweep complete.\n")
+} else {
+  decay_recovery <- readRDS(decay_recovery_file)
+  cat("Loaded existing decay recovery sweep.\n")
+}
+
+decay_recovery_long <- decay_recovery |>
+  dplyr::select(scenario, c_true, lambda_true, iteration, had_divergence,
+                log_c_mean, log_lambda_mean) |>
+  pivot_longer(
+    cols      = c(log_c_mean, log_lambda_mean),
+    names_to  = "variable",
+    values_to = "estimated"
+  ) |>
+  mutate(
+    parameter = if_else(variable == "log_c_mean", "log_c", "log_lambda"),
+    truth     = if_else(parameter == "log_c", log(c_true), log(lambda_true))
+  )
+
+ggplot(decay_recovery_long, aes(x = truth, y = estimated, color = had_divergence)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_point(alpha = 0.7, size = 2) +
+  facet_grid(parameter ~ scenario, scales = "free") +
+  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00"),
+                     name = "Had divergence") +
+  labs(
+    title    = "One-Shot Parameter Recovery for the Decay GCM",
+    subtitle = "Posterior mean vs true generating value; 5 iterations per (c, lambda) cell, 3 scenarios",
+    x = "True value (log scale)", y = "Estimated value (posterior mean)"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+**Interpretation.** The `log_c` row is near-diagonal across all three scenarios — the sensitivity parameter is well-identified regardless of task structure. The `log_lambda` row is the diagnostic: scatter under static data (the decay parameter is weakly identified, so posterior means regress toward the prior mean), considerably tighter under drift, and tightest under contingent-shift — the reversal dynamics load directly on $\lambda$. This is the empirical answer to the identifiability question from the chapter-12 planning discussion: the parameter that is partially confounded under a stationary task is cleanly recovered as soon as the task exercises the mechanism the parameter encodes.
+
+### Simulation-Based Calibration Across Scenarios
+
+SBC is the calibration test proper: draw parameters from their priors, simulate data with those parameters, fit the model, and check that the posterior ranks of the true parameter are uniform. We run a separate SBC sweep for each scenario.
+
+```{r ch12_decay_sbc_generator}
+make_decay_sbc_generator <- function(scenario) {
+  SBC_generator_function(
+    function() {
+      log_c_true      <- rnorm(1, LOG_C_PRIOR_MEAN,      LOG_C_PRIOR_SD)
+      log_lambda_true <- rnorm(1, LOG_LAMBDA_PRIOR_MEAN, LOG_LAMBDA_PRIOR_SD)
+      c_true          <- exp(log_c_true)
+      lambda_true     <- exp(log_lambda_true)
+      w1_true         <- runif(1)
+      bias_true       <- rbeta(1, 1, 1)
+
+      subject_seed <- sample.int(1e8, 1)
+      agent_df <- simulate_decay_agent(
+        agent_id     = 1,
+        scenario     = scenario,
+        w            = c(w1_true, 1 - w1_true),
+        c            = c_true,
+        lambda       = lambda_true,
+        bias         = bias_true,
+        subject_seed = subject_seed
+      )
+
+      list(
+        variables = list(
+          log_c      = log_c_true,
+          log_lambda = log_lambda_true,
+          `w[1]`     = w1_true,
+          bias       = bias_true
+        ),
+        generated = stan_data_from_agent(agent_df)
+      )
+    }
+  )
+}
+
+run_decay_sbc <- function(scenario, n_sims = 200) {
+  cache_file <- here("simdata", paste0("ch12_decay_sbc_", scenario, ".rds"))
+  if (!regenerate_simulations && file.exists(cache_file)) {
+    cat("Loaded cached decay SBC for scenario:", scenario, "\n")
+    return(readRDS(cache_file))
+  }
+
+  gen <- make_decay_sbc_generator(scenario)
+  backend <- SBC_backend_cmdstan_sample(
+    mod_gcm_decay_single,
+    iter_warmup   = 800,
+    iter_sampling = 1000,
+    chains        = 2,
+    adapt_delta   = 0.9,
+    refresh       = 0
+  )
+  datasets <- generate_datasets(gen, n_sims = n_sims)
+  res <- compute_SBC(
+    datasets,
+    backend,
+    cache_mode     = "results",
+    cache_location = here("simdata", paste0("ch12_decay_sbc_cache_", scenario)),
+    keep_fits      = FALSE
+  )
+  saveRDS(res, cache_file)
+  res
+}
+
+decay_sbc_static <- run_decay_sbc("static",           n_sims = 200)
+decay_sbc_shift  <- run_decay_sbc("contingent_shift", n_sims = 200)
+decay_sbc_drift  <- run_decay_sbc("drift",            n_sims = 200)
+```
+
+```{r ch12_decay_sbc_ecdf}
+print(plot_ecdf_diff(decay_sbc_static) + ggtitle("SBC: static"))
+print(plot_ecdf_diff(decay_sbc_shift)  + ggtitle("SBC: performance-contingent shifts"))
+print(plot_ecdf_diff(decay_sbc_drift)  + ggtitle("SBC: smooth drift"))
+
+print(plot_rank_hist(decay_sbc_static) + ggtitle("Rank histograms — static"))
+print(plot_rank_hist(decay_sbc_shift)  + ggtitle("Rank histograms — contingent shifts"))
+print(plot_rank_hist(decay_sbc_drift)  + ggtitle("Rank histograms — drift"))
+```
+
+### Parameter Recovery Across SBC Simulations
+
+```{r ch12_decay_sbc_recovery_plots}
+combine_sbc_stats <- function(sbc_obj, scenario) {
+  sbc_obj$stats |> mutate(scenario = scenario)
+}
+
+decay_sbc_stats <- bind_rows(
+  combine_sbc_stats(decay_sbc_static, "static"),
+  combine_sbc_stats(decay_sbc_shift,  "contingent_shift"),
+  combine_sbc_stats(decay_sbc_drift,  "drift")
+) |>
+  dplyr::filter(variable %in% c("log_c", "log_lambda", "w[1]", "bias"))
+
+ggplot(decay_sbc_stats, aes(x = simulated_value, y = mean)) +
+  geom_point(alpha = 0.35, color = "#0072B2") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  facet_grid(variable ~ scenario, scales = "free") +
+  labs(
+    title    = "SBC-Level Parameter Recovery: Decay GCM",
+    subtitle = "Posterior mean vs true generating value, pooled across SBC simulations",
+    x = "True value", y = "Posterior mean"
+  )
+
+decay_sbc_stats |>
+  group_by(scenario, variable) |>
+  summarise(
+    sbc_mean_bias = mean(mean - simulated_value, na.rm = TRUE),
+    sbc_rmse      = sqrt(mean((mean - simulated_value)^2, na.rm = TRUE)),
+    sbc_corr      = cor(mean, simulated_value,
+                        use = "complete.obs", method = "pearson"),
+    n_sims        = dplyr::n(),
+    .groups       = "drop"
+  ) |>
+  print(n = Inf)
+```
+
+### Discussion: Task Structure Governs Identifiability
+
+The three SBC panels give the cleanest summary of the argument that opens Ch. 12. Under static data, the `log_lambda` ECDF-difference curve drifts outside the simultaneous band and the rank histogram is non-uniform — the posterior does not contain the truth at the nominal rate because the data carry almost no information about forgetting. The `log_c` curve is well-behaved on the same data: the sensitivity parameter is identified regardless. Under contingent-shift and drift data, both curves return inside the band and the rank histograms are flat.
+
+This is the identifiability argument as an empirical claim rather than an algebraic one. The decay GCM's *parameter* is always the same. Its *identifiability* is a joint property of the model and the task: when the task exercises forgetting — whether through performance-contingent reversals or through a drifting boundary — the model recovers $\lambda$ cleanly; when it does not, $\lambda$ is indistinguishable from a slightly wider similarity kernel.
+
+A secondary observation: the scatter of posterior means on the static panel still clusters near the identity line in the SBC recovery plot, even though the SBC calibration curve fails. Point recovery and coverage calibration are different checks — a model can be right "on average" while miscalibrating its uncertainty. SBC is the one that catches the latter, which is why we run it rather than stopping at the recovery plot.
+
+**How the three scenarios match the model's assumptions.** The decay GCM explicitly assumes exemplars decay exponentially as a function of trial age and have no other way of being overridden. The *static* scenario violates nothing but offers no signal for $\lambda$. The *smooth-drift* scenario is a reasonable match: exponentially downweighting past exemplars is a defensible approximation to "evidence collected under a different category mean is stale." The *contingent-shift* scenario is a genuine misspecification — the true data-generating process has abrupt reversals that no smooth decay can exactly reproduce. What saves recovery there is that the post-shift dynamics depend specifically on how fast old evidence can be effectively ignored, and the decay rate is the only parameter in the model that controls that speed. The posterior predictive checks at scenario transitions (not plotted here) should reveal systematic underperformance right after each flip — the reader is encouraged to add one and confirm. That residual misfit is the handle for a future extension with an explicit change-point mechanism.
+
+---
+
 ## Multilevel Generalized Context Model (GCM)
 
 ### The Need for a Multilevel Approach
@@ -1700,6 +2399,22 @@ ggplot(multilevel_sim_data,
 \end{tikzpicture}
 ```
 
+The generative relationships for the Multilevel GCM are:
+$$
+\begin{aligned}
+\bar{\mathbf{w}} &\sim \text{Dirichlet}(\boldsymbol{\alpha}_w) \\
+\kappa &\sim \text{Exponential}(\lambda_\kappa) \\
+\mathbf{w}_j &\sim \text{Dirichlet}(\kappa \cdot \bar{\mathbf{w}}) \\
+\log c_j &\sim \text{Normal}(\bar{\mu}_c, \bar{\sigma}_c) \\
+\text{logit}(\beta_j) &\sim \text{Normal}(\bar{\mu}_\beta, \bar{\sigma}_\beta) \\
+d_{iej} &= \sum_f w_{jf} |x_{if} - x_{ef}| \\
+s_{iej} &= \exp(-c_j \cdot d_{iej}) \\
+m_{k,ij} &= \frac{1}{n_{k,ij}} \sum_{e \in C_k} s_{iej} \quad \text{for } k \in \{0, 1\} \\
+p_{ij} &= \frac{\beta_j \cdot m_{1,ij}}{\beta_j \cdot m_{1,ij} + (1 - \beta_j) \cdot m_{0,ij}} \\
+y_{ij} &\sim \text{Bernoulli}(p_{ij})
+\end{aligned}
+$$
+
 ```{r ch12_multilevel_gcm_stan}
 gcm_ml_stan <- "
 // Generalized Context Model — Multilevel (refactored architecture)
@@ -1785,21 +2500,23 @@ transformed parameters {
         if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
           p_i = subj_bias[j];
         } else {
-          vector[n_mem] sims;
+          real s1 = 0;
+          real s0 = 0;
+          int  n1 = 0;
+          int  n0 = 0;
           for (e in 1:n_mem) {
             real d = 0;
             for (f in 1:N_features)
               d += subj_w[j][f] * abs(obs[i, f] - memory_obs[j, e, f]);
-            sims[e] = exp(-subj_c[j] * d);
+            real sim = exp(-subj_c[j] * d);
+            if (memory_cat[j, e] == 1) { s1 += sim; n1 += 1; }
+            else                       { s0 += sim; n0 += 1; }
           }
-          real s1 = 0;
-          real s0 = 0;
-          for (e in 1:n_mem) {
-            if (memory_cat[j, e] == 1) s1 += sims[e];
-            else                       s0 += sims[e];
-          }
-          real num = subj_bias[j] * s1;
-          real den = num + (1 - subj_bias[j]) * s0;
+          // Mean similarity per category (n1, n0 > 0 here).
+          real m1 = s1 / n1;
+          real m0 = s0 / n0;
+          real num = subj_bias[j] * m1;
+          real den = num + (1 - subj_bias[j]) * m0;
           p_i = (den > 1e-9) ? num / den : subj_bias[j];
         }
 

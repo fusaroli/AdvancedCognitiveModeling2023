@@ -1834,11 +1834,11 @@ We split the misnamed block into two correctly-labelled checks: (1) a **Cross-Mo
 n_cross_iters <- 500   # use >= 1000 for production
 
 cross_generator <- SBC_generator_function(
-  function(i) {
+  function() {
     logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
     eps_true       <- plogis(logit_eps_true)
 
-    sched <- make_subject_schedule(stimulus_info, n_blocks, seed = 30000 + i)
+    sched <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
     # NOTE: data drawn from Model A (the particle filter)
     sim <- rule_particle_filter(
       n_particles = N_PARTICLES_FIXED,
@@ -1860,8 +1860,7 @@ cross_generator <- SBC_generator_function(
         prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
       )
     )
-  },
-  n = n_cross_iters
+  }
 )
 
 cross_backend <- SBC_backend_cmdstan_sample(
@@ -1870,10 +1869,16 @@ cross_backend <- SBC_backend_cmdstan_sample(
   chains = 2, adapt_delta = 0.9, refresh = 0
 )
 
+cross_datasets <- generate_datasets(
+  cross_generator,
+  n_sims = n_cross_iters
+)
+
 cross_results <- compute_SBC(
-  cross_generator, cross_backend,
-  cache_path = here("simdata", "ch14_cross_model_check_cache"),
-  keep_fits = FALSE
+  cross_datasets, cross_backend,
+  cache_mode     = "results",
+  cache_location = here("simdata", "ch14_cross_model_check_cache"),
+  keep_fits      = FALSE
 )
 
 # Plotted as rank ECDF, but with explicit re-labelling in the title
@@ -1894,13 +1899,13 @@ For a proper Talts–Vehtari SBC of Model B, the generator must use Model B itse
 n_real_sbc_iters <- 500   # use >= 1000 for production
 
 real_sbc_generator <- SBC_generator_function(
-  function(i) {
+  function() {
     logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
     eps_true       <- plogis(logit_eps_true)
 
     # Use the SAME generator as Model B's mixture: draw a rule, generate Bernoulli responses
     rule_idx <- sample.int(5L, 1)
-    sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = 60000 + i)
+    sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
     obs_mat  <- as.matrix(sched[, c("height", "position")])
     n_trials <- nrow(obs_mat)
 
@@ -1928,8 +1933,7 @@ real_sbc_generator <- SBC_generator_function(
         prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
       )
     )
-  },
-  n = n_real_sbc_iters
+  }
 )
 
 real_sbc_backend <- SBC_backend_cmdstan_sample(
@@ -1938,10 +1942,16 @@ real_sbc_backend <- SBC_backend_cmdstan_sample(
   chains = 2, adapt_delta = 0.9, refresh = 0
 )
 
+real_sbc_datasets <- generate_datasets(
+  real_sbc_generator,
+  n_sims = n_real_sbc_iters
+)
+
 real_sbc_results <- compute_SBC(
-  real_sbc_generator, real_sbc_backend,
-  cache_path = here("simdata", "ch14_real_sbc_cache"),
-  keep_fits = FALSE
+  real_sbc_datasets, real_sbc_backend,
+  cache_mode     = "results",
+  cache_location = here("simdata", "ch14_real_sbc_cache"),
+  keep_fits      = FALSE
 )
 
 plot_ecdf_diff(real_sbc_results) +
@@ -1967,14 +1977,14 @@ if (!is.null(fit_rule_stan)) {
   fitted_logit_eps <- fitted_draws$logit_error_prob
 
   psbc_generator <- SBC_generator_function(
-    function(i) {
+    function() {
       # Draw from the POSTERIOR, not the prior
       logit_eps_true <- sample(fitted_logit_eps, 1)
       eps_true       <- plogis(logit_eps_true)
 
       # Generate from Model B's own mixture (same as real SBC)
       rule_idx <- sample.int(5L, 1)
-      sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = 65000 + i)
+      sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
       obs_mat  <- as.matrix(sched[, c("height", "position")])
       n_trials <- nrow(obs_mat)
 
@@ -2002,8 +2012,7 @@ if (!is.null(fit_rule_stan)) {
           prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
         )
       )
-    },
-    n = n_psbc_iters
+    }
   )
 
   psbc_backend <- SBC_backend_cmdstan_sample(
@@ -2012,10 +2021,16 @@ if (!is.null(fit_rule_stan)) {
     chains = 2, adapt_delta = 0.9, refresh = 0
   )
 
+  psbc_datasets <- generate_datasets(
+    psbc_generator,
+    n_sims = n_psbc_iters
+  )
+
   psbc_results <- compute_SBC(
-    psbc_generator, psbc_backend,
-    cache_path = here("simdata", "ch14_psbc_cache"),
-    keep_fits = FALSE
+    psbc_datasets, psbc_backend,
+    cache_mode     = "results",
+    cache_location = here("simdata", "ch14_psbc_cache"),
+    keep_fits      = FALSE
   )
 
   plot_ecdf_diff(psbc_results) +
@@ -2470,6 +2485,272 @@ Because the NPE network is trained once, inference on any new subject's data tak
 
 This is the methodological payoff of using NPE instead of ABC: the Chapter 15 comparison becomes both honest (fitting the cognitive theory directly) and actually executable (amortized inference scales to many subjects).
 
+
+---
+
+## Extending the Particle Filter with Rule Mutation
+
+The particle filter as defined so far has no mechanism for entertaining a rule that was not in the initial candidate set. Resampling purges low-weight particles but cannot *create* new rule variants, so the filter's effective hypothesis space shrinks monotonically across trials. On a stationary task like Kruschke (1993) this is fine — the filter converges on whichever small subset of initial particles happens to match the data. But on a task where the "correct" rule changes over time, the filter has no way to recover: all the rules that would fit the new regime were likely eliminated in the first ten or twenty trials.
+
+The fix is a **rule-mutation step**: at each trial, each particle independently regenerates with probability $\mu$, redrawn from the rule grammar. This is the particle filter analogue of the process noise $q$ in the Kalman prototype (Ch. 12) and the recency weight $\lambda$ in the decay GCM (Ch. 11) — a single parameter that injects hypothesis turnover.
+
+The three chapters now share a common shape:
+
+| Chapter | Model | Non-stationarity parameter | Mechanism |
+|---|---|---|---|
+| Ch. 11 (decay GCM) | Exemplar store | $\lambda$ (forgetting rate) | Exponentially downweight old exemplars |
+| Ch. 12 (Kalman prototype) | Running mean + covariance | $q$ (process noise) | Re-inflate uncertainty each trial |
+| Ch. 13 (rule filter, below) | Particle distribution over rules | $\mu$ (mutation rate) | Randomly regenerate a fraction of particles each trial |
+
+### Mutation Mechanism
+
+```{r ch14_rule_mutation}
+# At each trial, each particle independently has probability mutation_prob
+# of being replaced by a freshly drawn rule. This keeps the hypothesis space
+# from collapsing and allows the filter to track changes in the correct rule.
+mutate_particles <- function(particles, mutation_prob, n_features,
+                             max_dims, feature_range) {
+  if (mutation_prob <= 0) return(particles)
+  n <- length(particles)
+  to_mutate <- which(runif(n) < mutation_prob)
+  for (i in to_mutate) {
+    particles[[i]] <- generate_random_rule(n_features, max_dims, feature_range)
+  }
+  particles
+}
+```
+
+### Scenario-Aware Particle Filter
+
+We extend `rule_particle_filter` to take a `mutation_prob` argument and a `scenario` switch that controls how the true feedback sequence is produced. The scenarios mirror Chapters 11 and 12 exactly: static Kruschke, performance-contingent abrupt shifts, and smooth drift.
+
+```{r ch14_drift_trajectory}
+make_drift_trajectory <- function(ntrials, drift_sigma = 0.05, seed = 1) {
+  set.seed(seed)
+  mu0_init <- c(1.75, 3.25)
+  mu1_init <- c(3.25, 1.75)
+  d0 <- apply(matrix(rnorm(ntrials * 2, 0, drift_sigma), ncol = 2), 2, cumsum)
+  d1 <- apply(matrix(rnorm(ntrials * 2, 0, drift_sigma), ncol = 2), 2, cumsum)
+  list(
+    mu0 = sweep(d0, 2, mu0_init, "+"),
+    mu1 = sweep(d1, 2, mu1_init, "+")
+  )
+}
+```
+
+```{r ch14_scenario_particle_filter}
+rule_particle_filter_scenario <- function(schedule,
+                                          error_prob,
+                                          mutation_prob              = 0.0,
+                                          n_particles                = N_PARTICLES_FIXED,
+                                          max_dims                   = MAX_RULE_DIMS,
+                                          resample_threshold_factor  = RESAMPLE_THRESHOLD,
+                                          scenario                   = c("static",
+                                                                          "contingent_shift",
+                                                                          "drift"),
+                                          streak_target              = 8,
+                                          drift_traj                 = NULL,
+                                          quiet                      = TRUE) {
+  scenario   <- match.arg(scenario)
+  n_trials   <- nrow(schedule)
+  obs        <- as.matrix(schedule[, c("height", "position")])
+  base_lab   <- schedule$category_feedback
+  n_features <- ncol(obs)
+  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+
+  ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
+  particles <- ps$particles
+  weights   <- ps$weights
+
+  label_flip         <- FALSE
+  streak             <- 0L
+
+  response_probs     <- numeric(n_trials)
+  sim_response       <- integer(n_trials)
+  observed_feedback  <- integer(n_trials)
+  label_flip_trace   <- logical(n_trials)
+
+  for (i in seq_len(n_trials)) {
+    stim <- as.numeric(obs[i, ])
+
+    # ── Mutation step ─────────────────────────────────────────────────
+    particles <- mutate_particles(particles, mutation_prob,
+                                  n_features, max_dims, fr)
+
+    # ── Prediction ────────────────────────────────────────────────────
+    preds        <- sapply(particles, evaluate_rule, stimulus = stim)
+    p_cat1_rules <- ifelse(preds == 1, 1 - error_prob, error_prob)
+    p            <- sum(weights * p_cat1_rules)
+    p            <- pmax(1e-9, pmin(1 - 1e-9, p))
+    response_probs[i] <- p
+    sim_response[i]   <- rbinom(1, 1, p)
+
+    # ── Observed feedback depends on scenario ─────────────────────────
+    fb <- switch(scenario,
+      static           = base_lab[i],
+      contingent_shift = if (label_flip) 1L - base_lab[i] else base_lab[i],
+      drift            = {
+        d0 <- sum(abs(stim - drift_traj$mu0[i, ]))
+        d1 <- sum(abs(stim - drift_traj$mu1[i, ]))
+        as.integer(d1 < d0)
+      }
+    )
+    observed_feedback[i] <- fb
+    label_flip_trace[i]  <- label_flip
+
+    if (scenario == "contingent_shift") {
+      streak <- if (sim_response[i] == fb) streak + 1L else 0L
+      if (streak >= streak_target) { label_flip <- !label_flip; streak <- 0L }
+    }
+
+    # ── Weight update ────────────────────────────────────────────────
+    weights <- update_weights(particles, weights, stim, fb, error_prob)
+
+    # ── Resample if ESS is low ───────────────────────────────────────
+    ess <- 1 / sum(weights^2)
+    if (ess < n_particles * resample_threshold_factor) {
+      rs        <- resample_particles(particles, weights)
+      particles <- rs$particles
+      weights   <- rs$weights
+    }
+  }
+
+  schedule |>
+    mutate(
+      prob_cat1         = response_probs,
+      sim_response      = sim_response,
+      observed_feedback = observed_feedback,
+      label_flip        = label_flip_trace,
+      correct           = as.integer(sim_response == observed_feedback)
+    )
+}
+```
+
+### Agent Wrapper
+
+```{r ch14_scenario_agent_wrapper}
+simulate_rule_agent_scenario <- function(agent_id, scenario,
+                                         error_prob, mutation_prob,
+                                         subject_seed,
+                                         n_particles   = N_PARTICLES_FIXED,
+                                         max_dims      = MAX_RULE_DIMS,
+                                         streak_target = 8,
+                                         drift_sigma   = 0.05) {
+  schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  drift_tr <- if (scenario == "drift")
+    make_drift_trajectory(nrow(schedule), drift_sigma, seed = subject_seed)
+  else NULL
+
+  out <- rule_particle_filter_scenario(
+    schedule                  = schedule,
+    error_prob                = error_prob,
+    mutation_prob             = mutation_prob,
+    n_particles               = n_particles,
+    max_dims                  = max_dims,
+    scenario                  = scenario,
+    streak_target             = streak_target,
+    drift_traj                = drift_tr,
+    resample_threshold_factor = RESAMPLE_THRESHOLD
+  )
+
+  out |>
+    mutate(
+      agent_id           = agent_id,
+      scenario           = scenario,
+      error_prob_true    = error_prob,
+      mutation_prob_true = mutation_prob
+    ) |>
+    group_by(agent_id) |>
+    mutate(cumulative_accuracy = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+```
+
+### Visualising the Three Scenarios
+
+We simulate 8 agents per cell across a 3 × 3 grid of scenarios × mutation rates, at fixed $\varepsilon = 0.1$ and $N_{\text{particles}} = 100$. As in Chapters 11 and 12, we expect mutation to *hurt* on static data (it purges rules that already match) and *help* on non-stationary data (it injects fresh candidates the filter can reweight when the environment changes).
+
+```{r ch14_scenario_viz}
+rule_scenario_viz_file <- here("simdata", "ch14_rule_scenario_viz.csv")
+
+if (regenerate_simulations || !file.exists(rule_scenario_viz_file)) {
+  viz_grid <- expand_grid(
+    scenario      = c("static", "contingent_shift", "drift"),
+    mutation_prob = c(0.0, 0.05, 0.2),
+    agent_id      = 1:8
+  ) |>
+    mutate(subject_seed = 50000 + row_number())
+
+  rule_viz_sim <- pmap_dfr(
+    list(agent_id      = viz_grid$agent_id,
+         scenario      = viz_grid$scenario,
+         mutation_prob = viz_grid$mutation_prob,
+         subject_seed  = viz_grid$subject_seed),
+    function(agent_id, scenario, mutation_prob, subject_seed) {
+      simulate_rule_agent_scenario(
+        agent_id      = agent_id,
+        scenario      = scenario,
+        error_prob    = 0.1,
+        mutation_prob = mutation_prob,
+        subject_seed  = subject_seed
+      )
+    }
+  )
+  write_csv(rule_viz_sim, rule_scenario_viz_file)
+} else {
+  rule_viz_sim <- read_csv(rule_scenario_viz_file, show_col_types = FALSE)
+}
+
+ggplot(rule_viz_sim,
+       aes(x = trial_within_subject, y = cumulative_accuracy,
+           color = factor(mutation_prob_true))) +
+  stat_summary(fun = mean, geom = "line",
+               aes(group = factor(mutation_prob_true)), linewidth = 1.1) +
+  stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.15,
+               aes(fill = factor(mutation_prob_true),
+                   group = factor(mutation_prob_true)),
+               color = NA) +
+  facet_wrap(~scenario, ncol = 3,
+             labeller = as_labeller(c(
+               static           = "Static Kruschke",
+               contingent_shift = "Performance-contingent flips",
+               drift            = "Smooth drift"))) +
+  scale_color_viridis_d(option = "plasma", name = expression(mu)) +
+  scale_fill_viridis_d(option  = "plasma", name = expression(mu)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") +
+  labs(
+    title    = "Rule Particle Filter Learning Curves Across Scenarios",
+    subtitle = paste0("Mean ± SE across 8 agents per cell; ε = 0.1, N_particles = 100"),
+    x = "Trial", y = "Cumulative accuracy"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+**Reading the panels.** On static data, $\mu = 0$ wins: the filter can converge on the right rule and keep it. Higher $\mu$ trades accuracy for adaptability — with 5% mutation per trial per particle, there is always ~5% of the particle cloud freshly drawn from the prior, which cannot (yet) have high weight. On contingent-shift data, the curves sort in the opposite direction after the first flip: $\mu = 0$ collapses after the reversal and never recovers, while $\mu > 0$ produces the characteristic sawtooth recovery. On drift data, moderate $\mu$ tracks the drifting boundary better than $\mu = 0$.
+
+### Assumption Match Across Scenarios
+
+| Scenario | What "changes" in the world | What mutation assumes | Match |
+|---|---|---|---|
+| Static | Nothing | Stochastic rule turnover at rate $\mu$ | **Harmless at $\mu = 0$**; costly for $\mu > 0$ |
+| Contingent shift | Abrupt label reversals | Stochastic rule turnover | **Approximate**: mutation lets the filter recover, but there is no mechanism for abrupt, synchronised re-initialisation |
+| Smooth drift | Gaussian drift of category centres | Stochastic rule turnover | **Approximate**: mutation supplies fresh candidates but is not literally tracking the drift direction |
+
+Unlike the Kalman prototype's $q$, mutation is not a *model* of the drift process — it is a coarse rejuvenation mechanism that keeps the hypothesis space alive so the filter can react to whatever changes the environment throws at it. The matching story in Chapter 12 was "smooth drift fits the model's generative assumption exactly"; here it is "mutation is a general-purpose fix that happens to suffice in both non-stationary scenarios." This is the cognitive-theory contrast: rule-based learners have no commitment to *how* the environment changes, only that their hypotheses need to stay fresh.
+
+### How This Strengthens the Model A vs Model B Gap
+
+The Stan mixture (Model B) is built on a fixed candidate rule set enumerated before inference begins. There is no analogue to $\mu$ — mixture weights can reassign posterior mass across the candidate set, but nothing in Model B *creates* rules that were not in the candidate set. On static data this is an acceptable approximation as long as the true rule is in the candidate set (Ch. 13's §"Discharging the Post-Hoc Rule Selection" argues exactly this). On contingent-shift or drift data, the candidate set that correctly covered the initial environment will not cover the post-shift environment, and Model B has no mechanism to repair itself.
+
+Concretely: if we take the contingent-shift simulated data from the plot above and fit Model B to it, Model B's posterior predictive learning curve will be stuck at the pre-shift accuracy plateau — it has no way to produce the sawtooth. The same fit under NPE (with $\varepsilon$ and $\mu$ both inferred) can match the data because Model A *is* the generative process. **The gap between Model A and Model B on non-stationary data is therefore not a subtle bias — it is a structural ceiling.** This is the sharpened version of the argument in §"The Main Empirical Result": the cost of replacing an intractable cognitive theory with a tractable proxy is bounded when the task is stationary, and unbounded when it is not.
+
+### Implication for the NPE Pipeline
+
+The NPE setup in §"Neural Posterior Estimation for Model A" infers $(\varepsilon, N_{\text{particles}})$. Extending to $(\varepsilon, N_{\text{particles}}, \mu)$ is a one-line change to the prior and a one-argument change to `simulate_model_a`. Validation (SBC + expected coverage) and the pair-plot inspection transfer directly. On static data we would expect $\mu$ to be poorly identified — matching Ch. 12's $q$ and Ch. 11's $\lambda$ under their own static scenarios. On contingent-shift and drift data $\mu$ should become identifiable, because the signature in the learning curve (sawtooth depth, plateau height, post-flip recovery speed) depends specifically on $\mu$ in a way the other parameters cannot mimic. Production implementations of this chapter for the Chapter 15 cross-architecture comparison should include $\mu$ in the NPE prior and run one validation sweep per scenario.
+
+### Trilogy Synthesis
+
+Chapters 11, 12, and 13 now each contain a parallel analysis: a one-parameter extension to the base cognitive model that turns the model from a stationary learner into a non-stationary one, validated across three scenarios that load the new parameter differently. The parameters are superficially different — a recency weight, a process-noise variance, a mutation probability — but the validation story is the same in each case: identifiability is a joint property of the model and the task, the non-stationarity parameter is weakly identified when the task is stationary, and SBC under a stationary task catches this failure mode while SBC under a matched non-stationary task passes. This is the shape the reader should recognise when extending any path-dependent cognitive model: one parameter for non-stationarity, one matched scenario to identify it, and a validation battery that sorts assumption-matched, mis-specified, and information-starved cases in the order the theory predicts.
 
 ---
 

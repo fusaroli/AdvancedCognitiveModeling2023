@@ -846,6 +846,15 @@ models in Stan and finds out what happens.
 \end{tikzpicture}
 ```
 
+The generative relationships for the SBA are:
+$$
+\begin{aligned}
+\alpha_{post,i} &= \alpha_0 + k_{1,i} + k_{2,i} \\
+\beta_{post,i}  &= \beta_0 + (n_{1,i} - k_{1,i}) + (n_{2,i} - k_{2,i}) \\
+y_i &\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
+\end{aligned}
+$$
+
 ```{r ch10_stan_simple_agent}
 SimpleAgent_stan <- "
 // Simple Bayesian Agent (SBA).
@@ -924,6 +933,17 @@ We start with the intuitive parameterisation using $w_d$ and $w_s$ directly:
   \plate {p1} {(k1)(n1)(k2)(n2)(ap)(bp)(y)} {$N$};
 \end{tikzpicture}
 ```
+
+The generative relationships for the unreparameterized WBA are:
+$$
+\begin{aligned}
+w_d &\sim \text{Lognormal}(0, 0.5) \\
+w_s &\sim \text{Lognormal}(0, 0.5) \\
+\alpha_{post,i} &= \alpha_0 + w_d k_{1,i} + w_s k_{2,i} \\
+\beta_{post,i}  &= \beta_0 + w_d(n_{1,i} - k_{1,i}) + w_s(n_{2,i} - k_{2,i}) \\
+y_i &\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
+\end{aligned}
+$$
 
 ```{r ch10_stan_weighted_agent_raw}
 WeightedAgentRaw_stan <- "
@@ -1583,6 +1603,16 @@ attention) and we'll fit both.
 \end{tikzpicture}
 ```
 
+The generative relationships for the PBA are:
+$$
+\begin{aligned}
+p &\sim \text{Beta}(2, 2) \\
+\alpha_{post,i} &= \alpha_0 + p k_{1,i} + (1-p) k_{2,i} \\
+\beta_{post,i}  &= \beta_0 + p(n_{1,i} - k_{1,i}) + (1-p)(n_{2,i} - k_{2,i}) \\
+y_i &\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
+\end{aligned}
+$$
+
 ```{r ch10_stan_proportional_agent}
 ProportionalAgent_stan <- "
 // Proportional Bayesian Agent (PBA).
@@ -1680,6 +1710,19 @@ write_stan_file(ProportionalAgent_stan,
   \plate {p1} {(k1)(n1)(k2)(n2)(ap)(bp)(y)} {$N$};
 \end{tikzpicture}
 ```
+
+The generative relationships for the reparameterized WBA are:
+$$
+\begin{aligned}
+\rho &\sim \text{Beta}(2, 2) \\
+\kappa &\sim \text{Lognormal}(\log(2), 0.5) \\
+w_d &= \rho \cdot \kappa \\
+w_s &= (1 - \rho) \cdot \kappa \\
+\alpha_{post,i} &= \alpha_0 + w_d k_{1,i} + w_s k_{2,i} \\
+\beta_{post,i}  &= \beta_0 + w_d(n_{1,i} - k_{1,i}) + w_s(n_{2,i} - k_{2,i}) \\
+y_i &\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
+\end{aligned}
+$$
 
 ```{r ch10_stan_weighted_reparam}
 WeightedAgent_stan <- "
@@ -3072,6 +3115,15 @@ The ML-SBA has zero free parameters per agent. It applies strict Bayesian integr
 \end{tikzpicture}
 ```
 
+The generative relationships for the ML-SBA are identical across agents:
+$$
+\begin{aligned}
+\alpha_{post,ij} &= \alpha_0 + k_{1,ij} + k_{2,ij} \\
+\beta_{post,ij}  &= \beta_0 + (n_{1,ij} - k_{1,ij}) + (n_{2,ij} - k_{2,ij}) \\
+y_{ij} &\sim \text{Beta-Binomial}(1, \alpha_{post,ij}, \beta_{post,ij})
+\end{aligned}
+$$
+
 ```{r ch10_multilevel_sba_stan}
 MultilevelSBA_stan <- "
 // Multilevel Simple Bayesian Agent
@@ -3232,6 +3284,18 @@ The key design choices mirror Chapter 7:
   \plate {agent} {(indiv)(wd)(ws)(trial)} {$J$ agents};
 \end{tikzpicture}
 ```
+
+The generative relationships for the ML-WBA are:
+$$
+\begin{aligned}
+\begin{pmatrix} \text{logit}(\rho_j) \\ \log(\kappa_j) \end{pmatrix} &\sim \text{MVN}(\boldsymbol{\mu}, \boldsymbol{\Sigma}) \\
+w_{d,j} &= \rho_j \cdot \kappa_j \\
+w_{s,j} &= (1 - \rho_j) \cdot \kappa_j \\
+\alpha_{post,ij} &= \alpha_0 + w_{d,j} k_{1,ij} + w_{s,j} k_{2,ij} \\
+\beta_{post,ij}  &= \beta_0 + w_{d,j}(n_{1,ij} - k_{1,ij}) + w_{s,j}(n_{2,ij} - k_{2,ij}) \\
+y_{ij} &\sim \text{Beta-Binomial}(1, \alpha_{post,ij}, \beta_{post,ij})
+\end{aligned}
+$$
 
 ```{r ch10_multilevel_wba_stan}
 MultilevelWBA_stan <- "
