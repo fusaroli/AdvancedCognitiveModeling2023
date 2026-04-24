@@ -7,31 +7,35 @@
 //   Kalman loop structure: Predict (add Q) → Decide → Update.
 //   The full filter is in transformed parameters so log_lik in generated
 //   quantities reads p[i] directly without re-running the filter.
+
 data {
   int<lower=1> ntrials;
   int<lower=1> nfeatures;
   array[ntrials] int<lower=0, upper=1> cat_one;
   array[ntrials] int<lower=0, upper=1> y;
   array[ntrials, nfeatures] real obs;
+
   vector[nfeatures] initial_mu_cat0;
   vector[nfeatures] initial_mu_cat1;
   real<lower=0> initial_sigma_diag;
+
   real prior_logr_mean;
   real<lower=0> prior_logr_sd;
   real prior_logq_mean;
   real<lower=0> prior_logq_sd;
 }
+
 parameters {
   real log_r;
   real log_q;
 }
+
 transformed parameters {
   real<lower=0> r_value = exp(log_r);
   real<lower=0> q_value = exp(log_q);
-  // ── Explicitly calculate and save the joint log-prior ─────────────
-  real lprior = normal_lpdf(log_r | prior_logr_mean, prior_logr_sd) +
-                normal_lpdf(log_q | prior_logq_mean, prior_logq_sd);
+
   array[ntrials] real<lower=1e-9, upper=1-1e-9> p;
+
   {
     vector[nfeatures] mu_cat0 = initial_mu_cat0;
     vector[nfeatures] mu_cat1 = initial_mu_cat1;
@@ -45,18 +49,24 @@ transformed parameters {
       diag_matrix(rep_vector(q_value, nfeatures));
     matrix[nfeatures, nfeatures] I_mat =
       diag_matrix(rep_vector(1.0, nfeatures));
+
     for (i in 1:ntrials) {
       vector[nfeatures] x = to_vector(obs[i]);
+
       // ── Prediction step: add process noise to both categories ──────────
       sigma_cat0 = sigma_cat0 + q_matrix;
       sigma_cat1 = sigma_cat1 + q_matrix;
+
       // ── Decision ────────────────────────────────────────────────────────
       matrix[nfeatures, nfeatures] cov0 = sigma_cat0 + r_matrix;
       matrix[nfeatures, nfeatures] cov1 = sigma_cat1 + r_matrix;
+
       real log_p0 = multi_normal_lpdf(x | mu_cat0, cov0);
       real log_p1 = multi_normal_lpdf(x | mu_cat1, cov1);
       real prob1  = exp(log_p1 - log_sum_exp(log_p0, log_p1));
+
       p[i] = fmax(1e-9, fmin(1 - 1e-9, prob1));
+
       // ── Update (measurement update for the correct category only) ────────
       if (cat_one[i] == 1) {
         vector[nfeatures] innov = x - mu_cat1;
@@ -78,15 +88,19 @@ transformed parameters {
     }
   }
 }
+
 model {
-  // ── Add the pre-calculated log-prior to the target density ────────
-  target += lprior;
-  // ── Add the likelihood ────────────────────────────────────────────
+  target += normal_lpdf(log_r | prior_logr_mean, prior_logr_sd);
+  target += normal_lpdf(log_q | prior_logq_mean, prior_logq_sd);
   target += bernoulli_lpmf(y | p);
 }
+
 generated quantities {
   vector[ntrials] log_lik;
+  real lprior;
   for (i in 1:ntrials)
     log_lik[i] = bernoulli_lpmf(y[i] | p[i]);
+  lprior = normal_lpdf(log_r | prior_logr_mean, prior_logr_sd) +
+           normal_lpdf(log_q | prior_logq_mean, prior_logq_sd);
 }
 

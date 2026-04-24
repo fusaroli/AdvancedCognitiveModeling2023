@@ -286,13 +286,35 @@ which requires iterating `log_mix()` **inside a loop over observations**.
 
 ###  The Correct Stan Model
 
-> Why must discrete parameters be marginalised? Stan's HMC sampler requires a continuous, differentiable log-posterior. The latent component indicator z_i is discrete. Marginalising it — summing over its two possible values inside log_mix() — converts the model into a purely continuous problem that HMC can handle.
+::: {.callout-note title="Stan Technique — Marginalizing Discrete Parameters with `log_mix`"}
+
+Stan's HMC sampler requires a **continuous, differentiable** log-posterior. A latent component indicator $z_i \in \{0, 1\}$ (which component generated trial $i$) is **discrete** — HMC cannot sample it directly.
+
+The solution is **analytic marginalization**: instead of sampling $z_i$, we sum its log-probability over both possible values. For a two-component mixture this is exactly what `log_mix` does:
+
+```stan
+target += log_mix(pi,          // mixing weight (probability of component 1)
+                  lp1,         // log p(obs | component 1)
+                  lp2);        // log p(obs | component 2)
+```
+
+which computes $\log\!\left[\pi \cdot p_1 + (1-\pi) \cdot p_2\right]$ in a numerically stable way.
+
+**Block placement note.** The per-observation `log_mix` sum lives inside the `model` block as a local computation — it contributes to `target` but `z_i` is never stored. The parameters we do sample (`alpha`, `nu`) are continuous and HMC can take gradients through them. In `generated quantities`, we can *recover* posterior expectations of $z_i$ via a Bayes-rule calculation if needed, but we do not sample it.
+
+**Why the loop is necessary here.** Unlike a pure Bernoulli likelihood, `log_mix` operates on a single observation at a time. There is no vectorized Stan function for mixture likelihoods across observations (because each call is itself a sum of two terms that depend on the observation), so the explicit `for (i in 1:n)` loop is correct and unavoidable for the single-subject model. For the multilevel model we will see how to structure this loop across subjects to enable future parallelization.
+:::
 
 ```{r ch09_write-single-stan}
 single_mixture_stan <- "
 data {
   int<lower=1> n;
   array[n] int<lower=0, upper=1> h;
+  real prior_alpha_mu;
+  real<lower=0> prior_alpha_sigma;
+  real prior_nu_mu;
+  real<lower=0> prior_nu_sigma;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -303,38 +325,34 @@ parameters {
 model {
   real noise_p = inv_logit(nu);
 
-  target += normal_lpdf(alpha | 0, 1);
-  target += normal_lpdf(nu    | -1, 1);
+  target += normal_lpdf(alpha | prior_alpha_mu, prior_alpha_sigma);
+  target += normal_lpdf(nu    | prior_nu_mu,    prior_nu_sigma);
 
-  // Correct: one log_mix call per observation.
-  // logit(0.5) = 0.0, so bernoulli_logit_lpmf(h[i] | 0.0) is used for
-  // the random component — keeping both calls on the logit scale for
-  // consistency and to avoid an implicit probability-to-logit conversion.
+  // Marginalise the discrete component indicator analytically via log_mix.
+  // One call per observation — vectorisation is not available for log_mix.
   for (i in 1:n)
     target += log_mix(noise_p,
-                      bernoulli_logit_lpmf(h[i] | 0.0),    // random component
-                      bernoulli_logit_lpmf(h[i] | alpha));  // biased component
+                      bernoulli_logit_lpmf(h[i] | 0.0),
+                      bernoulli_logit_lpmf(h[i] | alpha));
 }
 
 generated quantities {
-  real<lower=0, upper=1> theta   = inv_logit(alpha);  // bias, probability scale
-  real<lower=0, upper=1> pi_hat  = inv_logit(nu);     // noise weight, prob scale
-
-  // lprior is required by priorsense::powerscale_sensitivity()
-  real lprior = normal_lpdf(alpha | 0, 1) + normal_lpdf(nu | -1, 1);
-
+  real<lower=0, upper=1> theta   = inv_logit(alpha);
+  real<lower=0, upper=1> pi_hat  = inv_logit(nu);
+  real lprior = normal_lpdf(alpha | prior_alpha_mu, prior_alpha_sigma)
+              + normal_lpdf(nu    | prior_nu_mu,    prior_nu_sigma);
   vector[n] log_lik;
   array[n] int pred_choice;
-
-  for (i in 1:n) {
-    log_lik[i] = log_mix(pi_hat,
-                         bernoulli_logit_lpmf(h[i] | 0.0),
-                         bernoulli_logit_lpmf(h[i] | alpha));
-
-    if (bernoulli_rng(pi_hat))
-      pred_choice[i] = bernoulli_rng(0.5);
-    else
-      pred_choice[i] = bernoulli_rng(theta);
+  if (run_diagnostics) {
+    for (i in 1:n) {
+      log_lik[i] = log_mix(pi_hat,
+                           bernoulli_logit_lpmf(h[i] | 0.0),
+                           bernoulli_logit_lpmf(h[i] | alpha));
+      if (bernoulli_rng(pi_hat))
+        pred_choice[i] = bernoulli_rng(0.5);
+      else
+        pred_choice[i] = bernoulli_rng(theta);
+    }
   }
 }
 "
@@ -352,7 +370,13 @@ We use the simulated matching-pennies data introduced in earlier chapters, selec
 ```{r ch09_load-data}
 d    <- read_csv(here("simdata", "ch05_randomnoise.csv"), show_col_types = FALSE)
 dd   <- d |> dplyr::filter(true_rate == 0.8, true_noise == 0.1)
-data <- list(n = nrow(dd), h = as.integer(dd$choice))
+data <- list(
+  n    = nrow(dd),
+  h    = as.integer(dd$choice),
+  prior_alpha_mu    = 0,   prior_alpha_sigma = 1,
+  prior_nu_mu       = -1,  prior_nu_sigma    = 1,
+  run_diagnostics   = 1L
+)
 
 cat("Trials:", data$n, "| Proportion '1':", round(mean(data$h), 3), "\n")
 ```
@@ -823,42 +847,38 @@ data {
   int<lower=1> trials;
   int<lower=1> agents;
   array[trials, agents] int<lower=0, upper=1> h;
+  // Priors as data — change without recompiling
+  real prior_muA_mu;
+  real<lower=0> prior_muA_sigma;
+  real prior_muN_mu;
+  real<lower=0> prior_muN_sigma;
+  real<lower=0> prior_tau_sigma;
+  real<lower=0> prior_lkj_shape;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
-  real muA;                         // population mean bias (logit)
-  real muN;                         // population mean noise (logit)
-  vector<lower=0>[2] tau;           // population SDs: [bias, noise]
-  matrix[2, agents] z_IDs;          // standardised individual offsets
-  cholesky_factor_corr[2] L_Omega;  // Cholesky of correlation matrix
+  real muA;
+  real muN;
+  vector<lower=0>[2] tau;
+  matrix[2, agents] z_IDs;
+  cholesky_factor_corr[2] L_Omega;
 }
 
 transformed parameters {
-  // Non-centred: individual offsets on the logit scale
   matrix[agents, 2] IDs = (diag_pre_multiply(tau, L_Omega) * z_IDs)';
 }
 
 model {
-  target += normal_lpdf(muA | 0, 1);
-  target += normal_lpdf(muN | -1, 0.5);
-
-  // tau is declared vector<lower=0>[2], so Stan applies the log Jacobian
-  // of the log transform automatically. The truncation normalising constant
-  // is already absorbed into the unconstrained parameterisation; manually
-  // subtracting normal_lccdf() would add unnecessary AD nodes for a
-  // constant that cancels. Vectorised call covers both SD elements.
-  target += normal_lpdf(tau | 0, 0.3);
-
-  target += lkj_corr_cholesky_lpdf(L_Omega | 2);
+  target += normal_lpdf(muA | prior_muA_mu,  prior_muA_sigma);
+  target += normal_lpdf(muN | prior_muN_mu,  prior_muN_sigma);
+  target += normal_lpdf(tau | 0, prior_tau_sigma);
+  target += lkj_corr_cholesky_lpdf(L_Omega | prior_lkj_shape);
   target += std_normal_lpdf(to_vector(z_IDs));
 
-  // Per-agent, per-trial mixture likelihood (correct loop structure).
-  // Both components use bernoulli_logit_lpmf for scale consistency:
-  // logit(0.5) = 0.0, so the random component is bernoulli_logit_lpmf(h | 0.0).
   for (i in 1:agents) {
     real noise_i = inv_logit(muN + IDs[i, 2]);
     real alpha_i = muA + IDs[i, 1];
-
     for (t in 1:trials)
       target += log_mix(noise_i,
                         bernoulli_logit_lpmf(h[t, i] | 0.0),
@@ -867,38 +887,31 @@ model {
 }
 
 generated quantities {
-  // Population-level summaries
   real<lower=0, upper=1> pop_bias  = inv_logit(muA);
   real<lower=0, upper=1> pop_noise = inv_logit(muN);
   corr_matrix[2] Omega             = multiply_lower_tri_self_transpose(L_Omega);
   real bias_noise_corr             = Omega[1, 2];
-
-  // lprior is required by priorsense::powerscale_sensitivity().
-  // Must mirror every term in the model block exactly.
-  real lprior = normal_lpdf(muA | 0, 1)
-              + normal_lpdf(muN | -1, 0.5)
-              + normal_lpdf(tau | 0, 0.3)
-              + lkj_corr_cholesky_lpdf(L_Omega | 2)
+  real lprior = normal_lpdf(muA | prior_muA_mu,  prior_muA_sigma)
+              + normal_lpdf(muN | prior_muN_mu,  prior_muN_sigma)
+              + normal_lpdf(tau | 0, prior_tau_sigma)
+              + lkj_corr_cholesky_lpdf(L_Omega | prior_lkj_shape)
               + std_normal_lpdf(to_vector(z_IDs));
 
-  // Individual parameters
   array[agents] real<lower=0, upper=1> agent_bias;
   array[agents] real<lower=0, upper=1> agent_noise;
-
-  // Per-trial log-lik (needed for LOO and priorsense)
   array[trials, agents] real log_lik;
 
   for (i in 1:agents) {
     real alpha_i = muA + IDs[i, 1];
     real noise_i = inv_logit(muN + IDs[i, 2]);
-
     agent_bias[i]  = inv_logit(alpha_i);
     agent_noise[i] = noise_i;
-
-    for (t in 1:trials)
-      log_lik[t, i] = log_mix(noise_i,
-                               bernoulli_logit_lpmf(h[t, i] | 0.0),
-                               bernoulli_logit_lpmf(h[t, i] | alpha_i));
+    if (run_diagnostics) {
+      for (t in 1:trials)
+        log_lik[t, i] = log_mix(noise_i,
+                                bernoulli_logit_lpmf(h[t, i] | 0.0),
+                                bernoulli_logit_lpmf(h[t, i] | alpha_i));
+    }
   }
 }
 "
@@ -942,9 +955,14 @@ for (j in seq_len(n_agents)) {
 }
 
 data_multi <- list(
-  trials = n_trials,
-  agents = n_agents,
-  h      = h_matrix
+  trials            = n_trials,
+  agents            = n_agents,
+  h                 = h_matrix,
+  prior_muA_mu      = 0,    prior_muA_sigma   = 1.0,
+  prior_muN_mu      = -1,   prior_muN_sigma   = 0.5,
+  prior_tau_sigma   = 0.3,
+  prior_lkj_shape   = 2.0,
+  run_diagnostics   = 1L
 )
 
 # True individual parameters for later recovery plots

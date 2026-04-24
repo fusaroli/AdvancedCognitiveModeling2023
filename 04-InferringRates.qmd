@@ -668,7 +668,34 @@ stan_file_logit <- here(stan_model_dir, "ch06_SimpleBernoulli_logodds.stan")
 # Write the Stan code to the file
 writeLines(stan_model_logit_code, stan_file_logit)
 cat("Stan model (logit) written to:", stan_file_logit, "\n")
+```
 
+::: {.callout-tip title="Stan Efficiency — Sufficient Statistics: Aggregate IID Trials"}
+
+When all trials are **independently and identically distributed** (no memory, no sequential
+dependency, one $\theta$ for the whole session), you can replace a loop of $N$ Bernoulli calls
+with a single Binomial call on the **sufficient statistic** — the total number of successes.
+
+```stan
+// Slower: N separate Bernoulli evaluations (one autodiff node each)
+for (i in 1:N)
+  target += bernoulli_logit_lpmf(h[i] | theta_logit);
+
+// Faster: one Binomial evaluation — mathematically identical for IID data
+target += binomial_logit_lpmf(sum(h) | N, theta_logit);
+```
+
+Pass `sum(h)` and `N` as integers rather than the full array — Stan never sees the
+individual trial values.
+
+**When this applies:** single-subject models with one rate parameter per session (Chapters 4–5).
+
+**When it does not apply:** any model where the likelihood varies by trial — memory
+models, multilevel models with per-subject parameters indexed by `subj_id`, sequential
+belief-updating models. For those, the per-trial loop is necessary.
+:::
+
+```{r ch04_fit_logit_model}
 ## With the logit format
 ## Specify where the model is
 file <- here("stan", "ch06_SimpleBernoulli_logodds.stan")
@@ -740,7 +767,24 @@ ggplot(draws_df_biased_logodds) +
 
 We can see that the results are very similar.
 
-## Bonus content: fitting the model with pathfinder vs mcmc
+## Bonus: Pathfinder Variational Inference vs. Full MCMC
+
+::: {.callout-tip title="Stan Optimization: Pathfinder as Warm-Start Initialization"}
+
+Stan's default NUTS-HMC sampler draws posterior samples by simulating a Hamiltonian dynamical system. During **warm-up**, the sampler adapts its step size and metric — a phase that can take hundreds of iterations if chains start far from the posterior mass. **Pathfinder** [@zhang2022pathfinder] is a fast variational approximation that traces the L-BFGS optimization path from an initial point to the posterior mode and fits a series of multivariate normal approximations along the way. It is not a gold-standard posterior, but it tells HMC *roughly where the posterior lives* before NUTS begins.
+
+Three strategies, in order of increasing accuracy and cost:
+
+| Strategy | When to use | Typical speed |
+|---|---|---|
+| **Pathfinder alone** | Quick exploration, prior sensitivity checks | ~10–50× faster than NUTS |
+| **NUTS with default init** | Standard analysis | Baseline |
+| **Pathfinder → NUTS warm-start** | Hierarchical or complex models where warm-up is slow | 20–60% faster than default NUTS |
+
+The warm-start trick: run `mod$pathfinder(...)` to get a posterior approximation, then pass it as `init` to `mod$sample(...)`. This replaces the random Uniform(−2, 2) starting points with draws from the Pathfinder approximation, letting the sampler skip most of the warm-up trajectory. We will use this pattern throughout the book for models with challenging geometry or many parameters.
+
+**When Pathfinder fails:** Near-degenerate posteriors (e.g., hard funnels, flat ridges) can cause Pathfinder's variational approximation to collapse. Always wrap it in `tryCatch(..., error = function(e) NULL)` and fall back to explicit per-chain inits centered on prior medians if it returns `NULL`.
+:::
 
 ```{r ch05_intro to pathfinded}
 ## Bonus content: Benchmarking NUTS, Pathfinder, and Pathfinder-initialized NUTS
@@ -1039,47 +1083,96 @@ The trace plots should show the same "hairy caterpillar" pattern as before — w
 
 Instead of feeding memory as external data, we can model it as an internal state that updates within the model.
 
-For this specific model—where memory is defined simply as the running average of the opponent's choices—the update rule depends only on the observed data (other), and not on any parameters we are trying to estimate (like bias or beta). Therefore, we should calculate this in Stan's `transformed data` block.
+For this specific model — where memory is simply a running average of the opponent's choices — the update rule depends only on the observed data (`other`), not on any parameter being estimated. We should therefore calculate it in Stan's `transformed data` block.
 
-In my first version of these notes, I had rather used the `transformed parameters` to calculate memory. This led me to better understand how these blocks work:
+::: {.callout-tip title="Stan Efficiency Rule 1 — Block Placement: Run it Once, Not Thousands of Times"}
 
-* code in transformed data runs only once before sampling begins. 
+Every Stan model has blocks that execute at very different frequencies. Choosing the **right block** is the most impactful single optimization:
 
-* code in transformed parameters is calculated at every single step of the MCMC chain.
+| Block | Executes | Use for |
+|---|---|---|
+| `transformed data` | **Once**, before sampling | Any quantity derived **only from data** — precomputed distances, normalized inputs, log-transforms of fixed constants |
+| `transformed parameters` | **Every leapfrog step** | Deterministic functions of parameters whose gradients must flow backward — recursive states, reparameterizations, predicted values used in the likelihood |
+| `model` (local `{}` block) | Every leapfrog step, **not saved** | Scratch variables for accumulating `target +=`; no overhead from the saved-draw tape |
+| `generated quantities` | **Once per saved draw** (post-warmup only) | PPCs, log-likelihoods, prior samples — expensive quantities you only need in the final posterior |
 
-In other words, if the variable we need to calculate is dependent on data only, calculating it in transformed data is more efficient. If it depends on parameters that are being estimated, then we need to calculate it in transformed parameters. 
+**Concrete cost of misplacement.** A typical fit runs 4 chains × 1000 warmup × ~6 leapfrog steps per draw = ~24 000 leapfrog evaluations. Any computation in `transformed parameters` runs ~24 000 times. The same computation in `transformed data` runs exactly once. For a model with 500 trials, precomputing 500 memory values in `transformed data` rather than `transformed parameters` saves ~12 million floating-point operations per fit.
+
+**The decision tree:**
+
+1. Does this depend **only on data** (not on any parameter)?
+   → `transformed data`
+2. Does this depend on **parameters** and does the likelihood or another parameter need it?
+   → `transformed parameters`
+3. Is this needed **only after sampling** (PPC draws, LOO log-likelihoods)?
+   → `generated quantities`, gated by `run_diagnostics` (introduced properly in Ch. 5)
+4. Is this just a temporary accumulator inside a loop?
+   → Local variable inside `{}` in `model` or `transformed parameters`
+
+In the memory model below, `memory` depends only on `other` (data) → `transformed data`. In the forgetting model that follows, `memory` depends on the free parameter `forgetting` → local variable inside `model`.
+
+**Corollary — pre-compute in R when possible.** If a quantity depends only on data and will
+never change between fits, computing it in R and passing it as a data field is even faster than
+`transformed data`: Stan never sees the raw computation at all. For example, the multilevel
+memory model in Chapter 6 pre-computes the running opponent rate in R and passes `opp_rate_prev`
+as a vector, rather than recomputing it inside Stan on every chain.
+:::
+
+::: {.callout-tip title="Stan Efficiency — Vectorize the Likelihood Call"}
+
+Stan evaluates each `~` or `target +=` statement as a separate autodiff node.
+Replacing a trial-level loop with a **vectorized distribution call** collapses $N$ nodes
+into one, reducing autodiff graph size and improving cache locality.
+
+```stan
+// Slower: N separate nodes in the autodiff graph
+for (i in 1:N)
+  target += bernoulli_logit_lpmf(h[i] | theta_logit);
+
+// Faster: one vectorized call — h and theta_logit are both length-N vectors
+target += bernoulli_logit_lpmf(h | theta_logit);
+```
+
+The vectorized form works whenever `theta_logit` is either a **scalar** (broadcasts to all
+trials) or a **vector of the same length as `h`**. In the multilevel model of Chapter 6,
+`target += bernoulli_logit_lpmf(y | theta_logit[subj_id])` vectorizes the full N_total
+trial loop by scatter-indexing the per-subject parameters.
+
+**Caveat:** vectorization is not available for mixture likelihoods (`log_mix`) because each
+observation requires its own separate `log_mix` call. The loop is unavoidable there (Ch. 8).
+:::
+
 
 ```{r ch05_internal memory stan model}
-## Create the data
+## Create the data — run_diagnostics = 1 for the single validation fit
 data <- list(
   n = 120,
   h = d1$Self,
-  other = d1$Other
+  other = d1$Other,
+  run_diagnostics = 1L
 )
 
 stan_model <- "
-// Memory-based choice model with prior and posterior predictions
+// Memory-based choice model with prior and posterior predictions.
+// memory[] is data-derived and lives in transformed data (computed once).
+// run_diagnostics gates expensive generated quantities for SBC speed.
 
 data {
  int<lower=1> n;
  array[n] int h;
  array[n] int other;
+ int<lower=0, upper=1> run_diagnostics; // 1 = compute PPC + log_lik; 0 = skip (use for SBC)
 }
 
 transformed data {
-  // WORKFLOW RULE: If a variable depends ONLY on observed data (like 'other'), 
-  // calculate it in 'transformed data'. It evaluates exactly ONCE.
-  // If you put this in 'transformed parameters', Stan would needlessly recalculate 
-  // the exact same vector at every single MCMC leapfrog step, drastically slowing down your model.
+  // memory depends only on other[] (data), so it runs ONCE here.
+  // Moving this to transformed parameters would recompute it ~24 000 times per fit.
   vector[n] memory;
-  
   memory[1] = 0.5;
-  
   for (trial in 1:(n-1)) {
      memory[trial + 1] = memory[trial] + ((other[trial] - memory[trial]) / (trial + 1));
-     // Numerical stability clips
-     if (memory[trial + 1] < 0.01) { memory[trial + 1] = 0.01; }
-     if (memory[trial + 1] > 0.99) { memory[trial + 1] = 0.99; }
+     if (memory[trial + 1] < 0.01) memory[trial + 1] = 0.01;
+     if (memory[trial + 1] > 0.99) memory[trial + 1] = 0.99;
   }
 }
 
@@ -1089,29 +1182,25 @@ parameters {
 }
 
 model {
-  // Priors
   target += normal_lpdf(bias | 0, .3);
   target += normal_lpdf(beta | 0, .5);
-  
-  // Likelihood
-  // A trial by trial version would be
-  // for (trial in 1:n) {
-  //   target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
-  // }
-  // However, we vectorize the likelihood for speed.
+  // Vectorized likelihood — no loop needed because memory is precomputed.
   target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
 }
 
 generated quantities {
-  // We save the pointwise log-likelihood for later model comparisons
-  vector[n] log_lik;
-  for (trial in 1:n) {
-    log_lik[trial] = bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
-  }
-  
-  // Generate prior samples for Prior-Posterior Update checks
+  // Prior samples are always generated (cheap).
   real bias_prior = normal_rng(0, 0.3);
   real beta_prior = normal_rng(0, 0.5);
+  // Expensive diagnostics are gated — set run_diagnostics = 0 during SBC.
+  vector[n] log_lik;
+  array[n] int y_rep;
+  if (run_diagnostics) {
+    for (trial in 1:n) {
+      log_lik[trial] = bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
+      y_rep[trial]   = bernoulli_logit_rng(bias + beta * logit(memory[trial]));
+    }
+  }
 }
 "
 
@@ -1202,41 +1291,64 @@ A more cognitively plausible memory model incorporates forgetting, where recent 
 
 ```{r ch05_internal memory with forgetting stan model}
 stan_model <- "
-// The input (data) for the model. n of trials and h for (right and left) hand
+// Memory model with exponential forgetting (learning-rate style).
+// memory[] depends on the free parameter 'forgetting', so it cannot go in
+// transformed data. It lives as a local vector inside the model block —
+// computed at every leapfrog step but never saved to the posterior draws.
+
 data {
   int<lower=1> n;
   array[n] int h;
   array[n] int other;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
-// The parameters accepted by the model. 
 parameters {
-  real bias; // how likely is the agent to pick right when the previous rate has no information (50-50)?
-  real beta; // how strongly is previous rate impacting the decision?
+  real bias;
+  real beta;
   real<lower=0, upper=1> forgetting;
 }
 
-// The model to be estimated. 
 model {
-  
-  vector[n] memory;
-  // Priors
   target += beta_lpdf(forgetting | 1, 1);
   target += normal_lpdf(bias | 0, .3);
   target += normal_lpdf(beta | 0, .5);
-  
-  // Model, looping to keep track of memory
+
+  // memory is a LOCAL variable — declared inside model, so it lives on the
+  // stack and is discarded after each leapfrog step without touching the saved-
+  // draw tape. This is the right pattern when memory depends on a parameter.
+  vector[n] memory;
   for (trial in 1:n) {
-    if (trial == 1) {
-      memory[trial] = 0.5;
-    }
+    if (trial == 1) memory[trial] = 0.5;
     target += bernoulli_logit_lpmf(h[trial] | bias + beta * logit(memory[trial]));
-    if (trial < n){
+    if (trial < n) {
       memory[trial + 1] = (1 - forgetting) * memory[trial] + forgetting * other[trial];
-      if (memory[trial + 1] == 0){memory[trial + 1] = 0.01;}
-      if (memory[trial + 1] == 1){memory[trial + 1] = 0.99;}
+      if (memory[trial + 1] <= 0) memory[trial + 1] = 0.01;
+      if (memory[trial + 1] >= 1) memory[trial + 1] = 0.99;
     }
-    
+  }
+}
+
+generated quantities {
+  real bias_prior      = normal_rng(0, 0.3);
+  real beta_prior      = normal_rng(0, 0.5);
+  real forgetting_prior = beta_rng(1, 1);
+  vector[n] log_lik;
+  array[n] int y_rep;
+  if (run_diagnostics) {
+    // Recompute memory for the saved draw — runs once per posterior sample.
+    vector[n] memory_gq;
+    for (trial in 1:n) {
+      if (trial == 1) memory_gq[trial] = 0.5;
+      real lin = bias + beta * logit(memory_gq[trial]);
+      log_lik[trial] = bernoulli_logit_lpmf(h[trial] | lin);
+      y_rep[trial]   = bernoulli_logit_rng(lin);
+      if (trial < n) {
+        memory_gq[trial + 1] = (1 - forgetting) * memory_gq[trial] + forgetting * other[trial];
+        if (memory_gq[trial + 1] <= 0) memory_gq[trial + 1] = 0.01;
+        if (memory_gq[trial + 1] >= 1) memory_gq[trial + 1] = 0.99;
+      }
+    }
   }
 }
 "
@@ -1258,18 +1370,17 @@ if (regenerate_simulations || !file.exists(model_file)) {
                        cpp_options = list(stan_threads = FALSE),
                        stanc_options = list("O1"))
   
+  data_forgetting <- modifyList(data, list(run_diagnostics = 1L))
   # The following command calls Stan with specific options.
   samples_memory_forgetting <- mod$sample(
-    data = data,
+    data = data_forgetting,
     seed = 123,
-    chains = 1,
-    parallel_chains = 2,
-    threads_per_chain = 1,
+    chains = 4,
+    parallel_chains = 4,
     iter_warmup = 1000,
     iter_sampling = 1000,
     refresh = 0,
-    max_treedepth = 20,
-    adapt_delta = 0.99,
+    adapt_delta = 0.95
   )
   
   # Save the fitted model

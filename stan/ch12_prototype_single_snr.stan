@@ -40,9 +40,6 @@ transformed parameters {
   real<lower=0> r_value = exp(log_r);
   real<lower=0> q_value = exp(log_q);
 
-  real lprior = normal_lpdf(log_r   | prior_logr_mean,   prior_logr_sd) +
-                normal_lpdf(log_rho | prior_logrho_mean, prior_logrho_sd);
-
   array[ntrials] real<lower=1e-9, upper=1-1e-9> p;
   {
     vector[nfeatures] mu_cat0 = initial_mu_cat0;
@@ -91,11 +88,15 @@ transformed parameters {
   }
 }
 model {
-  target += lprior;
+  target += normal_lpdf(log_r   | prior_logr_mean,   prior_logr_sd);
+  target += normal_lpdf(log_rho | prior_logrho_mean, prior_logrho_sd);
   target += bernoulli_lpmf(y | p);
 }
 generated quantities {
   vector[ntrials] log_lik;
+  real lprior;
   for (i in 1:ntrials)
     log_lik[i] = bernoulli_lpmf(y[i] | p[i]);
+  lprior = normal_lpdf(log_r   | prior_logr_mean,   prior_logr_sd) +
+           normal_lpdf(log_rho | prior_logrho_mean, prior_logrho_sd);
 }

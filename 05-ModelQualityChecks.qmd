@@ -144,52 +144,141 @@ We will now reproduce the Stan code for the model, and modify it to include the 
 
 * the joint log prior, which tells us how likely the posterior is given the prior and will be used to assess the sensitivity of the posterior to the choice of priors
 
-Note that we are adding data for the prior parameters, so we can quickly change them without recompiling the model and that we will explain the different additional variables in detail throughout the chapter.
+::: {.callout-tip title="Stan Design Pattern — Priors as Data"}
+Notice that we declare the prior hyperparameters (`prior_theta_mu`, `prior_theta_sigma`) in the **`data` block** rather than hardcoding them in the `model` block. This separation has two concrete benefits:
+
+1. **No recompilation when exploring priors.** Changing a hardcoded `normal(0, 1.5)` to `normal(0, 2.0)` in Stan requires recompiling the C++ model binary (~10–30 seconds). Passing them as data means you change a single R list entry and re-run instantly.
+2. **SBC priors can differ from the fitted model's priors.** When SBC simulates from the prior, it draws hyperparameters from the same distribution specified in the data list. Keeping this in sync is trivial when priors are data; it is easy to introduce accidental mismatches when they are hardcoded.
+
+We use this pattern for every model with tunable priors from this chapter onward.
+:::
+
+Note that we are adding data for the prior parameters, so we can quickly change them without recompiling the model, and that we will explain the different additional variables in detail throughout the chapter.
+
+::: {.callout-tip title="Stan Efficiency Rule 2 — Conditional Diagnostics: The `run_diagnostics` Flag"}
+
+The six-phase validation pipeline requires **thousands of Stan fits** during SBC (Simulation-Based Calibration). Each SBC iteration only needs to verify posterior calibration — it does **not** need:
+
+- PPC draws (`y_rep`) — these require one `bernoulli_rng()` call per observation per draw
+- Pointwise log-likelihoods (`log_lik`) — needed for LOO-CV, but LOO is not run on SBC fits
+- Prior predictive samples — only needed for the visual prior check, not for calibration
+
+Generating these quantities inside `generated quantities` on every SBC iteration wastes substantial compute. We gate them with a single integer flag in the data block:
+
+```stan
+int<lower=0, upper=1> run_diagnostics;  // 1 = full diagnostics; 0 = calibration only
+```
+
+```stan
+generated quantities {
+  vector[N_trials] log_lik;
+  array[N_trials] int y_rep;
+  if (run_diagnostics) {
+    for (i in 1:N_trials) {
+      log_lik[i] = bernoulli_logit_lpmf(y[i] | theta_logit);
+      y_rep[i]   = bernoulli_logit_rng(theta_logit);
+    }
+  }
+}
+```
+
+Then in R, the main validation fit uses `run_diagnostics = 1` and SBC backends use `run_diagnostics = 0`:
+
+```r
+stan_data_main <- list(..., run_diagnostics = 1L)   # single model check
+stan_data_sbc  <- list(..., run_diagnostics = 0L)   # every SBC iteration
+```
+
+**Why it matters at scale.** For a model with 120 trials and 100 SBC datasets × 4 chains × 1000 draws: gating `log_lik` and `y_rep` eliminates 100 × 4 × 1000 × 120 ≈ **48 million** log-probability evaluations, typically cutting SBC wall-clock time by 20–40%.
+
+Note that **prior samples** (e.g., `bias_prior = normal_rng(0, 0.3)`) are cheap scalar draws and can remain ungated — they don't loop over observations.
+
+We introduced this flag in simplified form in Chapter 4's memory model. From this chapter onward it appears in every Stan model in the book.
+:::
+
+::: {.callout-tip title="Stan Efficiency — Post-Hoc Generated Quantities with `$generate_quantities()`"}
+
+The `run_diagnostics` flag trades off between fitting speed and diagnostic richness.
+A complementary pattern avoids the trade-off entirely: **fit once with `run_diagnostics = 0`,
+then replay the saved draws through the `generated quantities` block on demand** using
+`$generate_quantities()`.
+
+```r
+# Fast fit — no log_lik or y_rep computed during sampling
+fit_fast <- mod$sample(data = list(..., run_diagnostics = 0L), ...)
+
+# Later: compute log_lik and y_rep from the saved draws without re-running MCMC
+fit_gq <- mod$generate_quantities(
+  fitted_params = fit_fast,
+  data          = list(..., run_diagnostics = 1L)
+)
+
+# Extract as usual
+log_lik <- fit_gq$draws("log_lik")
+y_rep   <- fit_gq$draws("y_rep")
+```
+
+`$generate_quantities()` runs only the `generated quantities` block — it never touches the
+sampler. This means:
+
+- **LOO and PPC can be deferred** until you actually need them, without re-running MCMC.
+- **SBC backends always run with `run_diagnostics = 0`** and you call `$generate_quantities()` only on the subset of fits you want to inspect.
+- The saved `CmdStanFit` object from a previous session can be replayed by loading it with `readRDS()` and passing it as `fitted_params`.
+
+The only requirement is that the `data` list passed to `$generate_quantities()` matches the
+data block of the compiled model — the same model object must be used for both calls.
+:::
 
 ```{r ch06_simple_biased_agent_gq, warning = F, message = F}
 
 # Stan code of the model, adding generated quantities for predictive checks
 stan_model_gq_code <- "
 data {
-  int<lower=1> n;                      // Number of trials (e.g., 120)
-  array[n] int<lower=0, upper=1> h;    // Observed choices (vector of 0s and 1s)
-  real prior_theta_m;
-  real<lower = 0> prior_theta_sd;
+  int<lower=1> N_trials;               // Total number of trials
+  array[N_trials] int<lower=0, upper=1> y; // Observed choices
+  real prior_theta_mu;                 // Mean of the prior for theta_logit
+  real<lower=0> prior_theta_sigma;     // SD of the prior for theta_logit
+  int<lower=0, upper=1> run_diagnostics; // Flag: 1 to compute PPC/log_lik, 0 to skip
 }
 parameters {
   real theta_logit; // Represents the log-odds of choosing option 1 (right)
 }
 model {
-  target += normal_lpdf(theta_logit | prior_theta_m, prior_theta_sd); // prior
-  target += bernoulli_logit_lpmf(h | theta_logit); // likelihood
+  target += normal_lpdf(theta_logit | prior_theta_mu, prior_theta_sigma); // prior
+  target += bernoulli_logit_lpmf(y | theta_logit); // likelihood
 }
 
 generated quantities {
   // Create the prior for theta
-  real theta_logit_prior = normal_rng(prior_theta_m, prior_theta_sd); 
+  real theta_logit_prior = normal_rng(prior_theta_mu, prior_theta_sigma); 
   // --- Parameter Transformation ---
   real theta_prior = inv_logit(theta_logit_prior); 
   real<lower=0, upper=1> theta = inv_logit(theta_logit);
 
-  // --- Prior Predictive Check Simulation ---
-  // Simulate data based *only* on the prior distribution.
-  array[n] int h_prior_rep = bernoulli_logit_rng(rep_vector(theta_logit_prior, n));
-  // Calculate a summary statistic for this PRIOR replicated dataset.
-   int<lower=0, upper=n> prior_rep_sum = sum(h_prior_rep);
-
-  // --- Posterior Predictive Check Simulation ---
-  // Simulate data based on the *posterior* distribution of the parameter.
-  array[n] int h_post_rep = bernoulli_logit_rng(rep_vector(theta_logit, n));
-  // Calculate a summary statistic for this posterior dataset.
-  int<lower=0, upper=n> post_rep_sum = sum(h_post_rep); 
-  
-  // --- Log-likelihood ---
-  vector[n] log_lik;
+  // --- Conditional Diagnostics ---
+  // These blocks are expensive to run and store during SBC.
+  // We wrap them in a conditional flag.
+  array[N_trials] int y_prior_rep;
+  int<lower=0, upper=N_trials> prior_rep_sum;
+  array[N_trials] int y_post_rep;
+  int<lower=0, upper=N_trials> post_rep_sum;
+  vector[N_trials] log_lik;
   real lprior;
-  // log likelihood
-  for (i in 1:n) log_lik[i] =  bernoulli_logit_lpmf(h[i] | theta_logit);
-  // joint log prior
-  lprior = normal_lpdf(theta_logit | prior_theta_m, prior_theta_sd);
+
+  if (run_diagnostics) {
+    // --- Prior Predictive Check Simulation ---
+    y_prior_rep = bernoulli_logit_rng(rep_vector(theta_logit_prior, N_trials));
+    prior_rep_sum = sum(y_prior_rep);
+
+    // --- Posterior Predictive Check Simulation ---
+    y_post_rep = bernoulli_logit_rng(rep_vector(theta_logit, N_trials));
+    post_rep_sum = sum(y_post_rep); 
+    
+    // --- Log-likelihood ---
+    for (i in 1:N_trials) log_lik[i] = bernoulli_logit_lpmf(y[i] | theta_logit);
+  }
+  // joint log prior (useful for sensitivity even if run_diagnostics=0)
+  lprior = normal_lpdf(theta_logit | prior_theta_mu, prior_theta_sigma);
 }
 "
 stan_file_gq <- file.path(stan_model_dir, "ch07_SimpleBernoulli_GQ.stan")
@@ -207,14 +296,15 @@ d <- read_csv(sim_data_file, show_col_types = FALSE)
 # Subset data for the specific agent fitted in Chapter 5 (rate=0.8, noise=0)
 d1 <- d %>% filter(true_rate == 0.8, true_noise == 0.0)
 
-trials <- nrow(d1)
+N_trials <- nrow(d1)
 
 # Prepare the observed data list in the format Stan expects
 observed_data_list <- list(
-  n = trials,     # Number of trials (integer)
-  h = d1$choice,   # Vector of observed choices (0s and 1s)
-  prior_theta_m = 0,    # Mean of the prior for theta_logit 
-  prior_theta_sd = 1.5  # Standard deviation of the prior for theta_logit 
+  N_trials = N_trials,
+  y = d1$choice,
+  prior_theta_mu = 0,
+  prior_theta_sigma = 1.5,
+  run_diagnostics = 1
 )
 
 
@@ -322,7 +412,7 @@ We have already embedded the generative simulation (h_prior_rep) and the summary
 # Extract the summary statistic calculated from prior predictive simulations
 # 'prior_rep_sum' was calculated within the generated quantities block
 draws_gq <- as_draws_df(fit_gq$draws()) # Ensure we have the draws as a dataframe
-observed_sum <- sum(observed_data_list$h) # Total number of 'right' choices in the actual observed data
+observed_sum <- sum(observed_data_list$y) # Total number of 'right' choices in the actual observed data
 
 ppc_prior_ggplot <- ggplot(draws_gq, aes(x = prior_rep_sum)) +
   # Draw the histogram of the model's prior predictions (light red)
@@ -334,7 +424,7 @@ ppc_prior_ggplot <- ggplot(draws_gq, aes(x = prior_rep_sum)) +
   # Labels and theming
   ggtitle("Prior Predictive Check: Total 'Right' Choices",
           subtitle = "Healthy = histogram spans the full range; observed value (dashed) is not in the tails") +
-  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  xlab(paste("Total Number of 'Right' Choices (out of", N_trials, "trials)")) +
   ylab("Frequency") +
   theme_classic()
 
@@ -374,20 +464,20 @@ We must interrogate these predictions critically. Our model assumes independent,
 
 ### Performing the Posterior Predictive Check:
 
-We extract the replicated datasets (h_post_rep) generated simultaneously within the Stan generated quantities block. We will then systematically compare the test statistic distributions $T(y_{\text{rep}})$ against our empirical ground truth $T(y)$.
+We extract the replicated datasets (y_post_rep) generated simultaneously within the Stan generated quantities block. We will then systematically compare the test statistic distributions $T(y_{\text{rep}})$ against our empirical ground truth $T(y)$.
 
 ```{r ch06_posterior_predictive_checks, warning = F, message = F}
 
 # Extract posterior predictive simulations from the fitted object
 # This matrix has dimensions: [number_of_draws, number_of_trials]
-h_post_rep <- fit_gq$draws("h_post_rep", format = "matrix")
+y_post_rep <- fit_gq$draws("y_post_rep", format = "matrix")
 
 # Calculate the test statistic T(y) for the *actual* empirical data
-observed_sum <- sum(observed_data_list$h) 
+observed_sum <- sum(observed_data_list$y) 
 
 # Calculate the test statistic T(y_rep) for *each* replicated dataset
 # We compute the row-wise sum across the posterior draws
-post_rep_sums <- rowSums(h_post_rep)
+post_rep_sums <- rowSums(y_post_rep)
 
 # Bundle into a tibble for strictly structured plotting
 ppc_df <- tibble(
@@ -400,13 +490,13 @@ ppc_posterior_ggplot <- ggplot(ppc_df, aes(x = Replicated_Sum)) +
   geom_vline(xintercept = observed_sum, color = "black", linetype = "dashed", linewidth = 1) +
   ggtitle("Posterior Predictive Check: Total 'Right' Choices",
           subtitle = "Healthy = observed value (dashed) sits inside the bulk of replicated datasets") +
-  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  xlab(paste("Total Number of 'Right' Choices (out of", N_trials, "trials)")) +
   ylab("Frequency (Replicated Datasets)") +
   # Add annotation for the empirical ground truth
   annotate(
     "text", x = observed_sum, y = Inf, 
     label = "Empirical data", 
-    vjust = 2, hjust = if(observed_sum > trials/2) 1.1 else -0.1, 
+    vjust = 2, hjust = if(observed_sum > N_trials/2) 1.1 else -0.1, 
     size = 4, fontface = "bold"
   ) +
   theme_classic()
@@ -429,13 +519,13 @@ ppc_overlay_ggplot <- ggplot(ppc_overlay_df, aes(x = Replicated_Sum, fill = Dist
   scale_fill_manual(values = c("Prior Predictive" = "#ffbaba", "Posterior Predictive" = "skyblue")) +
   ggtitle("Prior vs. Posterior Predictive: Narrowing of Predictions After Fitting",
           subtitle = "Posterior (blue) should be much tighter than prior (red) and centred on observed data") +
-  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  xlab(paste("Total Number of 'Right' Choices (out of", N_trials, "trials)")) +
   ylab("Frequency (Replicated Datasets)") +
   # Add annotation for the empirical ground truth
   annotate(
     "text", x = observed_sum, y = Inf, 
     label = "Empirical data", 
-    vjust = 2, hjust = if(observed_sum > trials/2) 1.1 else -0.1, 
+    vjust = 2, hjust = if(observed_sum > N_trials/2) 1.1 else -0.1, 
     size = 4, fontface = "bold"
   ) +
   theme_classic() +
@@ -457,17 +547,17 @@ max_run_length <- function(x) {
 }
 
 # 2. Calculate the empirical test statistic T(y)
-observed_max_run <- max_run_length(observed_data_list$h)
+observed_max_run <- max_run_length(observed_data_list$y)
 
 # 3. Extract prior replicated matrices and compute T(y_rep) for the prior
-# h_prior_rep is an S x N matrix generated from the prior distributions
-h_prior_rep <- fit_gq$draws("h_prior_rep", format = "matrix")
-prior_max_runs <- apply(h_prior_rep, 1, max_run_length)
+# y_prior_rep is an S x N matrix generated from the prior distributions
+y_prior_rep <- fit_gq$draws("y_prior_rep", format = "matrix")
+prior_max_runs <- apply(y_prior_rep, 1, max_run_length)
 
 # 4. Extract posterior replicated matrices and compute T(y_rep) for the posterior
-# h_post_rep is an S x N matrix generated from the posterior distributions
-h_post_rep <- fit_gq$draws("h_post_rep", format = "matrix")
-post_max_runs <- apply(h_post_rep, 1, max_run_length)
+# y_post_rep is an S x N matrix generated from the posterior distributions
+y_post_rep <- fit_gq$draws("y_post_rep", format = "matrix")
+post_max_runs <- apply(y_post_rep, 1, max_run_length)
 
 # 5. Bundle into a strictly structured tibble for overlay plotting
 ppc_run_df <- tibble(
@@ -612,7 +702,7 @@ print(p_update_prob)
 
 Now that we have a better feel for the model, it is high time to go beyond one dataset and one prior, and be systematic about testing the model across a wide range of parameter values and prior specifications. We will first assess the sensitivity of our model to prior values to then proceed onto parameter recovery.
 
-## Phase 5: Prior Sensitivity Analysis - Do Priors Matter Too Much?
+## Phase 5: Prior Sensitivity Analysis - Do Priors Matter Too Too Much?
 
 > *Why test sensitivity to prior choice?* We chose `Normal(0, 1.5)` for
 > the logit-scale prior, but that was a judgment call. If a researcher using
@@ -642,8 +732,8 @@ To execute this efficiently, we have modified our Stan model to accept the prior
 ```{r ch06_manual_sensitivity_analysis, warning = F, message = F}
 # We test 3 location parameters (means) and 10 scale parameters (SDs)
 prior_grid <- tidyr::expand_grid(
-  prior_m = c(-1.5, 0, 1.5), 
-  prior_sd = seq(0.5, 3.0, length.out = 10)
+  prior_mu = c(-1.5, 0, 1.5), 
+  prior_sigma = seq(0.5, 3.0, length.out = 10)
 )
 
 # Standardized filename variable
@@ -653,11 +743,11 @@ sensitivity_draws_file <- file.path(here(stan_results_dir), "ch07_sensitivity_dr
 if (regenerate_simulations || !file.exists(sensitivity_draws_file)) {
   
   # Removed 'seed_val' from the function arguments
-  fit_and_extract <- function(prior_m, prior_sd) {
+  fit_and_extract <- function(prior_mu, prior_sigma) {
     # Dynamically inject the perturbed parameters into the data list
     current_data_list <- observed_data_list
-    current_data_list$prior_theta_m <- prior_m
-    current_data_list$prior_theta_sd <- prior_sd 
+    current_data_list$prior_theta_mu <- prior_mu
+    current_data_list$prior_theta_sigma <- prior_sigma 
 
     # Fit using the original compiled model
     fit <- mod_gq$sample(
@@ -677,8 +767,8 @@ if (regenerate_simulations || !file.exists(sensitivity_draws_file)) {
     # Return a strictly structured tibble, discarding the fragile fit object
     tibble::tibble(
       theta_prob = draws_df$theta,
-      prior_m = prior_m,
-      prior_sd = prior_sd
+      prior_mu = prior_mu,
+      prior_sigma = prior_sigma
     )
   }
 
@@ -708,10 +798,10 @@ if (regenerate_simulations || !file.exists(sensitivity_draws_file)) {
 }
  
 
-p_sensitivity_2d <- ggplot(sensitivity_draws, aes(x = theta_prob, group = factor(prior_sd), color = prior_sd)) +
+p_sensitivity_2d <- ggplot(sensitivity_draws, aes(x = theta_prob, group = factor(prior_sigma), color = prior_sigma)) +
   geom_line(stat = "density", alpha = 0.8, linewidth = 0.8) + 
   geom_vline(xintercept = true_theta_prob, color = "black", linetype = "dashed", linewidth = 1) + 
-  facet_wrap(~ prior_m, labeller = labeller(prior_m = function(x) paste0("Prior Mean (Logit): ", x))) +
+  facet_wrap(~ prior_mu, labeller = labeller(prior_mu = function(x) paste0("Prior Mean (Logit): ", x))) +
   scale_color_viridis_c(option = "mako", name = expression(Prior ~ sigma)) + 
   coord_cartesian(xlim = c(0.4, 1.0)) + 
   ggtitle("Epistemic Robustness: 2D Prior Perturbation Grid") +
@@ -727,7 +817,7 @@ p_sensitivity_2d <- ggplot(sensitivity_draws, aes(x = theta_prob, group = factor
 p_sensitivity_2d
 
 sensitivity_summary <- sensitivity_draws |> 
-  dplyr::group_by(prior_m, prior_sd) |> 
+  dplyr::group_by(prior_mu, prior_sigma) |> 
   dplyr::summarize(
     post_mean = mean(theta_prob),
     # The 95% CrI (Outer Ribbon)
@@ -740,8 +830,8 @@ sensitivity_summary <- sensitivity_draws |>
   ) |> 
   # Create strict, mathematically explicit facet labels
   dplyr::mutate(
-    prior_m_label = factor(
-      prior_m, 
+    prior_mu_label = factor(
+      prior_mu, 
       levels = c(-1.5, 0, 1.5), 
       labels = c("Prior \u03bc = -1.5 (Strong Left Bias)", 
                  "Prior \u03bc = 0 (Neutral)", 
@@ -750,22 +840,22 @@ sensitivity_summary <- sensitivity_draws |>
   )
 
 # 2. Generate the bounded trajectory plot with graded topological ribbons
-p_sensitivity_trajectory <- ggplot(sensitivity_summary, aes(x = prior_sd, y = post_mean)) +
+p_sensitivity_trajectory <- ggplot(sensitivity_summary, aes(x = prior_sigma, y = post_mean)) +
   # The generative ground truth is our invariant reference line
   geom_hline(yintercept = true_theta_prob, color = "black", linetype = "dashed", linewidth = 1) +
   
   # The 95% Credible Interval (Outer Ribbon, Highly Transparent)
-  geom_ribbon(aes(ymin = lower_95, ymax = upper_95, fill = prior_m_label), alpha = 0.15) +
+  geom_ribbon(aes(ymin = lower_95, ymax = upper_95, fill = prior_mu_label), alpha = 0.15) +
   
   # The 68% Credible Interval (~1 SD, Inner Ribbon, More Opaque)
-  geom_ribbon(aes(ymin = lower_68, ymax = upper_68, fill = prior_m_label), alpha = 0.35) +
+  geom_ribbon(aes(ymin = lower_68, ymax = upper_68, fill = prior_mu_label), alpha = 0.35) +
   
   # The posterior mean trajectory
-  geom_line(aes(color = prior_m_label), linewidth = 1) +
-  geom_point(aes(color = prior_m_label), size = 2) +
+  geom_line(aes(color = prior_mu_label), linewidth = 1) +
+  geom_point(aes(color = prior_mu_label), size = 2) +
   
   # Structural faceting
-  facet_wrap(~ prior_m_label) +
+  facet_wrap(~ prior_mu_label) +
   scale_color_viridis_d(option = "mako", begin = 0.3, end = 0.7) +
   scale_fill_viridis_d(option = "mako", begin = 0.3, end = 0.7) +
   coord_cartesian(ylim = c(0.5, 1.0)) + # Zoom to the scientifically relevant probability bounds
@@ -862,7 +952,7 @@ We will simulate empirical data across an escalating grid of trial lengths (30, 
 
 ```{r ch06_parameter_recovery_grid}
 recovery_grid <- tidyr::expand_grid(
-  n_trials = c(30, 60, 120, 240),
+  N_trials = c(30, 60, 120, 240),
   true_theta = c(0.5, 0.7, 0.9)
 )
 
@@ -872,16 +962,17 @@ recovery_file <- file.path(stan_results_dir, "ch07_recovery_draws.rds")
 if (regenerate_simulations || !file.exists(recovery_file)) {
   
   # 2. Define the isolated recovery pipeline
-  run_recovery <- function(n_trials, true_theta) {
+  run_recovery <- function(N_trials, true_theta) {
     # Generate synthetic empirical data
-    sim_h <- rbinom(n = n_trials, size = 1, prob = true_theta)
+    sim_y <- rbinom(n = N_trials, size = 1, prob = true_theta)
     
     # Structure the data block for Stan
     rec_data_list <- list(
-      n = n_trials,
-      h = sim_h,
-      prior_theta_m = 0,
-      prior_theta_sd = 1.5
+      N_trials = N_trials,
+      y = sim_y,
+      prior_theta_mu = 0,
+      prior_theta_sigma = 1.5,
+      run_diagnostics = 0
     )
     
     # Fit the generative model
@@ -898,7 +989,7 @@ if (regenerate_simulations || !file.exists(recovery_file)) {
     draws_df <- fit$draws("theta", format = "df")
     
     tibble::tibble(
-      trials = n_trials,
+      trials = N_trials,
       true_theta = true_theta,
       theta_prob = draws_df$theta
     )
@@ -1050,17 +1141,18 @@ if (regenerate_simulations || !file.exists(sbc_results_file)) {
     theta_true       <- plogis(theta_logit_true)
 
     # Simulate empirical reality (N = 120 trials)
-    n_trials <- 120
-    h_sim    <- rbinom(n_trials, size = 1, prob = theta_true)
+    N_trials <- 120
+    y_sim    <- rbinom(N_trials, size = 1, prob = theta_true)
 
     # Format strictly required by the SBC package
     list(
       variables = list(theta_logit = theta_logit_true, theta = theta_true),
       generated = list(
-        n              = n_trials,
-        h              = h_sim,
-        prior_theta_m  = 0,
-        prior_theta_sd = 1.5
+        N_trials          = N_trials,
+        y                 = y_sim,
+        prior_theta_mu    = 0,
+        prior_theta_sigma = 1.5,
+        run_diagnostics   = 0
       )
     )
   }
@@ -1224,7 +1316,7 @@ print(
 
 Our Phase 6a grid recovery showed how precision evolves at three specific $\theta$ values as $N$ grows. We can now generalise that question systematically: across the *full* prior space, at what $N$ does the model become reliable?
 
-Because the SBC generator is a plain R function, we can pass different `n_trials` values and re-run the calibration+recovery pipeline at each design point. The faceted identity plots below show the entire prior-weighted recovery profile for $N \in \{30, 60, 120, 240\}$, directly comparable to the grid facets in Phase 6a but without the restriction to three anchor values.
+Because the SBC generator is a plain R function, we can pass different `N_trials` values and re-run the calibration+recovery pipeline at each design point. The faceted identity plots below show the entire prior-weighted recovery profile for $N \in \{30, 60, 120, 240\}$, directly comparable to the grid facets in Phase 6a but without the restriction to three anchor values.
 
 This is a Precision Analysis, the Bayesian analogue of a frequentist power analysis, with three important distinctions:
 
@@ -1237,13 +1329,13 @@ This is a Precision Analysis, the Bayesian analogue of a frequentist power analy
 ```{r ch06_sbc_precision_analysis, warning = FALSE, message = FALSE}
 # ---------------------------------------------------------------------------
 # precision-analysis generator: same logic as sbc_generator_fn above,
-# but parameterised on n_trials so we can loop over the design grid.
+# but parameterised on N_trials so we can loop over the design grid.
 # ---------------------------------------------------------------------------
-make_sbc_precision_generator <- function(n_trials) {
+make_sbc_precision_generator <- function(N_trials) {
   function() {
     theta_logit_true <- rnorm(1, mean = 0, sd = 1.5)
     theta_true       <- plogis(theta_logit_true)
-    h_sim            <- rbinom(n_trials, size = 1, prob = theta_true)
+    y_sim            <- rbinom(N_trials, size = 1, prob = theta_true)
 
     list(
       variables = list(
@@ -1251,10 +1343,11 @@ make_sbc_precision_generator <- function(n_trials) {
         theta       = theta_true
       ),
       generated = list(
-        n             = n_trials,
-        h             = h_sim,
-        prior_theta_m = 0,
-        prior_theta_sd = 1.5
+        N_trials          = N_trials,
+        y                 = y_sim,
+        prior_theta_mu    = 0,
+        prior_theta_sigma = 1.5,
+        run_diagnostics   = 0
       )
     )
   }
@@ -1266,7 +1359,7 @@ trial_grid_precision <- c(30, 60, 120, 240)
 # Accumulate recovery stats across all design conditions
 precision_stats <- purrr::map_dfr(trial_grid_precision, function(n_t) {
 
-  cat(sprintf("  precision analysis: n_trials = %d ...\n", n_t))
+  cat(sprintf("  precision analysis: N_trials = %d ...\n", n_t))
 
   precision_file <- file.path(stan_results_dir,
                           sprintf("ch07_sbc_precision_n%d.rds", n_t))
@@ -1379,13 +1472,14 @@ generate_psbc_data_theta <- function(n_sims = 1000) {
     true_prob <- plogis(true_logit) # Logistic transformation
     
     # Simulate data based on these posterior-conditioned parameters 
-    h_sim <- rbinom(observed_data_list$n, size = 1, prob = true_prob)
+    y_sim <- rbinom(observed_data_list$N_trials, size = 1, prob = true_prob)
     
     gen_list[[i]] <- list(
-      n = observed_data_list$n,
-      h = h_sim,
-      prior_theta_m = 0,
-      prior_theta_sd = 1.5
+      N_trials          = observed_data_list$N_trials,
+      y                 = y_sim,
+      prior_theta_mu    = 0,
+      prior_theta_sigma = 1.5,
+      run_diagnostics   = 0
     )
   }
   
@@ -1475,15 +1569,16 @@ stan_memory_gq_code <- "
 // Social Memory Agent: Estimates bias and memory sensitivity.
 
 data {
-  int<lower=1> n;               // Number of trials
-  array[n] int h;               // Agent's choices (0, 1)
-  array[n] int other;           // Opponent's choices (0, 1)
+  int<lower=1> N_trials;               // Number of trials
+  array[N_trials] int y;               // Agent's choices (0, 1)
+  array[N_trials] int other;           // Opponent's choices (0, 1)
   
   // Dynamic Prior Controls
-  real prior_bias_m;
-  real prior_bias_s;
-  real prior_beta_m;
-  real prior_beta_s;
+  real prior_bias_mu;
+  real<lower=0> prior_bias_sigma;
+  real prior_beta_mu;
+  real<lower=0> prior_beta_sigma;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -1492,10 +1587,10 @@ parameters {
 }
 
 transformed parameters {
-  vector[n] memory;
+  vector[N_trials] memory;
   memory[1] = 0.5; // Neutral start
   
-  for (t in 2:n) {
+  for (t in 2:N_trials) {
     // Recursive update: running average of 'other' choices
     memory[t] = memory[t-1] + ((other[t-1] - memory[t-1]) / (t-1.0));
     
@@ -1506,43 +1601,47 @@ transformed parameters {
 
 model {
   // Principled regularizing priors
-  target += normal_lpdf(bias | prior_bias_m, prior_bias_s);
-  target += normal_lpdf(beta | prior_beta_m, prior_beta_s);
+  target += normal_lpdf(bias | prior_bias_mu, prior_bias_sigma);
+  target += normal_lpdf(beta | prior_beta_mu, prior_beta_sigma);
 
   // Likelihood function
   // We use the vectorized bernoulli_logit for computational efficiency
-  target += bernoulli_logit_lpmf(h | bias + beta * logit(memory));
+  target += bernoulli_logit_lpmf(y | bias + beta * logit(memory));
 }
 
 generated quantities {
   // --- Prior Predictive Checks ---
-  real bias_prior = normal_rng(prior_bias_m, prior_bias_s);
-  real beta_prior = normal_rng(prior_beta_m, prior_beta_s);
+  real bias_prior = normal_rng(prior_bias_mu, prior_bias_sigma);
+  real beta_prior = normal_rng(prior_beta_mu, prior_beta_sigma);
   
-  array[n] int h_prior_rep;
-  for (t in 1:n) {
-    h_prior_rep[t] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory[t]));
-  }
-  
-  // Summary Statistic: Cumulative Choice Rate
-  int prior_sum = sum(h_prior_rep);
+  // --- Conditional Diagnostics ---
+  array[N_trials] int y_prior_rep;
+  int prior_sum;
+  array[N_trials] int y_post_rep;
+  int post_sum;
+  vector[N_trials] log_lik;
 
-  // --- Posterior Predictive Checks ---
-  array[n] int h_post_rep;
-  for (t in 1:n) {
-    h_post_rep[t] = bernoulli_logit_rng(bias + beta * logit(memory[t]));
-  }
-  
-  int post_sum = sum(h_post_rep);
-  
-  vector[n] log_lik;
-  for (t in 1:n) {
-    log_lik[t] = bernoulli_logit_lpmf(h[t] | bias + beta * logit(memory[t]));
+  if (run_diagnostics) {
+    for (t in 1:N_trials) {
+      y_prior_rep[t] = bernoulli_logit_rng(bias_prior + beta_prior * logit(memory[t]));
+    }
+    // Summary Statistic: Cumulative Choice Rate
+    prior_sum = sum(y_prior_rep);
+
+    // --- Posterior Predictive Checks ---
+    for (t in 1:N_trials) {
+      y_post_rep[t] = bernoulli_logit_rng(bias + beta * logit(memory[t]));
+    }
+    post_sum = sum(y_post_rep);
+    
+    for (t in 1:N_trials) {
+      log_lik[t] = bernoulli_logit_lpmf(y[t] | bias + beta * logit(memory[t]));
+    }
   }
 
   // 2. Total Log-Prior (for Sensitivity/Update analysis)
-  real lprior = normal_lpdf(bias | prior_bias_m, prior_bias_s) + 
-                normal_lpdf(beta | prior_beta_m, prior_beta_s);
+  real lprior = normal_lpdf(bias | prior_bias_mu, prior_bias_sigma) + 
+                normal_lpdf(beta | prior_beta_mu, prior_beta_sigma);
 }
 "
 stan_file_mem_gq <- file.path(stan_model_dir, "ch07_Memory_GQ.stan")
@@ -1564,11 +1663,12 @@ d_memory_obs <- simulate_memory(
 
 # 2. Prepare the data list for Stan
 observed_data_list_mem <- list(
-  n = trials,
-  h = d_memory_obs$choice,
+  N_trials = N_trials,
+  y = d_memory_obs$choice,
   other = d_memory_obs$other_choice,
-  prior_bias_m = 0, prior_bias_s = 0.5,
-  prior_beta_m = 0, prior_beta_s = 1.0
+  prior_bias_mu = 0, prior_bias_sigma = 0.5,
+  prior_beta_mu = 0, prior_beta_sigma = 1.0,
+  run_diagnostics = 1
 )
 
 model_file_mem_gq <- file.path(stan_results_dir, "ch07_Memory_GQ.rds")
@@ -1580,7 +1680,7 @@ if (regenerate_simulations || !file.exists(model_file_mem_gq)) {
   fit_mem_gq <- mod_mem_gq$sample(
     data = observed_data_list_mem,
     chains = 4,
-    parallel_chains = parallel::detectCores() - 2,
+    parallel_chains = max(1, parallel::detectCores() - 2),
     iter_warmup = 1000,
     iter_sampling = 2000,
     refresh = 0,

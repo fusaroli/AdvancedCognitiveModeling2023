@@ -395,12 +395,13 @@ generate_agent_decisions <- function(weight_direct, weight_social,
 
 prepare_stan_data <- function(df) {
   list(
-    N      = nrow(df),
-    choice = df$choice,
-    blue1  = df$blue1,
-    total1 = df$total1,
-    blue2  = df$blue2,
-    total2 = df$total2
+    N_total = nrow(df),
+    y       = df$choice,
+    blue1   = df$blue1,
+    total1  = df$total1,
+    blue2   = df$blue2,
+    total2  = df$total2,
+    run_diagnostics = 1
   )
 }
 ```
@@ -861,33 +862,36 @@ SimpleAgent_stan <- "
 // No free parameters — evidence is counted at face value.
 // Jeffreys prior pseudo-counts: alpha0 = beta0 = 0.5.
 data {
-  int<lower=1> N;
-  array[N] int<lower=0, upper=1> choice;
-  array[N] int<lower=0> blue1;
-  array[N] int<lower=0> total1;
-  array[N] int<lower=0> blue2;
-  array[N] int<lower=0> total2;
+  int<lower=1> N_total;
+  array[N_total] int<lower=0, upper=1> y;
+  array[N_total] int<lower=0> blue1;
+  array[N_total] int<lower=0> total1;
+  array[N_total] int<lower=0> blue2;
+  array[N_total] int<lower=0> total2;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 model {
   // Vectorized likelihood with fixed weights = 1
-  vector[N] alpha_post = 0.5 + to_vector(blue1) + to_vector(blue2);
-  vector[N] beta_post  = 0.5 + (to_vector(total1) - to_vector(blue1))
-                             + (to_vector(total2) - to_vector(blue2));
+  vector[N_total] alpha_post = 0.5 + to_vector(blue1) + to_vector(blue2);
+  vector[N_total] beta_post  = 0.5 + (to_vector(total1) - to_vector(blue1))
+                                   + (to_vector(total2) - to_vector(blue2));
                              
-  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);
+  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);
 }
 
 generated quantities {
-  vector[N] log_lik;
-  array[N] int posterior_pred;
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
 
-  for (i in 1:N) {
-    real alpha_post = 0.5 + blue1[i] + blue2[i];
-    real beta_post  = 0.5 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      real alpha_post = 0.5 + blue1[i] + blue2[i];
+      real beta_post  = 0.5 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
 
-    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
-    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
+      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
+      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);
+    }
   }
 }
 "
@@ -948,15 +952,21 @@ $$
 ```{r ch10_stan_weighted_agent_raw}
 WeightedAgentRaw_stan <- "
 // Weighted Bayesian Agent (raw parameterisation).
-// w_d, w_s > 0: independent weights on direct and social evidence.
+// weight_direct, weight_social > 0: independent weights on direct and social evidence.
 // Jeffreys prior pseudo-counts (0.5) consistent with SBA.
 data {
-  int<lower=1> N;
-  array[N] int<lower=0, upper=1> choice;
-  array[N] int<lower=0> blue1;
-  array[N] int<lower=0> total1;
-  array[N] int<lower=0> blue2;
-  array[N] int<lower=0> total2;
+  int<lower=1> N_total;
+  array[N_total] int<lower=0, upper=1> y;
+  array[N_total] int<lower=0> blue1;
+  array[N_total] int<lower=0> total1;
+  array[N_total] int<lower=0> blue2;
+  array[N_total] int<lower=0> total2;
+  
+  real prior_wd_mu;
+  real<lower=0> prior_wd_sigma;
+  real prior_ws_mu;
+  real<lower=0> prior_ws_sigma;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -966,29 +976,31 @@ parameters {
 
 model {
   // Priors: lognormal centered on 1 (evidence taken at face value)
-  target += lognormal_lpdf(weight_direct | 0, 0.5);
-  target += lognormal_lpdf(weight_social | 0, 0.5);
+  target += lognormal_lpdf(weight_direct | prior_wd_mu, prior_wd_sigma);
+  target += lognormal_lpdf(weight_social | prior_ws_mu, prior_ws_sigma);
 
   // Vectorized likelihood
-  vector[N] alpha_post = 0.5 + weight_direct * to_vector(blue1)
-                             + weight_social * to_vector(blue2);
-  vector[N] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))
-                             + weight_social * (to_vector(total2) - to_vector(blue2));
+  vector[N_total] alpha_post = 0.5 + weight_direct * to_vector(blue1)
+                                   + weight_social * to_vector(blue2);
+  vector[N_total] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))
+                                   + weight_social * (to_vector(total2) - to_vector(blue2));
                              
-  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);
+  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);
 }
 
 generated quantities {
-  vector[N] log_lik;
-  array[N] int posterior_pred;
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
 
-  for (i in 1:N) {
-    real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];
-    real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) 
-                         + weight_social * (total2[i] - blue2[i]);
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];
+      real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) 
+                           + weight_social * (total2[i] - blue2[i]);
 
-    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
-    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
+      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
+      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);
+    }
   }
 }
 "
@@ -1027,12 +1039,20 @@ true_wba <- list(
 # Generate simulated data for each scenario
 stan_data_wba <- map(true_wba, function(params) {
   sim <- generate_agent_decisions(
-    params$wd, params$ws, 
-    evidence_combinations, 
+    params$wd, params$ws,
+    evidence_combinations,
     n_samples = 5
   ) |> mutate(total1 = 8L, total2 = 3L)
-  prepare_stan_data(sim)
+
+  d <- prepare_stan_data(sim)
+  # Add priors for the weighted model
+  d$prior_wd_mu    = 0
+  d$prior_wd_sigma = 0.5
+  d$prior_ws_mu    = 0
+  d$prior_ws_sigma = 0.5
+  d
 })
+
 ```
 
 ### Fitting the Simple Model
@@ -1619,12 +1639,16 @@ ProportionalAgent_stan <- "
 // p in [0,1] allocates the unit evidence budget between direct and social.
 // p = 0.5 approximates balanced weighting; p -> 1 ignores social; p -> 0 ignores direct.
 data {
-  int<lower=1> N;
-  array[N] int<lower=0, upper=1> choice;
-  array[N] int<lower=0> blue1;
-  array[N] int<lower=0> total1;
-  array[N] int<lower=0> blue2;
-  array[N] int<lower=0> total2;
+  int<lower=1> N_total;
+  array[N_total] int<lower=0, upper=1> y;
+  array[N_total] int<lower=0> blue1;
+  array[N_total] int<lower=0> total1;
+  array[N_total] int<lower=0> blue2;
+  array[N_total] int<lower=0> total2;
+  
+  real prior_p_alpha;
+  real prior_p_beta;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -1632,36 +1656,31 @@ parameters {
 }
 
 model {
-  // Beta(2, 2): weakly bell-shaped, symmetric about 0.5
-  target += beta_lpdf(p | 2, 2);
+  // prior
+  target += beta_lpdf(p | prior_p_alpha, prior_p_beta);
 
   // Vectorized likelihood
-  vector[N] alpha_post = 0.5 + p * to_vector(blue1) + (1.0 - p) * to_vector(blue2);
-  vector[N] beta_post  = 0.5 + p * (to_vector(total1) - to_vector(blue1))
-                             + (1.0 - p) * (to_vector(total2) - to_vector(blue2));
+  vector[N_total] alpha_post = 0.5 + p * to_vector(blue1) + (1.0 - p) * to_vector(blue2);
+  vector[N_total] beta_post  = 0.5 + p * (to_vector(total1) - to_vector(blue1))
+                                   + (1.0 - p) * (to_vector(total2) - to_vector(blue2));
                              
-  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);
+  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);
 }
 
 generated quantities {
-  vector[N] log_lik;
-  array[N] int prior_pred;
-  array[N] int posterior_pred;
-  real lprior = beta_lpdf(p | 2, 2);
-  real p_prior = beta_rng(2, 2);
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
+  real lprior = beta_lpdf(p | prior_p_alpha, prior_p_beta);
 
-  for (i in 1:N) {
-    real alpha_post = 0.5 + p * blue1[i] + (1.0 - p) * blue2[i];
-    real beta_post  = 0.5 + p * (total1[i] - blue1[i])
-                          + (1.0 - p) * (total2[i] - blue2[i]);
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      real alpha_post = 0.5 + p * blue1[i] + (1.0 - p) * blue2[i];
+      real beta_post  = 0.5 + p * (total1[i] - blue1[i]) 
+                           + (1.0 - p) * (total2[i] - blue2[i]);
 
-    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
-    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
-
-    real ap = 0.5 + p_prior * blue1[i] + (1.0 - p_prior) * blue2[i];
-    real bp = 0.5 + p_prior * (total1[i] - blue1[i])
-                  + (1.0 - p_prior) * (total2[i] - blue2[i]);
-    prior_pred[i] = beta_binomial_rng(1, ap, bp);
+      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
+      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);
+    }
   }
 }
 "
@@ -1730,12 +1749,18 @@ WeightedAgent_stan <- "
 // rho in (0,1): relative weight of direct vs social evidence.
 // kappa > 0: total evidence scaling (w_d + w_s).
 data {
-  int<lower=1> N;
-  array[N] int<lower=0, upper=1> choice;
-  array[N] int<lower=0> blue1;
-  array[N] int<lower=0> total1;
-  array[N] int<lower=0> blue2;
-  array[N] int<lower=0> total2;
+  int<lower=1> N_total;
+  array[N_total] int<lower=0, upper=1> y;
+  array[N_total] int<lower=0> blue1;
+  array[N_total] int<lower=0> total1;
+  array[N_total] int<lower=0> blue2;
+  array[N_total] int<lower=0> total2;
+  
+  real prior_rho_alpha;
+  real prior_rho_beta;
+  real prior_kappa_mu;
+  real<lower=0> prior_kappa_sigma;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -1750,42 +1775,34 @@ transformed parameters {
 
 model {
   // rho: weakly centred on equal weighting
-  target += beta_lpdf(rho | 2, 2);
+  target += beta_lpdf(rho | prior_rho_alpha, prior_rho_beta);
   // kappa: lognormal centered on 2 (SBA equivalent)
-  target += lognormal_lpdf(kappa | log(2), 0.5);
+  target += lognormal_lpdf(kappa | prior_kappa_mu, prior_kappa_sigma);
 
   // Vectorized likelihood
-  vector[N] alpha_post = 0.5 + weight_direct * to_vector(blue1)
-                             + weight_social * to_vector(blue2);
-  vector[N] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))
-                             + weight_social * (to_vector(total2) - to_vector(blue2));
+  vector[N_total] alpha_post = 0.5 + weight_direct * to_vector(blue1)
+                                   + weight_social * to_vector(blue2);
+  vector[N_total] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))
+                                   + weight_social * (to_vector(total2) - to_vector(blue2));
                              
-  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);
+  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);
 }
 
 generated quantities {
-  vector[N] log_lik;
-  array[N] int prior_pred;
-  array[N] int posterior_pred;
-  real lprior = beta_lpdf(rho | 2, 2) + lognormal_lpdf(kappa | log(2), 0.5);
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
+  real lprior = beta_lpdf(rho | prior_rho_alpha, prior_rho_beta) + 
+                lognormal_lpdf(kappa | prior_kappa_mu, prior_kappa_sigma);
 
-  real rho_prior   = beta_rng(2, 2);
-  real kappa_prior = lognormal_rng(log(2), 0.5);
-  real wd_prior    = rho_prior * kappa_prior;
-  real ws_prior    = (1.0 - rho_prior) * kappa_prior;
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];
+      real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) 
+                           + weight_social * (total2[i] - blue2[i]);
 
-  for (i in 1:N) {
-    real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];
-    real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) 
-                         + weight_social * (total2[i] - blue2[i]);
-
-    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
-    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
-
-    real ap = 0.5 + wd_prior * blue1[i] + ws_prior * blue2[i];
-    real bp = 0.5 + wd_prior * (total1[i] - blue1[i]) 
-                  + ws_prior * (total2[i] - blue2[i]);
-    prior_pred[i] = beta_binomial_rng(1, ap, bp);
+      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
+      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);
+    }
   }
 }
 "
@@ -1818,10 +1835,15 @@ true_pba <- list(
   Socially_Influenced = 0.2
 )
 
+# Generate simulated data for each scenario
 stan_data_pba <- map(true_pba, function(p) {
   sim <- generate_agent_decisions(p, 1 - p, evidence_combinations, n_samples = 5) |>
     mutate(total1 = 8L, total2 = 3L)
-  prepare_stan_data(sim)
+  
+  d <- prepare_stan_data(sim)
+  d$prior_p_alpha = 2
+  d$prior_p_beta  = 2
+  d
 })
 ```
 
@@ -1834,12 +1856,20 @@ true_wba_reparam <- list(
   Socially_Influenced = list(rho = 0.20, kappa = 2.5, wd = 0.5, ws = 2.0)
 )
 
+# Generate simulated data for each scenario
 stan_data_wba_reparam <- map(true_wba_reparam, function(params) {
-  sim <- generate_agent_decisions(params$wd, params$ws, 
+  sim <- generate_agent_decisions(params$wd, params$ws,
                                   evidence_combinations, n_samples = 5) |>
     mutate(total1 = 8L, total2 = 3L)
-  prepare_stan_data(sim)
+
+  d <- prepare_stan_data(sim)
+  d$prior_rho_alpha     = 2
+  d$prior_rho_beta      = 2
+  d$prior_kappa_mu      = log(2)
+  d$prior_kappa_sigma   = 0.5
+  d
 })
+
 ```
 
 ### Fit All Models
@@ -3039,18 +3069,32 @@ ml_sim_data <- agent_params_ml |>
   })
 
 stan_data_ml <- list(
-  N        = nrow(ml_sim_data),
-  J        = n_agents,
-  agent_id = ml_sim_data$agent_id,
-  choice   = ml_sim_data$choice,
-  blue1    = ml_sim_data$blue1,
-  total1   = ml_sim_data$total1,
-  blue2    = ml_sim_data$blue2,
-  total2   = ml_sim_data$total2
+  N_total   = nrow(ml_sim_data),
+  N_subjects = n_agents,
+  subj_id   = ml_sim_data$agent_id,
+  y         = ml_sim_data$choice,
+  blue1     = ml_sim_data$blue1,
+  total1    = ml_sim_data$total1,
+  blue2     = ml_sim_data$blue2,
+  total2    = ml_sim_data$total2,
+  
+  prior_mu_p_mu             = 0,
+  prior_mu_p_sigma          = 1.5,
+  prior_sigma_p_lambda      = 1,
+  prior_mu_logit_p_mu       = 0,
+  prior_mu_logit_p_sigma    = 1.5,
+  prior_sigma_logit_p_lambda = 2,
+  prior_mu_logit_rho_mu     = 0,
+  prior_mu_logit_rho_sigma  = 1.5,
+  prior_mu_log_kappa_mu     = log(2),
+  prior_mu_log_kappa_sigma  = 0.5,
+  prior_sigma_lambda        = 2,
+  prior_Omega_shape         = 2,
+  run_diagnostics           = 1
 )
 
 cat(sprintf("Agents: %d | Trials per agent: %d | Total observations: %d\n",
-            n_agents, nrow(evidence_combinations) * n_trials_per_comb, stan_data_ml$N))
+            n_agents, nrow(evidence_combinations) * n_trials_per_comb, stan_data_ml$N_total))
 
 # Calculate the true population means on the natural scale for our reference lines
 pop_rho_true   <- plogis(pop_logit_rho_mean)
@@ -3129,14 +3173,15 @@ MultilevelSBA_stan <- "
 // Multilevel Simple Bayesian Agent
 // Zero free parameters per agent. Strict integration applied uniformly.
 data {
-  int<lower=1> N;
-  int<lower=1> J;
-  array[N] int<lower=1, upper=J> agent_id;
-  array[N] int<lower=0, upper=1>  choice;
-  array[N] int<lower=0>            blue1;
-  array[N] int<lower=0>            total1;
-  array[N] int<lower=0>            blue2;
-  array[N] int<lower=0>            total2;
+  int<lower=1> N_total;
+  int<lower=1> N_subjects;
+  array[N_total] int<lower=1, upper=N_subjects> subj_id;
+  array[N_total] int<lower=0, upper=1>  y;
+  array[N_total] int<lower=0>            blue1;
+  array[N_total] int<lower=0>            total1;
+  array[N_total] int<lower=0>            blue2;
+  array[N_total] int<lower=0>            total2;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 transformed data {
@@ -3145,18 +3190,23 @@ transformed data {
 }
 
 model {
-  vector[N] alpha_post = alpha0 + to_vector(blue1) + to_vector(blue2);
-  vector[N] beta_post  = beta0  + (to_vector(total1) - to_vector(blue1)) +
-                                  (to_vector(total2) - to_vector(blue2));
-  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);
+  vector[N_total] alpha_post = alpha0 + to_vector(blue1) + to_vector(blue2);
+  vector[N_total] beta_post  = beta0  + (to_vector(total1) - to_vector(blue1)) +
+                                        (to_vector(total2) - to_vector(blue2));
+  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);
 }
 
 generated quantities {
-  vector[N] log_lik;
-  for (i in 1:N) {
-    real alpha_post = alpha0 + blue1[i] + blue2[i];
-    real beta_post  = beta0 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
-    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
+
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      real alpha_post = alpha0 + blue1[i] + blue2[i];
+      real beta_post  = beta0 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);
+      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
+      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);
+    }
   }
 }
 "
@@ -3179,52 +3229,61 @@ MultilevelPBA_stan <- "
 // Population distribution on logit(p).
 // Non-centred parameterisation for individual p_j.
 data {
-  int<lower=1> N;
-  int<lower=1> J;
-  array[N] int<lower=1, upper=J> agent_id;
-  array[N] int<lower=0, upper=1>  choice;
-  array[N] int<lower=0>            blue1;
-  array[N] int<lower=0>            total1;
-  array[N] int<lower=0>            blue2;
-  array[N] int<lower=0>            total2;
+  int<lower=1> N_total;
+  int<lower=1> N_subjects;
+  array[N_total] int<lower=1, upper=N_subjects> subj_id;
+  array[N_total] int<lower=0, upper=1>  y;
+  array[N_total] int<lower=0>            blue1;
+  array[N_total] int<lower=0>            total1;
+  array[N_total] int<lower=0>            blue2;
+  array[N_total] int<lower=0>            total2;
+  
+  real prior_mu_logit_p_mu;
+  real<lower=0> prior_mu_logit_p_sigma;
+  real<lower=0> prior_sigma_logit_p_lambda;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
   real mu_logit_p;             // population mean on logit scale
   real<lower=0> sigma_logit_p; // population SD on logit scale
-  vector[J] z_p;               // NCP deviates
+  vector[N_subjects] z_p;      // NCP deviates
 }
 
 transformed parameters {
-  vector<lower=0, upper=1>[J] p;
-  for (j in 1:J)
+  vector<lower=0, upper=1>[N_subjects] p;
+  for (j in 1:N_subjects)
     p[j] = inv_logit(mu_logit_p + sigma_logit_p * z_p[j]);
 }
 
 model {
-  target += normal_lpdf(mu_logit_p    | 0, 1.5);
-  target += exponential_lpdf(sigma_logit_p | 2);
+  target += normal_lpdf(mu_logit_p    | prior_mu_logit_p_mu, prior_mu_logit_p_sigma);
+  target += exponential_lpdf(sigma_logit_p | prior_sigma_logit_p_lambda);
   target += std_normal_lpdf(z_p);
   
-  for (i in 1:N) {
-    int j = agent_id[i];
+  for (i in 1:N_total) {
+    int j = subj_id[i];
     real alpha_post = 0.5 + p[j] * blue1[i] + (1.0 - p[j]) * blue2[i];
     real beta_post  = 0.5 + p[j] * (total1[i] - blue1[i])
                           + (1.0 - p[j]) * (total2[i] - blue2[i]);
-    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    target += beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
   }
 }
 
 generated quantities {
   real pop_p = inv_logit(mu_logit_p);
-  
-  vector[N] log_lik;
-  for (i in 1:N) {
-    int j = agent_id[i];
-    real alpha_post = 0.5 + p[j] * blue1[i] + (1.0 - p[j]) * blue2[i];
-    real beta_post  = 0.5 + p[j] * (total1[i] - blue1[i])
-                          + (1.0 - p[j]) * (total2[i] - blue2[i]);
-    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
+
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      int j = subj_id[i];
+      real alpha_post = 0.5 + p[j] * blue1[i] + (1.0 - p[j]) * blue2[i];
+      real beta_post  = 0.5 + p[j] * (total1[i] - blue1[i])
+                            + (1.0 - p[j]) * (total2[i] - blue2[i]);
+      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
+      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);
+    }
   }
 }
 "
@@ -3303,33 +3362,41 @@ MultilevelWBA_stan <- "
 // Population distribution on (logit(rho), log(kappa)).
 // Non-centred parameterisation with correlated random effects.
 data {
-  int<lower=1> N;                                // total observations
-  int<lower=1> J;                                // number of agents
-  array[N] int<lower=1, upper=J> agent_id;
-  array[N] int<lower=0, upper=1>  choice;
-  array[N] int<lower=0>            blue1;
-  array[N] int<lower=0>            total1;
-  array[N] int<lower=0>            blue2;
-  array[N] int<lower=0>            total2;
+  int<lower=1> N_total;                                // total observations
+  int<lower=1> N_subjects;                             // number of agents
+  array[N_total] int<lower=1, upper=N_subjects> subj_id;
+  array[N_total] int<lower=0, upper=1>  y;
+  array[N_total] int<lower=0>            blue1;
+  array[N_total] int<lower=0>            total1;
+  array[N_total] int<lower=0>            blue2;
+  array[N_total] int<lower=0>            total2;
+  
+  real prior_mu_logit_rho_mu;
+  real<lower=0> prior_mu_logit_rho_sigma;
+  real prior_mu_log_kappa_mu;
+  real<lower=0> prior_mu_log_kappa_sigma;
+  real<lower=0> prior_sigma_lambda;
+  real<lower=0> prior_Omega_shape;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
   vector[2] mu;                              // population means: (logit_rho, log_kappa)
   vector<lower=0>[2] sigma;                  // population SDs
   cholesky_factor_corr[2] L_Omega;           // Cholesky factor of correlation matrix
-  matrix[2, J] z;                            // standard normal deviates (NCP)
+  matrix[2, N_subjects] z;                   // standard normal deviates (NCP)
 }
 
 transformed parameters {
   // Reconstruct individual parameters on natural scale
-  matrix[2, J] theta_raw = diag_pre_multiply(sigma, L_Omega) * z;
+  matrix[2, N_subjects] theta_raw = diag_pre_multiply(sigma, L_Omega) * z;
   
-  vector<lower=0, upper=1>[J] rho;
-  vector<lower=0>[J] kappa;
-  vector<lower=0>[J] weight_direct;
-  vector<lower=0>[J] weight_social;
+  vector<lower=0, upper=1>[N_subjects] rho;
+  vector<lower=0>[N_subjects] kappa;
+  vector<lower=0>[N_subjects] weight_direct;
+  vector<lower=0>[N_subjects] weight_social;
 
-  for (j in 1:J) {
+  for (j in 1:N_subjects) {
     rho[j]           = inv_logit(mu[1] + theta_raw[1, j]);
     kappa[j]         = exp(mu[2] + theta_raw[2, j]);
     weight_direct[j] = rho[j] * kappa[j];
@@ -3339,22 +3406,22 @@ transformed parameters {
 
 model {
   // Population priors
-  target += normal_lpdf(mu[1] | 0, 1.5);       // logit_rho: weakly informative
-  target += normal_lpdf(mu[2] | log(2), 0.5);   // log_kappa: centered on SBA-like scaling
-  target += exponential_lpdf(sigma | 2);         // moderate shrinkage on SDs
-  target += lkj_corr_cholesky_lpdf(L_Omega | 2); // weakly regularise correlation
-  target += std_normal_lpdf(to_vector(z));        // NCP deviates
+  target += normal_lpdf(mu[1] | prior_mu_logit_rho_mu, prior_mu_logit_rho_sigma);
+  target += normal_lpdf(mu[2] | prior_mu_log_kappa_mu, prior_mu_log_kappa_sigma);
+  target += exponential_lpdf(sigma | prior_sigma_lambda);
+  target += lkj_corr_cholesky_lpdf(L_Omega | prior_Omega_shape);
+  target += std_normal_lpdf(to_vector(z));
   
   // Likelihood (vectorised per trial)
-  for (i in 1:N) {
-    int j = agent_id[i];
+  for (i in 1:N_total) {
+    int j = subj_id[i];
     real alpha_post = 0.5
                     + weight_direct[j] * blue1[i]
                     + weight_social[j] * blue2[i];
     real beta_post  = 0.5
                     + weight_direct[j] * (total1[i] - blue1[i])
                     + weight_social[j] * (total2[i] - blue2[i]);
-    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
+    target += beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);
   }
 }
 
@@ -3364,19 +3431,18 @@ generated quantities {
   real pop_kappa = exp(mu[2]);
   matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
   
-  vector[N] log_lik;
-  array[N] int pred_choice;
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
 
-  for (i in 1:N) {
-    int j = agent_id[i];
-    real alpha_post = 0.5
-                    + weight_direct[j] * blue1[i]
-                    + weight_social[j] * blue2[i];
-    real beta_post  = 0.5
-                    + weight_direct[j] * (total1[i] - blue1[i])
-                    + weight_social[j] * (total2[i] - blue2[i]);
-    log_lik[i]     = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);
-    pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      int j = subj_id[i];
+      real a = 0.5 + weight_direct[j] * blue1[i] + weight_social[j] * blue2[i];
+      real b = 0.5 + weight_direct[j] * (total1[i] - blue1[i]) 
+                   + weight_social[j] * (total2[i] - blue2[i]);
+      log_lik[i] = beta_binomial_lpmf(y[i] | 1, a, b);
+      y_rep[i]   = beta_binomial_rng(1, a, b);
+    }
   }
 }
 "
@@ -5138,22 +5204,26 @@ functions {
 }
 
 data {
-  int<lower=1> N;
-  array[N] int<lower=0, upper=1> choice;
-  array[N] int<lower=0> blue1;
-  array[N] int<lower=0> total1;
-  array[N] int<lower=0> blue2;
-  array[N] int<lower=0> total2;
+  int<lower=1> N_total;
+  array[N_total] int<lower=0, upper=1> y;
+  array[N_total] int<lower=0> blue1;
+  array[N_total] int<lower=0> total1;
+  array[N_total] int<lower=0> blue2;
+  array[N_total] int<lower=0> total2;
+
+  real prior_w_mu;
+  real<lower=0> prior_w_sigma;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 transformed data {
   // Convert raw counts to log-odds once to save computation
   real alpha0 = 0.5;
   real beta0  = 0.5;
-  array[N] real lo_self;
-  array[N] real lo_social;
-  
-  for (i in 1:N) {
+  array[N_total] real lo_self;
+  array[N_total] real lo_social;
+
+  for (i in 1:N_total) {
     lo_self[i]   = log((alpha0 + blue1[i]) / (beta0 + total1[i] - blue1[i]));
     lo_social[i] = log((alpha0 + blue2[i]) / (beta0 + total2[i] - blue2[i]));
   }
@@ -5167,30 +5237,31 @@ parameters {
 
 model {
   // Weakly informative priors centered between 0.5 and 1.0
-  w_self  ~ normal(0.75, 0.25);
-  w_other ~ normal(0.75, 0.25);
-  
-  for (i in 1:N) {
+  target += normal_lpdf(w_self | prior_w_mu, prior_w_sigma);
+  target += normal_lpdf(w_other | prior_w_mu, prior_w_sigma);
+
+  for (i in 1:N_total) {
     real L_post = jardri_f(lo_self[i], w_self) + 
                   jardri_f(lo_social[i], w_other);
-                  
-    target += bernoulli_logit_lpmf(choice[i] | L_post);
+    target += bernoulli_logit_lpmf(y[i] | L_post);
   }
 }
 
 generated quantities {
-  vector[N] log_lik;
-  array[N] int posterior_pred;
-  
-  for (i in 1:N) {
-    real L_post = jardri_f(lo_self[i], w_self) + 
-                  jardri_f(lo_social[i], w_other);
-                  
-    log_lik[i]        = bernoulli_logit_lpmf(choice[i] | L_post);
-    posterior_pred[i] = bernoulli_logit_rng(L_post);
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
+
+  if (run_diagnostics) {
+    for (i in 1:N_total) {
+      real L_post = jardri_f(lo_self[i], w_self) + 
+                    jardri_f(lo_social[i], w_other);
+      log_lik[i] = bernoulli_logit_lpmf(y[i] | L_post);
+      y_rep[i]   = bernoulli_logit_rng(L_post);
+    }
   }
 }
 "
+
 
 write_stan_file(CI_Weights_stan, dir = "stan/", basename = "ch10_ci_weights_only.stan")
 ```
@@ -5622,15 +5693,47 @@ This pipeline is not bureaucracy. Without SBC, a subtle Stan implementation bug 
 - **Resource-rational models** (Griffiths et al. 2015) ask: what integration strategy is optimal given limited computational resources? The WBA can be interpreted as an approximation to full Bayesian inference under resource constraints.
 - **Active inference** (Friston 2010) frames perception and action as a unified process of minimising variational free energy, offering a different theoretical foundation for the same empirical phenomena.
 
-**This is the end of the core modelling sequence.** Chapters 1–9 have
+::: {.callout-note title="Stan Engineering: What We Have Built Across Chapters 4–10"}
+
+Across this book's first ten chapters we have introduced a layered set of Stan programming techniques. Before moving to the categorization chapters — where all of them combine — it is worth having the full picture in one place.
+
+**Stage I (Ch. 4–5): Foundations**
+
+| Technique | Rule |
+|---|---|
+| Block placement | `transformed data` for data-only quantities; `transformed parameters` for parameter-dependent state; `model` for local accumulators; `generated quantities` for post-sampling diagnostics |
+| `run_diagnostics` flag | Gate expensive `generated quantities` (PPC draws, `log_lik`) behind an `int<lower=0,upper=1>` data flag; set to 0 in SBC backends |
+| Priors as data | Pass prior hyperparameters through the `data` block — no recompilation when adjusting priors; SBC stays in sync automatically |
+| Pathfinder warm-start | Run `mod$pathfinder(...)` first; pass the result as `init` to `mod$sample(...)` to cut warm-up by 30–60% on complex models |
+
+**Stage II (Ch. 6): Population Structure**
+
+| Technique | Rule |
+|---|---|
+| Non-centered parameterization (NCP) | Sample standardized offsets $z_j \sim N(0,1)$; reconstruct cognitive parameters deterministically in `transformed parameters`. Eliminates Neal's Funnel in sparse-data hierarchical models |
+| Subject indexing | `subj_id` array (scatter-index) for exchangeable models; `subj_start/subj_end` contiguous-block for sequential models (Ch. 9+) |
+
+**Stage III (Ch. 8–10): Process Mechanisms**
+
+| Technique | Rule |
+|---|---|
+| Discrete marginalization | Never sample discrete parameters with HMC; use `log_sum_exp` or `log_mix` to analytically integrate them out in the `model` block |
+| Sequential state unrolling | Recursive belief/memory state goes in `transformed parameters` with volatile state kept local in `{}`; only the quantities needed downstream are lifted to the saved-draw tape |
+
+**Stage IV (Ch. 11): High-Performance**
+
+The categorization chapters introduce the final layer: precomputing pairwise stimulus distances in `transformed data` (computed once rather than thousands of times), NCP for all individual parameters including attention weights (eliminating Dirichlet funnels), and `reduce_sum` for multi-threaded parallelism across subjects within a chain. The next chapter puts all of these together.
+:::
+
+**This is the end of the core modelling sequence.** Chapters 1–10 have
 traced the complete Bayesian cognitive modelling workflow: from pizza-stone
 physics (Ch. 1), through verbal and formal models of strategic behaviour
-(Chs. 2–3), parameter estimation (Ch. 5), model validation (Ch. 6),
-hierarchical extensions (Ch. 7), model comparison (Ch. 8), mixture
-structures (Ch. 9), and Bayesian cognitive theory (Ch. 10). The tools and
-habits of mind established here — generative modelling, principled
-validation, honest uncertainty — apply directly to any new domain or model
-you encounter.
+(Chs. 2–3), parameter estimation (Ch. 4), model validation (Ch. 5),
+hierarchical extensions (Ch. 6), model comparison (Ch. 7), mixture
+structures (Ch. 8), sequential cognition (Ch. 9), and Bayesian cognitive
+theory (Ch. 10). The tools and habits of mind established here —
+generative modelling, principled validation, honest uncertainty — apply
+directly to any new domain or model you encounter.
 
 ## Further Reading
 

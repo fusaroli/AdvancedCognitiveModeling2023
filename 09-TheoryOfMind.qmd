@@ -417,6 +417,34 @@ proceed.
 
 ### Phase 2 — Stan implementation (single agent)
 
+::: {.callout-tip title="Stan Technique — Sequential State Unrolling in `transformed parameters`"}
+
+The 0-ToM model's belief state $(\mu_t, \Sigma_t)$ is a recursive function of the previous state and the opponent's most recent choice. It depends on the free parameter `log_sigma` (the volatility), so it **cannot** live in `transformed data`. It also cannot be a local variable in `model`, because the likelihood at every trial depends on it and we need Stan's autodiff to propagate gradients back through the entire sequence.
+
+The solution is to unroll the recursion in `transformed parameters`:
+
+```stan
+transformed parameters {
+  vector[N_total] dV;          // saved for the likelihood and generated quantities
+  {
+    real mu = 0.0; real Sig = 1.0;    // local state — not saved between draws
+    real sigma = exp(log_sigma);
+    for (t in 1:N_total) {
+      dV[t] = f(mu, Sig);             // deterministic function of the belief state
+      Sig   = update_Sig(Sig, sigma, mu);
+      mu    = update_mu(mu, Sig, other[t]);
+    }
+  }
+}
+```
+
+The `{}` inner block keeps `mu` and `Sig` **local** — they are stack-allocated scratch variables that Stan discards after each gradient evaluation. Only `dV` is lifted to the saved parameter space, because the likelihood needs it. This is the minimal footprint: the gradient tape tracks `log_sigma → sigma → Sig → mu → dV[t]`, but does not store the full sequence of $(\mu_t, \Sigma_t)$ in the posterior draws.
+
+**Why `transformed parameters` rather than `model`?** We need `dV` in `generated quantities` to compute `log_lik` and `y_rep`. If `dV` were a local variable in `model`, it would be invisible to `generated quantities`. The solution is to declare it in `transformed parameters` (where it is visible to all later blocks) and keep the volatile state variables local inside `{}`.
+
+**Computational cost.** Unrolling $T$ steps in `transformed parameters` means running the recursion once per leapfrog evaluation — the same cost as running it in `model`. The only overhead compared to a local-variable approach is that `dV` (a vector of length $T$) is written to the saved-draw tape once per posterior sample, adding $T$ doubles per draw. For $T = 120$ this is negligible.
+:::
+
 We unroll the Kalman update inside `transformed parameters` so that
 `log_sigma` is a real free parameter (not a fixed covariate) and is
 learned jointly with the decision parameters. The Bernoulli logit
@@ -425,9 +453,17 @@ likelihood and the `log_lik` block are standard.
 ```{r ch09_write_stan_tom0}
 stan_tom0_single <- "
 data {
-  int<lower=1> N;
-  array[N] int<lower=0, upper=1> choice;
-  array[N] int<lower=0, upper=1> op_choice;
+  int<lower=1> N_total;
+  array[N_total] int<lower=0, upper=1> y;
+  array[N_total] int<lower=0, upper=1> other;
+  
+  real prior_log_sigma_mu;
+  real<lower=0> prior_log_sigma_sigma;
+  real prior_log_beta_mu;
+  real<lower=0> prior_log_beta_sigma;
+  real prior_bias_mu;
+  real<lower=0> prior_bias_sigma;
+  int<lower=0, upper=1> run_diagnostics;
 }
 parameters {
   real log_sigma;
@@ -435,36 +471,37 @@ parameters {
   real bias;
 }
 transformed parameters {
-  vector[N] dV;
+  vector[N_total] dV;
   {
     real sigma = exp(log_sigma);
     real mu    = 0.0;
     real Sig   = 1.0;
-    for (t in 1:N) {
+    for (t in 1:N_total) {
       real s_mu = inv_logit(mu);
-      real p_op = inv_logit(mu / sqrt(1 + 0.36 * Sig));
-      dV[t] = 2 * p_op - 1;
-      Sig = 1.0 / (1.0 / (Sig + sigma) + s_mu * (1 - s_mu));
-      mu  = mu + Sig * (op_choice[t] - s_mu);
+      real p_op = inv_logit(mu / sqrt(1.0 + 0.36 * Sig));
+      dV[t] = 2.0 * p_op - 1.0;
+      Sig = 1.0 / (1.0 / (Sig + sigma) + s_mu * (1.0 - s_mu));
+      mu  = mu + Sig * (other[t] - s_mu);
     }
   }
 }
 model {
-  log_sigma ~ normal(-2, 1);
-  log_beta  ~ normal(-1, 1);
-  bias      ~ normal( 0, 1);
-  choice ~ bernoulli_logit((dV + bias) / exp(log_beta));
+  target += normal_lpdf(log_sigma | prior_log_sigma_mu, prior_log_sigma_sigma);
+  target += normal_lpdf(log_beta  | prior_log_beta_mu,  prior_log_beta_sigma);
+  target += normal_lpdf(bias      | prior_bias_mu,      prior_bias_sigma);
+  target += bernoulli_logit_lpmf(y | (dV + bias) / exp(log_beta));
 }
 generated quantities {
-  vector[N] log_lik;
-  array[N] int choice_rep;
-  real lprior =   normal_lpdf(log_sigma | -2, 1)
-                + normal_lpdf(log_beta  | -1, 1)
-                + normal_lpdf(bias      |  0, 1);
-  for (t in 1:N) {
-    log_lik[t]    = bernoulli_logit_lpmf(choice[t] |
-                       (dV[t] + bias) / exp(log_beta));
-    choice_rep[t] = bernoulli_logit_rng((dV[t] + bias) / exp(log_beta));
+  vector[N_total] log_lik;
+  array[N_total] int y_rep;
+  real lprior =   normal_lpdf(log_sigma | prior_log_sigma_mu, prior_log_sigma_sigma)
+                + normal_lpdf(log_beta  | prior_log_beta_mu,  prior_log_beta_sigma)
+                + normal_lpdf(bias      | prior_bias_mu,      prior_bias_sigma);
+  if (run_diagnostics) {
+    for (t in 1:N_total) {
+      log_lik[t] = bernoulli_logit_lpmf(y[t] | (dV[t] + bias) / exp(log_beta));
+      y_rep[t]   = bernoulli_logit_rng((dV[t] + bias) / exp(log_beta));
+    }
   }
 }
 "
@@ -500,7 +537,15 @@ if (regenerate_simulations || !file.exists(recovery_path)) {
 
   fit_one <- function(d) {
     fit <- mod_tom0$sample(
-      data = list(N = nrow(d), choice = d$choice, op_choice = d$op_choice),
+      data = list(
+        N_total = nrow(d), 
+        y = d$choice, 
+        other = d$op_choice,
+        prior_log_sigma_mu = -2.0, prior_log_sigma_sigma = 1.0,
+        prior_log_beta_mu = -1.0,  prior_log_beta_sigma = 1.0,
+        prior_bias_mu = 0.0,       prior_bias_sigma = 1.0,
+        run_diagnostics = 0
+      ),
       chains = 2, parallel_chains = 2,
       iter_warmup = 500, iter_sampling = 500,
       refresh = 0, show_messages = FALSE

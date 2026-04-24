@@ -1,5 +1,5 @@
 # --- Load Data ---
-human_data_file <- "AlienData.txt" 
+human_data_file <- "data/AlienData.txt" 
 # Check if file exists before attempting to read
 if (!file.exists(human_data_file)) {
   stop("Error: Human data file not found at path: ", human_data_file)

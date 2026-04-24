@@ -11,7 +11,7 @@ knitr::opts_chunk$set(
 
 # Set to TRUE to rerun simulations and Stan fits.
 # FALSE loads pre-computed results from 'simdata/'.
-regenerate_simulations <- FALSE
+regenerate_simulations <- TRUE
 
 # Set to TRUE to run the long-running validation chunks
 # (LFO-CV, precision analysis, SBC). FALSE loads cached results
@@ -155,13 +155,13 @@ plan(multisession, workers = max(1, availableCores() - 1))
 > The full validation pipeline from Ch. 5 — prior
 > predictive check, Pathfinder initialization, mandatory MCMC diagnostic
 > battery, posterior predictive check, prior–posterior update plot, randomised
-> LOO-PIT, LFO-CV, parameter recovery, precision analysis, prior sensitivity,
+> LOO-PIT, LFO-CV, precision analysis, prior sensitivity,
 > and SBC — is applied to this new model. Crucially, the **LFO-CV machinery
 > implemented in Chapter 11** (`psis_lfo_gcm`) is generalised here as
 > `psis_lfo_kalman` and applied to the prototype model. The chapter then
 > extends to a **multilevel prototype model** with population-level priors
 > on `log_r`, per-subject NCP offsets, and the full multilevel SBC battery
-> (population and individual calibration, extensive parameter recovery).
+> (population and individual calibration).
 
 # Prototype-Based Models of Categorization
 
@@ -177,15 +177,12 @@ plan(multisession, workers = max(1, availableCores() - 1))
 > | 3.5 Prior sensitivity | §"Prior Sensitivity Analysis" — `priorsense::powerscale_sensitivity()` |
 > | 4.5 LOO-PIT (randomised, binary) | §"Randomised LOO-PIT Calibration" |
 > | 4.6 LFO-CV | §"Leave-Future-Out Cross-Validation" — inherited from Ch 11 |
-> | 6a. Parameter recovery (single) | §"Parameter Recovery" |
 > | 6b. SBC (single-subject) | §"Simulation-Based Calibration" |
 > | 6d. Precision analysis | §"Precision Analysis: How CI Width Scales With N" |
 > | Identifiability check | § (r vs decisional temperature) |
 > | 1ML. Forward simulator (multilevel) | `simulate_multilevel_prototype()` |
 > | 2ML. Stan implementation (multilevel) | §"Implementing the Multilevel Prototype Model in Stan" — NCP over `log_r` and `log_q` |
 > | 3ML. MCMC diagnostics (multilevel) | §"Mandatory MCMC Diagnostic Battery (Multilevel)" |
-> | 6aML. Individual recovery | §"Individual Parameter Recovery" |
-> | 6bML. Extensive recovery | §"Extensive Parameter Recovery for the Multilevel Prototype Model" |
 > | 6cML. Multilevel SBC (pop + individual) | §"Multilevel SBC" — ECDF-diff + recovery for `pop_log_r_mean`, `pop_log_r_sd`, `pop_log_q_mean`, `pop_log_q_sd`, `subj_log_r[1]`, `subj_log_q[1]` |
 
 ## Rethinking Category Representation: From Examples to Averages
@@ -871,8 +868,11 @@ model {
 
 generated quantities {
   vector[ntrials] log_lik;
+  real lprior;
   for (i in 1:ntrials)
     log_lik[i] = bernoulli_lpmf(y[i] | p[i]);
+  lprior = normal_lpdf(log_r | prior_logr_mean, prior_logr_sd) +
+           normal_lpdf(log_q | prior_logq_mean, prior_logq_sd);
 }
 "
 
@@ -1429,241 +1429,11 @@ if (exists("lfo_psis")) {
 if (!is.null(fit_proto_single)) {
   ps <- priorsense::powerscale_sensitivity(fit_proto_single)
   print(ps)
-  priorsense::powerscale_plot_dens(ps, variables = c("log_r", "r_value", "log_q", "q_value"))
+  priorsense::powerscale_plot_dens(fit_proto_single, variables = c("log_r", "r_value", "log_q", "q_value"))
 }
 ```
 
 `powerscale_sensitivity()` perturbs the prior analytically (without re-running MCMC) and reports a sensitivity index $\psi$ for each parameter. A value $\psi > 0.1$ indicates structural fragility — the conclusion depends materially on the specific prior choice. For a model with two parameters and moderately informative priors on $\log r$ and $\log q$, $\psi$ should be small but non-zero. Under the static Kruschke paradigm, $\log q$ may show higher sensitivity than $\log r$ because the data are less informative about it. The accompanying density plot overlays posteriors at three power-scaling levels and lets the reader see whether the shape of each posterior is robust or whether a slightly different prior would push it elsewhere.
-
----
-
-
-## Parameter Recovery: Can We Retrieve the Noise Parameter?
-
-A crucial validation check: if we simulate data with a known `r_value`, can our Stan model accurately estimate it back? We test recovery systematically across the plausible range of `r_value`, with multiple independent datasets per true value.
-
-```{r ch13_recovery_simulation}
-# Run one recovery iteration for a given true r_value, q_value and dataset seed.
-# Each dataset gets its own per-agent randomized schedule.
-run_single_recovery <- function(true_r_value, true_q_value, iteration,
-                                stimulus_info, n_blocks,
-                                n_blocks_override = NULL) {
-  # Allow overriding number of blocks for the precision analysis below
-  blocks_to_use <- if (is.null(n_blocks_override)) n_blocks else n_blocks_override
-  subject_seed  <- iteration * 1000 + round(true_r_value * 100) + blocks_to_use
-
-  # Simulate one dataset with a uniquely randomized schedule
-  sim_dat <- simulate_prototype_agent(
-    agent_id     = 1L,
-    r_value      = true_r_value,
-    q_value      = true_q_value,
-    stimulus_info = stimulus_info,
-    n_blocks     = blocks_to_use,
-    subject_seed = subject_seed
-  )
-
-  stan_dat <- list(
-    ntrials            = nrow(sim_dat),
-    nfeatures          = 2L,
-    cat_one            = sim_dat$category_feedback,
-    y                  = sim_dat$sim_response,
-    obs                = as.matrix(sim_dat[, c("height", "position")]),
-    initial_mu_cat0    = c(2.5, 2.5),
-    initial_mu_cat1    = c(2.5, 2.5),
-    initial_sigma_diag = 10.0,
-    prior_logr_mean    = LOG_R_PRIOR_MEAN,
-    prior_logr_sd      = LOG_R_PRIOR_SD,
-    prior_logq_mean    = LOG_Q_PRIOR_MEAN,
-    prior_logq_sd      = LOG_Q_PRIOR_SD
-  )
-
-  pf <- tryCatch(
-    mod_prototype_single$pathfinder(data = stan_dat, num_paths = 4,
-                                     refresh = 0, seed = subject_seed),
-    error = function(e) NULL
-  )
-  init_val <- if (!is.null(pf)) pf else 0.5
-
-  fit <- tryCatch(
-    mod_prototype_single$sample(
-      data = stan_dat, init = init_val,
-      seed = subject_seed, chains = 2, parallel_chains = 2,
-      iter_warmup = 800, iter_sampling = 1000,
-      refresh = 0, adapt_delta = 0.9
-    ),
-    error = function(e) { cat("Fit error:", e$message, "\n"); NULL }
-  )
-  if (is.null(fit)) return(NULL)
-
-  draws_r <- fit$draws("r_value", format = "df")
-  draws_q <- fit$draws("q_value", format = "df")
-  tibble(
-    true_r_value     = true_r_value,
-    true_q_value     = true_q_value,
-    n_blocks         = blocks_to_use,
-    n_trials         = nrow(sim_dat),
-    iteration        = iteration,
-    estimated_r_mean = mean(draws_r$r_value),
-    estimated_q_mean = mean(draws_q$q_value),
-    est_lower_95_r   = quantile(draws_r$r_value, 0.025),
-    est_upper_95_r   = quantile(draws_r$r_value, 0.975),
-    ci_width_95      = quantile(draws_r$r_value, 0.975) -
-                       quantile(draws_r$r_value, 0.025),
-    covers_truth     = (true_r_value >= quantile(draws_r$r_value, 0.025)) &
-                       (true_r_value <= quantile(draws_r$r_value, 0.975)),
-    covers_truth_q   = (true_q_value >= quantile(draws_q$q_value, 0.025)) &
-                       (true_q_value <= quantile(draws_q$q_value, 0.975)),
-    had_divergence   = any(fit$diagnostic_summary(quiet=TRUE)$num_divergent > 0)
-  )
-}
-
-r_values_to_test <- c(0.5, 1.0, 2.0)
-q_values_to_test <- c(0.05, 0.2, 0.5)
-n_recovery_iters <- 5   # increase to 20–50 for publication-quality recovery
-
-recovery_file <- here("simdata", "ch13_prototype_recovery_results.rds")
-if (regenerate_simulations || !file.exists(recovery_file)) {
-  cat("Running parameter recovery...\n")
-  recovery_plan <- expand_grid(
-    true_r_value = r_values_to_test,
-    true_q_value = q_values_to_test,
-    iteration    = seq_len(n_recovery_iters)
-  )
-
-  recovery_results <- future_pmap_dfr(
-    list(true_r_value = recovery_plan$true_r_value,
-         true_q_value = recovery_plan$true_q_value,
-         iteration    = recovery_plan$iteration),
-    run_single_recovery,
-    stimulus_info = stimulus_info,
-    n_blocks      = n_blocks,
-    .options = furrr_options(seed = TRUE)
-  )
-  saveRDS(recovery_results, recovery_file)
-  cat("Parameter recovery complete and saved.\n")
-} else {
-  recovery_results <- readRDS(recovery_file)
-  cat("Recovery results loaded.\n")
-}
-
-recovery_long <- recovery_results |>
-  pivot_longer(
-    cols      = c(estimated_r_mean, estimated_q_mean),
-    names_to  = "variable",
-    values_to = "estimated_mean"
-  ) |>
-  mutate(
-    true_value = if_else(variable == "estimated_r_mean", true_r_value, true_q_value),
-    variable   = if_else(variable == "estimated_r_mean", "r", "q")
-  )
-
-ggplot(recovery_long, aes(x = true_value, y = estimated_mean)) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
-  geom_point(aes(color = had_divergence), size = 2, alpha = 0.7) +
-  scale_color_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00"),
-                     name = "Had divergence") +
-  facet_wrap(~variable, scales = "free") +
-  labs(
-    title    = "Parameter Recovery: Prototype Model (r and q)",
-    subtitle = paste0("Points: posterior mean; n=", n_recovery_iters,
-                      " datasets per true value. Dashed line = perfect recovery."),
-    x = "True value", y = "Estimated value (posterior mean)"
-  )
-```
-
-**Discussion of Recovery Results**: The two panels show recovery for $r$ and $q$ separately. Points near the diagonal indicate accurate recovery; divergent iterations are flagged in orange. Under the static Kruschke (1993) paradigm, $q$ and $r$ are partially confounded — both influence the effective likelihood width at decision time. $q$ is best separately identified from non-stationary data where performance oscillates or recovers after a structural change. The recovery plot for $q$ will typically show wider credible intervals and more shrinkage toward the prior mean than the recovery plot for $r$, reflecting this identifiability limitation. **The next subsection turns this observation into a quantitative statement** by sweeping the recovery loop over a grid of trial counts.
-
-### Precision Analysis: How CI Width Scales With N
-
-Recovery at a single trial count tells us the model is identifiable; it does not tell us *how many trials we need* to estimate $r$ and $q$ within a given precision. We can run the recovery loop at multiple dataset sizes and tracking median CI width and empirical coverage as functions of $N$. This is the honest version of "how long should I make my experiment." It is also the cleanest place in this trio of chapters to teach precision analysis, because the two-parameter model and fast simulator make the sweep tractable.
-
-We sweep across $N_{\text{blocks}} \in \{2, 4, 8, 16\}$ — corresponding to $N_{\text{trials}} \in \{16, 32, 64, 128\}$ for the 8-stimulus Kruschke set — at three representative true values of $r$ (low, moderate, high).
-
-```{r ch13_precision_analysis}
-precision_file <- here("simdata", "ch13_prototype_precision_results.rds")
-if (regenerate_simulations || !file.exists(precision_file)) {
-  cat("Running precision analysis...\n")
-  precision_plan <- expand_grid(
-    true_r_value = c(0.5, 1.0, 3.0),
-    true_q_value = c(0.05, 0.2, 0.5),
-    n_blocks_grid = c(2, 4, 8, 16),
-    iteration    = 1:8   # 8 datasets per cell — coarse but illustrative
-  )
-
-  precision_results <- future_pmap_dfr(
-    list(true_r_value      = precision_plan$true_r_value,
-         true_q_value      = precision_plan$true_q_value,
-         iteration         = precision_plan$iteration,
-         n_blocks_override = precision_plan$n_blocks_grid),
-    function(true_r_value, true_q_value, iteration, n_blocks_override) {
-      run_single_recovery(true_r_value, true_q_value, iteration,
-                          stimulus_info = stimulus_info,
-                          n_blocks = n_blocks,
-                          n_blocks_override = n_blocks_override)
-    },
-    .options = furrr_options(seed = TRUE)
-  )
-  saveRDS(precision_results, precision_file)
-  cat("Precision analysis saved.\n")
-} else {
-  precision_results <- readRDS(precision_file)
-  cat("Precision analysis loaded.\n")
-}
-
-if (exists("precision_results")) {
-  precision_summary <- precision_results |>
-    group_by(true_r_value, true_q_value, n_trials) |>
-    summarise(
-      median_ci_width = median(ci_width_95, na.rm = TRUE),
-      coverage        = mean(covers_truth, na.rm = TRUE),
-      mean_bias       = mean(estimated_r_mean - true_r_value, na.rm = TRUE),
-      n_datasets      = n(),
-      .groups = "drop"
-    )
-
-  print(precision_summary)
-
-  p_width <- ggplot(precision_summary,
-                    aes(x = n_trials, y = median_ci_width,
-                        color = factor(true_r_value),
-                        group = factor(true_r_value))) +
-    geom_line(linewidth = 1) +
-    geom_point(size = 3) +
-    scale_color_viridis_d(option = "plasma", name = "True r") +
-    scale_x_continuous(breaks = unique(precision_summary$n_trials)) +
-    facet_wrap(~paste0("q = ", true_q_value), ncol = 3) +
-    labs(
-      title    = "Precision Analysis: Median 95% CI Width vs. N",
-      subtitle = "How fast does posterior precision improve with more trials?",
-      x = "Number of trials", y = "Median 95% CI width on r"
-    )
-
-  p_cover <- ggplot(precision_summary,
-                    aes(x = n_trials, y = coverage,
-                        color = factor(true_r_value),
-                        group = factor(true_r_value))) +
-    geom_hline(yintercept = 0.95, linetype = "dashed", color = "grey50") +
-    geom_line(linewidth = 1) +
-    geom_point(size = 3) +
-    scale_color_viridis_d(option = "plasma", name = "True r") +
-    scale_x_continuous(breaks = unique(precision_summary$n_trials)) +
-    facet_wrap(~paste0("q = ", true_q_value), ncol = 3) +
-    labs(
-      title    = "Empirical 95% Coverage",
-      subtitle = "Should track the dashed line at 0.95 if the posterior is calibrated",
-      x = "Number of trials", y = "Empirical coverage"
-    ) +
-    coord_cartesian(ylim = c(0, 1))
-
-  print(p_width / p_cover)
-}
-```
-
-**Reading the precision analysis.** The top panel shows how the median CI width on $r$ shrinks as you add more trials. The Bayesian-power-analysis question — *how many trials do I need to estimate $r$ within a tolerance of 0.5?* — is answered by reading off the appropriate horizontal line. The bottom panel is the calibration check: at each $N$, the 95% credible intervals should cover the truth in approximately 95% of replicates. Coverage that drops well below 0.95 at small $N$ means the posterior is overconfident at that sample size — a known small-sample failure mode that recovery-at-a-single-N cannot reveal.
-
-The trade-off between trial count and identifiability is now visible rather than asserted. For experimental design purposes, this is the picture you want: pick a target precision, find the smallest $N$ that delivers it without breaking calibration, and budget accordingly. This is more directly useful than any frequentist power calculation because it uses *the actual model* to make the projection.
-
-> **Note (12-R10).** The precision analysis above sweeps trial count at fixed parameter values. A fuller version would also sweep over the prior space — combining precision analysis with SBC to give a "calibrated power surface." That is a one-line modification (replace the fixed `r_values_to_test` grid with `rnorm` draws from the prior at each $N$), but it multiplies the runtime by a small constant. We leave it as a production-only extension and recommend it for any actual experimental planning.
 
 ---
 
@@ -2876,8 +2646,15 @@ model {
 
 generated quantities {
   vector[N_total] log_lik;
+  real lprior;
   for (i in 1:N_total)
     log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1[i]);
+  lprior = normal_lpdf(pop_log_r_mean | pop_log_r_mean_prior_mean, pop_log_r_mean_prior_sd) +
+           exponential_lpdf(pop_log_r_sd | pop_log_r_sd_prior_rate) +
+           std_normal_lpdf(z_log_r) +
+           normal_lpdf(pop_log_q_mean | pop_log_q_mean_prior_mean, pop_log_q_mean_prior_sd) +
+           exponential_lpdf(pop_log_q_sd | pop_log_q_sd_prior_rate) +
+           std_normal_lpdf(z_log_q);
 }
 "
 
@@ -3071,216 +2848,6 @@ if (!is.null(fit_proto_ml)) {
 ```
 
 **Reading the population posterior.** The red dashed lines mark the true parameter values used to generate the data. Well-calibrated inference should show the posterior clearly shifted from the prior and centred near the true value. With 20 subjects each contributing 64 trials, the population mean is well-identified; the population SD requires more subjects before its posterior narrows substantially (see §"Multilevel SBC" below for the coverage analysis).
-
-### Individual Parameter Recovery
-
-```{r ch13_multilevel_individual_recovery}
-if (!is.null(fit_proto_ml)) {
-  subj_logr_summary <- fit_proto_ml$summary(variables = "subj_log_r") |>
-    mutate(
-      agent_id = readr::parse_number(
-        stringr::str_extract(variable, "\\[\\d+\\]")
-      )
-    ) |>
-    left_join(multilevel_proto_params |>
-                dplyr::select(agent_id, log_r_true, r_true),
-              by = "agent_id")
-
-  p_recov_logr <- ggplot(subj_logr_summary,
-                         aes(x = log_r_true, y = mean)) +
-    geom_point(alpha = 0.7, color = "#009E73") +
-    geom_errorbar(aes(ymin = q5, ymax = q95), alpha = 0.3,
-                  color = "#009E73", width = 0) +
-    geom_abline(intercept = 0, slope = 1,
-                color = "red", linetype = "dashed") +
-    geom_smooth(method = lm, color = "#0072B2",
-                linewidth = 0.7, se = TRUE) +
-    labs(
-      title    = "Individual Recovery: log(r)",
-      subtitle = "Posterior mean ± 90% CI vs. true value",
-      x = "True log(r)", y = "Estimated log(r) (posterior mean)"
-    )
-
-  subj_r_summary <- fit_proto_ml$summary(variables = "subj_r") |>
-    mutate(
-      agent_id = readr::parse_number(
-        stringr::str_extract(variable, "\\[\\d+\\]")
-      )
-    ) |>
-    left_join(multilevel_proto_params |>
-                dplyr::select(agent_id, r_true),
-              by = "agent_id")
-
-  p_recov_r <- ggplot(subj_r_summary,
-                      aes(x = r_true, y = mean)) +
-    geom_point(alpha = 0.7, color = "#E69F00") +
-    geom_errorbar(aes(ymin = q5, ymax = q95), alpha = 0.3,
-                  color = "#E69F00", width = 0) +
-    geom_abline(intercept = 0, slope = 1,
-                color = "red", linetype = "dashed") +
-    geom_smooth(method = lm, color = "#0072B2",
-                linewidth = 0.7, se = TRUE) +
-    labs(
-      title    = "Individual Recovery: r (natural scale)",
-      subtitle = "Posterior mean ± 90% CI vs. true value",
-      x = "True r", y = "Estimated r (posterior mean)"
-    )
-
-  cat("=== Individual Parameter Recovery ===\n")
-  print(p_recov_logr | p_recov_r)
-}
-```
-
-**Reading the recovery plots.** Points should cluster around the identity line (red dashed). Shrinkage toward the population mean is expected and desirable — it is the partial-pooling that makes multilevel inference more accurate than independent single-subject fits. Subjects with extreme true values will be pulled toward the group mean; the 90% credible intervals should still contain the truth at the expected rate (verified by the SBC below).
-
----
-
-## Extensive Parameter Recovery for the Multilevel Prototype Model
-
-```{r ch13_extensive_recovery_ml}
-param_grid_ml_proto <- expand_grid(
-  pop_log_r_mean = c(log(0.5), log(1.0), log(2.0)),
-  pop_log_r_sd   = c(0.2, 0.5)
-) |>
-  mutate(grid_id = row_number())
-
-n_sims_per_grid_proto  <- 3
-n_subjects_recov_proto <- 15
-
-run_proto_ml_recovery_iteration <- function(
-    grid_id, pop_log_r_mean, pop_log_r_sd, sim_iteration) {
-
-  cat("Grid", grid_id, "Iter", sim_iteration, "\n")
-  mod_local <- cmdstanr::cmdstan_model(here("stan", "ch13_prototype_ml.stan"))
-
-  sim_out <- tryCatch(
-    simulate_multilevel_prototype(
-      n_subjects     = n_subjects_recov_proto,
-      stimulus_info  = stimulus_info,
-      n_blocks       = n_blocks,
-      base_seed      = grid_id * 100 + sim_iteration,
-      pop_log_r_mean = pop_log_r_mean,
-      pop_log_r_sd   = pop_log_r_sd
-    ),
-    error = function(e) { cat("Simulation error:", e$message, "\n"); NULL }
-  )
-  if (is.null(sim_out)) return(NULL)
-
-  sorted_dat <- sim_out$data |>
-    mutate(subj_id_stan = as.integer(factor(agent_id))) |>
-    arrange(subj_id_stan, trial_within_subject)
-
-  bounds <- sorted_dat |>
-    mutate(row_idx = row_number()) |>
-    group_by(subj_id_stan) |>
-    summarise(subj_start = min(row_idx), subj_end = max(row_idx),
-              .groups = "drop") |>
-    arrange(subj_id_stan)
-
-  stan_dat <- list(
-    N_total                   = nrow(sorted_dat),
-    N_subjects                = n_subjects_recov_proto,
-    N_features                = 2L,
-    subj_start                = bounds$subj_start,
-    subj_end                  = bounds$subj_end,
-    y                         = as.integer(sorted_dat$sim_response),
-    cat_one                   = as.integer(sorted_dat$category_feedback),
-    obs                       = as.matrix(sorted_dat[, c("height", "position")]),
-    initial_mu_cat0           = c(2.5, 2.5),
-    initial_mu_cat1           = c(2.5, 2.5),
-    initial_sigma_diag        = 10.0,
-    pop_log_r_mean_prior_mean = LOG_R_PRIOR_MEAN,
-    pop_log_r_mean_prior_sd   = LOG_R_PRIOR_SD,
-    pop_log_r_sd_prior_rate   = 2.0,
-    pop_log_q_mean_prior_mean = LOG_Q_PRIOR_MEAN,
-    pop_log_q_mean_prior_sd   = LOG_Q_PRIOR_SD,
-    pop_log_q_sd_prior_rate   = 2.0
-  )
-
-  pf_r <- tryCatch(
-    mod_local$pathfinder(data = stan_dat, num_paths = 4, refresh = 0,
-                         seed = grid_id * 100 + sim_iteration),
-    error = function(e) NULL
-  )
-
-  fit_r <- tryCatch(
-    mod_local$sample(
-      data = stan_dat, init = pf_r,
-      seed = grid_id * 100 + sim_iteration,
-      chains = 2, parallel_chains = 2,
-      iter_warmup = 800, iter_sampling = 1000,
-      refresh = 0, adapt_delta = 0.95, max_treedepth = 12
-    ),
-    error = function(e) { cat("Fit error:", e$message, "\n"); NULL }
-  )
-  if (is.null(fit_r)) return(NULL)
-
-  diag <- fit_r$diagnostic_summary(quiet = TRUE)
-  pop_est <- fit_r$summary(
-    variables = c("pop_log_r_mean", "pop_log_r_sd"),
-    "mean"
-  ) |>
-    mutate(
-      true_value = case_when(
-        variable == "pop_log_r_mean" ~ pop_log_r_mean,
-        variable == "pop_log_r_sd"   ~ pop_log_r_sd,
-        TRUE                         ~ NA_real_
-      ),
-      grid_id        = grid_id,
-      sim_iteration  = sim_iteration,
-      had_divergence = any(diag$num_divergent > 0)
-    )
-  pop_est
-}
-
-recovery_plan_proto <- param_grid_ml_proto |>
-  crossing(sim_iteration = seq_len(n_sims_per_grid_proto))
-
-recovery_file_proto <- here("simdata", "ch13_proto_ml_recovery_raw.csv")
-
-if (regenerate_simulations || !file.exists(recovery_file_proto)) {
-  plan(multisession, workers = max(1, availableCores() %/% 2))
-  proto_recovery_raw <- future_pmap_dfr(
-    list(
-      grid_id        = recovery_plan_proto$grid_id,
-      pop_log_r_mean = recovery_plan_proto$pop_log_r_mean,
-      pop_log_r_sd   = recovery_plan_proto$pop_log_r_sd,
-      sim_iteration  = recovery_plan_proto$sim_iteration
-    ),
-    run_proto_ml_recovery_iteration,
-    .options = furrr_options(seed = TRUE, scheduling = 1)
-  )
-  plan(sequential)
-  write_csv(proto_recovery_raw, recovery_file_proto)
-} else {
-  proto_recovery_raw <- read_csv(recovery_file_proto, show_col_types = FALSE)
-}
-
-proto_recovery_labeled <- proto_recovery_raw |>
-  left_join(param_grid_ml_proto |>
-              dplyr::select(grid_id, pop_log_r_mean, pop_log_r_sd),
-            by = "grid_id")
-
-ggplot(proto_recovery_labeled |> filter(!is.na(true_value)),
-       aes(x = true_value, y = mean)) +
-  geom_point(aes(color = had_divergence), alpha = 0.5) +
-  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
-  geom_smooth(method = lm, color = "#0072B2", linewidth = 0.7) +
-  scale_color_manual(values = c("FALSE" = "grey30", "TRUE" = "#D55E00"),
-                     name = "Had divergence") +
-  facet_wrap(~variable, scales = "free") +
-  labs(
-    title    = "Population Parameter Recovery: Multilevel Prototype Model",
-    subtitle = sprintf(
-      "%d grid cells × %d simulations × %d subjects each",
-      nrow(param_grid_ml_proto), n_sims_per_grid_proto, n_subjects_recov_proto
-    ),
-    x = "True value", y = "Estimated (posterior mean)"
-  ) +
-  theme(legend.position = "bottom")
-```
-
----
 
 ## Multilevel SBC
 

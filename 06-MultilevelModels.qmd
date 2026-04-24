@@ -329,10 +329,14 @@ Before we unleash the Hamiltonian Monte Carlo (HMC) engine, we must format our s
 #' @return A named list formatted for CmdStanR
 prep_stan_data <- function(sim_data) {
   list(
-    N = nrow(sim_data),                        # Total number of trials across all agents
-    J = length(unique(sim_data$agent_id)),     # Total number of agents
-    agent = sim_data$agent_id,                 # Vector of length N mapping trial to agent
-    h = sim_data$choice                        # Vector of length N containing observed choices
+    N_total                  = nrow(sim_data),
+    N_subjects               = length(unique(sim_data$agent_id)),
+    subj_id                  = sim_data$agent_id,
+    y                        = sim_data$choice,
+    prior_mu_theta_mu        = 0,
+    prior_mu_theta_sigma     = 1.5,
+    prior_sigma_theta_lambda = 1,
+    run_diagnostics          = 1
   )
 }
 
@@ -372,10 +376,14 @@ Let us write the Stan code.
 stan_biased_ml_cp_code <- "
 // Multilevel Biased Agent Model: Centered Parameterization (CP)
 data {
-  int<lower=1> N;                       // Total number of observations across all agents
-  int<lower=1> J;                       // Total number of agents
-  array[N] int<lower=1, upper=J> agent; // Agent ID index for each trial
-  array[N] int<lower=0, upper=1> h;     // Observed binary choices (1 = Right, 0 = Left)
+  int<lower=1> N_total;                 // Total number of observations
+  int<lower=1> N_subjects;              // Total number of agents
+  array[N_total] int<lower=1, upper=N_subjects> subj_id; // Agent ID index
+  array[N_total] int<lower=0, upper=1> y;     // Observed choices
+  real prior_mu_theta_mu;
+  real<lower=0> prior_mu_theta_sigma;
+  real<lower=0> prior_sigma_theta_lambda;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -384,56 +392,49 @@ parameters {
   real<lower=0> sigma_theta;            // Population SD of bias (logit scale)
 
   // Individual-level parameters (CENTERED)
-  vector[J] theta_logit;                // Agent-specific biases 
+  vector[N_subjects] theta_logit;       // Agent-specific biases 
 }
 
 model {
   // 1. Population-level hyperpriors
-  target += normal_lpdf(mu_theta | 0, 1.5);
-  target += exponential_lpdf(sigma_theta | 1);
+  target += normal_lpdf(mu_theta | prior_mu_theta_mu, prior_mu_theta_sigma);
+  target += exponential_lpdf(sigma_theta | prior_sigma_theta_lambda);
 
   // 2. Hierarchical prior (CENTERED)
-  // The individual parameters are directly parameterized by the hyperparameters.
-  // This explicitly creates the funnel geometry.
   target += normal_lpdf(theta_logit | mu_theta, sigma_theta);
 
   // 3. Likelihood
-  // Highly vectorized evaluation mapping each trial to its specific agent
-  target += bernoulli_logit_lpmf(h | theta_logit[agent]); 
+  target += bernoulli_logit_lpmf(y | theta_logit[subj_id]); 
 }
 
 generated quantities {
-  // Transform hyperparameters back to the probability (outcome) scale for interpretation
+  // Transform hyperparameters back to the probability (scale)
   real<lower=0, upper=1> mu_theta_prob = inv_logit(mu_theta);
-  vector<lower=0, upper=1>[J] theta_prob = inv_logit(theta_logit);
+  vector<lower=0, upper=1>[N_subjects] theta_prob = inv_logit(theta_logit);
 
-  // Initialize arrays for predictive checks, LOO-CV, and Prior Sensitivity
-  vector[N] log_lik;
-  array[N] int h_post_rep;
-  array[N] int h_prior_rep;
+  // Initialize arrays for conditional diagnostics
+  vector[N_total] log_lik;
+  array[N_total] int y_post_rep;
+  array[N_total] int y_prior_rep;
   
-  // Accumulator for joint prior log-density (required by 'priorsense')
+  // Accumulator for joint prior log-density
   real lprior; 
-  lprior = normal_lpdf(mu_theta | 0, 1.5) + 
-           exponential_lpdf(sigma_theta | 1) + 
+  lprior = normal_lpdf(mu_theta | prior_mu_theta_mu, prior_mu_theta_sigma) + 
+           exponential_lpdf(sigma_theta | prior_sigma_theta_lambda) + 
            normal_lpdf(theta_logit | mu_theta, sigma_theta);
 
-  // Draw from the priors to establish the generative baseline
-  real mu_theta_prior = normal_rng(0, 1.5);
-  real sigma_theta_prior = exponential_rng(1);
-  
-  // We use a loop for trial-level generation to ensure array indexing stability
-  for (i in 1:N) {
-    // Pointwise log-likelihood for out-of-sample predictive performance (PSIS-LOO)
-    log_lik[i] = bernoulli_logit_lpmf(h[i] | theta_logit[agent[i]]);
+  if (run_diagnostics) {
+    // Establishing the generative baseline from priors
+    real mu_theta_prior = normal_rng(prior_mu_theta_mu, prior_mu_theta_sigma);
+    real sigma_theta_prior = exponential_rng(prior_sigma_theta_lambda);
     
-    // Posterior Predictive Check (PPC): Data generated from the fitted posterior
-    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent[i]]);
-    
-    // Prior Predictive Check: Data generated entirely from the unconditioned priors
-    // We sample a prior theta for the specific agent on the fly
-    real theta_logit_prior_i = normal_rng(mu_theta_prior, sigma_theta_prior);
-    h_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior_i);
+    for (i in 1:N_total) {
+      log_lik[i] = bernoulli_logit_lpmf(y[i] | theta_logit[subj_id[i]]);
+      y_post_rep[i] = bernoulli_logit_rng(theta_logit[subj_id[i]]);
+      
+      real theta_logit_prior_i = normal_rng(mu_theta_prior, sigma_theta_prior);
+      y_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior_i);
+    }
   }
 }
 "
@@ -457,13 +458,11 @@ fit_cp_path <- here::here("simmodels", "ch07_fit_cp.rds")
 
 if (regenerate_simulations || !file.exists(fit_cp_path)) {
   
-  # Create a plain list of lists (1 for each of the 4 chains)
-  # This evaluates immediately and leaves no functions behind to capture environments!
   init_cp_list <- lapply(1:4, function(i) {
     list(
       mu_theta    = rnorm(1, 0, 1.5),
       sigma_theta = rexp(1, 1),
-      theta_logit = rnorm(stan_data_centered$J, 0, 0.5)
+      theta_logit = rnorm(stan_data_centered$N_subjects, 0, 0.5)
     )
   })
   
@@ -630,11 +629,11 @@ We will compare the observed choice rate for each agent against the distribution
 
 ```{r ch07_cp_ppc_viz}
 # Safely extract vectors
-y_obs <- as.numeric(stan_data_centered$h)
-agent_idx <- as.numeric(stan_data_centered$agent)
+y_obs <- as.numeric(stan_data_centered$y)
+agent_idx <- as.numeric(stan_data_centered$subj_id)
 
 # Use cmdstanr's native extraction to guarantee a strict S x N matrix
-y_rep <- fit_cp$draws("h_post_rep", format = "matrix")
+y_rep <- fit_cp$draws("y_post_rep", format = "matrix")
 
 # Select a random subset of agents to avoid overcrowded, illegible plots
 n_sample <- 12
@@ -1023,15 +1022,19 @@ Here is the NCP version of the model. Note the changes in the parameters, transf
 
 ```{r ch07_stan_model_biased_ncp}
 
-stan_biased_ml_ncp_code <- '
+stan_biased_ml_ncp_code <- "
 // Multilevel Biased Agent Model (Non-Centered Parameterization)
 // Estimates individual biases drawn from a population distribution.
 
 data {
-  int<lower=1> N;                    // Total number of observations
-  int<lower=1> J;                    // Number of agents
-  array[N] int<lower=1, upper=J> agent; // Agent ID for each observation (must be 1...J)
-  array[N] int<lower=0, upper=1> h;    // Observed choices (0 or 1)
+  int<lower=1> N_total;                 // Total number of observations
+  int<lower=1> N_subjects;              // Number of agents
+  array[N_total] int<lower=1, upper=N_subjects> subj_id; // Agent ID
+  array[N_total] int<lower=0, upper=1> y;     // Observed choices
+  real prior_mu_theta_mu;
+  real<lower=0> prior_mu_theta_sigma;
+  real<lower=0> prior_sigma_theta_lambda;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -1040,72 +1043,62 @@ parameters {
   real<lower=0> sigma_theta;         // Population SD of bias (logit scale)
 
   // Individual-level parameters (standardized deviations, z-scores of the agents)
-  vector[J] z_theta;                 // Non-centered individual effects (standard normal scale)
+  vector[N_subjects] z_theta;        // Non-centered individual effects
 }
 
 transformed parameters {
   // Deterministic reconstruction of the cognitive parameters
-  // This shifts and scales the z-scores back to the target logit space
-  vector[J] theta_logit = mu_theta + z_theta * sigma_theta;
+  vector[N_subjects] theta_logit = mu_theta + z_theta * sigma_theta;
 }
 
 model {
   // Priors for population-level parameters
-  target += normal_lpdf(mu_theta | 0, 1.5);
-  target += exponential_lpdf(sigma_theta | 1);
+  target += normal_lpdf(mu_theta | prior_mu_theta_mu, prior_mu_theta_sigma);
+  target += exponential_lpdf(sigma_theta | prior_sigma_theta_lambda);
   
   /// Individual level prior (NON-CENTERED)
-  // Notice there are no population level parameters here. The geometry is decoupled.
   target += std_normal_lpdf(z_theta);
 
   // Likelihood
-  /// The likelihood is evaluated on the deterministically transformed parameters
-  /// not the raw z-scores.
-  target += bernoulli_logit_lpmf(h | theta_logit[agent]);
+  target += bernoulli_logit_lpmf(y | theta_logit[subj_id]);
 }
 
 generated quantities {
-  // Transform hyperparameters back to the probability (outcome) scale
+  // Transform hyperparameters back to the probability (scale)
   real<lower=0, upper=1> mu_theta_prob = inv_logit(mu_theta);
-  vector<lower=0, upper=1>[J] theta_prob = inv_logit(theta_logit);
+  vector<lower=0, upper=1>[N_subjects] theta_prob = inv_logit(theta_logit);
   
   // Initialize containers for trial-level metrics
-  vector[N] log_lik;
-  array[N] int h_post_rep;
-  array[N] int h_prior_rep;
+  vector[N_total] log_lik;
+  array[N_total] int y_post_rep;
+  array[N_total] int y_prior_rep;
 
   // --- Prior Log-Density  ---
   real lprior;
-  // Notice we score z_theta with the standard normal distribution, exactly as in the model block
-  lprior = normal_lpdf(mu_theta | 0, 1.5) + 
-           exponential_lpdf(sigma_theta | 1) + 
+  lprior = normal_lpdf(mu_theta | prior_mu_theta_mu, prior_mu_theta_sigma) + 
+           exponential_lpdf(sigma_theta | prior_sigma_theta_lambda) + 
            std_normal_lpdf(z_theta);
 
-  // --- Prior Predictive Checks: Generative Baseline ---
-  // 1. Draw population hyperparameters from the EXACT priors used in the model block
-  real mu_theta_prior = normal_rng(0, 1.5);
-  real<lower=0> sigma_theta_prior = exponential_rng(1);
-  
-  // 2. Draw individual agent parameters from the non-centered prior
-  vector[J] theta_logit_prior;
-  for (j in 1:J) {
-    real z_theta_prior = normal_rng(0, 1); 
-    theta_logit_prior[j] = mu_theta_prior + z_theta_prior * sigma_theta_prior;
-  }
+  if (run_diagnostics) {
+    // --- Prior Predictive Checks: Generative Baseline ---
+    real mu_theta_prior = normal_rng(prior_mu_theta_mu, prior_mu_theta_sigma);
+    real sigma_theta_prior = exponential_rng(prior_sigma_theta_lambda);
+    
+    // 2. Draw individual agent parameters from the non-centered prior
+    vector[N_subjects] theta_logit_prior;
+    for (j in 1:N_subjects) {
+      real z_theta_prior = normal_rng(0, 1); 
+      theta_logit_prior[j] = mu_theta_prior + z_theta_prior * sigma_theta_prior;
+    }
 
-  // --- Trial-Level Computations ---
-  // We consolidate the log-likelihood and predictive checks into a single loop
-  for (i in 1:N) {
-    // 1. Pointwise log-likelihood (for PSIS-LOO model comparison later)
-    log_lik[i] = bernoulli_logit_lpmf(h[i] | theta_logit[agent[i]]);
-    
-    // 2. Posterior Predictive Check: Generate choices using the fitted posterior
-    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent[i]]);
-    
-    // 3. Prior Predictive Check: Generate choices using the unconditioned prior
-    h_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[agent[i]]);
+    // --- Trial-Level Computations ---
+    for (i in 1:N_total) {
+      log_lik[i] = bernoulli_logit_lpmf(y[i] | theta_logit[subj_id[i]]);
+      y_post_rep[i] = bernoulli_logit_rng(theta_logit[subj_id[i]]);
+      y_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[subj_id[i]]);
+    }
   }
-}'
+}"
 
 # Write Stan code to file
 stan_file_ncp <- here::here("stan", "ch07_multilevel_biased_ncp.stan")
@@ -1115,15 +1108,15 @@ mod_biased_ml_ncp <- cmdstan_model(stan_file_ncp)
 
 fit_ncp_path <- here::here("simmodels", "ch07_fit_ncp.rds")
 
-# Extract J safely
-  J_val_ncp <- stan_data_centered$J
+# Extract N_subjects safely
+  N_subj_val <- stan_data_centered$N_subjects
   
   # The dumb list (4 chains)
   init_ncp_list <- list(
-    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(J_val_ncp, 0, 1)),
-    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(J_val_ncp, 0, 1)),
-    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(J_val_ncp, 0, 1)),
-    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(J_val_ncp, 0, 1))
+    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(N_subj_val, 0, 1)),
+    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(N_subj_val, 0, 1)),
+    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(N_subj_val, 0, 1)),
+    list(mu_theta = rnorm(1, 0, 1.5), sigma_theta = rexp(1, 1), z_theta = rnorm(N_subj_val, 0, 1))
   )
 
   if (regenerate_simulations || !file.exists(fit_ncp_path)) {
@@ -1134,11 +1127,12 @@ fit_ncp_path <- here::here("simmodels", "ch07_fit_ncp.rds")
       parallel_chains = 4,
       iter_warmup     = 1000,
       iter_sampling   = 1000,
-      init            = init_ncp_list, # <--- Pass the dumb list here
+      init            = init_ncp_list,
       adapt_delta     = 0.85,
       refresh         = 0
     )
     fit_ncp$save_object(fit_ncp_path)
+
 } else {
   fit_ncp <- readRDS(fit_ncp_path)
 }
@@ -1155,16 +1149,56 @@ fit_ncp_path <- here::here("simmodels", "ch07_fit_ncp.rds")
 > two diagnostics that directly reveal the CP's failure and the NCP's fix:
 > sampling efficiency and the SBC rank histograms.
 
+::: {.callout-tip title="Stan Efficiency Rule 3 — Subject Indexing: `subj_id` vs. Contiguous Blocks"}
+
+The models in this chapter index subject membership via an integer array: `array[N_total] int subj_id`. On each trial row, `subj_id[i]` says which subject that row belongs to. This **scatter-index** pattern is simple and works perfectly for models where trial order does not matter — like the biased-agent model here, where the likelihood is `bernoulli_logit_lpmf(y | theta[subj_id])`.
+
+However, from Chapter 9 onward, all models are **path-dependent**: the predicted probability on trial $t$ is a function of everything that happened on trials $1, \ldots, t-1$ within the same subject. For those models, we need to process each subject's trials in strict sequence, which means we must know exactly where each subject's block of rows starts and ends in the data array.
+
+The **contiguous-block** pattern achieves this:
+
+```r
+# Sort data by subject, then by trial within subject
+data_sorted <- data |> arrange(subject_id, trial)
+bounds <- data_sorted |>
+  mutate(row = row_number()) |>
+  group_by(subject_id) |>
+  summarise(subj_start = min(row), subj_end = max(row))
+```
+
+```stan
+data {
+  array[N_subjects] int subj_start;  // first row index for each subject
+  array[N_subjects] int subj_end;    // last row index for each subject
+}
+model {
+  for (j in 1:N_subjects) {
+    for (i in subj_start[j]:subj_end[j]) {
+      // process trials in order — history is correct
+    }
+  }
+}
+```
+
+This layout also enables the **`reduce_sum` parallelism** introduced in Chapter 11: because each subject's trials form a self-contained contiguous block, independent subject loops can be dispatched to separate CPU threads without any shared mutable state.
+
+We keep `subj_id` here for simplicity. You will see `subj_start/subj_end` throughout Chapters 9–11.
+:::
+
 ```{r ch07_Time_NCP_Model}
-# Timing and ESS comparison 
+# Timing, ESS, and Pathfinder warm-start comparison for CP vs NCP
+
+# ── 1. Wall-clock and ESS ─────────────────────────────────────────────────────
 time_cp  <- fit_cp$time()$total
 time_ncp <- fit_ncp$time()$total
 
-ess_cp  <- summarise_draws(fit_cp$draws(c("mu_theta", "sigma_theta")),  "ess_bulk") |> rename(ess_cp  = ess_bulk)
-ess_ncp <- summarise_draws(fit_ncp$draws(c("mu_theta", "sigma_theta")), "ess_bulk") |> rename(ess_ncp = ess_bulk)
+ess_cp  <- summarise_draws(fit_cp$draws(c("mu_theta", "sigma_theta")),  "ess_bulk") |>
+  rename(ess_cp  = ess_bulk)
+ess_ncp <- summarise_draws(fit_ncp$draws(c("mu_theta", "sigma_theta")), "ess_bulk") |>
+  rename(ess_ncp = ess_bulk)
 
-efficiency_comparison <- ess_cp |> 
-  left_join(ess_ncp, by = "variable") |> 
+efficiency_comparison <- ess_cp |>
+  left_join(ess_ncp, by = "variable") |>
   mutate(
     ess_per_sec_cp  = ess_cp  / time_cp,
     ess_per_sec_ncp = ess_ncp / time_ncp
@@ -1177,9 +1211,47 @@ cat("Speedup Factor:", round(time_cp / time_ncp, 2), "x\n\n")
 cat("=== SAMPLING EFFICIENCY (ESS / SECOND) ===\n")
 print(knitr::kable(efficiency_comparison, digits = 1))
 
+# ── 2. Pathfinder warm-start timing for NCP ───────────────────────────────────
+fit_ncp_pf_path <- here::here("simmodels", "ch07_fit_ncp_pathfinder_init.rds")
+
+if (regenerate_simulations || !file.exists(fit_ncp_pf_path)) {
+  pf_ncp <- tryCatch(
+    mod_biased_ml_ncp$pathfinder(data = stan_data_centered, num_paths = 4,
+                                  seed = 42, refresh = 0),
+    error = function(e) NULL
+  )
+  init_for_ncp <- if (!is.null(pf_ncp)) pf_ncp else init_ncp_list
+
+  t_pf_start <- proc.time()["elapsed"]
+  fit_ncp_pf <- mod_biased_ml_ncp$sample(
+    data            = stan_data_centered,
+    seed            = 124,
+    chains          = 4,
+    parallel_chains = 4,
+    iter_warmup     = 500,        # shorter warmup thanks to Pathfinder init
+    iter_sampling   = 1000,
+    init            = init_for_ncp,
+    adapt_delta     = 0.85,
+    refresh         = 0
+  )
+  time_pf_total <- (proc.time()["elapsed"] - t_pf_start) +
+                   if (!is.null(pf_ncp)) pf_ncp$time()$total else 0
+  fit_ncp_pf$save_object(fit_ncp_pf_path)
+} else {
+  fit_ncp_pf <- readRDS(fit_ncp_pf_path)
+  time_pf_total <- fit_ncp_pf$time()$total   # approximate (Pathfinder time not stored)
+}
+
+timing_summary <- tibble::tribble(
+  ~Method,                       ~`Time (s)`,  ~`Warmup iter`,
+  "CP (standard)",                round(time_cp, 1),    1000L,
+  "NCP (standard init)",          round(time_ncp, 1),   1000L,
+  "NCP (Pathfinder warm-start)",  round(time_pf_total, 1), 500L
+)
+knitr::kable(timing_summary, caption = "Wall-clock time: CP vs NCP, with and without Pathfinder warm-start")
 ```
 
-Here we are seeing that the NCP model is sometimes slightly faster, sometimes slightly slower, but always less efficient at sampling than the CP model. There goes any simple guideline that NCP is more efficient :-)
+Here we see that the NCP model is sometimes slightly faster, sometimes slightly slower than CP in raw wall-clock time, but always less *sampling-efficient* (lower ESS/second). This is the trade-off of NCP: it eliminates the pathological geometry that causes SBC failures in CP, at the cost of slightly less efficient sampling in data-rich regimes. The Pathfinder warm-start partially recovers that efficiency by cutting warmup iterations.
 
 Yet, NCP might still end up exploring the space better. Let's see how it fares on the SBC assessment that was giving issues to CP.
 
@@ -1322,8 +1394,8 @@ make_psbc_generator <- function(fit, original_data) {
   draws_df <- posterior::as_draws_df(fit$draws())
   
   # Pre-compute the exact column names to guarantee flawless extraction
-  theta_cols <- paste0("theta_logit[", 1:original_data$J, "]")
-  y_cols <- paste0("h_post_rep[", 1:original_data$N, "]")
+  theta_cols <- paste0("theta_logit[", 1:original_data$N_subjects, "]")
+  y_cols <- paste0("y_post_rep[", 1:original_data$N_total, "]")
   
   # The generator function required by the SBC package
   function() {
@@ -1478,15 +1550,15 @@ This model assumes all agents are identical clones. The population variance is f
 ```{r ch07_fit_complete_pooling}
 stan_full_pooling_code <- "
 data {
-  int<lower=1> N;
-  array[N] int<lower=0, upper=1> h;
+  int<lower=1> N_total;
+  array[N_total] int<lower=0, upper=1> y;
 }
 parameters {
   real theta_logit; // A single parameter for the entire universe
 }
 model {
   target += normal_lpdf(theta_logit | 0, 1.5);
-  target += bernoulli_logit_lpmf(h | theta_logit);
+  target += bernoulli_logit_lpmf(y | theta_logit);
 }
 "
 stan_file_full <- here::here("stan", "ch07_biased_full_pooling.stan")
@@ -1497,7 +1569,7 @@ fit_full_path <- here::here("simmodels", "ch07_fit_full_pool.rds")
 
 if (regenerate_simulations || !file.exists(fit_full_path)) {
   fit_full <- mod_full$sample(
-    data            = list(N = stan_data_centered$N, h = stan_data_centered$h),
+    data            = list(N_total = stan_data_centered$N_total, y = stan_data_centered$y),
     seed            = 123, chains = 4, parallel_chains = 4, refresh = 0
   )
   fit_full$save_object(fit_full_path)
@@ -1515,18 +1587,18 @@ This model assumes every agent is a completely isolated island. The population v
 ```{r ch07_fit_no_pooling}
 stan_no_pooling_code <- "
 data {
-  int<lower=1> N;
-  int<lower=1> J;
-  array[N] int<lower=1, upper=J> agent;
-  array[N] int<lower=0, upper=1> h;
+  int<lower=1> N_total;
+  int<lower=1> N_subjects;
+  array[N_total] int<lower=1, upper=N_subjects> subj_id;
+  array[N_total] int<lower=0, upper=1> y;
 }
 parameters {
-  vector[J] theta_logit; // J completely independent parameters
+  vector[N_subjects] theta_logit; // N_subjects completely independent parameters
 }
 model {
   // Static prior: No hierarchical learning
   target += normal_lpdf(theta_logit | 0, 1.5);
-  target += bernoulli_logit_lpmf(h | theta_logit[agent]);
+  target += bernoulli_logit_lpmf(y | theta_logit[subj_id]);
 }
 "
 stan_file_no <- here::here("stan", "ch07_biased_no_pooling.stan")
@@ -1971,13 +2043,21 @@ Having established from the biased agent workflow that NCP is our default archit
 #' @return A named list formatted for CmdStanR.
 prep_stan_data_memory <- function(sim_data) {
   list(
-    N             = nrow(sim_data),
-    J             = length(unique(sim_data$agent_id)),
-    agent         = sim_data$agent_id,
-    h             = sim_data$choice,
-    opp_rate_prev = sim_data$opp_rate_prev
+    N_total                  = nrow(sim_data),
+    N_subjects               = length(unique(sim_data$agent_id)),
+    subj_id                  = sim_data$agent_id,
+    y                        = sim_data$choice,
+    opp_rate_prev            = sim_data$memory_state,
+    prior_mu_alpha_mu        = 0,
+    prior_mu_alpha_sigma     = 1.0,
+    prior_mu_beta_mu         = 0,
+    prior_mu_beta_sigma      = 1.0,
+    prior_sigma_lambda       = 1.0,
+    prior_Omega_shape        = 2.0,
+    run_diagnostics          = 1
   )
 }
+
 
 # --- Load the reversal learning schedule from Ch. 6 ---
 # This 240-trial sequence (80% right → reversal → 20% right) was validated
@@ -2009,8 +2089,8 @@ stan_data_memory <- prep_stan_data_memory(sim_data_memory)
 
 cat(sprintf(
   "Hierarchical memory data: %d agents, %d total trials, %d–%d trials per agent\n",
-  stan_data_memory$J,
-  stan_data_memory$N,
+  stan_data_memory$N_subjects,
+  stan_data_memory$N_total,
   min(sim_data_memory$n_trials),
   max(sim_data_memory$n_trials)
 ))
@@ -2023,42 +2103,44 @@ The only new structural element relative to the biased agent NCP is the bivariat
 ```{r ch07_stan_memory_ncp_code}
 stan_memory_ncp_code <- "
 // Hierarchical Memory Agent Model (Non-Centered Parameterization)
-// -------------------------------------------------------------------
 // alpha_j (baseline bias) and beta_j (memory sensitivity) are jointly
 // drawn from a bivariate Normal. NCP decouples sampling geometry from
 // the population parameters, preventing Neal's Funnel.
 
 data {
-  int<lower=1> N;                          // Total observations across all agents
-  int<lower=1> J;                          // Number of agents
-  array[N] int<lower=1, upper=J>  agent;   // Agent index per trial
-  array[N] int<lower=0, upper=1>  h;       // Observed binary choices
-  // Pre-computed running average of opponent choices, clipped to [0.01, 0.99].
-  vector<lower=0.01, upper=0.99>[N] opp_rate_prev;
+  int<lower=1> N_total;                    // Total observations
+  int<lower=1> N_subjects;                 // Number of agents
+  array[N_total] int<lower=1, upper=N_subjects>  subj_id;   // Agent index
+  array[N_total] int<lower=0, upper=1>  y;       // Observed choices
+  vector<lower=0.01, upper=0.99>[N_total] opp_rate_prev;
+  
+  real prior_mu_alpha_mu;
+  real<lower=0> prior_mu_alpha_sigma;
+  real prior_mu_beta_mu;
+  real<lower=0> prior_mu_beta_sigma;
+  real<lower=0> prior_sigma_lambda;
+  real<lower=0> prior_Omega_shape;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
   // Population-level parameters
   real mu_alpha;              // Population mean baseline bias (logit scale)
   real mu_beta;               // Population mean memory sensitivity
-  vector<lower=0>[2] sigma;   // Marginal SDs: sigma[1] = sigma_alpha, sigma[2] = sigma_beta
+  vector<lower=0>[2] sigma;   // Marginal SDs
 
-  // Cholesky factor of the 2x2 correlation matrix. Prior: Omega ~ LKJ(2).
+  // Cholesky factor of the correlation matrix
   cholesky_factor_corr[2] L_Omega;
 
-  // Individual-level parameters (NCP): 2 x J matrix of standard normals.
-  // Row 1 = alpha offsets, row 2 = beta offsets.
-  matrix[2, J] z;
+  // Individual-level parameters (NCP)
+  matrix[2, N_subjects] z;
 }
 
 transformed parameters {
-  // Reconstruct cognitive parameters from z-space via the Cholesky transform.
-  // diag_pre_multiply(sigma, L_Omega) = diag(sigma) * L_Omega  (2x2 matrix)
-  // Multiplying by z (2xJ) and transposing gives J x 2.
-  matrix[J, 2] indiv_params;
+  matrix[N_subjects, 2] indiv_params;
   {
-    matrix[2, J] deviations = diag_pre_multiply(sigma, L_Omega) * z;
-    for (j in 1:J) {
+    matrix[2, N_subjects] deviations = diag_pre_multiply(sigma, L_Omega) * z;
+    for (j in 1:N_subjects) {
       indiv_params[j, 1] = mu_alpha + deviations[1, j];
       indiv_params[j, 2] = mu_beta  + deviations[2, j];
     }
@@ -2067,74 +2149,73 @@ transformed parameters {
 
 model {
   // Hyperpriors
-  target += normal_lpdf(mu_alpha | 0, 1);
-  target += normal_lpdf(mu_beta  | 0, 1);
-  target += exponential_lpdf(sigma | 1);
-  target += lkj_corr_cholesky_lpdf(L_Omega | 2);
+  target += normal_lpdf(mu_alpha | prior_mu_alpha_mu, prior_mu_alpha_sigma);
+  target += normal_lpdf(mu_beta  | prior_mu_beta_mu,  prior_mu_beta_sigma);
+  target += exponential_lpdf(sigma | prior_sigma_lambda);
+  target += lkj_corr_cholesky_lpdf(L_Omega | prior_Omega_shape);
 
-  // Individual-level prior (NCP): geometry fully decoupled from population params
+  // Individual-level prior (NCP)
   target += std_normal_lpdf(to_vector(z));
 
   // Likelihood
-  vector[N] logit_p;
-  for (i in 1:N) {
-    logit_p[i] = indiv_params[agent[i], 1]
-               + indiv_params[agent[i], 2] * logit(opp_rate_prev[i]);
+  vector[N_total] logit_p;
+  for (i in 1:N_total) {
+    logit_p[i] = indiv_params[subj_id[i], 1]
+               + indiv_params[subj_id[i], 2] * logit(opp_rate_prev[i]);
   }
-  target += bernoulli_logit_lpmf(h | logit_p);
+  target += bernoulli_logit_lpmf(y | logit_p);
 }
 
 generated quantities {
-  // Recover the full correlation matrix and the scalar rho
   matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
   real rho = Omega[1, 2];
 
-  // Individual parameters on natural scales
-  vector[J] alpha    = indiv_params[, 1];
-  vector[J] beta_mem = indiv_params[, 2];
+  vector[N_subjects] alpha    = indiv_params[, 1];
+  vector[N_subjects] beta_mem = indiv_params[, 2];
 
-  // Prior log-density (required by priorsense)
-  real lprior = normal_lpdf(mu_alpha | 0, 1)
-              + normal_lpdf(mu_beta  | 0, 1)
-              + exponential_lpdf(sigma | 1)
-              + lkj_corr_cholesky_lpdf(L_Omega | 2)
+  // Prior log-density
+  real lprior = normal_lpdf(mu_alpha | prior_mu_alpha_mu, prior_mu_alpha_sigma)
+              + normal_lpdf(mu_beta  | prior_mu_beta_mu,  prior_mu_beta_sigma)
+              + exponential_lpdf(sigma | prior_sigma_lambda)
+              + lkj_corr_cholesky_lpdf(L_Omega | prior_Omega_shape)
               + std_normal_lpdf(to_vector(z));
 
-  // Prior draws for prior-posterior update plots
-  real mu_alpha_prior    = normal_rng(0, 1);
-  real mu_beta_prior     = normal_rng(0, 1);
-  real sigma_alpha_prior = exponential_rng(1);
-  real sigma_beta_prior  = exponential_rng(1);
-  // LKJ(2) marginal on rho: 2*Beta(2,2) - 1
-  real rho_prior         = 2.0 * beta_rng(2.0, 2.0) - 1.0;
-
   // Predictive checks and pointwise log-likelihood
-  vector[N] log_lik;
-  array[N] int h_post_rep;
-  array[N] int h_prior_rep;
+  vector[N_total] log_lik;
+  array[N_total] int y_post_rep;
+  array[N_total] int y_prior_rep;
 
-  // Build a prior-drawn population for h_prior_rep
-  cholesky_factor_corr[2] L_Omega_prior = lkj_corr_cholesky_rng(2, 2.0);
-  vector[2] sigma_prior = [sigma_alpha_prior, sigma_beta_prior]';
-  matrix[2, J] z_prior;
-  for (j in 1:J) { z_prior[1,j] = normal_rng(0,1); z_prior[2,j] = normal_rng(0,1); }
-  matrix[J, 2] indiv_prior;
-  {
-    matrix[2, J] dev_prior = diag_pre_multiply(sigma_prior, L_Omega_prior) * z_prior;
-    for (j in 1:J) {
-      indiv_prior[j, 1] = mu_alpha_prior + dev_prior[1, j];
-      indiv_prior[j, 2] = mu_beta_prior  + dev_prior[2, j];
+  if (run_diagnostics) {
+    real mu_alpha_prior    = normal_rng(prior_mu_alpha_mu, prior_mu_alpha_sigma);
+    real mu_beta_prior     = normal_rng(prior_mu_beta_mu, prior_mu_beta_sigma);
+    real sigma_alpha_prior = exponential_rng(prior_sigma_lambda);
+    real sigma_beta_prior  = exponential_rng(prior_sigma_lambda);
+    
+    cholesky_factor_corr[2] L_Omega_prior = lkj_corr_cholesky_rng(2, prior_Omega_shape);
+    vector[2] sigma_prior = [sigma_alpha_prior, sigma_beta_prior]';
+    matrix[2, N_subjects] z_prior;
+    for (j in 1:N_subjects) { 
+      z_prior[1,j] = normal_rng(0,1); 
+      z_prior[2,j] = normal_rng(0,1); 
     }
-  }
+    matrix[N_subjects, 2] indiv_prior;
+    {
+      matrix[2, N_subjects] dev_prior = diag_pre_multiply(sigma_prior, L_Omega_prior) * z_prior;
+      for (j in 1:N_subjects) {
+        indiv_prior[j, 1] = mu_alpha_prior + dev_prior[1, j];
+        indiv_prior[j, 2] = mu_beta_prior  + dev_prior[2, j];
+      }
+    }
 
-  for (i in 1:N) {
-    int j = agent[i];
-    real lp_post  = indiv_params[j,1] + indiv_params[j,2] * logit(opp_rate_prev[i]);
-    real lp_prior = indiv_prior[j,1]  + indiv_prior[j,2]  * logit(opp_rate_prev[i]);
+    for (i in 1:N_total) {
+      int j = subj_id[i];
+      real lp_post  = indiv_params[j,1] + indiv_params[j,2] * logit(opp_rate_prev[i]);
+      real lp_prior = indiv_prior[j,1]  + indiv_prior[j,2]  * logit(opp_rate_prev[i]);
 
-    log_lik[i]     = bernoulli_logit_lpmf(h[i] | lp_post);
-    h_post_rep[i]  = bernoulli_logit_rng(lp_post);
-    h_prior_rep[i] = bernoulli_logit_rng(lp_prior);
+      log_lik[i]     = bernoulli_logit_lpmf(y[i] | lp_post);
+      y_post_rep[i]  = bernoulli_logit_rng(lp_post);
+      y_prior_rep[i] = bernoulli_logit_rng(lp_prior);
+    }
   }
 }
 "
@@ -2146,22 +2227,61 @@ mod_memory_ncp <- cmdstan_model(stan_file_memory_ncp)
 
 Two Stan details are worth noting. First, the local block `{ matrix[2,J] deviations = ...; }` in `transformed parameters` confines the intermediate matrix to local scope, preventing it from appearing in the parameter output. Second, `lkj_corr_cholesky_rng(2, 2.0)` in `generated quantities` draws a full Cholesky factor from the LKJ(2) prior. This is the correct way to generate prior predictive data — unlike the Beta marginal trick, it generalizes to the $3 \times 3$ case we will need for the WSLS agent.
 
+::: {.callout-tip title="Stan Efficiency — Cholesky Factorization for Correlation Matrices"}
+
+Whenever a model includes a **correlation matrix** $\Omega$ over individual-level parameters,
+use the Cholesky-factorized parameterization rather than sampling $\Omega$ directly.
+
+| Parameterization | Type | Why avoid |
+|---|---|---|
+| `corr_matrix[K] Omega` + `lkj_corr_lpdf` | Direct | Requires $O(K^3)$ matrix square root and positive-definiteness checks at every leapfrog step |
+| `cholesky_factor_corr[K] L_Omega` + `lkj_corr_cholesky_lpdf` | Cholesky | $L_\Omega$ is already lower-triangular; lies directly on its natural constrained manifold; $O(K^2)$ operations |
+
+```stan
+// Avoid
+parameters { corr_matrix[2] Omega; }
+model     { Omega ~ lkj_corr(2.0); }
+
+// Prefer
+parameters { cholesky_factor_corr[2] L_Omega; }
+model      { L_Omega ~ lkj_corr_cholesky(2.0); }
+transformed parameters {
+  // Apply the Cholesky scale to NCP offsets in O(K^2) — no matrix inversion
+  matrix[2, J] deviations = diag_pre_multiply(sigma, L_Omega) * z;
+}
+generated quantities {
+  // Recover the full correlation matrix once per saved draw (not every leapfrog step)
+  matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);
+  real rho = Omega[1, 2];
+}
+```
+
+**Key point:** the matrix multiply `diag_pre_multiply(sigma, L_Omega) * z` gives the
+individual-level deviations directly — no matrix square-root needed at run time.
+The correlation matrix $\Omega$ is only reconstructed in `generated quantities`, where it
+runs once per saved draw instead of once per leapfrog step.
+
+For $K = 2$ parameters the saving is modest; for $K = 5$ or more (e.g., five per-subject
+RL parameters in a full model) it becomes substantial.
+:::
+
 #### Fitting the model
 
 ```{r ch07_Fit_Memory_NCP}
 fit_memory_path <- here::here("simmodels", "ch07_fit_memory_ncp.rds")
 
-# Initialize at prior means. L_Omega starts at the identity Cholesky (rho = 0).
-# This is a neutral, numerically stable starting point for the correlation geometry.
-J_val_mem <- stan_data_memory$J
-  
-  # A 4-chain dumb list for the Memory Model
-  init_memory_list <- list(
-    list(mu_alpha = rnorm(1, 0, 0.3), mu_beta = rnorm(1, 0, 0.3), sigma = abs(rnorm(2, 0, 0.3)) + 0.1, L_Omega = matrix(c(1, 0, 0, 1), nrow=2), z = matrix(0, nrow=2, ncol=J_val_mem)),
-    list(mu_alpha = rnorm(1, 0, 0.3), mu_beta = rnorm(1, 0, 0.3), sigma = abs(rnorm(2, 0, 0.3)) + 0.1, L_Omega = matrix(c(1, 0, 0, 1), nrow=2), z = matrix(0, nrow=2, ncol=J_val_mem)),
-    list(mu_alpha = rnorm(1, 0, 0.3), mu_beta = rnorm(1, 0, 0.3), sigma = abs(rnorm(2, 0, 0.3)) + 0.1, L_Omega = matrix(c(1, 0, 0, 1), nrow=2), z = matrix(0, nrow=2, ncol=J_val_mem)),
-    list(mu_alpha = rnorm(1, 0, 0.3), mu_beta = rnorm(1, 0, 0.3), sigma = abs(rnorm(2, 0, 0.3)) + 0.1, L_Omega = matrix(c(1, 0, 0, 1), nrow=2), z = matrix(0, nrow=2, ncol=J_val_mem))
+# Initialize at prior means.
+N_subj_val_mem <- stan_data_memory$N_subjects
+
+init_memory_list <- lapply(1:4, function(i) {
+  list(
+    mu_alpha = rnorm(1, 0, 0.3), 
+    mu_beta = rnorm(1, 0, 0.3), 
+    sigma = abs(rnorm(2, 0, 0.3)) + 0.1, 
+    L_Omega = matrix(c(1, 0, 0, 1), nrow=2), 
+    z = matrix(0, nrow=2, ncol=N_subj_val_mem)
   )
+})
 
 if (regenerate_simulations || !file.exists(fit_memory_path)) {
   fit_memory <- mod_memory_ncp$sample(
@@ -2180,6 +2300,7 @@ if (regenerate_simulations || !file.exists(fit_memory_path)) {
 } else {
   fit_memory <- readRDS(fit_memory_path)
 }
+```
 ```
 
 We raise `adapt_delta` to 0.90. The bivariate NCP is well-behaved globally, but the correlation parameter $\rho$ introduces a curved direction that can require longer leapfrog trajectories. The higher target acceptance rate forces the dual-averaging algorithm to find a smaller step size, reducing integration error along this direction. If `max_treedepth` warnings appear (distinct from divergences), raise `max_treedepth` further — do not raise `adapt_delta` in response to those.
@@ -2304,9 +2425,9 @@ A healthy update shows a posterior significantly narrower than the prior and com
 3### Posterior Predictive Checks (PPC): Generative Adequacy
 
 ```{r ch07_memory_ppc}
-y_obs_mem     <- as.numeric(stan_data_memory$h)
-agent_idx_mem <- as.numeric(stan_data_memory$agent)
-y_rep_mem     <- fit_memory$draws("h_post_rep", format = "matrix")
+y_obs_mem     <- as.numeric(stan_data_memory$y)
+agent_idx_mem <- as.numeric(stan_data_memory$subj_id)
+y_rep_mem     <- fit_memory$draws("y_post_rep", format = "matrix")
 
 n_sample_mem       <- 12
 sampled_agents_mem <- sample(unique(agent_idx_mem), n_sample_mem)

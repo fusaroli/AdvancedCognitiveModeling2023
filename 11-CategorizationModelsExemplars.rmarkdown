@@ -814,27 +814,38 @@ $$
 ```{r ch12_gcm_stan_model}
 gcm_single_stan <- "
 // Generalized Context Model — Single Subject (refactored architecture)
+//
+// Key design:
+//   prob_cat1[i] is the per-trial choice probability. It is deterministic
+//   given (w, log_c, bias) and the data sequence, so it lives in
+//   transformed parameters. model{} reads it once via bernoulli_lpmf.
+//   generated quantities{} reads the same vector for log_lik[i].
+//
+// Parameterization:
+//   w      : attention weights (simplex)
+//   log_c  : log sensitivity (unconstrained); c = exp(log_c)
+//   bias   : response bias towards category 1 (0–1)
 
 data {
-  int<lower=1> N_total;
-  int<lower=1> N_features;
-  array[N_total] int<lower=0, upper=1> y;
-  array[N_total, N_features] real obs;
-  array[N_total] int<lower=0, upper=1> cat_feedback;
+  int<lower=1> ntrials;
+  int<lower=1> nfeatures;
+  array[ntrials] int<lower=0, upper=1> y;
+  array[ntrials, nfeatures] real obs;
+  array[ntrials] int<lower=0, upper=1> cat_feedback;
 
-  vector[N_features] prior_w_alpha;
-  real prior_log_c_mu;
-  real<lower=0> prior_log_c_sigma;
-  real<lower=0> prior_bias_alpha;
-  real<lower=0> prior_bias_beta;
-  int<lower=0, upper=1> run_diagnostics;
+  vector[nfeatures] w_prior_alpha;
+  real log_c_prior_mean;
+  real<lower=0> log_c_prior_sd;
+  real<lower=0> bias_prior_alpha;
+  real<lower=0> bias_prior_beta;
 }
 
 transformed data {
-  array[N_total, N_total, N_features] real abs_diff;
-  for (i in 1:N_total) {
-    for (j in 1:N_total) {
-      for (f in 1:N_features) {
+  array[ntrials, ntrials, nfeatures] real abs_diff;
+
+  for (i in 1:ntrials) {
+    for (j in 1:ntrials) {
+      for (f in 1:nfeatures) {
         abs_diff[i, j, f] = abs(obs[i, f] - obs[j, f]);
       }
     }
@@ -842,21 +853,22 @@ transformed data {
 }
 
 parameters {
-  simplex[N_features] w;
+  simplex[nfeatures] w;
   real log_c;
   real<lower=0, upper=1> bias;
 }
 
 transformed parameters {
   real<lower=0> c = exp(log_c);
-  vector<lower=1e-9, upper=1-1e-9>[N_total] prob_cat1;
+
+  vector<lower=1e-9, upper=1-1e-9>[ntrials] prob_cat1;
 
   {
-    array[N_total] int memory_trial_idx;
-    array[N_total] int memory_cat;
+    array[ntrials] int memory_trial_idx;
+    array[ntrials] int memory_cat;
     int n_mem = 0;
 
-    for (i in 1:N_total) {
+    for (i in 1:ntrials) {
       real p_i;
       int has_cat0 = 0;
       int has_cat1 = 0;
@@ -869,17 +881,20 @@ transformed parameters {
       if (n_mem == 0 || has_cat0 == 0 || has_cat1 == 0) {
         p_i = bias;
       } else {
-        real s1 = 0; real s0 = 0;
-        int n1 = 0;  int n0 = 0;
+        real s1 = 0;
+        real s0 = 0;
+        int n1 = 0;
+        int n0 = 0;
         for (e in 1:n_mem) {
           real d = 0;
           int past_i = memory_trial_idx[e];
-          for (f in 1:N_features)
+          for (f in 1:nfeatures)
             d += w[f] * abs_diff[i, past_i, f];
           real sim = exp(-c * d);
           if (memory_cat[e] == 1) { s1 += sim; n1 += 1; }
           else                    { s0 += sim; n0 += 1; }
         }
+        // Mean similarity per category (n1, n0 > 0 here).
         real m1 = s1 / n1;
         real m0 = s0 / n0;
         real num = bias * m1;
@@ -897,23 +912,21 @@ transformed parameters {
 }
 
 model {
-  target += dirichlet_lpdf(w    | prior_w_alpha);
-  target += normal_lpdf(log_c   | prior_log_c_mu, prior_log_c_sigma);
-  target += beta_lpdf(bias      | prior_bias_alpha,  prior_bias_beta);
+  target += dirichlet_lpdf(w    | w_prior_alpha);
+  target += normal_lpdf(log_c   | log_c_prior_mean, log_c_prior_sd);
+  target += beta_lpdf(bias      | bias_prior_alpha, bias_prior_beta);
 
   target += bernoulli_lpmf(y | prob_cat1);
 }
 
 generated quantities {
-  vector[N_total] log_lik;
+  vector[ntrials] log_lik;
   real lprior;
-  if (run_diagnostics) {
-    for (i in 1:N_total)
-      log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1[i]);
-  }
-  lprior = dirichlet_lpdf(w | prior_w_alpha) +
-           normal_lpdf(log_c | prior_log_c_mu, prior_log_c_sigma) +
-           beta_lpdf(bias | prior_bias_alpha, prior_bias_beta);
+  for (i in 1:ntrials)
+    log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1[i]);
+  lprior = dirichlet_lpdf(w | w_prior_alpha) +
+           normal_lpdf(log_c | log_c_prior_mean, log_c_prior_sd) +
+           beta_lpdf(bias | bias_prior_alpha, bias_prior_beta);
 }
 "
 
@@ -1846,19 +1859,18 @@ decay_single_fit_data <- list(
 
 stan_data_from_agent <- function(agent_df) {
   list(
-    N_total               = nrow(agent_df),
-    N_features             = 2L,
+    ntrials               = nrow(agent_df),
+    nfeatures             = 2L,
     y                     = as.integer(agent_df$sim_response),
     obs                   = as.matrix(agent_df[, c("height", "position")]),
     cat_feedback          = as.integer(agent_df$observed_feedback),
-    prior_w_alpha         = c(1, 1),
-    prior_log_c_mu        = LOG_C_PRIOR_MEAN,
-    prior_log_c_sigma     = LOG_C_PRIOR_SD,
-    prior_log_lambda_mu   = LOG_LAMBDA_PRIOR_MEAN,
-    prior_log_lambda_sigma = LOG_LAMBDA_PRIOR_SD,
-    prior_bias_alpha      = 1,
-    prior_bias_beta       = 1,
-    run_diagnostics       = 1
+    w_prior_alpha         = c(1, 1),
+    log_c_prior_mean      = LOG_C_PRIOR_MEAN,
+    log_c_prior_sd        = LOG_C_PRIOR_SD,
+    log_lambda_prior_mean = LOG_LAMBDA_PRIOR_MEAN,
+    log_lambda_prior_sd   = LOG_LAMBDA_PRIOR_SD,
+    bias_prior_alpha      = 1,
+    bias_prior_beta       = 1
   )
 }
 
@@ -2321,7 +2333,7 @@ simulate_multilevel_decay_gcm <- function(n_subjects, stimulus_info, n_blocks,
   list(data = bind_rows(all_agent_data), true_params = true_params)
 }
 
-n_subjects_sim <- 10
+n_subjects_sim <- 20
 pop_params_sim <- list(
   pop_w               = c(0.8, 0.2),
   kappa               = 15,
@@ -2374,14 +2386,14 @@ ggplot(multilevel_decay_data,
 
 #### Implementing the Multilevel Decay GCM in Stan
 
-The Stan code combines the sequential decay-similarity loop with the hierarchical parameter draws. All four individual parameters now use non-centred parameterisation: $(\log c, \log \lambda, \text{logit}\,\beta)$ via standard $z$-offset reparameterisation, and $w_1$ via a **logit-normal NCP** — converting the constrained simplex into an unconstrained Gaussian geometry that avoids the funnel-shaped posteriors produced by the centered Dirichlet + $\kappa$ formulation. Population hyperparameters $(\mu_w, \sigma_w)$ on the logit scale play the same role as the former Dirichlet centroid $\bar{\mathbf{w}}$ and concentration $\kappa$: $\mu_w$ locates the population mean attention weight and $\sigma_w$ captures how much subjects vary around it.
+The Stan code combines the sequential decay-similarity loop with the hierarchical parameter draws. We use non-centred parameterisation for $(\log c, \log \lambda, \text{logit} \beta)$ and a Dirichlet centroid $\bar{\mathbf{w}}$ for the attention weights.
 
 ```{tikz gcm-ml-decay-dag, fig.cap = "DAG for the Multilevel Decay GCM. Population-level hyperparameters feed into population parameters (centroids and spreads). Individual parameters (w_j, c_j, lambda_j, beta_j) are drawn from these. Inside the trial plate, the choice probability p_i is a deterministic function of the current stimulus, the decay-weighted memory, and the individual's parameters.", fig.align = "center", out.width = "75%"}
 \usetikzlibrary{bayesnet}
 \begin{tikzpicture}
   % ── Population parameters ──────────────────────
-  \node[latent] (mu_w)    at (0, 0)   {$\mu_w$};
-  \node[latent] (sigma_w) at (1.5, 0) {$\sigma_w$};
+  \node[latent] (pop_w) at (0, 0)   {$\bar{\mathbf{w}}$};
+  \node[latent] (kappa) at (1.5, 0) {$\kappa$};
   \node[latent] (pop_c) at (4, 0)   {$\bar{\mu}_c, \bar{\sigma}_c$};
   \node[latent] (pop_l) at (6.5, 0) {$\bar{\mu}_\lambda, \bar{\sigma}_\lambda$};
   \node[latent] (pop_b) at (9, 0)   {$\bar{\mu}_\beta, \bar{\sigma}_\beta$};
@@ -2399,7 +2411,7 @@ The Stan code combines the sequential decay-similarity loop with the hierarchica
   \node[obs] (yi) at (7,   -6) {$y_i$};
 
   % ── Edges ─────────────────────
-  \edge {mu_w, sigma_w} {wj};
+  \edge {pop_w, kappa}  {wj};
   \edge {pop_c}         {cj};
   \edge {pop_l}         {lj};
   \edge {pop_b}         {bj};
@@ -2416,60 +2428,40 @@ The Stan code combines the sequential decay-similarity loop with the hierarchica
 ```{r ch12_multilevel_decay_stan}
 gcm_ml_decay_stan <- "
 // Multilevel Decay Generalized Context Model
-// All individual parameters use non-centred parameterisation:
-//   - w_1 via logit-normal NCP (eliminates Dirichlet funnel geometry)
-//   - log_c, log_lambda, logit_bias via standard z-offset NCP
-// Sequential likelihood is computed directly in the model block (no
-// prob_cat1 stored in transformed parameters), avoiding a large var-vector
-// on the autodiff tape. prob_cat1 and log_lik are recomputed once per saved
-// draw in generated quantities.
+// Hierarchical priors for w (Dirichlet), c, lambda, and bias.
 
 data {
   int<lower=1> N_total;
   int<lower=1> N_subjects;
   int<lower=1> N_features;
-  int<lower=1> N_unique_stim;
   int<lower=1> max_trials_per_subject;
 
   array[N_subjects] int<lower=1, upper=N_total> subj_start;
   array[N_subjects] int<lower=1, upper=N_total> subj_end;
 
-  array[N_total] int<lower=1, upper=N_unique_stim> stim_id;
   array[N_total] int<lower=0, upper=1> y;
-  array[N_unique_stim, N_features] real unique_obs;
+  array[N_total, N_features] real obs;
   array[N_total] int<lower=0, upper=1> cat_feedback;
 
   // Hyperparameters
-  real prior_pop_logit_w_mean;
-  real<lower=0> prior_pop_logit_w_sigma;
-  real<lower=0> prior_pop_logit_w_sd_lambda;
-  real prior_pop_log_c_mu;
-  real<lower=0> prior_pop_log_c_sigma;
-  real<lower=0> prior_pop_log_c_lambda;
-  real prior_pop_log_lambda_mu;
-  real<lower=0> prior_pop_log_lambda_sigma;
-  real<lower=0> prior_pop_log_lambda_lambda;
-  real prior_pop_logit_bias_mu;
-  real<lower=0> prior_pop_logit_bias_sigma;
-  real<lower=0> prior_pop_logit_bias_lambda;
-  int<lower=0, upper=1> run_diagnostics;
-}
-
-transformed data {
-  array[N_unique_stim, N_unique_stim, N_features] real stimulus_abs_diff;
-  for (i in 1:N_unique_stim)
-    for (k in 1:N_unique_stim)
-      for (f in 1:N_features)
-        stimulus_abs_diff[i, k, f] = abs(unique_obs[i, f] - unique_obs[k, f]);
+  vector[N_features] pop_w_prior_alpha;
+  real pop_log_c_mean_prior_mean;
+  real<lower=0> pop_log_c_mean_prior_sd;
+  real<lower=0> pop_log_c_sd_prior_rate;
+  real<lower=0> kappa_prior_rate;
+  
+  real pop_log_lambda_mean_prior_mean;
+  real<lower=0> pop_log_lambda_mean_prior_sd;
+  real<lower=0> pop_log_lambda_sd_prior_rate;
+  
+  real pop_logit_bias_mean_prior_mean;
+  real<lower=0> pop_logit_bias_mean_prior_sd;
+  real<lower=0> pop_logit_bias_sd_prior_rate;
 }
 
 parameters {
-  // Population attention weight: logit-normal NCP for w_1 (w_2 = 1 - w_1)
-  real pop_logit_w_mean;
-  real<lower=0> pop_logit_w_sd;
-  vector[N_subjects] z_w;
-
-  // Population c, lambda, bias
+  simplex[N_features] pop_w;
+  real<lower=0> kappa;
   real pop_log_c_mean;
   real<lower=0> pop_log_c_sd;
   real pop_log_lambda_mean;
@@ -2477,149 +2469,100 @@ parameters {
   real pop_logit_bias_mean;
   real<lower=0> pop_logit_bias_sd;
 
-  // Non-centred individual offsets
+  // Non-centered parameters
   vector[N_subjects] z_log_c;
   vector[N_subjects] z_log_lambda;
   vector[N_subjects] z_logit_bias;
+  array[N_subjects] simplex[N_features] subj_w;
 }
 
 transformed parameters {
-  vector[N_subjects] subj_log_c;
+  vector[N_total] prob_cat1;
   vector[N_subjects] subj_log_lambda;
+  vector[N_subjects] subj_log_c;
   vector<lower=0, upper=1>[N_subjects] subj_bias;
-  array[N_subjects] vector[N_features] subj_w;
 
   for (j in 1:N_subjects) {
     subj_log_c[j]      = pop_log_c_mean + pop_log_c_sd * z_log_c[j];
     subj_log_lambda[j] = pop_log_lambda_mean + pop_log_lambda_sd * z_log_lambda[j];
     subj_bias[j]       = inv_logit(pop_logit_bias_mean + pop_logit_bias_sd * z_logit_bias[j]);
-    real logit_w       = pop_logit_w_mean + pop_logit_w_sd * z_w[j];
-    subj_w[j][1]       = inv_logit(logit_w);
-    subj_w[j][2]       = 1.0 - subj_w[j][1];
+  }
+
+  {
+    // Local workspace for sequential memory accumulation
+    array[N_subjects, max_trials_per_subject, N_features] real memory_obs;
+    array[N_subjects, max_trials_per_subject] int memory_cat;
+    array[N_subjects, max_trials_per_subject] int memory_trial;
+
+    for (j in 1:N_subjects) {
+      int n_mem = 0;
+      real c = exp(subj_log_c[j]);
+      real lambda = exp(subj_log_lambda[j]);
+      real bias = subj_bias[j];
+
+      for (i in subj_start[j]:subj_end[j]) {
+        real p_i;
+        if (n_mem == 0) {
+          p_i = bias;
+        } else {
+          real s1 = 0.0; real s0 = 0.0;
+          real w1 = 0.0; real w0 = 0.0;
+          for (e in 1:n_mem) {
+            real dist = 0.0;
+            for (f in 1:N_features)
+              dist += subj_w[j][f] * abs(obs[i, f] - memory_obs[j, e, f]);
+            
+            real age = (i - subj_start[j] + 1.0) - memory_trial[j, e];
+            real decay = exp(-lambda * age);
+            real sim = exp(-c * dist);
+            real weight = decay * sim;
+            
+            if (memory_cat[j, e] == 1) { s1 += weight; w1 += decay; }
+            else                       { s0 += weight; w0 += decay; }
+          }
+          real m1 = (w1 > 1e-9) ? s1 / w1 : 0.0;
+          real m0 = (w0 > 1e-9) ? s0 / w0 : 0.0;
+          real num = bias * m1;
+          real den = num + (1.0 - bias) * m0;
+          p_i = (den > 1e-9) ? num / den : bias;
+        }
+        prob_cat1[i] = fmax(1e-9, fmin(1.0 - 1e-9, p_i));
+
+        n_mem += 1;
+        for (f in 1:N_features) memory_obs[j, n_mem, f] = obs[i, f];
+        memory_cat[j, n_mem] = cat_feedback[i];
+        memory_trial[j, n_mem] = i - subj_start[j] + 1;
+      }
+    }
   }
 }
 
 model {
   // Population priors
-  pop_logit_w_mean    ~ normal(prior_pop_logit_w_mean, prior_pop_logit_w_sigma);
-  pop_logit_w_sd      ~ exponential(prior_pop_logit_w_sd_lambda);
-  pop_log_c_mean      ~ normal(prior_pop_log_c_mu, prior_pop_log_c_sigma);
-  pop_log_c_sd        ~ exponential(prior_pop_log_c_lambda);
-  pop_log_lambda_mean ~ normal(prior_pop_log_lambda_mu, prior_pop_log_lambda_sigma);
-  pop_log_lambda_sd   ~ exponential(prior_pop_log_lambda_lambda);
-  pop_logit_bias_mean ~ normal(prior_pop_logit_bias_mu, prior_pop_logit_bias_sigma);
-  pop_logit_bias_sd   ~ exponential(prior_pop_logit_bias_lambda);
+  pop_w           ~ dirichlet(pop_w_prior_alpha);
+  kappa           ~ exponential(kappa_prior_rate);
+  pop_log_c_mean  ~ normal(pop_log_c_mean_prior_mean, pop_log_c_mean_prior_sd);
+  pop_log_c_sd    ~ exponential(pop_log_c_sd_prior_rate);
+  pop_log_lambda_mean ~ normal(pop_log_lambda_mean_prior_mean, pop_log_lambda_mean_prior_sd);
+  pop_log_lambda_sd   ~ exponential(pop_log_lambda_sd_prior_rate);
+  pop_logit_bias_mean ~ normal(pop_logit_bias_mean_prior_mean, pop_logit_bias_mean_prior_sd);
+  pop_logit_bias_sd   ~ exponential(pop_logit_bias_sd_prior_rate);
 
-  // Non-centred priors
-  z_w          ~ std_normal();
+  // Individual draws
   z_log_c      ~ std_normal();
   z_log_lambda ~ std_normal();
   z_logit_bias ~ std_normal();
-
-  // Sequential likelihood — local workspace, one subject at a time
-  {
-    array[max_trials_per_subject] int mem_stim;
-    array[max_trials_per_subject] int mem_cat;
-    array[max_trials_per_subject] int mem_trial;
-
-    for (j in 1:N_subjects) {
-      int n_mem  = 0;
-      real c      = exp(subj_log_c[j]);
-      real lambda = exp(subj_log_lambda[j]);
-      real bias   = subj_bias[j];
-
-      for (i in subj_start[j]:subj_end[j]) {
-        real p_i;
-        if (n_mem == 0) {
-          p_i = bias;
-        } else {
-          real s1 = 0.0; real s0 = 0.0;
-          real w1 = 0.0; real w0 = 0.0;
-          int curr_stim = stim_id[i];
-          for (e in 1:n_mem) {
-            real dist = 0.0;
-            int past_stim = mem_stim[e];
-            for (f in 1:N_features)
-              dist += subj_w[j][f] * stimulus_abs_diff[curr_stim, past_stim, f];
-            real age   = (i - subj_start[j] + 1.0) - mem_trial[e];
-            real decay = exp(-lambda * age);
-            real sim   = exp(-c * dist);
-            real wt    = decay * sim;
-            if (mem_cat[e] == 1) { s1 += wt; w1 += decay; }
-            else                 { s0 += wt; w0 += decay; }
-          }
-          real m1  = (w1 > 1e-9) ? s1 / w1 : 0.0;
-          real m0  = (w0 > 1e-9) ? s0 / w0 : 0.0;
-          real num = bias * m1;
-          real den = num + (1.0 - bias) * m0;
-          p_i = (den > 1e-9) ? num / den : bias;
-        }
-        target += bernoulli_lpmf(y[i] | fmax(1e-9, fmin(1.0 - 1e-9, p_i)));
-
-        n_mem += 1;
-        mem_stim[n_mem]  = stim_id[i];
-        mem_cat[n_mem]   = cat_feedback[i];
-        mem_trial[n_mem] = i - subj_start[j] + 1;
-      }
-    }
+  for (j in 1:N_subjects) {
+    subj_w[j] ~ dirichlet(kappa * pop_w);
   }
+
+  y ~ bernoulli(prob_cat1);
 }
 
 generated quantities {
-  // Recompute once per saved draw (not on every leapfrog step).
-  // prob_cat1 is always filled (needed for PPC); log_lik only when run_diagnostics=1.
-  vector[N_total] prob_cat1;
-  vector[N_total] log_lik = rep_vector(0.0, N_total);
-
-  {
-    array[max_trials_per_subject] int mem_stim;
-    array[max_trials_per_subject] int mem_cat;
-    array[max_trials_per_subject] int mem_trial;
-
-    for (j in 1:N_subjects) {
-      int n_mem  = 0;
-      real c      = exp(subj_log_c[j]);
-      real lambda = exp(subj_log_lambda[j]);
-      real bias   = subj_bias[j];
-
-      for (i in subj_start[j]:subj_end[j]) {
-        real p_i;
-        if (n_mem == 0) {
-          p_i = bias;
-        } else {
-          real s1 = 0.0; real s0 = 0.0;
-          real w1 = 0.0; real w0 = 0.0;
-          int curr_stim = stim_id[i];
-          for (e in 1:n_mem) {
-            real dist = 0.0;
-            int past_stim = mem_stim[e];
-            for (f in 1:N_features)
-              dist += subj_w[j][f] * stimulus_abs_diff[curr_stim, past_stim, f];
-            real age   = (i - subj_start[j] + 1.0) - mem_trial[e];
-            real decay = exp(-lambda * age);
-            real sim   = exp(-c * dist);
-            real wt    = decay * sim;
-            if (mem_cat[e] == 1) { s1 += wt; w1 += decay; }
-            else                 { s0 += wt; w0 += decay; }
-          }
-          real m1  = (w1 > 1e-9) ? s1 / w1 : 0.0;
-          real m0  = (w0 > 1e-9) ? s0 / w0 : 0.0;
-          real num = bias * m1;
-          real den = num + (1.0 - bias) * m0;
-          p_i = (den > 1e-9) ? num / den : bias;
-        }
-        real p_clamp  = fmax(1e-9, fmin(1.0 - 1e-9, p_i));
-        prob_cat1[i]  = p_clamp;
-        if (run_diagnostics)
-          log_lik[i]  = bernoulli_lpmf(y[i] | p_clamp);
-
-        n_mem += 1;
-        mem_stim[n_mem]  = stim_id[i];
-        mem_cat[n_mem]   = cat_feedback[i];
-        mem_trial[n_mem] = i - subj_start[j] + 1;
-      }
-    }
-  }
+  vector[N_total] log_lik;
+  for (i in 1:N_total)
+    log_lik[i] = bernoulli_lpmf(y[i] | prob_cat1[i]);
 }
 "
 if (!dir.exists("stan")) dir.create("stan")
@@ -2627,34 +2570,6 @@ stan_file_ml_decay <- "stan/ch12_gcm_ml_decay.stan"
 writeLines(gcm_ml_decay_stan, stan_file_ml_decay)
 mod_gcm_ml_decay <- cmdstan_model(stan_file_ml_decay)
 ```
-
-#### Stan Efficiency Rule 4 — Parallelism with `reduce_sum`
-
-::: {.callout-tip title="Stan Efficiency Rule 4 — Intra-Chain Parallelism via `reduce_sum`"}
-
-Up to this point, a single Stan chain evaluates the log-posterior **serially**: all subjects are processed one after another in a single loop. With 10 subjects and 4 parallel chains, each chain's inner loop still runs subjects sequentially — the parallelism is only across chains.
-
-**`reduce_sum`** exploits the fact that subjects are **conditionally independent** given the population parameters: subject $j$'s trial loop does not share any mutable state with subject $k$'s loop. Each subject is therefore a safe unit of parallel work.
-
-How it works:
-
-1. You write a **`partial_sum_lp`** function in the `functions` block that takes a slice of subject indices and returns the summed log-likelihood for that slice.
-2. In the `model` block, replace the `for (j in 1:N_subjects)` loop with `reduce_sum(partial_sum_lp, subject_ids, grainsize, ...)`.
-3. Compile with `cpp_options = list(stan_threads = TRUE)` and set `threads_per_chain` in `$sample()`.
-
-The **`grainsize`** parameter controls the minimum batch size dispatched to each thread. `grainsize = 1` means each subject is potentially its own work unit; Stan's TBB scheduler combines them into actual batches based on available threads. For sequential within-subject models (where each subject loop is expensive), small grainsize works well.
-
-**When is `reduce_sum` beneficial?**
-
-| Condition | Benefit |
-|---|---|
-| Many subjects (≥ 10), independent given params | High — each subject batch dispatched to a thread |
-| Few subjects (< 4) | Low — scheduling overhead may exceed the gain |
-| Within-subject sequential dependency | `reduce_sum` is still valid (it parallelises *across* subjects, not *within*) |
-| SBC backends | Use `threads_per_chain = 1` — SBC already parallelises across simulations via `future` |
-
-**Expected speedup.** On a 4-core machine with `threads_per_chain = 4`, the parallel model processes all 10 subjects simultaneously within each chain. Theoretical speedup is up to 4×; in practice 2–3× is typical due to scheduling overhead and the sequential warm-up phase.
-:::
 
 #### Fitting the Multilevel Decay GCM
 
@@ -2668,503 +2583,42 @@ subj_bounds_decay <- ml_decay_data_sorted |>
   group_by(subj_id_stan) |>
   summarise(subj_start = min(row_idx), subj_end = max(row_idx), .groups = "drop")
 
-unique_stim_matrix <- stimulus_info |> 
-  arrange(stimulus) |> 
-  dplyr::select(height, position) |> 
-  as.matrix()
-
 stan_data_ml_decay <- list(
   N_total           = nrow(ml_decay_data_sorted),
   N_subjects        = n_distinct(ml_decay_data_sorted$agent_id),
   N_features        = 2,
-  N_unique_stim     = nrow(unique_stim_matrix),
   max_trials_per_subject = max(ml_decay_data_sorted$trial_within_subject),
   subj_start        = subj_bounds_decay$subj_start,
   subj_end          = subj_bounds_decay$subj_end,
-  stim_id           = ml_decay_data_sorted$stimulus_id,
   y                 = ml_decay_data_sorted$sim_response,
-  unique_obs        = unique_stim_matrix,
+  obs               = as.matrix(ml_decay_data_sorted[, c("height", "position")]),
   cat_feedback      = ml_decay_data_sorted$observed_feedback,
   
-  prior_pop_logit_w_mean = 0, prior_pop_logit_w_sigma = 1.5,
-  prior_pop_logit_w_sd_lambda = 2.0,
-  prior_pop_log_c_mu = log(2), prior_pop_log_c_sigma = 1.0,
-  prior_pop_log_c_lambda = 2.0,
-  prior_pop_log_lambda_mu = -2, prior_pop_log_lambda_sigma = 1.0,
-  prior_pop_log_lambda_lambda = 2.0,
-  prior_pop_logit_bias_mu = 0, prior_pop_logit_bias_sigma = 1.0,
-  prior_pop_logit_bias_lambda = 2.0,
-  run_diagnostics = 1
+  pop_w_prior_alpha = c(1, 1),
+  pop_log_c_mean_prior_mean = log(2), pop_log_c_mean_prior_sd = 1.0,
+  pop_log_c_sd_prior_rate = 2.0,
+  pop_log_lambda_mean_prior_mean = -2, pop_log_lambda_mean_prior_sd = 1.0,
+  pop_log_lambda_sd_prior_rate = 2.0,
+  pop_logit_bias_mean_prior_mean = 0, pop_logit_bias_mean_prior_sd = 1.0,
+  pop_logit_bias_sd_prior_rate = 2.0,
+  kappa_prior_rate = 0.1
 )
 
 fit_file_ml_decay <- here("simmodels", "ch12_gcm_ml_decay_fit.rds")
 
 if (regenerate_simulations || !file.exists(fit_file_ml_decay)) {
-  # Initialize with Pathfinder for significantly faster convergence
-  pf_ml_decay <- tryCatch(
-    mod_gcm_ml_decay$pathfinder(data = stan_data_ml_decay, num_paths = 10, seed = 123),
-    error = function(e) NULL
-  )
-  
   fit_ml_decay <- mod_gcm_ml_decay$sample(
     data = stan_data_ml_decay,
-    init = if (!is.null(pf_ml_decay)) pf_ml_decay else 0.5,
     chains = 4, parallel_chains = 4,
     iter_warmup = 1000, iter_sampling = 1000,
-    refresh = 10, adapt_delta = 0.95, max_treedepth = 12
+    refresh = 100, adapt_delta = 0.95
   )
   fit_ml_decay$save_object(file = fit_file_ml_decay)
 } else {
   fit_ml_decay <- readRDS(fit_file_ml_decay)
 }
 
-fit_ml_decay$summary(variables = c("pop_logit_w_mean", "pop_logit_w_sd", "pop_log_c_mean", "pop_log_lambda_mean"))
-```
-
-#### Parallel Version: Multilevel Decay GCM with `reduce_sum`
-
-```{r ch12_multilevel_decay_stan_parallel}
-gcm_ml_decay_parallel_stan <- "
-// Multilevel Decay GCM — parallel version using reduce_sum.
-// The partial_sum_lp function processes a slice of subjects independently.
-// Compile with cpp_options = list(stan_threads = TRUE).
-
-functions {
-  // partial_sum_lp: log-likelihood contribution for a slice of subjects.
-  // subj_slice contains the subject indices assigned to this thread.
-  // start / end are their 1-indexed positions in the original subject array.
-  // All remaining arguments are passed in full to every thread.
-  real partial_sum_lp(
-    array[] int subj_slice,
-    int start, int end,
-    vector subj_log_c,
-    vector subj_log_lambda,
-    vector subj_bias,
-    array[] vector subj_w,
-    array[] int subj_start_g,
-    array[] int subj_end_g,
-    array[] int stim_id,
-    array[] int y,
-    array[] int cat_feedback,
-    array[,,] real stimulus_abs_diff,
-    int N_features,
-    int max_trials
-  ) {
-    real lp = 0.0;
-    for (n in 1:size(subj_slice)) {
-      int j      = subj_slice[n];
-      int ts     = subj_start_g[j];
-      int te     = subj_end_g[j];
-      int n_mem  = 0;
-      real c      = exp(subj_log_c[j]);
-      real lambda = exp(subj_log_lambda[j]);
-      real bias   = subj_bias[j];
-
-      array[max_trials] int mem_stim;
-      array[max_trials] int mem_cat;
-      array[max_trials] int mem_trial;
-
-      for (i in ts:te) {
-        real p_i;
-        if (n_mem == 0) {
-          p_i = bias;
-        } else {
-          real s1 = 0.0; real s0 = 0.0;
-          real w1 = 0.0; real w0 = 0.0;
-          int curr_stim = stim_id[i];
-          for (e in 1:n_mem) {
-            real dist = 0.0;
-            int past_stim = mem_stim[e];
-            for (f in 1:N_features)
-              dist += subj_w[j][f] * stimulus_abs_diff[curr_stim, past_stim, f];
-            real age   = (i - ts + 1.0) - mem_trial[e];
-            real decay = exp(-lambda * age);
-            real sim   = exp(-c * dist);
-            real wt    = decay * sim;
-            if (mem_cat[e] == 1) { s1 += wt; w1 += decay; }
-            else                 { s0 += wt; w0 += decay; }
-          }
-          real m1  = (w1 > 1e-9) ? s1 / w1 : 0.0;
-          real m0  = (w0 > 1e-9) ? s0 / w0 : 0.0;
-          real num = bias * m1;
-          real den = num + (1.0 - bias) * m0;
-          p_i = (den > 1e-9) ? num / den : bias;
-        }
-        lp += bernoulli_lpmf(y[i] | fmax(1e-9, fmin(1.0 - 1e-9, p_i)));
-
-        n_mem += 1;
-        mem_stim[n_mem]  = stim_id[i];
-        mem_cat[n_mem]   = cat_feedback[i];
-        mem_trial[n_mem] = i - ts + 1;
-      }
-    }
-    return lp;
-  }
-}
-
-data {
-  int<lower=1> N_total;
-  int<lower=1> N_subjects;
-  int<lower=1> N_features;
-  int<lower=1> N_unique_stim;
-  int<lower=1> max_trials_per_subject;
-  array[N_subjects] int<lower=1, upper=N_total> subj_start;
-  array[N_subjects] int<lower=1, upper=N_total> subj_end;
-  array[N_total] int<lower=1, upper=N_unique_stim> stim_id;
-  array[N_total] int<lower=0, upper=1> y;
-  array[N_unique_stim, N_features] real unique_obs;
-  array[N_total] int<lower=0, upper=1> cat_feedback;
-  real prior_pop_logit_w_mean;
-  real<lower=0> prior_pop_logit_w_sigma;
-  real<lower=0> prior_pop_logit_w_sd_lambda;
-  real prior_pop_log_c_mu;
-  real<lower=0> prior_pop_log_c_sigma;
-  real<lower=0> prior_pop_log_c_lambda;
-  real prior_pop_log_lambda_mu;
-  real<lower=0> prior_pop_log_lambda_sigma;
-  real<lower=0> prior_pop_log_lambda_lambda;
-  real prior_pop_logit_bias_mu;
-  real<lower=0> prior_pop_logit_bias_sigma;
-  real<lower=0> prior_pop_logit_bias_lambda;
-  int<lower=0, upper=1> run_diagnostics;
-}
-
-transformed data {
-  array[N_unique_stim, N_unique_stim, N_features] real stimulus_abs_diff;
-  for (i in 1:N_unique_stim)
-    for (k in 1:N_unique_stim)
-      for (f in 1:N_features)
-        stimulus_abs_diff[i, k, f] = abs(unique_obs[i, f] - unique_obs[k, f]);
-
-  // Integer array of subject indices — the container reduce_sum slices over.
-  array[N_subjects] int subject_ids;
-  for (j in 1:N_subjects) subject_ids[j] = j;
-}
-
-parameters {
-  real pop_logit_w_mean;
-  real<lower=0> pop_logit_w_sd;
-  vector[N_subjects] z_w;
-  real pop_log_c_mean;
-  real<lower=0> pop_log_c_sd;
-  real pop_log_lambda_mean;
-  real<lower=0> pop_log_lambda_sd;
-  real pop_logit_bias_mean;
-  real<lower=0> pop_logit_bias_sd;
-  vector[N_subjects] z_log_c;
-  vector[N_subjects] z_log_lambda;
-  vector[N_subjects] z_logit_bias;
-}
-
-transformed parameters {
-  vector[N_subjects] subj_log_c;
-  vector[N_subjects] subj_log_lambda;
-  vector[N_subjects] subj_bias;
-  array[N_subjects] vector[N_features] subj_w;
-  for (j in 1:N_subjects) {
-    subj_log_c[j]      = pop_log_c_mean + pop_log_c_sd * z_log_c[j];
-    subj_log_lambda[j] = pop_log_lambda_mean + pop_log_lambda_sd * z_log_lambda[j];
-    subj_bias[j]       = inv_logit(pop_logit_bias_mean + pop_logit_bias_sd * z_logit_bias[j]);
-    real logit_w       = pop_logit_w_mean + pop_logit_w_sd * z_w[j];
-    subj_w[j][1]       = inv_logit(logit_w);
-    subj_w[j][2]       = 1.0 - subj_w[j][1];
-  }
-}
-
-model {
-  pop_logit_w_mean    ~ normal(prior_pop_logit_w_mean, prior_pop_logit_w_sigma);
-  pop_logit_w_sd      ~ exponential(prior_pop_logit_w_sd_lambda);
-  pop_log_c_mean      ~ normal(prior_pop_log_c_mu, prior_pop_log_c_sigma);
-  pop_log_c_sd        ~ exponential(prior_pop_log_c_lambda);
-  pop_log_lambda_mean ~ normal(prior_pop_log_lambda_mu, prior_pop_log_lambda_sigma);
-  pop_log_lambda_sd   ~ exponential(prior_pop_log_lambda_lambda);
-  pop_logit_bias_mean ~ normal(prior_pop_logit_bias_mu, prior_pop_logit_bias_sigma);
-  pop_logit_bias_sd   ~ exponential(prior_pop_logit_bias_lambda);
-  z_w          ~ std_normal();
-  z_log_c      ~ std_normal();
-  z_log_lambda ~ std_normal();
-  z_logit_bias ~ std_normal();
-
-  // Parallel likelihood — subjects dispatched across available threads.
-  // grainsize = 1: each subject is a potential work unit; TBB batches them.
-  target += reduce_sum(partial_sum_lp, subject_ids, 1,
-                       subj_log_c, subj_log_lambda, subj_bias, subj_w,
-                       subj_start, subj_end,
-                       stim_id, y, cat_feedback,
-                       stimulus_abs_diff, N_features, max_trials_per_subject);
-}
-
-generated quantities {
-  vector[N_total] prob_cat1;
-  vector[N_total] log_lik = rep_vector(0.0, N_total);
-  {
-    array[max_trials_per_subject] int mem_stim;
-    array[max_trials_per_subject] int mem_cat;
-    array[max_trials_per_subject] int mem_trial;
-    for (j in 1:N_subjects) {
-      int n_mem  = 0;
-      real c      = exp(subj_log_c[j]);
-      real lambda = exp(subj_log_lambda[j]);
-      real bias   = subj_bias[j];
-      for (i in subj_start[j]:subj_end[j]) {
-        real p_i;
-        if (n_mem == 0) {
-          p_i = bias;
-        } else {
-          real s1 = 0.0; real s0 = 0.0;
-          real w1 = 0.0; real w0 = 0.0;
-          int curr_stim = stim_id[i];
-          for (e in 1:n_mem) {
-            real dist = 0.0;
-            int past_stim = mem_stim[e];
-            for (f in 1:N_features)
-              dist += subj_w[j][f] * stimulus_abs_diff[curr_stim, past_stim, f];
-            real age   = (i - subj_start[j] + 1.0) - mem_trial[e];
-            real decay = exp(-lambda * age);
-            real sim   = exp(-c * dist);
-            real wt    = decay * sim;
-            if (mem_cat[e] == 1) { s1 += wt; w1 += decay; }
-            else                 { s0 += wt; w0 += decay; }
-          }
-          real m1  = (w1 > 1e-9) ? s1 / w1 : 0.0;
-          real m0  = (w0 > 1e-9) ? s0 / w0 : 0.0;
-          real num = bias * m1;
-          real den = num + (1.0 - bias) * m0;
-          p_i = (den > 1e-9) ? num / den : bias;
-        }
-        real p_clamp  = fmax(1e-9, fmin(1.0 - 1e-9, p_i));
-        prob_cat1[i]  = p_clamp;
-        if (run_diagnostics)
-          log_lik[i]  = bernoulli_lpmf(y[i] | p_clamp);
-        n_mem += 1;
-        mem_stim[n_mem]  = stim_id[i];
-        mem_cat[n_mem]   = cat_feedback[i];
-        mem_trial[n_mem] = i - subj_start[j] + 1;
-      }
-    }
-  }
-}
-"
-stan_file_ml_decay_par <- "stan/ch12_gcm_ml_decay_parallel.stan"
-writeLines(gcm_ml_decay_parallel_stan, stan_file_ml_decay_par)
-mod_gcm_ml_decay_par <- cmdstan_model(
-  stan_file_ml_decay_par,
-  cpp_options = list(stan_threads = TRUE)   # required for reduce_sum
-)
-```
-
-#### Timing Benchmark: Serial vs. Parallel vs. Pathfinder Warm-Start
-
-```{r ch12_timing_benchmark}
-n_threads <- max(1L, parallel::detectCores() %/% 4L)
-
-fit_file_ml_decay_par  <- here("simmodels", "ch12_gcm_ml_decay_parallel_fit.rds")
-fit_file_ml_decay_nopf <- here("simmodels", "ch12_gcm_ml_decay_nopf_fit.rds")
-
-# ── Serial fit (already computed above) ──────────────────────────────────────
-time_serial <- if (!is.null(fit_ml_decay)) fit_ml_decay$time()$total else NA_real_
-
-# ── Serial fit WITHOUT Pathfinder warm-start (baseline comparison) ────────────
-if (regenerate_simulations || !file.exists(fit_file_ml_decay_nopf)) {
-  fit_ml_decay_nopf <- mod_gcm_ml_decay$sample(
-    data = stan_data_ml_decay,
-    init = 0.5,                             # default: no Pathfinder
-    chains = 4, parallel_chains = 4,
-    iter_warmup = 1000, iter_sampling = 1000,
-    refresh = 0, adapt_delta = 0.95, max_treedepth = 12
-  )
-  fit_ml_decay_nopf$save_object(file = fit_file_ml_decay_nopf)
-} else {
-  fit_ml_decay_nopf <- readRDS(fit_file_ml_decay_nopf)
-}
-time_serial_nopf <- fit_ml_decay_nopf$time()$total
-
-# ── Parallel fit WITH Pathfinder warm-start ───────────────────────────────────
-if (regenerate_simulations || !file.exists(fit_file_ml_decay_par)) {
-  pf_par <- tryCatch(
-    mod_gcm_ml_decay_par$pathfinder(data = stan_data_ml_decay,
-                                     num_paths = 10, seed = 123, refresh = 0),
-    error = function(e) NULL
-  )
-  fit_ml_decay_par <- mod_gcm_ml_decay_par$sample(
-    data              = stan_data_ml_decay,
-    init              = if (!is.null(pf_par)) pf_par else 0.5,
-    chains            = 4,
-    parallel_chains   = 4,
-    threads_per_chain = n_threads,
-    iter_warmup       = 1000, iter_sampling = 1000,
-    refresh = 0, adapt_delta = 0.95, max_treedepth = 12
-  )
-  fit_ml_decay_par$save_object(file = fit_file_ml_decay_par)
-} else {
-  fit_ml_decay_par <- readRDS(fit_file_ml_decay_par)
-}
-time_parallel <- fit_ml_decay_par$time()$total
-
-# ── Summary table ─────────────────────────────────────────────────────────────
-timing_tbl <- tibble::tribble(
-  ~Model,                              ~`Wall-clock (s)`,  ~`Speedup vs baseline`,
-  "Serial, no Pathfinder (baseline)",  round(time_serial_nopf, 1),  1.00,
-  "Serial, Pathfinder warm-start",     round(time_serial, 1),
-    round(time_serial_nopf / time_serial, 2),
-  paste0("Parallel (", n_threads, " threads/chain), Pathfinder"),
-    round(time_parallel, 1),
-    round(time_serial_nopf / time_parallel, 2)
-)
-knitr::kable(timing_tbl,
-  caption = paste0("Timing benchmark on this machine (",
-                   parallel::detectCores(), " logical cores, ",
-                   n_threads, " threads per chain). ",
-                   "Speedup is relative to the serial no-Pathfinder baseline."))
-```
-
-The three strategies compound:
-
-- **Pathfinder warm-start** reduces warm-up iterations by initializing chains near the posterior, typically saving 20–50% of total time on hierarchical models.
-- **`reduce_sum` parallelism** distributes the subject loop across `threads_per_chain` CPU cores within each chain, with near-linear speedup up to the number of subjects (10 here).
-- Together they give the largest benefit on machines where `parallel::detectCores()` is much larger than 4 (the number of chains). On an 8-core laptop, setting `threads_per_chain = 2` and `parallel_chains = 4` uses all cores; on a 16-core workstation, `threads_per_chain = 4` is appropriate.
-
-#### Mandatory MCMC Diagnostic Battery (Multilevel)
-
-```{r ch12_multilevel_decay_diagnostics}
-if (!is.null(fit_ml_decay)) {
-  pop_vars_decay <- c("pop_logit_w_mean", "pop_logit_w_sd",
-                      "pop_log_c_mean", "pop_log_c_sd",
-                      "pop_log_lambda_mean", "pop_log_lambda_sd",
-                      "pop_logit_bias_mean", "pop_logit_bias_sd")
-  
-  diag_tbl_ml_decay <- diagnostic_summary_table(fit_ml_decay, params = pop_vars_decay)
-  print(diag_tbl_ml_decay)
-  
-  if (!all(diag_tbl_ml_decay$pass)) {
-    warning("Multilevel Decay GCM diagnostic battery has failures. Inspect mcmc_pairs().")
-  }
-}
-```
-
-#### Posterior Predictive Check: Population Learning
-
-We compare the observed learning curves (cumulative accuracy) against the model's posterior predictions to ensure it captures the central tendency and diversity of the population.
-
-```{r ch12_multilevel_decay_ppc}
-if (!is.null(fit_ml_decay)) {
-  # Extract posterior probabilities for all trials
-  prob_draws_ml <- fit_ml_decay$draws("prob_cat1", format = "matrix")
-  n_draws_ml    <- nrow(prob_draws_ml)
-  
-  # Map back to subjects and trials
-  ppc_ml_df <- ml_decay_data_sorted |>
-    mutate(trial_idx = row_number())
-  
-  # For efficiency, we'll summarize the prediction for the group mean
-  # 1. Generate posterior predictive choices (Bernoulli)
-  # (Using a subset of draws for speed if n_draws is very large)
-  subset_draws <- sample(seq_len(n_draws_ml), min(200, n_draws_ml))
-  
-  pp_accuracy <- map_dfr(subset_draws, function(d) {
-    ppc_ml_df |>
-      mutate(
-        pp_choice = rbinom(n(), 1, prob_draws_ml[d, ]),
-        pp_correct = as.integer(pp_choice == observed_feedback)
-      ) |>
-      group_by(trial_within_subject) |>
-      summarise(avg_pp_acc = mean(pp_correct), .groups = "drop") |>
-      mutate(draw = d)
-  })
-
-  pp_summ <- pp_accuracy |>
-    group_by(trial_within_subject) |>
-    summarise(
-      q05 = quantile(avg_pp_acc, 0.05),
-      q50 = quantile(avg_pp_acc, 0.50),
-      q95 = quantile(avg_pp_acc, 0.95),
-      .groups = "drop"
-    )
-
-  obs_summ <- ml_decay_data_sorted |>
-    group_by(trial_within_subject) |>
-    summarise(avg_obs_acc = mean(correct), .groups = "drop")
-
-  ggplot(pp_summ, aes(x = trial_within_subject)) +
-    geom_ribbon(aes(ymin = q05, ymax = q95), fill = "#0072B2", alpha = 0.2) +
-    geom_line(aes(y = q50), color = "#0072B2", linewidth = 1, linetype = "dashed") +
-    geom_line(data = obs_summ, aes(y = avg_obs_acc), color = "black", linewidth = 1.2) +
-    labs(title = "Multilevel PPC: Population Learning Curve",
-         subtitle = "Solid black: observed mean accuracy; Blue band: 90% posterior predictive interval",
-         x = "Trial", y = "Mean Accuracy") +
-    theme_classic()
-}
-```
-
-#### Population Prior-Posterior Update
-
-```{r ch12_multilevel_decay_pop_update}
-if (!is.null(fit_ml_decay)) {
-  draws_ml_decay <- as_draws_df(fit_ml_decay$draws(variables = pop_vars_decay))
-  n_draws_ml <- nrow(draws_ml_decay)
-
-  # True pop_logit_w_mean implied by the generating Dirichlet centroid
-  true_logit_w_mean <- qlogis(pop_params_sim$pop_w[1])
-
-  prior_pop_decay <- tibble(
-    pop_logit_w_mean    = rnorm(n_draws_ml, 0, 1.5),
-    pop_logit_w_sd      = rexp(n_draws_ml, 2.0),
-    pop_log_c_mean      = rnorm(n_draws_ml, log(2), 1.0),
-    pop_log_c_sd        = rexp(n_draws_ml, 2.0),
-    pop_log_lambda_mean = rnorm(n_draws_ml, -2, 1.0),
-    pop_log_lambda_sd   = rexp(n_draws_ml, 2.0),
-    pop_logit_bias_mean = rnorm(n_draws_ml, 0, 1.0),
-    pop_logit_bias_sd   = rexp(n_draws_ml, 2.0)
-  )
-
-  plot_pop_update_decay <- function(name, prior_vec, post_vec, true_val, color) {
-    df <- tibble(value = c(prior_vec, post_vec),
-                 source = rep(c("Prior", "Posterior"), each = length(prior_vec)))
-    ggplot(df, aes(x = value, fill = source)) +
-      geom_density(alpha = 0.5) +
-      geom_vline(xintercept = true_val, color = "red", linetype = "dashed") +
-      scale_fill_manual(values = c(Prior = "grey70", Posterior = color)) +
-      labs(title = name, x = NULL, y = NULL) +
-      theme(axis.text.y = element_blank())
-  }
-
-  p1 <- plot_pop_update_decay("Pop logit(w) mean", prior_pop_decay$pop_logit_w_mean,
-                              draws_ml_decay$pop_logit_w_mean, true_logit_w_mean, "#56B4E9")
-  p2 <- plot_pop_update_decay("Pop logit(w) SD", prior_pop_decay$pop_logit_w_sd,
-                              draws_ml_decay$pop_logit_w_sd, NA_real_, "#E69F00")
-  p3 <- plot_pop_update_decay("Pop log(c) mean", prior_pop_decay$pop_log_c_mean,
-                              draws_ml_decay$pop_log_c_mean, pop_params_sim$pop_log_c_mean, "#009E73")
-  p4 <- plot_pop_update_decay("Pop log(lambda) mean", prior_pop_decay$pop_log_lambda_mean,
-                              draws_ml_decay$pop_log_lambda_mean, pop_params_sim$pop_log_lambda_mean, "#D55E00")
-
-  (p1 | p2) / (p3 | p4) + plot_annotation(title = "Population-Level Updates: Multilevel Decay GCM")
-}
-```
-
-#### Individual Parameter Recovery: Sensitivity and Forgetting
-
-```{r ch12_multilevel_decay_indiv_recovery}
-if (!is.null(fit_ml_decay)) {
-  subj_summ_decay <- fit_ml_decay$summary(variables = c("subj_log_c", "subj_log_lambda")) |>
-    mutate(
-      agent_id = readr::parse_number(stringr::str_extract(variable, "\\[\\d+\\]")),
-      param    = if_else(str_detect(variable, "log_c"), "log_c", "log_lambda")
-    ) |>
-    left_join(multilevel_decay_params |> 
-                select(agent_id, log_c_true, log_lambda_true) |>
-                pivot_longer(-agent_id, names_to = "param_type", values_to = "truth") |>
-                mutate(param = str_replace(param_type, "_true", "")),
-              by = c("agent_id", "param"))
-
-  ggplot(subj_summ_decay, aes(x = truth, y = mean)) +
-    geom_point(alpha = 0.7) +
-    geom_errorbar(aes(ymin = q5, ymax = q95), width = 0, alpha = 0.3) +
-    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
-    facet_wrap(~param, scales = "free") +
-    labs(title = "Individual Parameter Recovery",
-         subtitle = "Posterior mean ± 90% CrI vs. generating value",
-         x = "True value (log scale)", y = "Estimated value (posterior mean)")
-}
+fit_ml_decay$summary(variables = c("pop_w", "kappa", "pop_log_c_mean", "pop_log_lambda_mean"))
 ```
 
 ### Population Parameter Recovery: Multilevel Decay GCM
@@ -3173,14 +2627,12 @@ Finally, we confirm that our "Final Boss" model can recover the group-level char
 
 ```{r ch12_ml_decay_recovery_plot}
 ml_decay_summ <- fit_ml_decay$summary() |>
-  filter(str_detect(variable, "^pop_"))
+  filter(str_detect(variable, "^pop_") | variable == "kappa")
 
 ml_decay_truth <- tibble(
-  variable = c("pop_logit_w_mean", "pop_log_c_mean", "pop_log_lambda_mean", "pop_logit_bias_mean"),
-  true_val = c(qlogis(pop_params_sim$pop_w[1]),
-               pop_params_sim$pop_log_c_mean,
-               pop_params_sim$pop_log_lambda_mean,
-               pop_params_sim$pop_logit_bias_mean)
+  variable = c("pop_w[1]", "pop_w[2]", "kappa", "pop_log_c_mean", "pop_log_lambda_mean", "pop_logit_bias_mean"),
+  true_val = c(pop_params_sim$pop_w[1], pop_params_sim$pop_w[2], pop_params_sim$kappa, 
+               pop_params_sim$pop_log_c_mean, pop_params_sim$pop_log_lambda_mean, pop_params_sim$pop_logit_bias_mean)
 )
 
 ml_decay_summ |>
@@ -3195,126 +2647,6 @@ ml_decay_summ |>
     x = "Parameter", y = "Value"
   )
 ```
-
-### Multilevel SBC: Calibrating the "Final Boss"
-
-The ultimate validation for our hierarchical architecture is Simulation-Based Calibration. We check if the population hyperparameters ($\mu_w, \sigma_w, \mu_c, \sigma_c, \mu_\lambda, \sigma_\lambda$) and individual parameters are jointly recovered and statistically calibrated.
-
-```{r ch12_multilevel_decay_sbc}
-sbc_ml_decay_filepath <- here("simdata", "ch12_sbc_ml_decay_results.rds")
-
-if (run_intensive_checks && (regenerate_simulations || !file.exists(sbc_ml_decay_filepath))) {
-  n_sbc_ml_decay <- 100 # coarse check; use 1000 for publication
-  n_subj_sbc     <- 8
-  
-  ml_decay_sbc_generator <- SBC_generator_function(function() {
-    # 1. Draw population parameters from priors
-    pop_logit_w_mean    <- rnorm(1, 0, 1.5)
-    pop_logit_w_sd      <- rexp(1, 2.0)
-    pop_log_c_mean      <- rnorm(1, log(2), 0.5)
-    pop_log_c_sd        <- rexp(1, 5.0)
-    pop_log_lambda_mean <- rnorm(1, -2, 0.5)
-    pop_log_lambda_sd   <- rexp(1, 5.0)
-    pop_logit_bias_mean <- rnorm(1, 0, 0.5)
-    pop_logit_bias_sd   <- rexp(1, 5.0)
-
-    # 2. Draw individual parameters (all fully non-centred)
-    z_w          <- rnorm(n_subj_sbc, 0, 1)
-    z_log_c      <- rnorm(n_subj_sbc, 0, 1)
-    z_log_lambda <- rnorm(n_subj_sbc, 0, 1)
-    z_logit_bias <- rnorm(n_subj_sbc, 0, 1)
-    subj_w1      <- plogis(pop_logit_w_mean + pop_logit_w_sd * z_w)
-    subj_w       <- cbind(subj_w1, 1 - subj_w1)
-
-    # 3. Simulate agents on Drift scenario
-    all_sbc_dat <- map_dfr(seq_len(n_subj_sbc), function(j) {
-      subj_c      <- exp(pop_log_c_mean + pop_log_c_sd * z_log_c[j])
-      subj_lambda <- exp(pop_log_lambda_mean + pop_log_lambda_sd * z_log_lambda[j])
-      subj_bias   <- plogis(pop_logit_bias_mean + pop_logit_bias_sd * z_logit_bias[j])
-
-      sched <- make_subject_schedule(stimulus_info, n_blocks = 4, seed = sample.int(1e7, 1))
-      drift <- make_drift_trajectory(nrow(sched), 0.05, seed = sample.int(1e7, 1))
-      sim   <- simulate_decay_scenario(
-        w = as.numeric(subj_w[j, ]), c = subj_c, lambda = subj_lambda, bias = subj_bias,
-        schedule = sched, scenario = "drift", drift_traj = drift
-      )
-      sched |> mutate(agent_id = j, sim_response = sim$sim_response,
-                      observed_feedback = sim$observed_feedback)
-    })
-
-    sorted <- all_sbc_dat |> arrange(agent_id, trial_within_subject)
-    bounds <- sorted |> group_by(agent_id) |>
-      summarise(s = min(row_number()), e = max(row_number()), .groups = "drop")
-    unique_stim <- stimulus_info |> arrange(stimulus) |> select(height, position) |> as.matrix()
-
-    list(
-      variables = list(
-        pop_logit_w_mean    = pop_logit_w_mean,
-        pop_logit_w_sd      = pop_logit_w_sd,
-        pop_log_c_mean      = pop_log_c_mean,
-        pop_log_c_sd        = pop_log_c_sd,
-        pop_log_lambda_mean = pop_log_lambda_mean,
-        pop_log_lambda_sd   = pop_log_lambda_sd,
-        `subj_log_c[1]`     = pop_log_c_mean + pop_log_c_sd * z_log_c[1]
-      ),
-      generated = list(
-        N_total                    = nrow(sorted),
-        N_subjects                 = n_subj_sbc,
-        N_features                 = 2,
-        N_unique_stim              = 8,
-        max_trials_per_subject     = max(sorted$trial_within_subject),
-        subj_start                 = bounds$s,
-        subj_end                   = bounds$e,
-        stim_id                    = sorted$stimulus_id,
-        y                          = sorted$sim_response,
-        unique_obs                 = unique_stim,
-        cat_feedback               = sorted$observed_feedback,
-        prior_pop_logit_w_mean     = 0,
-        prior_pop_logit_w_sigma    = 1.5,
-        prior_pop_logit_w_sd_lambda = 2.0,
-        prior_pop_log_c_mu         = log(2),
-        prior_pop_log_c_sigma      = 1.0,
-        prior_pop_log_c_lambda     = 2.0,
-        prior_pop_log_lambda_mu    = -2,
-        prior_pop_log_lambda_sigma = 1.0,
-        prior_pop_log_lambda_lambda = 2.0,
-        prior_pop_logit_bias_mu    = 0,
-        prior_pop_logit_bias_sigma = 1.0,
-        prior_pop_logit_bias_lambda = 2.0,
-        run_diagnostics            = 0L
-      )
-    )
-  })
-  
-  ml_decay_sbc_backend <- SBC_backend_cmdstan_sample(
-    mod_gcm_ml_decay, iter_warmup = 800, iter_sampling = 1000, chains = 2, refresh = 0
-  )
-  
-  sbc_ml_decay_res <- compute_SBC(
-    generate_datasets(ml_decay_sbc_generator, n_sims = n_sbc_ml_decay),
-    ml_decay_sbc_backend, cache_mode = "results"
-  )
-  saveRDS(sbc_ml_decay_res, sbc_ml_decay_filepath)
-} else {
-  sbc_ml_decay_res <- readRDS(sbc_ml_decay_filepath)
-}
-
-plot_ecdf_diff(sbc_ml_decay_res)
-plot_rank_hist(sbc_ml_decay_res)
-
-# ── Hyperparameter Recovery scatter ──────────────────────────────────────────
-sbc_ml_decay_res$stats |>
-  filter(variable %in% c("pop_logit_w_mean", "pop_logit_w_sd",
-                         "pop_log_c_mean", "pop_log_lambda_mean")) |>
-  ggplot(aes(x = simulated_value, y = mean)) +
-  geom_point(alpha = 0.5, color = "#0072B2") +
-  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
-  facet_wrap(~variable, scales = "free") +
-  labs(title = "Population Hyperparameter Recovery: SBC",
-       x = "True value", y = "Posterior mean")
-```
-
-**How to read the Multilevel SBC.** The ECDF-difference plots for the population means (`pop_logit_w_mean`, `pop_log_c_mean`, `pop_log_lambda_mean`) should remain within the confidence bands, indicating unbiased group-level estimators. The recovery scatters confirm that even with non-stationary drifting data, the multilevel architecture can accurately pull out the core parameters of the forgetting process.
 
 ### GCM in Context: Strengths and Limitations
 
@@ -3335,3 +2667,4 @@ sbc_ml_decay_res$stats |>
 In the next two chapters we explore alternative approaches — prototype models (Ch. 12) and rule-based models (Ch. 13) — that address some of these limitations while introducing their own strengths and challenges.
 
 ---
+
