@@ -1,4 +1,4 @@
-# Assessing Model Quality
+# Assessing Model Quality {#sec-model-quality-checks}
 
 ```{r ch06_setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -315,9 +315,16 @@ observed_data_list <- list(
 # ---------------------------------------------------------------------------
 mod_gq <- cmdstan_model(stan_file_gq)
 
-if (regenerate_simulations || !file.exists(model_file_gq)) {
+.run_sampling <- regenerate_simulations || !file.exists(model_file_gq)
 
-  # Sample from the posterior distribution using MCMC
+if (!.run_sampling) {
+  fit_gq <- readRDS(model_file_gq)
+  # Detect stale cache: if y_post_rep is missing, the model was saved before PPC was added
+  .has_ppc <- tryCatch({ fit_gq$draws("y_post_rep"); TRUE }, error = function(e) FALSE)
+  if (!.has_ppc) .run_sampling <- TRUE
+}
+
+if (.run_sampling) {
   fit_gq <- mod_gq$sample(
     data             = observed_data_list,
     seed             = 123,
@@ -329,13 +336,7 @@ if (regenerate_simulations || !file.exists(model_file_gq)) {
     max_treedepth    = 10,
     adapt_delta      = 0.8
   )
-
-  # Save the fitted model object (including samples and generated quantities)
   fit_gq$save_object(file = model_file_gq)
-
-} else {
-  # Load the previously saved fitted model object
-  fit_gq <- readRDS(model_file_gq)
 }
 
 ```
@@ -2145,9 +2146,10 @@ sbc_memory_generator_fn <- function() {
   
   list(
     variables = list(bias = t_bias, beta = t_beta),
-    generated = list(n = 120, h = sim$choice, other = opp_choices,
-                     prior_bias_m = 0, prior_bias_s = 0.5,
-                     prior_beta_m = 0, prior_beta_s = 1.0)
+    generated = list(N_trials = 120, y = sim$choice, other = opp_choices,
+                     prior_bias_mu = 0, prior_bias_sigma = 0.5,
+                     prior_beta_mu = 0, prior_beta_sigma = 1.0,
+                     run_diagnostics = 0L)
   )
 }
 

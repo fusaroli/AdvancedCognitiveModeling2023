@@ -55,7 +55,27 @@ div.sourceCode
 @media screen {
 pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
 }
-</style>
+/* CSS for citations */
+div.csl-bib-body { }
+div.csl-entry {
+  clear: both;
+  margin-bottom: 0em;
+}
+.hanging-indent div.csl-entry {
+  margin-left:2em;
+  text-indent:-2em;
+}
+div.csl-left-margin {
+  min-width:2em;
+  float:left;
+}
+div.csl-right-inline {
+  margin-left:2em;
+  padding-left:1em;
+}
+div.csl-indent {
+  margin-left: 2em;
+}</style>
 
 
 <script src="site_libs/quarto-nav/quarto-nav.js"></script>
@@ -268,6 +288,12 @@ window.Quarto = {
  <span class="menu-text"><span class="chapter-number">B</span>&nbsp; <span class="chapter-title">Stan Optimization Cheatsheet</span></span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./AppC-Reparameterization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">C</span>&nbsp; <span class="chapter-title">Reparameterization Techniques</span></span></a>
+  </div>
+</li>
       </ul>
   </li>
     </ul>
@@ -291,7 +317,7 @@ window.Quarto = {
   <li><a href="#summarizing-the-results" id="toc-summarizing-the-results" class="nav-link" data-scroll-target="#summarizing-the-results"><span class="header-section-number">5.5.3</span> Summarizing the results</a></li>
   </ul></li>
   <li><a href="#bonus-pathfinder-variational-inference-vs.-full-mcmc" id="toc-bonus-pathfinder-variational-inference-vs.-full-mcmc" class="nav-link" data-scroll-target="#bonus-pathfinder-variational-inference-vs.-full-mcmc"><span class="header-section-number">5.6</span> Bonus: Pathfinder Variational Inference vs.&nbsp;Full MCMC</a></li>
-  <li><a href="#moving-beyond-simple-bias-memory-models" id="toc-moving-beyond-simple-bias-memory-models" class="nav-link" data-scroll-target="#moving-beyond-simple-bias-memory-models"><span class="header-section-number">5.7</span> Moving Beyond Simple Bias: Memory Models</a>
+  <li><a href="#sec-memory-models" id="toc-sec-memory-models" class="nav-link" data-scroll-target="#sec-memory-models"><span class="header-section-number">5.7</span> Moving Beyond Simple Bias: Memory Models</a>
   <ul class="collapse">
   <li><a href="#memory-model-1-glm-like-approach-external-predictor" id="toc-memory-model-1-glm-like-approach-external-predictor" class="nav-link" data-scroll-target="#memory-model-1-glm-like-approach-external-predictor"><span class="header-section-number">5.7.1</span> Memory Model 1: GLM-like Approach (External Predictor)</a></li>
   <li><a href="#summarizing-the-results-1" id="toc-summarizing-the-results-1" class="nav-link" data-scroll-target="#summarizing-the-results-1"><span class="header-section-number">5.7.2</span> Summarizing the results</a></li>
@@ -314,7 +340,7 @@ window.Quarto = {
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">From simulation to model fitting</span></h1>
+<h1 class="title"><span id="sec-inferring-rates" class="quarto-section-identifier"><span class="chapter-number">5</span>&nbsp; <span class="chapter-title">From simulation to model fitting</span></span></h1>
 </div>
 
 
@@ -1031,7 +1057,7 @@ Loaded existing model fit from /Users/au209589/Dropbox/Teaching/AdvancedCognitiv
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>Stan’s default NUTS-HMC sampler draws posterior samples by simulating a Hamiltonian dynamical system. During <strong>warm-up</strong>, the sampler adapts its step size and metric — a phase that can take hundreds of iterations if chains start far from the posterior mass. <strong>Pathfinder</strong> <span class="citation" data-cites="zhang2022pathfinder">(<a href="#ref-zhang2022pathfinder" role="doc-biblioref"><strong>zhang2022pathfinder?</strong></a>)</span> is a fast variational approximation that traces the L-BFGS optimization path from an initial point to the posterior mode and fits a series of multivariate normal approximations along the way. It is not a gold-standard posterior, but it tells HMC <em>roughly where the posterior lives</em> before NUTS begins.</p>
+<p>Stan’s default NUTS-HMC sampler draws posterior samples by simulating a Hamiltonian dynamical system. During <strong>warm-up</strong>, the sampler adapts its step size and metric — a phase that can take hundreds of iterations if chains start far from the posterior mass. <strong>Pathfinder</strong> <span class="citation" data-cites="zhang2022pathfinder">(<a href="#ref-zhang2022pathfinder" role="doc-biblioref">Zhang et al. 2022</a>)</span> is a fast variational approximation that traces the L-BFGS optimization path from an initial point to the posterior mode and fits a series of multivariate normal approximations along the way. It is not a gold-standard posterior, but it tells HMC <em>roughly where the posterior lives</em> before NUTS begins.</p>
 <p>Three strategies, in order of increasing accuracy and cost:</p>
 <table class="caption-top table">
 <colgroup>
@@ -1196,8 +1222,8 @@ Loaded existing model fit from /Users/au209589/Dropbox/Teaching/AdvancedCognitiv
 </div>
 </div>
 </section>
-<section id="moving-beyond-simple-bias-memory-models" class="level2" data-number="5.7">
-<h2 data-number="5.7" class="anchored" data-anchor-id="moving-beyond-simple-bias-memory-models"><span class="header-section-number">5.7</span> Moving Beyond Simple Bias: Memory Models</h2>
+<section id="sec-memory-models" class="level2" data-number="5.7">
+<h2 data-number="5.7" class="anchored" data-anchor-id="sec-memory-models"><span class="header-section-number">5.7</span> Moving Beyond Simple Bias: Memory Models</h2>
 <p>The simple biased agent model assumes choices are independent over time, influenced only by a fixed <code>theta</code>. However, behavior is often history-dependent. Let’s explore models where the choice probability <code>theta</code> on trial <em>t</em> depends on previous events.</p>
 <section id="memory-model-1-glm-like-approach-external-predictor" class="level3" data-number="5.7.1">
 <h3 data-number="5.7.1" class="anchored" data-anchor-id="memory-model-1-glm-like-approach-external-predictor"><span class="header-section-number">5.7.1</span> Memory Model 1: GLM-like Approach (External Predictor)</h3>
@@ -2046,6 +2072,11 @@ Loaded existing model fit from /Users/au209589/Dropbox/Teaching/AdvancedCognitiv
 <p>Only after passing all four tests does a model earn the right to touch real empirical data.</p>
 
 
+<div id="refs" class="references csl-bib-body hanging-indent" data-entry-spacing="0" role="list">
+<div id="ref-zhang2022pathfinder" class="csl-entry" role="listitem">
+Zhang, Lu, Bob Carpenter, Andrew Gelman, and Aki Vehtari. 2022. <span>“Pathfinder: Parallel Quasi-Newton Variational Inference.”</span> <em>Journal of Machine Learning Research</em> 23 (306): 1–49.
+</div>
+</div>
 </section>
 
 </main> <!-- /main -->

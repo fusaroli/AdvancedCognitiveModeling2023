@@ -3,10 +3,14 @@
 // Estimates individual biases drawn from a population distribution.
 
 data {
-  int<lower=1> N;                    // Total number of observations
-  int<lower=1> J;                    // Number of agents
-  array[N] int<lower=1, upper=J> agent; // Agent ID for each observation (must be 1...J)
-  array[N] int<lower=0, upper=1> h;    // Observed choices (0 or 1)
+  int<lower=1> N_total;                 // Total number of observations
+  int<lower=1> N_subjects;              // Number of agents
+  array[N_total] int<lower=1, upper=N_subjects> subj_id; // Agent ID
+  array[N_total] int<lower=0, upper=1> y;     // Observed choices
+  real prior_mu_theta_mu;
+  real<lower=0> prior_mu_theta_sigma;
+  real<lower=0> prior_sigma_theta_lambda;
+  int<lower=0, upper=1> run_diagnostics;
 }
 
 parameters {
@@ -15,69 +19,59 @@ parameters {
   real<lower=0> sigma_theta;         // Population SD of bias (logit scale)
 
   // Individual-level parameters (standardized deviations, z-scores of the agents)
-  vector[J] z_theta;                 // Non-centered individual effects (standard normal scale)
+  vector[N_subjects] z_theta;        // Non-centered individual effects
 }
 
 transformed parameters {
   // Deterministic reconstruction of the cognitive parameters
-  // This shifts and scales the z-scores back to the target logit space
-  vector[J] theta_logit = mu_theta + z_theta * sigma_theta;
+  vector[N_subjects] theta_logit = mu_theta + z_theta * sigma_theta;
 }
 
 model {
   // Priors for population-level parameters
-  target += normal_lpdf(mu_theta | 0, 1.5);
-  target += exponential_lpdf(sigma_theta | 1);
+  target += normal_lpdf(mu_theta | prior_mu_theta_mu, prior_mu_theta_sigma);
+  target += exponential_lpdf(sigma_theta | prior_sigma_theta_lambda);
   
   /// Individual level prior (NON-CENTERED)
-  // Notice there are no population level parameters here. The geometry is decoupled.
   target += std_normal_lpdf(z_theta);
 
   // Likelihood
-  /// The likelihood is evaluated on the deterministically transformed parameters
-  /// not the raw z-scores.
-  target += bernoulli_logit_lpmf(h | theta_logit[agent]);
+  target += bernoulli_logit_lpmf(y | theta_logit[subj_id]);
 }
 
 generated quantities {
-  // Transform hyperparameters back to the probability (outcome) scale
+  // Transform hyperparameters back to the probability (scale)
   real<lower=0, upper=1> mu_theta_prob = inv_logit(mu_theta);
-  vector<lower=0, upper=1>[J] theta_prob = inv_logit(theta_logit);
+  vector<lower=0, upper=1>[N_subjects] theta_prob = inv_logit(theta_logit);
   
   // Initialize containers for trial-level metrics
-  vector[N] log_lik;
-  array[N] int h_post_rep;
-  array[N] int h_prior_rep;
+  vector[N_total] log_lik;
+  array[N_total] int y_post_rep;
+  array[N_total] int y_prior_rep;
 
   // --- Prior Log-Density  ---
   real lprior;
-  // Notice we score z_theta with the standard normal distribution, exactly as in the model block
-  lprior = normal_lpdf(mu_theta | 0, 1.5) + 
-           exponential_lpdf(sigma_theta | 1) + 
+  lprior = normal_lpdf(mu_theta | prior_mu_theta_mu, prior_mu_theta_sigma) + 
+           exponential_lpdf(sigma_theta | prior_sigma_theta_lambda) + 
            std_normal_lpdf(z_theta);
 
   // --- Prior Predictive Checks: Generative Baseline ---
-  // 1. Draw population hyperparameters from the EXACT priors used in the model block
-  real mu_theta_prior = normal_rng(0, 1.5);
-  real<lower=0> sigma_theta_prior = exponential_rng(1);
-  
-  // 2. Draw individual agent parameters from the non-centered prior
-  vector[J] theta_logit_prior;
-  for (j in 1:J) {
-    real z_theta_prior = normal_rng(0, 1); 
-    theta_logit_prior[j] = mu_theta_prior + z_theta_prior * sigma_theta_prior;
-  }
+  real mu_theta_prior = normal_rng(prior_mu_theta_mu, prior_mu_theta_sigma);
+  real sigma_theta_prior = exponential_rng(prior_sigma_theta_lambda);
 
-  // --- Trial-Level Computations ---
-  // We consolidate the log-likelihood and predictive checks into a single loop
-  for (i in 1:N) {
-    // 1. Pointwise log-likelihood (for PSIS-LOO model comparison later)
-    log_lik[i] = bernoulli_logit_lpmf(h[i] | theta_logit[agent[i]]);
-    
-    // 2. Posterior Predictive Check: Generate choices using the fitted posterior
-    h_post_rep[i] = bernoulli_logit_rng(theta_logit[agent[i]]);
-    
-    // 3. Prior Predictive Check: Generate choices using the unconditioned prior
-    h_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[agent[i]]);
+  if (run_diagnostics) {
+    // 2. Draw individual agent parameters from the non-centered prior
+    vector[N_subjects] theta_logit_prior;
+    for (j in 1:N_subjects) {
+      real z_theta_prior = normal_rng(0, 1); 
+      theta_logit_prior[j] = mu_theta_prior + z_theta_prior * sigma_theta_prior;
+    }
+
+    // --- Trial-Level Computations ---
+    for (i in 1:N_total) {
+      log_lik[i] = bernoulli_logit_lpmf(y[i] | theta_logit[subj_id[i]]);
+      y_post_rep[i] = bernoulli_logit_rng(theta_logit[subj_id[i]]);
+      y_prior_rep[i] = bernoulli_logit_rng(theta_logit_prior[subj_id[i]]);
+    }
   }
 }

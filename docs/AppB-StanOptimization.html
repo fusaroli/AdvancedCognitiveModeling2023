@@ -65,6 +65,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="site_libs/quarto-search/fuse.min.js"></script>
 <script src="site_libs/quarto-search/quarto-search.js"></script>
 <meta name="quarto:offset" content="./">
+<link href="./AppC-Reparameterization.html" rel="next">
 <link href="./10a-BayesianSequentialExtensions.html" rel="prev">
 <script src="site_libs/quarto-html/quarto.js" type="module"></script>
 <script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
@@ -267,6 +268,12 @@ window.Quarto = {
  <span class="menu-text"><span class="chapter-number">B</span>&nbsp; <span class="chapter-title">Stan Optimization Cheatsheet</span></span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./AppC-Reparameterization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">C</span>&nbsp; <span class="chapter-title">Reparameterization Techniques</span></span></a>
+  </div>
+</li>
       </ul>
   </li>
     </ul>
@@ -414,7 +421,7 @@ window.Quarto = {
 <hr>
 <section id="sec-block-placement" class="level2" data-number="B.1">
 <h2 data-number="B.1" class="anchored" data-anchor-id="sec-block-placement"><span class="header-section-number">B.1</span> 1. Block Placement — Run It Once, Not Thousands of Times</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-memory-models</span> (Chapter 4, Memory Model 1)</em></p>
+<p><em>First introduced: <a href="04-InferringRates.html#sec-memory-models" class="quarto-xref"><span>Section 5.7</span></a> (Chapter 4, Memory Model 1)</em></p>
 <p>HMC runs thousands of leapfrog steps during warm-up. Every line of code in <code>transformed parameters</code> or <code>model</code> executes at each step; every line in <code>transformed data</code> executes exactly <strong>once</strong>.</p>
 <table class="caption-top table">
 <colgroup>
@@ -476,7 +483,7 @@ window.Quarto = {
 </section>
 <section id="sec-precompute-r" class="level2" data-number="B.2">
 <h2 data-number="B.2" class="anchored" data-anchor-id="sec-precompute-r"><span class="header-section-number">B.2</span> 2. Pre-Compute in R — Don’t Let Stan See the Raw Computation</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-multilevel-models</span> (Chapter 6, multilevel memory agent)</em></p>
+<p><em>First introduced: <a href="06-MultilevelModels.html" class="quarto-xref"><span>Chapter 7</span></a> (Chapter 6, multilevel memory agent)</em></p>
 <p><code>transformed data</code> runs once before sampling — but the computation still happens inside Stan’s runtime. If a quantity depends only on observed data and will never change between fits, computing it in R and passing it as a data field is even cheaper: Stan never processes the raw inputs at all.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: compute the running opponent rate once (O(N) vectorised R operation)</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> d <span class="sc">|&gt;</span></span>
@@ -502,7 +509,7 @@ window.Quarto = {
 </section>
 <section id="sec-sufficient-stats" class="level2" data-number="B.3">
 <h2 data-number="B.3" class="anchored" data-anchor-id="sec-sufficient-stats"><span class="header-section-number">B.3</span> 3. Sufficient Statistics — Aggregate IID Trials</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-inferring-rates</span> (Chapter 4, simple bias model)</em></p>
+<p><em>First introduced: <a href="04-InferringRates.html" class="quarto-xref"><span>Chapter 5</span></a> (Chapter 4, simple bias model)</em></p>
 <p>When all trials are <strong>independently and identically distributed</strong> under the same parameter, the total number of successes is a <strong>sufficient statistic</strong> — it carries all the information in the data about <span class="math inline">\(\theta\)</span>. A single Binomial call replaces <span class="math inline">\(N\)</span> Bernoulli calls.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co">// data block: pass the aggregate, not the full array</span></span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="kw">data</span> {</span>
@@ -532,7 +539,7 @@ window.Quarto = {
 </section>
 <section id="sec-vectorize" class="level2" data-number="B.4">
 <h2 data-number="B.4" class="anchored" data-anchor-id="sec-vectorize"><span class="header-section-number">B.4</span> 4. Vectorize the Likelihood Call</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-inferring-rates</span> (Chapter 4); used throughout from Chapter 5 onward</em></p>
+<p><em>First introduced: <a href="04-InferringRates.html" class="quarto-xref"><span>Chapter 5</span></a> (Chapter 4); used throughout from Chapter 5 onward</em></p>
 <p>Stan evaluates each distribution call as a node in the autodiff graph. A vectorized call over a length-<span class="math inline">\(N\)</span> vector creates <strong>one node</strong>; a loop over <span class="math inline">\(N\)</span> trials creates <strong><span class="math inline">\(N\)</span> nodes</strong>. Smaller graph = faster gradient computation and better cache use.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Slower: N nodes in the autodiff graph</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span>:N)</span>
@@ -560,7 +567,7 @@ window.Quarto = {
 </section>
 <section id="sec-priors-as-data" class="level2" data-number="B.5">
 <h2 data-number="B.5" class="anchored" data-anchor-id="sec-priors-as-data"><span class="header-section-number">B.5</span> 5. Priors as Data — Avoid Recompilation</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-model-quality-checks</span> (Chapter 5)</em></p>
+<p><em>First introduced: <a href="05-ModelQualityChecks.html" class="quarto-xref"><span>Chapter 6</span></a> (Chapter 5)</em></p>
 <p>Pass prior hyperparameters through the <code>data</code> block instead of hard-coding them. Stan recompiles whenever the <strong>code</strong> changes, never for new <strong>data</strong>. This lets you run prior sensitivity analyses and SBC sweeps without recompiling.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="kw">data</span> {</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">int</span>&lt;<span class="kw">lower</span>=<span class="dv">0</span>&gt; N;</span>
@@ -578,7 +585,7 @@ window.Quarto = {
 </section>
 <section id="sec-run-diagnostics" class="level2" data-number="B.6">
 <h2 data-number="B.6" class="anchored" data-anchor-id="sec-run-diagnostics"><span class="header-section-number">B.6</span> 6. The <code>run_diagnostics</code> Flag — Conditional Generated Quantities</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-model-quality-checks</span> (Chapter 5)</em></p>
+<p><em>First introduced: <a href="05-ModelQualityChecks.html" class="quarto-xref"><span>Chapter 6</span></a> (Chapter 5)</em></p>
 <p>Computing <code>log_lik</code> (N values per draw) and <code>y_rep</code> in <code>generated quantities</code> can double run-time. Gate them behind an integer flag so SBC backends can turn them off.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="kw">data</span> {</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">int</span>&lt;<span class="kw">lower</span>=<span class="dv">0</span>, <span class="kw">upper</span>=<span class="dv">1</span>&gt; run_diagnostics;</span>
@@ -615,7 +622,7 @@ window.Quarto = {
 </section>
 <section id="sec-generate-quantities" class="level2" data-number="B.7">
 <h2 data-number="B.7" class="anchored" data-anchor-id="sec-generate-quantities"><span class="header-section-number">B.7</span> 7. Post-Hoc Generated Quantities with <code>$generate_quantities()</code></h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-model-quality-checks</span> (Chapter 5)</em></p>
+<p><em>First introduced: <a href="05-ModelQualityChecks.html" class="quarto-xref"><span>Chapter 6</span></a> (Chapter 5)</em></p>
 <p>The <code>run_diagnostics</code> flag lets you skip <code>log_lik</code> and <code>y_rep</code> during SBC. A complementary pattern avoids the trade-off entirely: <strong>fit once with diagnostics off, then replay the saved parameter draws through the <code>generated quantities</code> block on demand</strong>, without re-running MCMC.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fast fit — no log_lik or y_rep during sampling</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>fit_fast <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">sample</span>(<span class="at">data =</span> <span class="fu">list</span>(..., <span class="at">run_diagnostics =</span> <span class="dv">0</span>L), ...)</span>
@@ -639,7 +646,7 @@ window.Quarto = {
 </section>
 <section id="sec-ncp" class="level2" data-number="B.8">
 <h2 data-number="B.8" class="anchored" data-anchor-id="sec-ncp"><span class="header-section-number">B.8</span> 8. Non-Centered Parameterization (NCP)</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-multilevel-models</span> (Chapter 6, multilevel biased agent)</em> <em>Extended to simplex parameters: <span class="quarto-unresolved-ref">?sec-categorization-exemplars</span> (Chapter 11, multilevel decay GCM)</em></p>
+<p><em>First introduced: <a href="06-MultilevelModels.html" class="quarto-xref"><span>Chapter 7</span></a> (Chapter 6, multilevel biased agent)</em> <em>Extended to simplex parameters: <a href="11-CategorizationModelsExemplars.html" class="quarto-xref"><span>Chapter 12</span></a> (Chapter 11, multilevel decay GCM)</em></p>
 <p>Centered parameterizations create <strong>funnel geometries</strong> when the group-level variance (<code>sigma</code>) is small: individual-level parameters collapse toward the mean, forming a narrow neck that HMC cannot traverse efficiently, producing divergences, low E-BFMI, and <code>max_treedepth</code> warnings.</p>
 <div class="columns">
 <div class="column" style="width:48%;">
@@ -653,7 +660,7 @@ window.Quarto = {
 <span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>  theta ~ normal(mu, sigma);</span>
 <span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div><div class="column" style="width:4%;">
-
+<p>&nbsp;</p>
 </div><div class="column" style="width:48%;">
 <p><strong>Non-Centered (preferred):</strong></p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">parameters</span> {</span>
@@ -706,7 +713,7 @@ window.Quarto = {
 </section>
 <section id="sec-cholesky" class="level2" data-number="B.9">
 <h2 data-number="B.9" class="anchored" data-anchor-id="sec-cholesky"><span class="header-section-number">B.9</span> 9. Cholesky Factorization for Correlation Matrices</h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-multilevel-models</span> (Chapter 6, multilevel memory agent with correlated parameters)</em></p>
+<p><em>First introduced: <a href="06-MultilevelModels.html" class="quarto-xref"><span>Chapter 7</span></a> (Chapter 6, multilevel memory agent with correlated parameters)</em></p>
 <p>Whenever a model estimates a <strong>correlation matrix</strong> <span class="math inline">\(\Omega\)</span> over individual-level parameters, use the Cholesky-factorized form rather than sampling <span class="math inline">\(\Omega\)</span> directly.</p>
 <table class="caption-top table">
 <colgroup>
@@ -758,7 +765,7 @@ window.Quarto = {
 </section>
 <section id="sec-subject-indexing" class="level2" data-number="B.10">
 <h2 data-number="B.10" class="anchored" data-anchor-id="sec-subject-indexing"><span class="header-section-number">B.10</span> 10. Contiguous Subject Indexing — <code>subj_start</code> / <code>subj_end</code></h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-multilevel-models</span> (Chapter 6, multilevel memory model)</em></p>
+<p><em>First introduced: <a href="06-MultilevelModels.html" class="quarto-xref"><span>Chapter 7</span></a> (Chapter 6, multilevel memory model)</em></p>
 <p>Two strategies for multi-subject trial data:</p>
 <p><strong>Strategy A — <code>subj_id</code> lookup</strong> (simple; works only when trials are independent):</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb17"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="kw">data</span> { <span class="dt">array</span>[N_total] <span class="dt">int</span> subj_id; }</span>
@@ -788,7 +795,7 @@ window.Quarto = {
 </section>
 <section id="sec-pathfinder" class="level2" data-number="B.11">
 <h2 data-number="B.11" class="anchored" data-anchor-id="sec-pathfinder"><span class="header-section-number">B.11</span> 11. Pathfinder Warm-Start Initialisation</h2>
-<p><em>First benchmarked: <span class="quarto-unresolved-ref">?sec-inferring-rates</span> (Chapter 4)</em> <em>Timing comparison for multilevel models: <span class="quarto-unresolved-ref">?sec-multilevel-models</span> (Chapter 6)</em> <em>Three-way benchmark: <span class="quarto-unresolved-ref">?sec-categorization-exemplars</span> (Chapter 11)</em></p>
+<p><em>First benchmarked: <a href="04-InferringRates.html" class="quarto-xref"><span>Chapter 5</span></a> (Chapter 4)</em> <em>Timing comparison for multilevel models: <a href="06-MultilevelModels.html" class="quarto-xref"><span>Chapter 7</span></a> (Chapter 6)</em> <em>Three-way benchmark: <a href="11-CategorizationModelsExemplars.html" class="quarto-xref"><span>Chapter 12</span></a> (Chapter 11)</em></p>
 <p>Stan’s default initialisation draws chain starts from Uniform(−2, 2) in unconstrained space — far from the posterior on hierarchical models. <strong>Pathfinder</strong> runs L-BFGS from each start, fits Gaussian approximations along the path, and returns approximate posterior draws. Passing these as <code>init</code> to <code>$sample()</code> lets HMC skip most of the warm-up trajectory.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Step 1 — fast variational approximation</span></span>
 <span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>pf <span class="ot">&lt;-</span> mod<span class="sc">$</span><span class="fu">pathfinder</span>(<span class="at">data =</span> stan_data, <span class="at">num_paths =</span> <span class="dv">4</span>, <span class="at">draws =</span> <span class="dv">1000</span>, <span class="at">seed =</span> <span class="dv">123</span>)</span>
@@ -817,7 +824,7 @@ window.Quarto = {
 </section>
 <section id="sec-log-mix" class="level2" data-number="B.12">
 <h2 data-number="B.12" class="anchored" data-anchor-id="sec-log-mix"><span class="header-section-number">B.12</span> 12. Marginalizing Discrete Parameters with <code>log_mix</code></h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-mixture-models</span> (Chapter 8, single and multilevel mixture models)</em></p>
+<p><em>First introduced: <a href="08-MixtureModels.html" class="quarto-xref"><span>Chapter 9</span></a> (Chapter 8, single and multilevel mixture models)</em></p>
 <p>HMC requires continuous, differentiable parameters. Discrete latent variables (component indicators, regime switches) must be <strong>analytically marginalized</strong> out of the likelihood before sampling.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb21"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co">// two-component mixture</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="dt">real</span> lp1 = bernoulli_logit_lpmf(y | alpha);</span>
@@ -849,7 +856,7 @@ window.Quarto = {
 </section>
 <section id="sec-sequential-state" class="level2" data-number="B.13">
 <h2 data-number="B.13" class="anchored" data-anchor-id="sec-sequential-state"><span class="header-section-number">B.13</span> 13. Sequential State Unrolling in <code>transformed parameters</code></h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-theory-of-mind</span> (Chapter 9, weighted and proportional agent models)</em></p>
+<p><em>First introduced: <a href="09-TheoryOfMind.html" class="quarto-xref"><span>Chapter 10</span></a> (Chapter 9, weighted and proportional agent models)</em></p>
 <p>When the likelihood depends on a latent state that evolves trial-by-trial (belief, RL value, running weight), unroll the recursion in <code>transformed parameters</code> so the gradient flows back through the entire trajectory.</p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb24"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="kw">transformed parameters</span> {</span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">vector</span>[N] predicted_choice;</span>
@@ -883,7 +890,7 @@ window.Quarto = {
 </section>
 <section id="sec-reduce-sum" class="level2" data-number="B.14">
 <h2 data-number="B.14" class="anchored" data-anchor-id="sec-reduce-sum"><span class="header-section-number">B.14</span> 14. Intra-Chain Parallelism with <code>reduce_sum</code></h2>
-<p><em>First introduced: <span class="quarto-unresolved-ref">?sec-categorization-exemplars</span> (Chapter 11, multilevel decay GCM)</em></p>
+<p><em>First introduced: <a href="11-CategorizationModelsExemplars.html" class="quarto-xref"><span>Chapter 12</span></a> (Chapter 11, multilevel decay GCM)</em></p>
 <p><code>reduce_sum</code> exploits <strong>conditional independence across subjects</strong>: given population parameters, subject <span class="math inline">\(j\)</span>’s trial loop shares no mutable state with subject <span class="math inline">\(k\)</span>’s loop. The subject dimension can therefore be distributed across CPU threads <strong>within a single chain</strong>, giving near-linear speedup up to the number of subjects.</p>
 <p><strong>Step 1 — Write a <code>partial_sum_lp</code> function in the <code>functions</code> block:</strong></p>
 <div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb25"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="kw">functions</span> {</span>
@@ -982,7 +989,7 @@ window.Quarto = {
 </section>
 <section id="sec-compound-speedups" class="level2" data-number="B.15">
 <h2 data-number="B.15" class="anchored" data-anchor-id="sec-compound-speedups"><span class="header-section-number">B.15</span> 15. Combining Techniques — Compound Speedups</h2>
-<p><em>Three-way timing benchmark: <span class="quarto-unresolved-ref">?sec-categorization-exemplars</span> (Chapter 11)</em></p>
+<p><em>Three-way timing benchmark: <a href="11-CategorizationModelsExemplars.html" class="quarto-xref"><span>Chapter 12</span></a> (Chapter 11)</em></p>
 <p>The techniques above stack multiplicatively on hierarchical models:</p>
 <table class="caption-top table">
 <colgroup>
@@ -1556,6 +1563,9 @@ window.Quarto = {
       </a>          
   </div>
   <div class="nav-page nav-page-next">
+      <a href="./AppC-Reparameterization.html" class="pagination-link" aria-label="Reparameterization Techniques">
+        <span class="nav-page-text"><span class="chapter-number">C</span>&nbsp; <span class="chapter-title">Reparameterization Techniques</span></span> <i class="bi bi-arrow-right-short"></i>
+      </a>
   </div>
 </nav>
 </div> <!-- /content -->

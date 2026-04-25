@@ -1,4 +1,4 @@
-# Bayesian Models of Cognition
+# Bayesian Models of Cognition {#sec-bayesian-models}
 
 ```{r ch10_setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -395,12 +395,18 @@ generate_agent_decisions <- function(weight_direct, weight_social,
 
 prepare_stan_data <- function(df) {
   list(
+    N       = nrow(df),
+    choice  = df$choice,
     N_total = nrow(df),
     y       = df$choice,
     blue1   = df$blue1,
     total1  = df$total1,
     blue2   = df$blue2,
     total2  = df$total2,
+    prior_rho_alpha   = 2.0,
+    prior_rho_beta    = 2.0,
+    prior_kappa_mu    = 0.5,
+    prior_kappa_sigma = 0.5,
     run_diagnostics = 1
   )
 }
@@ -3069,14 +3075,18 @@ ml_sim_data <- agent_params_ml |>
   })
 
 stan_data_ml <- list(
-  N_total   = nrow(ml_sim_data),
+  N          = nrow(ml_sim_data),
+  J          = n_agents,
+  agent_id   = ml_sim_data$agent_id,
+  choice     = ml_sim_data$choice,
+  N_total    = nrow(ml_sim_data),
   N_subjects = n_agents,
-  subj_id   = ml_sim_data$agent_id,
-  y         = ml_sim_data$choice,
-  blue1     = ml_sim_data$blue1,
-  total1    = ml_sim_data$total1,
-  blue2     = ml_sim_data$blue2,
-  total2    = ml_sim_data$total2,
+  subj_id    = ml_sim_data$agent_id,
+  y          = ml_sim_data$choice,
+  blue1      = ml_sim_data$blue1,
+  total1     = ml_sim_data$total1,
+  blue2      = ml_sim_data$blue2,
+  total2     = ml_sim_data$total2,
   
   prior_mu_p_mu             = 0,
   prior_mu_p_sigma          = 1.5,
@@ -4216,12 +4226,16 @@ generate_ml_data <- function(agent_rhos, agent_kappas, ev, n_reps = 2) {
   })
   list(
     N = nrow(all_data), J = J,
-    agent_id = all_data$agent_id,
-    choice   = all_data$choice,
-    blue1    = all_data$blue1,
-    total1   = all_data$total1,
-    blue2    = all_data$blue2,
-    total2   = all_data$total2
+    agent_id   = all_data$agent_id,
+    choice     = all_data$choice,
+    N_total    = nrow(all_data),
+    N_subjects = J,
+    subj_id    = all_data$agent_id,
+    y          = all_data$choice,
+    blue1      = all_data$blue1,
+    total1     = all_data$total1,
+    blue2      = all_data$blue2,
+    total2     = all_data$total2
   )
 }
 

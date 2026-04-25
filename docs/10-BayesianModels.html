@@ -262,6 +262,18 @@ window.Quarto = {
  <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">Sequential Extensions of the Bayesian Agent</span></span></a>
   </div>
 </li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./AppB-StanOptimization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">B</span>&nbsp; <span class="chapter-title">Stan Optimization Cheatsheet</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./AppC-Reparameterization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">C</span>&nbsp; <span class="chapter-title">Reparameterization Techniques</span></span></a>
+  </div>
+</li>
       </ul>
   </li>
     </ul>
@@ -416,7 +428,7 @@ window.Quarto = {
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Bayesian Models of Cognition</span></h1>
+<h1 class="title"><span id="sec-bayesian-models" class="quarto-section-identifier"><span class="chapter-number">11</span>&nbsp; <span class="chapter-title">Bayesian Models of Cognition</span></span></h1>
 </div>
 
 
@@ -786,14 +798,21 @@ window.Quarto = {
 <span id="cb9-53"><a href="#cb9-53" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-54"><a href="#cb9-54" aria-hidden="true" tabindex="-1"></a>prepare_stan_data <span class="ot">&lt;-</span> <span class="cf">function</span>(df) {</span>
 <span id="cb9-55"><a href="#cb9-55" aria-hidden="true" tabindex="-1"></a>  <span class="fu">list</span>(</span>
-<span id="cb9-56"><a href="#cb9-56" aria-hidden="true" tabindex="-1"></a>    <span class="at">N      =</span> <span class="fu">nrow</span>(df),</span>
-<span id="cb9-57"><a href="#cb9-57" aria-hidden="true" tabindex="-1"></a>    <span class="at">choice =</span> df<span class="sc">$</span>choice,</span>
-<span id="cb9-58"><a href="#cb9-58" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue1  =</span> df<span class="sc">$</span>blue1,</span>
-<span id="cb9-59"><a href="#cb9-59" aria-hidden="true" tabindex="-1"></a>    <span class="at">total1 =</span> df<span class="sc">$</span>total1,</span>
-<span id="cb9-60"><a href="#cb9-60" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue2  =</span> df<span class="sc">$</span>blue2,</span>
-<span id="cb9-61"><a href="#cb9-61" aria-hidden="true" tabindex="-1"></a>    <span class="at">total2 =</span> df<span class="sc">$</span>total2</span>
-<span id="cb9-62"><a href="#cb9-62" aria-hidden="true" tabindex="-1"></a>  )</span>
-<span id="cb9-63"><a href="#cb9-63" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb9-56"><a href="#cb9-56" aria-hidden="true" tabindex="-1"></a>    <span class="at">N       =</span> <span class="fu">nrow</span>(df),</span>
+<span id="cb9-57"><a href="#cb9-57" aria-hidden="true" tabindex="-1"></a>    <span class="at">choice  =</span> df<span class="sc">$</span>choice,</span>
+<span id="cb9-58"><a href="#cb9-58" aria-hidden="true" tabindex="-1"></a>    <span class="at">N_total =</span> <span class="fu">nrow</span>(df),</span>
+<span id="cb9-59"><a href="#cb9-59" aria-hidden="true" tabindex="-1"></a>    <span class="at">y       =</span> df<span class="sc">$</span>choice,</span>
+<span id="cb9-60"><a href="#cb9-60" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue1   =</span> df<span class="sc">$</span>blue1,</span>
+<span id="cb9-61"><a href="#cb9-61" aria-hidden="true" tabindex="-1"></a>    <span class="at">total1  =</span> df<span class="sc">$</span>total1,</span>
+<span id="cb9-62"><a href="#cb9-62" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue2   =</span> df<span class="sc">$</span>blue2,</span>
+<span id="cb9-63"><a href="#cb9-63" aria-hidden="true" tabindex="-1"></a>    <span class="at">total2  =</span> df<span class="sc">$</span>total2,</span>
+<span id="cb9-64"><a href="#cb9-64" aria-hidden="true" tabindex="-1"></a>    <span class="at">prior_rho_alpha   =</span> <span class="fl">2.0</span>,</span>
+<span id="cb9-65"><a href="#cb9-65" aria-hidden="true" tabindex="-1"></a>    <span class="at">prior_rho_beta    =</span> <span class="fl">2.0</span>,</span>
+<span id="cb9-66"><a href="#cb9-66" aria-hidden="true" tabindex="-1"></a>    <span class="at">prior_kappa_mu    =</span> <span class="fl">0.5</span>,</span>
+<span id="cb9-67"><a href="#cb9-67" aria-hidden="true" tabindex="-1"></a>    <span class="at">prior_kappa_sigma =</span> <span class="fl">0.5</span>,</span>
+<span id="cb9-68"><a href="#cb9-68" aria-hidden="true" tabindex="-1"></a>    <span class="at">run_diagnostics =</span> <span class="dv">1</span></span>
+<span id="cb9-69"><a href="#cb9-69" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb9-70"><a href="#cb9-70" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <section id="the-observation-model-a-separate-modelling-dimension" class="level3" data-number="11.6.1">
 <h3 data-number="11.6.1" class="anchored" data-anchor-id="the-observation-model-a-separate-modelling-dimension"><span class="header-section-number">11.6.1</span> The Observation Model: A Separate Modelling Dimension</h3>
@@ -1267,40 +1286,43 @@ y_i &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
 <span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="st">// No free parameters — evidence is counted at face value.</span></span>
 <span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="st">// Jeffreys prior pseudo-counts: alpha0 = beta0 = 0.5.</span></span>
 <span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;</span></span>
-<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt; choice;</span></span>
-<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue1;</span></span>
-<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total1;</span></span>
-<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue2;</span></span>
-<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total2;</span></span>
-<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood with fixed weights = 1</span></span>
-<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] alpha_post = 0.5 + to_vector(blue1) + to_vector(blue2);</span></span>
-<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] beta_post  = 0.5 + (to_vector(total1) - to_vector(blue1))</span></span>
-<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a><span class="st">                             + (to_vector(total2) - to_vector(blue2));</span></span>
-<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
-<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);</span></span>
-<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int posterior_pred;</span></span>
-<span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-27"><a href="#cb16-27" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb16-28"><a href="#cb16-28" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5 + blue1[i] + blue2[i];</span></span>
-<span id="cb16-29"><a href="#cb16-29" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);</span></span>
-<span id="cb16-30"><a href="#cb16-30" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-31"><a href="#cb16-31" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb16-32"><a href="#cb16-32" aria-hidden="true" tabindex="-1"></a><span class="st">    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
-<span id="cb16-33"><a href="#cb16-33" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb16-34"><a href="#cb16-34" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb16-35"><a href="#cb16-35" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb16-36"><a href="#cb16-36" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-37"><a href="#cb16-37" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(SimpleAgent_stan,</span>
-<span id="cb16-38"><a href="#cb16-38" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir      =</span> <span class="st">"stan/"</span>,</span>
-<span id="cb16-39"><a href="#cb16-39" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_simple_agent.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt; y;</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue1;</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total1;</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue2;</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total2;</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood with fixed weights = 1</span></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] alpha_post = 0.5 + to_vector(blue1) + to_vector(blue2);</span></span>
+<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] beta_post  = 0.5 + (to_vector(total1) - to_vector(blue1))</span></span>
+<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a><span class="st">                                   + (to_vector(total2) - to_vector(blue2));</span></span>
+<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
+<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);</span></span>
+<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb16-27"><a href="#cb16-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-28"><a href="#cb16-28" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb16-29"><a href="#cb16-29" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb16-30"><a href="#cb16-30" aria-hidden="true" tabindex="-1"></a><span class="st">      real alpha_post = 0.5 + blue1[i] + blue2[i];</span></span>
+<span id="cb16-31"><a href="#cb16-31" aria-hidden="true" tabindex="-1"></a><span class="st">      real beta_post  = 0.5 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);</span></span>
+<span id="cb16-32"><a href="#cb16-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-33"><a href="#cb16-33" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb16-34"><a href="#cb16-34" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
+<span id="cb16-35"><a href="#cb16-35" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb16-36"><a href="#cb16-36" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb16-37"><a href="#cb16-37" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb16-38"><a href="#cb16-38" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb16-39"><a href="#cb16-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-40"><a href="#cb16-40" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(SimpleAgent_stan,</span>
+<span id="cb16-41"><a href="#cb16-41" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir      =</span> <span class="st">"stan/"</span>,</span>
+<span id="cb16-42"><a href="#cb16-42" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_simple_agent.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_simple_agent.stan"</code></pre>
 </div>
@@ -1361,54 +1383,62 @@ y_i &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>WeightedAgentRaw_stan <span class="ot">&lt;-</span> <span class="st">"</span></span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="st">// Weighted Bayesian Agent (raw parameterisation).</span></span>
-<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="st">// w_d, w_s &gt; 0: independent weights on direct and social evidence.</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="st">// weight_direct, weight_social &gt; 0: independent weights on direct and social evidence.</span></span>
 <span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="st">// Jeffreys prior pseudo-counts (0.5) consistent with SBA.</span></span>
 <span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;</span></span>
-<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt; choice;</span></span>
-<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue1;</span></span>
-<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total1;</span></span>
-<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue2;</span></span>
-<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total2;</span></span>
-<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_direct;  // w_d</span></span>
-<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_social;  // w_s</span></span>
-<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="st">  // Priors: lognormal centered on 1 (evidence taken at face value)</span></span>
-<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lognormal_lpdf(weight_direct | 0, 0.5);</span></span>
-<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lognormal_lpdf(weight_social | 0, 0.5);</span></span>
-<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood</span></span>
-<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] alpha_post = 0.5 + weight_direct * to_vector(blue1)</span></span>
-<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a><span class="st">                             + weight_social * to_vector(blue2);</span></span>
-<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))</span></span>
-<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a><span class="st">                             + weight_social * (to_vector(total2) - to_vector(blue2));</span></span>
-<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
-<span id="cb19-30"><a href="#cb19-30" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);</span></span>
-<span id="cb19-31"><a href="#cb19-31" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb19-32"><a href="#cb19-32" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-33"><a href="#cb19-33" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb19-34"><a href="#cb19-34" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb19-35"><a href="#cb19-35" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int posterior_pred;</span></span>
-<span id="cb19-36"><a href="#cb19-36" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-37"><a href="#cb19-37" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb19-38"><a href="#cb19-38" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];</span></span>
-<span id="cb19-39"><a href="#cb19-39" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) </span></span>
-<span id="cb19-40"><a href="#cb19-40" aria-hidden="true" tabindex="-1"></a><span class="st">                         + weight_social * (total2[i] - blue2[i]);</span></span>
-<span id="cb19-41"><a href="#cb19-41" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-42"><a href="#cb19-42" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb19-43"><a href="#cb19-43" aria-hidden="true" tabindex="-1"></a><span class="st">    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
-<span id="cb19-44"><a href="#cb19-44" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb19-45"><a href="#cb19-45" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb19-46"><a href="#cb19-46" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb19-47"><a href="#cb19-47" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-48"><a href="#cb19-48" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(WeightedAgentRaw_stan,</span>
-<span id="cb19-49"><a href="#cb19-49" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir      =</span> <span class="st">"stan/"</span>,</span>
-<span id="cb19-50"><a href="#cb19-50" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_weighted_agent_raw.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt; y;</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue1;</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total1;</span></span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue2;</span></span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total2;</span></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_wd_mu;</span></span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_wd_sigma;</span></span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_ws_mu;</span></span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_ws_sigma;</span></span>
+<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
+<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_direct;  // w_d</span></span>
+<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_social;  // w_s</span></span>
+<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a><span class="st">  // Priors: lognormal centered on 1 (evidence taken at face value)</span></span>
+<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lognormal_lpdf(weight_direct | prior_wd_mu, prior_wd_sigma);</span></span>
+<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lognormal_lpdf(weight_social | prior_ws_mu, prior_ws_sigma);</span></span>
+<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-30"><a href="#cb19-30" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood</span></span>
+<span id="cb19-31"><a href="#cb19-31" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] alpha_post = 0.5 + weight_direct * to_vector(blue1)</span></span>
+<span id="cb19-32"><a href="#cb19-32" aria-hidden="true" tabindex="-1"></a><span class="st">                                   + weight_social * to_vector(blue2);</span></span>
+<span id="cb19-33"><a href="#cb19-33" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))</span></span>
+<span id="cb19-34"><a href="#cb19-34" aria-hidden="true" tabindex="-1"></a><span class="st">                                   + weight_social * (to_vector(total2) - to_vector(blue2));</span></span>
+<span id="cb19-35"><a href="#cb19-35" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
+<span id="cb19-36"><a href="#cb19-36" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);</span></span>
+<span id="cb19-37"><a href="#cb19-37" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb19-38"><a href="#cb19-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-39"><a href="#cb19-39" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb19-40"><a href="#cb19-40" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb19-41"><a href="#cb19-41" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb19-42"><a href="#cb19-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-43"><a href="#cb19-43" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb19-44"><a href="#cb19-44" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb19-45"><a href="#cb19-45" aria-hidden="true" tabindex="-1"></a><span class="st">      real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];</span></span>
+<span id="cb19-46"><a href="#cb19-46" aria-hidden="true" tabindex="-1"></a><span class="st">      real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) </span></span>
+<span id="cb19-47"><a href="#cb19-47" aria-hidden="true" tabindex="-1"></a><span class="st">                           + weight_social * (total2[i] - blue2[i]);</span></span>
+<span id="cb19-48"><a href="#cb19-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-49"><a href="#cb19-49" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb19-50"><a href="#cb19-50" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
+<span id="cb19-51"><a href="#cb19-51" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb19-52"><a href="#cb19-52" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb19-53"><a href="#cb19-53" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb19-54"><a href="#cb19-54" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb19-55"><a href="#cb19-55" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-56"><a href="#cb19-56" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(WeightedAgentRaw_stan,</span>
+<span id="cb19-57"><a href="#cb19-57" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir      =</span> <span class="st">"stan/"</span>,</span>
+<span id="cb19-58"><a href="#cb19-58" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_weighted_agent_raw.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_weighted_agent_raw.stan"</code></pre>
 </div>
@@ -1441,12 +1471,19 @@ y_i &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
 <span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate simulated data for each scenario</span></span>
 <span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a>stan_data_wba <span class="ot">&lt;-</span> <span class="fu">map</span>(true_wba, <span class="cf">function</span>(params) {</span>
 <span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a>  sim <span class="ot">&lt;-</span> <span class="fu">generate_agent_decisions</span>(</span>
-<span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a>    params<span class="sc">$</span>wd, params<span class="sc">$</span>ws, </span>
-<span id="cb22-12"><a href="#cb22-12" aria-hidden="true" tabindex="-1"></a>    evidence_combinations, </span>
+<span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a>    params<span class="sc">$</span>wd, params<span class="sc">$</span>ws,</span>
+<span id="cb22-12"><a href="#cb22-12" aria-hidden="true" tabindex="-1"></a>    evidence_combinations,</span>
 <span id="cb22-13"><a href="#cb22-13" aria-hidden="true" tabindex="-1"></a>    <span class="at">n_samples =</span> <span class="dv">5</span></span>
 <span id="cb22-14"><a href="#cb22-14" aria-hidden="true" tabindex="-1"></a>  ) <span class="sc">|&gt;</span> <span class="fu">mutate</span>(<span class="at">total1 =</span> <span class="dv">8</span>L, <span class="at">total2 =</span> <span class="dv">3</span>L)</span>
-<span id="cb22-15"><a href="#cb22-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">prepare_stan_data</span>(sim)</span>
-<span id="cb22-16"><a href="#cb22-16" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb22-15"><a href="#cb22-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-16"><a href="#cb22-16" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">prepare_stan_data</span>(sim)</span>
+<span id="cb22-17"><a href="#cb22-17" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Add priors for the weighted model</span></span>
+<span id="cb22-18"><a href="#cb22-18" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_wd_mu    <span class="ot">=</span> <span class="dv">0</span></span>
+<span id="cb22-19"><a href="#cb22-19" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_wd_sigma <span class="ot">=</span> <span class="fl">0.5</span></span>
+<span id="cb22-20"><a href="#cb22-20" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_ws_mu    <span class="ot">=</span> <span class="dv">0</span></span>
+<span id="cb22-21"><a href="#cb22-21" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_ws_sigma <span class="ot">=</span> <span class="fl">0.5</span></span>
+<span id="cb22-22"><a href="#cb22-22" aria-hidden="true" tabindex="-1"></a>  d</span>
+<span id="cb22-23"><a href="#cb22-23" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
 </section>
@@ -2041,56 +2078,55 @@ y_i &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
 <span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="st">// p in [0,1] allocates the unit evidence budget between direct and social.</span></span>
 <span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a><span class="st">// p = 0.5 approximates balanced weighting; p -&gt; 1 ignores social; p -&gt; 0 ignores direct.</span></span>
 <span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;</span></span>
-<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt; choice;</span></span>
-<span id="cb37-8"><a href="#cb37-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue1;</span></span>
-<span id="cb37-9"><a href="#cb37-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total1;</span></span>
-<span id="cb37-10"><a href="#cb37-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue2;</span></span>
-<span id="cb37-11"><a href="#cb37-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total2;</span></span>
-<span id="cb37-12"><a href="#cb37-12" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb37-13"><a href="#cb37-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-14"><a href="#cb37-14" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb37-15"><a href="#cb37-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; p;  // Allocation to direct evidence</span></span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;</span></span>
+<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt; y;</span></span>
+<span id="cb37-8"><a href="#cb37-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue1;</span></span>
+<span id="cb37-9"><a href="#cb37-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total1;</span></span>
+<span id="cb37-10"><a href="#cb37-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue2;</span></span>
+<span id="cb37-11"><a href="#cb37-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total2;</span></span>
+<span id="cb37-12"><a href="#cb37-12" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb37-13"><a href="#cb37-13" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_p_alpha;</span></span>
+<span id="cb37-14"><a href="#cb37-14" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_p_beta;</span></span>
+<span id="cb37-15"><a href="#cb37-15" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
 <span id="cb37-16"><a href="#cb37-16" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
 <span id="cb37-17"><a href="#cb37-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-18"><a href="#cb37-18" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb37-19"><a href="#cb37-19" aria-hidden="true" tabindex="-1"></a><span class="st">  // Beta(2, 2): weakly bell-shaped, symmetric about 0.5</span></span>
-<span id="cb37-20"><a href="#cb37-20" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_lpdf(p | 2, 2);</span></span>
+<span id="cb37-18"><a href="#cb37-18" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb37-19"><a href="#cb37-19" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; p;  // Allocation to direct evidence</span></span>
+<span id="cb37-20"><a href="#cb37-20" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
 <span id="cb37-21"><a href="#cb37-21" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-22"><a href="#cb37-22" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood</span></span>
-<span id="cb37-23"><a href="#cb37-23" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] alpha_post = 0.5 + p * to_vector(blue1) + (1.0 - p) * to_vector(blue2);</span></span>
-<span id="cb37-24"><a href="#cb37-24" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] beta_post  = 0.5 + p * (to_vector(total1) - to_vector(blue1))</span></span>
-<span id="cb37-25"><a href="#cb37-25" aria-hidden="true" tabindex="-1"></a><span class="st">                             + (1.0 - p) * (to_vector(total2) - to_vector(blue2));</span></span>
-<span id="cb37-26"><a href="#cb37-26" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
-<span id="cb37-27"><a href="#cb37-27" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);</span></span>
-<span id="cb37-28"><a href="#cb37-28" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb37-29"><a href="#cb37-29" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-30"><a href="#cb37-30" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb37-31"><a href="#cb37-31" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb37-32"><a href="#cb37-32" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int prior_pred;</span></span>
-<span id="cb37-33"><a href="#cb37-33" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int posterior_pred;</span></span>
-<span id="cb37-34"><a href="#cb37-34" aria-hidden="true" tabindex="-1"></a><span class="st">  real lprior = beta_lpdf(p | 2, 2);</span></span>
-<span id="cb37-35"><a href="#cb37-35" aria-hidden="true" tabindex="-1"></a><span class="st">  real p_prior = beta_rng(2, 2);</span></span>
-<span id="cb37-36"><a href="#cb37-36" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-37"><a href="#cb37-37" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb37-38"><a href="#cb37-38" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5 + p * blue1[i] + (1.0 - p) * blue2[i];</span></span>
-<span id="cb37-39"><a href="#cb37-39" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5 + p * (total1[i] - blue1[i])</span></span>
-<span id="cb37-40"><a href="#cb37-40" aria-hidden="true" tabindex="-1"></a><span class="st">                          + (1.0 - p) * (total2[i] - blue2[i]);</span></span>
-<span id="cb37-41"><a href="#cb37-41" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-42"><a href="#cb37-42" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb37-43"><a href="#cb37-43" aria-hidden="true" tabindex="-1"></a><span class="st">    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
+<span id="cb37-22"><a href="#cb37-22" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb37-23"><a href="#cb37-23" aria-hidden="true" tabindex="-1"></a><span class="st">  // prior</span></span>
+<span id="cb37-24"><a href="#cb37-24" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_lpdf(p | prior_p_alpha, prior_p_beta);</span></span>
+<span id="cb37-25"><a href="#cb37-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-26"><a href="#cb37-26" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood</span></span>
+<span id="cb37-27"><a href="#cb37-27" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] alpha_post = 0.5 + p * to_vector(blue1) + (1.0 - p) * to_vector(blue2);</span></span>
+<span id="cb37-28"><a href="#cb37-28" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] beta_post  = 0.5 + p * (to_vector(total1) - to_vector(blue1))</span></span>
+<span id="cb37-29"><a href="#cb37-29" aria-hidden="true" tabindex="-1"></a><span class="st">                                   + (1.0 - p) * (to_vector(total2) - to_vector(blue2));</span></span>
+<span id="cb37-30"><a href="#cb37-30" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
+<span id="cb37-31"><a href="#cb37-31" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);</span></span>
+<span id="cb37-32"><a href="#cb37-32" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb37-33"><a href="#cb37-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-34"><a href="#cb37-34" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb37-35"><a href="#cb37-35" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb37-36"><a href="#cb37-36" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb37-37"><a href="#cb37-37" aria-hidden="true" tabindex="-1"></a><span class="st">  real lprior = beta_lpdf(p | prior_p_alpha, prior_p_beta);</span></span>
+<span id="cb37-38"><a href="#cb37-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-39"><a href="#cb37-39" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb37-40"><a href="#cb37-40" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb37-41"><a href="#cb37-41" aria-hidden="true" tabindex="-1"></a><span class="st">      real alpha_post = 0.5 + p * blue1[i] + (1.0 - p) * blue2[i];</span></span>
+<span id="cb37-42"><a href="#cb37-42" aria-hidden="true" tabindex="-1"></a><span class="st">      real beta_post  = 0.5 + p * (total1[i] - blue1[i]) </span></span>
+<span id="cb37-43"><a href="#cb37-43" aria-hidden="true" tabindex="-1"></a><span class="st">                           + (1.0 - p) * (total2[i] - blue2[i]);</span></span>
 <span id="cb37-44"><a href="#cb37-44" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-45"><a href="#cb37-45" aria-hidden="true" tabindex="-1"></a><span class="st">    real ap = 0.5 + p_prior * blue1[i] + (1.0 - p_prior) * blue2[i];</span></span>
-<span id="cb37-46"><a href="#cb37-46" aria-hidden="true" tabindex="-1"></a><span class="st">    real bp = 0.5 + p_prior * (total1[i] - blue1[i])</span></span>
-<span id="cb37-47"><a href="#cb37-47" aria-hidden="true" tabindex="-1"></a><span class="st">                  + (1.0 - p_prior) * (total2[i] - blue2[i]);</span></span>
-<span id="cb37-48"><a href="#cb37-48" aria-hidden="true" tabindex="-1"></a><span class="st">    prior_pred[i] = beta_binomial_rng(1, ap, bp);</span></span>
-<span id="cb37-49"><a href="#cb37-49" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb37-50"><a href="#cb37-50" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb37-51"><a href="#cb37-51" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb37-52"><a href="#cb37-52" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb37-53"><a href="#cb37-53" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(ProportionalAgent_stan,</span>
-<span id="cb37-54"><a href="#cb37-54" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
-<span id="cb37-55"><a href="#cb37-55" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_proportional_agent.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb37-45"><a href="#cb37-45" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb37-46"><a href="#cb37-46" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
+<span id="cb37-47"><a href="#cb37-47" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb37-48"><a href="#cb37-48" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb37-49"><a href="#cb37-49" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb37-50"><a href="#cb37-50" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb37-51"><a href="#cb37-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-52"><a href="#cb37-52" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(ProportionalAgent_stan,</span>
+<span id="cb37-53"><a href="#cb37-53" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
+<span id="cb37-54"><a href="#cb37-54" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_proportional_agent.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_proportional_agent.stan"</code></pre>
 </div>
@@ -2160,69 +2196,67 @@ y_i &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a><span class="st">// rho in (0,1): relative weight of direct vs social evidence.</span></span>
 <span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a><span class="st">// kappa &gt; 0: total evidence scaling (w_d + w_s).</span></span>
 <span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;</span></span>
-<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt; choice;</span></span>
-<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue1;</span></span>
-<span id="cb40-9"><a href="#cb40-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total1;</span></span>
-<span id="cb40-10"><a href="#cb40-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue2;</span></span>
-<span id="cb40-11"><a href="#cb40-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total2;</span></span>
-<span id="cb40-12"><a href="#cb40-12" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb40-13"><a href="#cb40-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-14"><a href="#cb40-14" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb40-15"><a href="#cb40-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; rho;    // relative weight: w_d / (w_d + w_s)</span></span>
-<span id="cb40-16"><a href="#cb40-16" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt;          kappa;  // total weight: w_d + w_s</span></span>
-<span id="cb40-17"><a href="#cb40-17" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb40-18"><a href="#cb40-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-19"><a href="#cb40-19" aria-hidden="true" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
-<span id="cb40-20"><a href="#cb40-20" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_direct = rho * kappa;</span></span>
-<span id="cb40-21"><a href="#cb40-21" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_social = (1.0 - rho) * kappa;</span></span>
-<span id="cb40-22"><a href="#cb40-22" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb40-23"><a href="#cb40-23" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-24"><a href="#cb40-24" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb40-25"><a href="#cb40-25" aria-hidden="true" tabindex="-1"></a><span class="st">  // rho: weakly centred on equal weighting</span></span>
-<span id="cb40-26"><a href="#cb40-26" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_lpdf(rho | 2, 2);</span></span>
-<span id="cb40-27"><a href="#cb40-27" aria-hidden="true" tabindex="-1"></a><span class="st">  // kappa: lognormal centered on 2 (SBA equivalent)</span></span>
-<span id="cb40-28"><a href="#cb40-28" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lognormal_lpdf(kappa | log(2), 0.5);</span></span>
+<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;</span></span>
+<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt; y;</span></span>
+<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue1;</span></span>
+<span id="cb40-9"><a href="#cb40-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total1;</span></span>
+<span id="cb40-10"><a href="#cb40-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue2;</span></span>
+<span id="cb40-11"><a href="#cb40-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total2;</span></span>
+<span id="cb40-12"><a href="#cb40-12" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb40-13"><a href="#cb40-13" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_rho_alpha;</span></span>
+<span id="cb40-14"><a href="#cb40-14" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_rho_beta;</span></span>
+<span id="cb40-15"><a href="#cb40-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_kappa_mu;</span></span>
+<span id="cb40-16"><a href="#cb40-16" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_kappa_sigma;</span></span>
+<span id="cb40-17"><a href="#cb40-17" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
+<span id="cb40-18"><a href="#cb40-18" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb40-19"><a href="#cb40-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-20"><a href="#cb40-20" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb40-21"><a href="#cb40-21" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0, upper=1&gt; rho;    // relative weight: w_d / (w_d + w_s)</span></span>
+<span id="cb40-22"><a href="#cb40-22" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt;          kappa;  // total weight: w_d + w_s</span></span>
+<span id="cb40-23"><a href="#cb40-23" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb40-24"><a href="#cb40-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-25"><a href="#cb40-25" aria-hidden="true" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
+<span id="cb40-26"><a href="#cb40-26" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_direct = rho * kappa;</span></span>
+<span id="cb40-27"><a href="#cb40-27" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; weight_social = (1.0 - rho) * kappa;</span></span>
+<span id="cb40-28"><a href="#cb40-28" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
 <span id="cb40-29"><a href="#cb40-29" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-30"><a href="#cb40-30" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood</span></span>
-<span id="cb40-31"><a href="#cb40-31" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] alpha_post = 0.5 + weight_direct * to_vector(blue1)</span></span>
-<span id="cb40-32"><a href="#cb40-32" aria-hidden="true" tabindex="-1"></a><span class="st">                             + weight_social * to_vector(blue2);</span></span>
-<span id="cb40-33"><a href="#cb40-33" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))</span></span>
-<span id="cb40-34"><a href="#cb40-34" aria-hidden="true" tabindex="-1"></a><span class="st">                             + weight_social * (to_vector(total2) - to_vector(blue2));</span></span>
-<span id="cb40-35"><a href="#cb40-35" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
-<span id="cb40-36"><a href="#cb40-36" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);</span></span>
-<span id="cb40-37"><a href="#cb40-37" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb40-38"><a href="#cb40-38" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-39"><a href="#cb40-39" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb40-40"><a href="#cb40-40" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb40-41"><a href="#cb40-41" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int prior_pred;</span></span>
-<span id="cb40-42"><a href="#cb40-42" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int posterior_pred;</span></span>
-<span id="cb40-43"><a href="#cb40-43" aria-hidden="true" tabindex="-1"></a><span class="st">  real lprior = beta_lpdf(rho | 2, 2) + lognormal_lpdf(kappa | log(2), 0.5);</span></span>
+<span id="cb40-30"><a href="#cb40-30" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb40-31"><a href="#cb40-31" aria-hidden="true" tabindex="-1"></a><span class="st">  // rho: weakly centred on equal weighting</span></span>
+<span id="cb40-32"><a href="#cb40-32" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_lpdf(rho | prior_rho_alpha, prior_rho_beta);</span></span>
+<span id="cb40-33"><a href="#cb40-33" aria-hidden="true" tabindex="-1"></a><span class="st">  // kappa: lognormal centered on 2 (SBA equivalent)</span></span>
+<span id="cb40-34"><a href="#cb40-34" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lognormal_lpdf(kappa | prior_kappa_mu, prior_kappa_sigma);</span></span>
+<span id="cb40-35"><a href="#cb40-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-36"><a href="#cb40-36" aria-hidden="true" tabindex="-1"></a><span class="st">  // Vectorized likelihood</span></span>
+<span id="cb40-37"><a href="#cb40-37" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] alpha_post = 0.5 + weight_direct * to_vector(blue1)</span></span>
+<span id="cb40-38"><a href="#cb40-38" aria-hidden="true" tabindex="-1"></a><span class="st">                                   + weight_social * to_vector(blue2);</span></span>
+<span id="cb40-39"><a href="#cb40-39" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] beta_post  = 0.5 + weight_direct * (to_vector(total1) - to_vector(blue1))</span></span>
+<span id="cb40-40"><a href="#cb40-40" aria-hidden="true" tabindex="-1"></a><span class="st">                                   + weight_social * (to_vector(total2) - to_vector(blue2));</span></span>
+<span id="cb40-41"><a href="#cb40-41" aria-hidden="true" tabindex="-1"></a><span class="st">                             </span></span>
+<span id="cb40-42"><a href="#cb40-42" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);</span></span>
+<span id="cb40-43"><a href="#cb40-43" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
 <span id="cb40-44"><a href="#cb40-44" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-45"><a href="#cb40-45" aria-hidden="true" tabindex="-1"></a><span class="st">  real rho_prior   = beta_rng(2, 2);</span></span>
-<span id="cb40-46"><a href="#cb40-46" aria-hidden="true" tabindex="-1"></a><span class="st">  real kappa_prior = lognormal_rng(log(2), 0.5);</span></span>
-<span id="cb40-47"><a href="#cb40-47" aria-hidden="true" tabindex="-1"></a><span class="st">  real wd_prior    = rho_prior * kappa_prior;</span></span>
-<span id="cb40-48"><a href="#cb40-48" aria-hidden="true" tabindex="-1"></a><span class="st">  real ws_prior    = (1.0 - rho_prior) * kappa_prior;</span></span>
-<span id="cb40-49"><a href="#cb40-49" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-50"><a href="#cb40-50" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb40-51"><a href="#cb40-51" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];</span></span>
-<span id="cb40-52"><a href="#cb40-52" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) </span></span>
-<span id="cb40-53"><a href="#cb40-53" aria-hidden="true" tabindex="-1"></a><span class="st">                         + weight_social * (total2[i] - blue2[i]);</span></span>
-<span id="cb40-54"><a href="#cb40-54" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-55"><a href="#cb40-55" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i]        = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb40-56"><a href="#cb40-56" aria-hidden="true" tabindex="-1"></a><span class="st">    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
-<span id="cb40-57"><a href="#cb40-57" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-58"><a href="#cb40-58" aria-hidden="true" tabindex="-1"></a><span class="st">    real ap = 0.5 + wd_prior * blue1[i] + ws_prior * blue2[i];</span></span>
-<span id="cb40-59"><a href="#cb40-59" aria-hidden="true" tabindex="-1"></a><span class="st">    real bp = 0.5 + wd_prior * (total1[i] - blue1[i]) </span></span>
-<span id="cb40-60"><a href="#cb40-60" aria-hidden="true" tabindex="-1"></a><span class="st">                  + ws_prior * (total2[i] - blue2[i]);</span></span>
-<span id="cb40-61"><a href="#cb40-61" aria-hidden="true" tabindex="-1"></a><span class="st">    prior_pred[i] = beta_binomial_rng(1, ap, bp);</span></span>
-<span id="cb40-62"><a href="#cb40-62" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb40-63"><a href="#cb40-63" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb40-64"><a href="#cb40-64" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb40-65"><a href="#cb40-65" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-66"><a href="#cb40-66" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(WeightedAgent_stan,</span>
-<span id="cb40-67"><a href="#cb40-67" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
-<span id="cb40-68"><a href="#cb40-68" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_weighted_agent.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb40-45"><a href="#cb40-45" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb40-46"><a href="#cb40-46" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb40-47"><a href="#cb40-47" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb40-48"><a href="#cb40-48" aria-hidden="true" tabindex="-1"></a><span class="st">  real lprior = beta_lpdf(rho | prior_rho_alpha, prior_rho_beta) + </span></span>
+<span id="cb40-49"><a href="#cb40-49" aria-hidden="true" tabindex="-1"></a><span class="st">                lognormal_lpdf(kappa | prior_kappa_mu, prior_kappa_sigma);</span></span>
+<span id="cb40-50"><a href="#cb40-50" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-51"><a href="#cb40-51" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb40-52"><a href="#cb40-52" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb40-53"><a href="#cb40-53" aria-hidden="true" tabindex="-1"></a><span class="st">      real alpha_post = 0.5 + weight_direct * blue1[i] + weight_social * blue2[i];</span></span>
+<span id="cb40-54"><a href="#cb40-54" aria-hidden="true" tabindex="-1"></a><span class="st">      real beta_post  = 0.5 + weight_direct * (total1[i] - blue1[i]) </span></span>
+<span id="cb40-55"><a href="#cb40-55" aria-hidden="true" tabindex="-1"></a><span class="st">                           + weight_social * (total2[i] - blue2[i]);</span></span>
+<span id="cb40-56"><a href="#cb40-56" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-57"><a href="#cb40-57" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb40-58"><a href="#cb40-58" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
+<span id="cb40-59"><a href="#cb40-59" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb40-60"><a href="#cb40-60" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb40-61"><a href="#cb40-61" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb40-62"><a href="#cb40-62" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb40-63"><a href="#cb40-63" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-64"><a href="#cb40-64" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(WeightedAgent_stan,</span>
+<span id="cb40-65"><a href="#cb40-65" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
+<span id="cb40-66"><a href="#cb40-66" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_weighted_agent.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_weighted_agent.stan"</code></pre>
 </div>
@@ -2250,11 +2284,16 @@ y_i &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
 <span id="cb43-9"><a href="#cb43-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">Socially_Influenced =</span> <span class="fl">0.2</span></span>
 <span id="cb43-10"><a href="#cb43-10" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb43-11"><a href="#cb43-11" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb43-12"><a href="#cb43-12" aria-hidden="true" tabindex="-1"></a>stan_data_pba <span class="ot">&lt;-</span> <span class="fu">map</span>(true_pba, <span class="cf">function</span>(p) {</span>
-<span id="cb43-13"><a href="#cb43-13" aria-hidden="true" tabindex="-1"></a>  sim <span class="ot">&lt;-</span> <span class="fu">generate_agent_decisions</span>(p, <span class="dv">1</span> <span class="sc">-</span> p, evidence_combinations, <span class="at">n_samples =</span> <span class="dv">5</span>) <span class="sc">|&gt;</span></span>
-<span id="cb43-14"><a href="#cb43-14" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">total1 =</span> <span class="dv">8</span>L, <span class="at">total2 =</span> <span class="dv">3</span>L)</span>
-<span id="cb43-15"><a href="#cb43-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">prepare_stan_data</span>(sim)</span>
-<span id="cb43-16"><a href="#cb43-16" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb43-12"><a href="#cb43-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate simulated data for each scenario</span></span>
+<span id="cb43-13"><a href="#cb43-13" aria-hidden="true" tabindex="-1"></a>stan_data_pba <span class="ot">&lt;-</span> <span class="fu">map</span>(true_pba, <span class="cf">function</span>(p) {</span>
+<span id="cb43-14"><a href="#cb43-14" aria-hidden="true" tabindex="-1"></a>  sim <span class="ot">&lt;-</span> <span class="fu">generate_agent_decisions</span>(p, <span class="dv">1</span> <span class="sc">-</span> p, evidence_combinations, <span class="at">n_samples =</span> <span class="dv">5</span>) <span class="sc">|&gt;</span></span>
+<span id="cb43-15"><a href="#cb43-15" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">total1 =</span> <span class="dv">8</span>L, <span class="at">total2 =</span> <span class="dv">3</span>L)</span>
+<span id="cb43-16"><a href="#cb43-16" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb43-17"><a href="#cb43-17" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">prepare_stan_data</span>(sim)</span>
+<span id="cb43-18"><a href="#cb43-18" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_p_alpha <span class="ot">=</span> <span class="dv">2</span></span>
+<span id="cb43-19"><a href="#cb43-19" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_p_beta  <span class="ot">=</span> <span class="dv">2</span></span>
+<span id="cb43-20"><a href="#cb43-20" aria-hidden="true" tabindex="-1"></a>  d</span>
+<span id="cb43-21"><a href="#cb43-21" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
 <section id="prepare-wba-reparameterised-data" class="level3" data-number="11.12.2">
@@ -2266,12 +2305,19 @@ y_i &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,i}, \beta_{post,i})
 <span id="cb44-4"><a href="#cb44-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">Socially_Influenced =</span> <span class="fu">list</span>(<span class="at">rho =</span> <span class="fl">0.20</span>, <span class="at">kappa =</span> <span class="fl">2.5</span>, <span class="at">wd =</span> <span class="fl">0.5</span>, <span class="at">ws =</span> <span class="fl">2.0</span>)</span>
 <span id="cb44-5"><a href="#cb44-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb44-6"><a href="#cb44-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb44-7"><a href="#cb44-7" aria-hidden="true" tabindex="-1"></a>stan_data_wba_reparam <span class="ot">&lt;-</span> <span class="fu">map</span>(true_wba_reparam, <span class="cf">function</span>(params) {</span>
-<span id="cb44-8"><a href="#cb44-8" aria-hidden="true" tabindex="-1"></a>  sim <span class="ot">&lt;-</span> <span class="fu">generate_agent_decisions</span>(params<span class="sc">$</span>wd, params<span class="sc">$</span>ws, </span>
-<span id="cb44-9"><a href="#cb44-9" aria-hidden="true" tabindex="-1"></a>                                  evidence_combinations, <span class="at">n_samples =</span> <span class="dv">5</span>) <span class="sc">|&gt;</span></span>
-<span id="cb44-10"><a href="#cb44-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">total1 =</span> <span class="dv">8</span>L, <span class="at">total2 =</span> <span class="dv">3</span>L)</span>
-<span id="cb44-11"><a href="#cb44-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">prepare_stan_data</span>(sim)</span>
-<span id="cb44-12"><a href="#cb44-12" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb44-7"><a href="#cb44-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Generate simulated data for each scenario</span></span>
+<span id="cb44-8"><a href="#cb44-8" aria-hidden="true" tabindex="-1"></a>stan_data_wba_reparam <span class="ot">&lt;-</span> <span class="fu">map</span>(true_wba_reparam, <span class="cf">function</span>(params) {</span>
+<span id="cb44-9"><a href="#cb44-9" aria-hidden="true" tabindex="-1"></a>  sim <span class="ot">&lt;-</span> <span class="fu">generate_agent_decisions</span>(params<span class="sc">$</span>wd, params<span class="sc">$</span>ws,</span>
+<span id="cb44-10"><a href="#cb44-10" aria-hidden="true" tabindex="-1"></a>                                  evidence_combinations, <span class="at">n_samples =</span> <span class="dv">5</span>) <span class="sc">|&gt;</span></span>
+<span id="cb44-11"><a href="#cb44-11" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mutate</span>(<span class="at">total1 =</span> <span class="dv">8</span>L, <span class="at">total2 =</span> <span class="dv">3</span>L)</span>
+<span id="cb44-12"><a href="#cb44-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb44-13"><a href="#cb44-13" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">prepare_stan_data</span>(sim)</span>
+<span id="cb44-14"><a href="#cb44-14" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_rho_alpha     <span class="ot">=</span> <span class="dv">2</span></span>
+<span id="cb44-15"><a href="#cb44-15" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_rho_beta      <span class="ot">=</span> <span class="dv">2</span></span>
+<span id="cb44-16"><a href="#cb44-16" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_kappa_mu      <span class="ot">=</span> <span class="fu">log</span>(<span class="dv">2</span>)</span>
+<span id="cb44-17"><a href="#cb44-17" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>prior_kappa_sigma   <span class="ot">=</span> <span class="fl">0.5</span></span>
+<span id="cb44-18"><a href="#cb44-18" aria-hidden="true" tabindex="-1"></a>  d</span>
+<span id="cb44-19"><a href="#cb44-19" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
 <section id="fit-all-models" class="level3" data-number="11.12.3">
@@ -3696,18 +3742,36 @@ WBA 0.369 </code></pre>
 <span id="cb88-48"><a href="#cb88-48" aria-hidden="true" tabindex="-1"></a>  })</span>
 <span id="cb88-49"><a href="#cb88-49" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb88-50"><a href="#cb88-50" aria-hidden="true" tabindex="-1"></a>stan_data_ml <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
-<span id="cb88-51"><a href="#cb88-51" aria-hidden="true" tabindex="-1"></a>  <span class="at">N        =</span> <span class="fu">nrow</span>(ml_sim_data),</span>
-<span id="cb88-52"><a href="#cb88-52" aria-hidden="true" tabindex="-1"></a>  <span class="at">J        =</span> n_agents,</span>
-<span id="cb88-53"><a href="#cb88-53" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_id =</span> ml_sim_data<span class="sc">$</span>agent_id,</span>
-<span id="cb88-54"><a href="#cb88-54" aria-hidden="true" tabindex="-1"></a>  <span class="at">choice   =</span> ml_sim_data<span class="sc">$</span>choice,</span>
-<span id="cb88-55"><a href="#cb88-55" aria-hidden="true" tabindex="-1"></a>  <span class="at">blue1    =</span> ml_sim_data<span class="sc">$</span>blue1,</span>
-<span id="cb88-56"><a href="#cb88-56" aria-hidden="true" tabindex="-1"></a>  <span class="at">total1   =</span> ml_sim_data<span class="sc">$</span>total1,</span>
-<span id="cb88-57"><a href="#cb88-57" aria-hidden="true" tabindex="-1"></a>  <span class="at">blue2    =</span> ml_sim_data<span class="sc">$</span>blue2,</span>
-<span id="cb88-58"><a href="#cb88-58" aria-hidden="true" tabindex="-1"></a>  <span class="at">total2   =</span> ml_sim_data<span class="sc">$</span>total2</span>
-<span id="cb88-59"><a href="#cb88-59" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb88-60"><a href="#cb88-60" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb88-61"><a href="#cb88-61" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Agents: %d | Trials per agent: %d | Total observations: %d</span><span class="sc">\n</span><span class="st">"</span>,</span>
-<span id="cb88-62"><a href="#cb88-62" aria-hidden="true" tabindex="-1"></a>            n_agents, <span class="fu">nrow</span>(evidence_combinations) <span class="sc">*</span> n_trials_per_comb, stan_data_ml<span class="sc">$</span>N))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb88-51"><a href="#cb88-51" aria-hidden="true" tabindex="-1"></a>  <span class="at">N          =</span> <span class="fu">nrow</span>(ml_sim_data),</span>
+<span id="cb88-52"><a href="#cb88-52" aria-hidden="true" tabindex="-1"></a>  <span class="at">J          =</span> n_agents,</span>
+<span id="cb88-53"><a href="#cb88-53" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_id   =</span> ml_sim_data<span class="sc">$</span>agent_id,</span>
+<span id="cb88-54"><a href="#cb88-54" aria-hidden="true" tabindex="-1"></a>  <span class="at">choice     =</span> ml_sim_data<span class="sc">$</span>choice,</span>
+<span id="cb88-55"><a href="#cb88-55" aria-hidden="true" tabindex="-1"></a>  <span class="at">N_total    =</span> <span class="fu">nrow</span>(ml_sim_data),</span>
+<span id="cb88-56"><a href="#cb88-56" aria-hidden="true" tabindex="-1"></a>  <span class="at">N_subjects =</span> n_agents,</span>
+<span id="cb88-57"><a href="#cb88-57" aria-hidden="true" tabindex="-1"></a>  <span class="at">subj_id    =</span> ml_sim_data<span class="sc">$</span>agent_id,</span>
+<span id="cb88-58"><a href="#cb88-58" aria-hidden="true" tabindex="-1"></a>  <span class="at">y          =</span> ml_sim_data<span class="sc">$</span>choice,</span>
+<span id="cb88-59"><a href="#cb88-59" aria-hidden="true" tabindex="-1"></a>  <span class="at">blue1      =</span> ml_sim_data<span class="sc">$</span>blue1,</span>
+<span id="cb88-60"><a href="#cb88-60" aria-hidden="true" tabindex="-1"></a>  <span class="at">total1     =</span> ml_sim_data<span class="sc">$</span>total1,</span>
+<span id="cb88-61"><a href="#cb88-61" aria-hidden="true" tabindex="-1"></a>  <span class="at">blue2      =</span> ml_sim_data<span class="sc">$</span>blue2,</span>
+<span id="cb88-62"><a href="#cb88-62" aria-hidden="true" tabindex="-1"></a>  <span class="at">total2     =</span> ml_sim_data<span class="sc">$</span>total2,</span>
+<span id="cb88-63"><a href="#cb88-63" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb88-64"><a href="#cb88-64" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_p_mu             =</span> <span class="dv">0</span>,</span>
+<span id="cb88-65"><a href="#cb88-65" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_p_sigma          =</span> <span class="fl">1.5</span>,</span>
+<span id="cb88-66"><a href="#cb88-66" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_sigma_p_lambda      =</span> <span class="dv">1</span>,</span>
+<span id="cb88-67"><a href="#cb88-67" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_logit_p_mu       =</span> <span class="dv">0</span>,</span>
+<span id="cb88-68"><a href="#cb88-68" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_logit_p_sigma    =</span> <span class="fl">1.5</span>,</span>
+<span id="cb88-69"><a href="#cb88-69" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_sigma_logit_p_lambda =</span> <span class="dv">2</span>,</span>
+<span id="cb88-70"><a href="#cb88-70" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_logit_rho_mu     =</span> <span class="dv">0</span>,</span>
+<span id="cb88-71"><a href="#cb88-71" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_logit_rho_sigma  =</span> <span class="fl">1.5</span>,</span>
+<span id="cb88-72"><a href="#cb88-72" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_log_kappa_mu     =</span> <span class="fu">log</span>(<span class="dv">2</span>),</span>
+<span id="cb88-73"><a href="#cb88-73" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_mu_log_kappa_sigma  =</span> <span class="fl">0.5</span>,</span>
+<span id="cb88-74"><a href="#cb88-74" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_sigma_lambda        =</span> <span class="dv">2</span>,</span>
+<span id="cb88-75"><a href="#cb88-75" aria-hidden="true" tabindex="-1"></a>  <span class="at">prior_Omega_shape         =</span> <span class="dv">2</span>,</span>
+<span id="cb88-76"><a href="#cb88-76" aria-hidden="true" tabindex="-1"></a>  <span class="at">run_diagnostics           =</span> <span class="dv">1</span></span>
+<span id="cb88-77"><a href="#cb88-77" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb88-78"><a href="#cb88-78" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb88-79"><a href="#cb88-79" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">"Agents: %d | Trials per agent: %d | Total observations: %d</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb88-80"><a href="#cb88-80" aria-hidden="true" tabindex="-1"></a>            n_agents, <span class="fu">nrow</span>(evidence_combinations) <span class="sc">*</span> n_trials_per_comb, stan_data_ml<span class="sc">$</span>N_total))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Agents: 20 | Trials per agent: 72 | Total observations: 1440</code></pre>
 </div>
@@ -3796,41 +3860,47 @@ y_{ij} &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,ij}, \beta_{post,ij})
 <span id="cb92-2"><a href="#cb92-2" aria-hidden="true" tabindex="-1"></a><span class="st">// Multilevel Simple Bayesian Agent</span></span>
 <span id="cb92-3"><a href="#cb92-3" aria-hidden="true" tabindex="-1"></a><span class="st">// Zero free parameters per agent. Strict integration applied uniformly.</span></span>
 <span id="cb92-4"><a href="#cb92-4" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb92-5"><a href="#cb92-5" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;</span></span>
-<span id="cb92-6"><a href="#cb92-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; J;</span></span>
-<span id="cb92-7"><a href="#cb92-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=1, upper=J&gt; agent_id;</span></span>
-<span id="cb92-8"><a href="#cb92-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt;  choice;</span></span>
-<span id="cb92-9"><a href="#cb92-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            blue1;</span></span>
-<span id="cb92-10"><a href="#cb92-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            total1;</span></span>
-<span id="cb92-11"><a href="#cb92-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            blue2;</span></span>
-<span id="cb92-12"><a href="#cb92-12" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            total2;</span></span>
-<span id="cb92-13"><a href="#cb92-13" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb92-14"><a href="#cb92-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb92-15"><a href="#cb92-15" aria-hidden="true" tabindex="-1"></a><span class="st">transformed data {</span></span>
-<span id="cb92-16"><a href="#cb92-16" aria-hidden="true" tabindex="-1"></a><span class="st">  real alpha0 = 0.5;</span></span>
-<span id="cb92-17"><a href="#cb92-17" aria-hidden="true" tabindex="-1"></a><span class="st">  real beta0  = 0.5;</span></span>
-<span id="cb92-18"><a href="#cb92-18" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb92-19"><a href="#cb92-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb92-20"><a href="#cb92-20" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb92-21"><a href="#cb92-21" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] alpha_post = alpha0 + to_vector(blue1) + to_vector(blue2);</span></span>
-<span id="cb92-22"><a href="#cb92-22" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] beta_post  = beta0  + (to_vector(total1) - to_vector(blue1)) +</span></span>
-<span id="cb92-23"><a href="#cb92-23" aria-hidden="true" tabindex="-1"></a><span class="st">                                  (to_vector(total2) - to_vector(blue2));</span></span>
-<span id="cb92-24"><a href="#cb92-24" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(choice | 1, alpha_post, beta_post);</span></span>
-<span id="cb92-25"><a href="#cb92-25" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb92-26"><a href="#cb92-26" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb92-27"><a href="#cb92-27" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb92-28"><a href="#cb92-28" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb92-29"><a href="#cb92-29" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb92-30"><a href="#cb92-30" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = alpha0 + blue1[i] + blue2[i];</span></span>
-<span id="cb92-31"><a href="#cb92-31" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = beta0 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);</span></span>
-<span id="cb92-32"><a href="#cb92-32" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb92-33"><a href="#cb92-33" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb92-34"><a href="#cb92-34" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb92-35"><a href="#cb92-35" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb92-36"><a href="#cb92-36" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb92-37"><a href="#cb92-37" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(MultilevelSBA_stan,</span>
-<span id="cb92-38"><a href="#cb92-38" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
-<span id="cb92-39"><a href="#cb92-39" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_multilevel_sba.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb92-5"><a href="#cb92-5" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;</span></span>
+<span id="cb92-6"><a href="#cb92-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_subjects;</span></span>
+<span id="cb92-7"><a href="#cb92-7" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=1, upper=N_subjects&gt; subj_id;</span></span>
+<span id="cb92-8"><a href="#cb92-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt;  y;</span></span>
+<span id="cb92-9"><a href="#cb92-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            blue1;</span></span>
+<span id="cb92-10"><a href="#cb92-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            total1;</span></span>
+<span id="cb92-11"><a href="#cb92-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            blue2;</span></span>
+<span id="cb92-12"><a href="#cb92-12" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            total2;</span></span>
+<span id="cb92-13"><a href="#cb92-13" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
+<span id="cb92-14"><a href="#cb92-14" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb92-15"><a href="#cb92-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb92-16"><a href="#cb92-16" aria-hidden="true" tabindex="-1"></a><span class="st">transformed data {</span></span>
+<span id="cb92-17"><a href="#cb92-17" aria-hidden="true" tabindex="-1"></a><span class="st">  real alpha0 = 0.5;</span></span>
+<span id="cb92-18"><a href="#cb92-18" aria-hidden="true" tabindex="-1"></a><span class="st">  real beta0  = 0.5;</span></span>
+<span id="cb92-19"><a href="#cb92-19" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb92-20"><a href="#cb92-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb92-21"><a href="#cb92-21" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb92-22"><a href="#cb92-22" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] alpha_post = alpha0 + to_vector(blue1) + to_vector(blue2);</span></span>
+<span id="cb92-23"><a href="#cb92-23" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] beta_post  = beta0  + (to_vector(total1) - to_vector(blue1)) +</span></span>
+<span id="cb92-24"><a href="#cb92-24" aria-hidden="true" tabindex="-1"></a><span class="st">                                        (to_vector(total2) - to_vector(blue2));</span></span>
+<span id="cb92-25"><a href="#cb92-25" aria-hidden="true" tabindex="-1"></a><span class="st">  target += beta_binomial_lpmf(y | 1, alpha_post, beta_post);</span></span>
+<span id="cb92-26"><a href="#cb92-26" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb92-27"><a href="#cb92-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb92-28"><a href="#cb92-28" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb92-29"><a href="#cb92-29" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb92-30"><a href="#cb92-30" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb92-31"><a href="#cb92-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb92-32"><a href="#cb92-32" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb92-33"><a href="#cb92-33" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb92-34"><a href="#cb92-34" aria-hidden="true" tabindex="-1"></a><span class="st">      real alpha_post = alpha0 + blue1[i] + blue2[i];</span></span>
+<span id="cb92-35"><a href="#cb92-35" aria-hidden="true" tabindex="-1"></a><span class="st">      real beta_post  = beta0 + (total1[i] - blue1[i]) + (total2[i] - blue2[i]);</span></span>
+<span id="cb92-36"><a href="#cb92-36" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb92-37"><a href="#cb92-37" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
+<span id="cb92-38"><a href="#cb92-38" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb92-39"><a href="#cb92-39" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb92-40"><a href="#cb92-40" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb92-41"><a href="#cb92-41" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb92-42"><a href="#cb92-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb92-43"><a href="#cb92-43" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(MultilevelSBA_stan,</span>
+<span id="cb92-44"><a href="#cb92-44" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
+<span id="cb92-45"><a href="#cb92-45" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_multilevel_sba.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_multilevel_sba.stan"</code></pre>
 </div>
@@ -3846,59 +3916,68 @@ y_{ij} &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,ij}, \beta_{post,ij})
 <span id="cb95-3"><a href="#cb95-3" aria-hidden="true" tabindex="-1"></a><span class="st">// Population distribution on logit(p).</span></span>
 <span id="cb95-4"><a href="#cb95-4" aria-hidden="true" tabindex="-1"></a><span class="st">// Non-centred parameterisation for individual p_j.</span></span>
 <span id="cb95-5"><a href="#cb95-5" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb95-6"><a href="#cb95-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;</span></span>
-<span id="cb95-7"><a href="#cb95-7" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; J;</span></span>
-<span id="cb95-8"><a href="#cb95-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=1, upper=J&gt; agent_id;</span></span>
-<span id="cb95-9"><a href="#cb95-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt;  choice;</span></span>
-<span id="cb95-10"><a href="#cb95-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            blue1;</span></span>
-<span id="cb95-11"><a href="#cb95-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            total1;</span></span>
-<span id="cb95-12"><a href="#cb95-12" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            blue2;</span></span>
-<span id="cb95-13"><a href="#cb95-13" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            total2;</span></span>
-<span id="cb95-14"><a href="#cb95-14" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb95-15"><a href="#cb95-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-16"><a href="#cb95-16" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb95-17"><a href="#cb95-17" aria-hidden="true" tabindex="-1"></a><span class="st">  real mu_logit_p;             // population mean on logit scale</span></span>
-<span id="cb95-18"><a href="#cb95-18" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; sigma_logit_p; // population SD on logit scale</span></span>
-<span id="cb95-19"><a href="#cb95-19" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[J] z_p;               // NCP deviates</span></span>
-<span id="cb95-20"><a href="#cb95-20" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb95-21"><a href="#cb95-21" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-22"><a href="#cb95-22" aria-hidden="true" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
-<span id="cb95-23"><a href="#cb95-23" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0, upper=1&gt;[J] p;</span></span>
-<span id="cb95-24"><a href="#cb95-24" aria-hidden="true" tabindex="-1"></a><span class="st">  for (j in 1:J)</span></span>
-<span id="cb95-25"><a href="#cb95-25" aria-hidden="true" tabindex="-1"></a><span class="st">    p[j] = inv_logit(mu_logit_p + sigma_logit_p * z_p[j]);</span></span>
-<span id="cb95-26"><a href="#cb95-26" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb95-27"><a href="#cb95-27" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-28"><a href="#cb95-28" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb95-29"><a href="#cb95-29" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(mu_logit_p    | 0, 1.5);</span></span>
-<span id="cb95-30"><a href="#cb95-30" aria-hidden="true" tabindex="-1"></a><span class="st">  target += exponential_lpdf(sigma_logit_p | 2);</span></span>
-<span id="cb95-31"><a href="#cb95-31" aria-hidden="true" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(z_p);</span></span>
-<span id="cb95-32"><a href="#cb95-32" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb95-33"><a href="#cb95-33" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb95-34"><a href="#cb95-34" aria-hidden="true" tabindex="-1"></a><span class="st">    int j = agent_id[i];</span></span>
-<span id="cb95-35"><a href="#cb95-35" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5 + p[j] * blue1[i] + (1.0 - p[j]) * blue2[i];</span></span>
-<span id="cb95-36"><a href="#cb95-36" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5 + p[j] * (total1[i] - blue1[i])</span></span>
-<span id="cb95-37"><a href="#cb95-37" aria-hidden="true" tabindex="-1"></a><span class="st">                          + (1.0 - p[j]) * (total2[i] - blue2[i]);</span></span>
-<span id="cb95-38"><a href="#cb95-38" aria-hidden="true" tabindex="-1"></a><span class="st">    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb95-39"><a href="#cb95-39" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb95-40"><a href="#cb95-40" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb95-41"><a href="#cb95-41" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-42"><a href="#cb95-42" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb95-43"><a href="#cb95-43" aria-hidden="true" tabindex="-1"></a><span class="st">  real pop_p = inv_logit(mu_logit_p);</span></span>
-<span id="cb95-44"><a href="#cb95-44" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb95-45"><a href="#cb95-45" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb95-46"><a href="#cb95-46" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb95-47"><a href="#cb95-47" aria-hidden="true" tabindex="-1"></a><span class="st">    int j = agent_id[i];</span></span>
-<span id="cb95-48"><a href="#cb95-48" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5 + p[j] * blue1[i] + (1.0 - p[j]) * blue2[i];</span></span>
-<span id="cb95-49"><a href="#cb95-49" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5 + p[j] * (total1[i] - blue1[i])</span></span>
-<span id="cb95-50"><a href="#cb95-50" aria-hidden="true" tabindex="-1"></a><span class="st">                          + (1.0 - p[j]) * (total2[i] - blue2[i]);</span></span>
-<span id="cb95-51"><a href="#cb95-51" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i] = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb95-52"><a href="#cb95-52" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb95-53"><a href="#cb95-53" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb95-54"><a href="#cb95-54" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb95-55"><a href="#cb95-55" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-56"><a href="#cb95-56" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(MultilevelPBA_stan,</span>
-<span id="cb95-57"><a href="#cb95-57" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
-<span id="cb95-58"><a href="#cb95-58" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_multilevel_pba.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb95-6"><a href="#cb95-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;</span></span>
+<span id="cb95-7"><a href="#cb95-7" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_subjects;</span></span>
+<span id="cb95-8"><a href="#cb95-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=1, upper=N_subjects&gt; subj_id;</span></span>
+<span id="cb95-9"><a href="#cb95-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt;  y;</span></span>
+<span id="cb95-10"><a href="#cb95-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            blue1;</span></span>
+<span id="cb95-11"><a href="#cb95-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            total1;</span></span>
+<span id="cb95-12"><a href="#cb95-12" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            blue2;</span></span>
+<span id="cb95-13"><a href="#cb95-13" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            total2;</span></span>
+<span id="cb95-14"><a href="#cb95-14" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-15"><a href="#cb95-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_mu_logit_p_mu;</span></span>
+<span id="cb95-16"><a href="#cb95-16" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_mu_logit_p_sigma;</span></span>
+<span id="cb95-17"><a href="#cb95-17" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sigma_logit_p_lambda;</span></span>
+<span id="cb95-18"><a href="#cb95-18" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
+<span id="cb95-19"><a href="#cb95-19" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-20"><a href="#cb95-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-21"><a href="#cb95-21" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb95-22"><a href="#cb95-22" aria-hidden="true" tabindex="-1"></a><span class="st">  real mu_logit_p;             // population mean on logit scale</span></span>
+<span id="cb95-23"><a href="#cb95-23" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; sigma_logit_p; // population SD on logit scale</span></span>
+<span id="cb95-24"><a href="#cb95-24" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_subjects] z_p;      // NCP deviates</span></span>
+<span id="cb95-25"><a href="#cb95-25" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-26"><a href="#cb95-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-27"><a href="#cb95-27" aria-hidden="true" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
+<span id="cb95-28"><a href="#cb95-28" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0, upper=1&gt;[N_subjects] p;</span></span>
+<span id="cb95-29"><a href="#cb95-29" aria-hidden="true" tabindex="-1"></a><span class="st">  for (j in 1:N_subjects)</span></span>
+<span id="cb95-30"><a href="#cb95-30" aria-hidden="true" tabindex="-1"></a><span class="st">    p[j] = inv_logit(mu_logit_p + sigma_logit_p * z_p[j]);</span></span>
+<span id="cb95-31"><a href="#cb95-31" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-32"><a href="#cb95-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-33"><a href="#cb95-33" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb95-34"><a href="#cb95-34" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(mu_logit_p    | prior_mu_logit_p_mu, prior_mu_logit_p_sigma);</span></span>
+<span id="cb95-35"><a href="#cb95-35" aria-hidden="true" tabindex="-1"></a><span class="st">  target += exponential_lpdf(sigma_logit_p | prior_sigma_logit_p_lambda);</span></span>
+<span id="cb95-36"><a href="#cb95-36" aria-hidden="true" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(z_p);</span></span>
+<span id="cb95-37"><a href="#cb95-37" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb95-38"><a href="#cb95-38" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N_total) {</span></span>
+<span id="cb95-39"><a href="#cb95-39" aria-hidden="true" tabindex="-1"></a><span class="st">    int j = subj_id[i];</span></span>
+<span id="cb95-40"><a href="#cb95-40" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5 + p[j] * blue1[i] + (1.0 - p[j]) * blue2[i];</span></span>
+<span id="cb95-41"><a href="#cb95-41" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5 + p[j] * (total1[i] - blue1[i])</span></span>
+<span id="cb95-42"><a href="#cb95-42" aria-hidden="true" tabindex="-1"></a><span class="st">                          + (1.0 - p[j]) * (total2[i] - blue2[i]);</span></span>
+<span id="cb95-43"><a href="#cb95-43" aria-hidden="true" tabindex="-1"></a><span class="st">    target += beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb95-44"><a href="#cb95-44" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb95-45"><a href="#cb95-45" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-46"><a href="#cb95-46" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-47"><a href="#cb95-47" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb95-48"><a href="#cb95-48" aria-hidden="true" tabindex="-1"></a><span class="st">  real pop_p = inv_logit(mu_logit_p);</span></span>
+<span id="cb95-49"><a href="#cb95-49" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb95-50"><a href="#cb95-50" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb95-51"><a href="#cb95-51" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-52"><a href="#cb95-52" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb95-53"><a href="#cb95-53" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb95-54"><a href="#cb95-54" aria-hidden="true" tabindex="-1"></a><span class="st">      int j = subj_id[i];</span></span>
+<span id="cb95-55"><a href="#cb95-55" aria-hidden="true" tabindex="-1"></a><span class="st">      real alpha_post = 0.5 + p[j] * blue1[i] + (1.0 - p[j]) * blue2[i];</span></span>
+<span id="cb95-56"><a href="#cb95-56" aria-hidden="true" tabindex="-1"></a><span class="st">      real beta_post  = 0.5 + p[j] * (total1[i] - blue1[i])</span></span>
+<span id="cb95-57"><a href="#cb95-57" aria-hidden="true" tabindex="-1"></a><span class="st">                            + (1.0 - p[j]) * (total2[i] - blue2[i]);</span></span>
+<span id="cb95-58"><a href="#cb95-58" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb95-59"><a href="#cb95-59" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
+<span id="cb95-60"><a href="#cb95-60" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb95-61"><a href="#cb95-61" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb95-62"><a href="#cb95-62" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb95-63"><a href="#cb95-63" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb95-64"><a href="#cb95-64" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-65"><a href="#cb95-65" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(MultilevelPBA_stan,</span>
+<span id="cb95-66"><a href="#cb95-66" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
+<span id="cb95-67"><a href="#cb95-67" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_multilevel_pba.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_multilevel_pba.stan"</code></pre>
 </div>
@@ -3975,87 +4054,94 @@ y_{ij} &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,ij}, \beta_{post,ij})
 <span id="cb99-3"><a href="#cb99-3" aria-hidden="true" tabindex="-1"></a><span class="st">// Population distribution on (logit(rho), log(kappa)).</span></span>
 <span id="cb99-4"><a href="#cb99-4" aria-hidden="true" tabindex="-1"></a><span class="st">// Non-centred parameterisation with correlated random effects.</span></span>
 <span id="cb99-5"><a href="#cb99-5" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb99-6"><a href="#cb99-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;                                // total observations</span></span>
-<span id="cb99-7"><a href="#cb99-7" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; J;                                // number of agents</span></span>
-<span id="cb99-8"><a href="#cb99-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=1, upper=J&gt; agent_id;</span></span>
-<span id="cb99-9"><a href="#cb99-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt;  choice;</span></span>
-<span id="cb99-10"><a href="#cb99-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            blue1;</span></span>
-<span id="cb99-11"><a href="#cb99-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            total1;</span></span>
-<span id="cb99-12"><a href="#cb99-12" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            blue2;</span></span>
-<span id="cb99-13"><a href="#cb99-13" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt;            total2;</span></span>
-<span id="cb99-14"><a href="#cb99-14" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb99-15"><a href="#cb99-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb99-16"><a href="#cb99-16" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb99-17"><a href="#cb99-17" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[2] mu;                              // population means: (logit_rho, log_kappa)</span></span>
-<span id="cb99-18"><a href="#cb99-18" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[2] sigma;                  // population SDs</span></span>
-<span id="cb99-19"><a href="#cb99-19" aria-hidden="true" tabindex="-1"></a><span class="st">  cholesky_factor_corr[2] L_Omega;           // Cholesky factor of correlation matrix</span></span>
-<span id="cb99-20"><a href="#cb99-20" aria-hidden="true" tabindex="-1"></a><span class="st">  matrix[2, J] z;                            // standard normal deviates (NCP)</span></span>
-<span id="cb99-21"><a href="#cb99-21" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb99-22"><a href="#cb99-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb99-23"><a href="#cb99-23" aria-hidden="true" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
-<span id="cb99-24"><a href="#cb99-24" aria-hidden="true" tabindex="-1"></a><span class="st">  // Reconstruct individual parameters on natural scale</span></span>
-<span id="cb99-25"><a href="#cb99-25" aria-hidden="true" tabindex="-1"></a><span class="st">  matrix[2, J] theta_raw = diag_pre_multiply(sigma, L_Omega) * z;</span></span>
-<span id="cb99-26"><a href="#cb99-26" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb99-27"><a href="#cb99-27" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0, upper=1&gt;[J] rho;</span></span>
-<span id="cb99-28"><a href="#cb99-28" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[J] kappa;</span></span>
-<span id="cb99-29"><a href="#cb99-29" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[J] weight_direct;</span></span>
-<span id="cb99-30"><a href="#cb99-30" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[J] weight_social;</span></span>
-<span id="cb99-31"><a href="#cb99-31" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb99-32"><a href="#cb99-32" aria-hidden="true" tabindex="-1"></a><span class="st">  for (j in 1:J) {</span></span>
-<span id="cb99-33"><a href="#cb99-33" aria-hidden="true" tabindex="-1"></a><span class="st">    rho[j]           = inv_logit(mu[1] + theta_raw[1, j]);</span></span>
-<span id="cb99-34"><a href="#cb99-34" aria-hidden="true" tabindex="-1"></a><span class="st">    kappa[j]         = exp(mu[2] + theta_raw[2, j]);</span></span>
-<span id="cb99-35"><a href="#cb99-35" aria-hidden="true" tabindex="-1"></a><span class="st">    weight_direct[j] = rho[j] * kappa[j];</span></span>
-<span id="cb99-36"><a href="#cb99-36" aria-hidden="true" tabindex="-1"></a><span class="st">    weight_social[j] = (1.0 - rho[j]) * kappa[j];</span></span>
-<span id="cb99-37"><a href="#cb99-37" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb99-38"><a href="#cb99-38" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb99-6"><a href="#cb99-6" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;                                // total observations</span></span>
+<span id="cb99-7"><a href="#cb99-7" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_subjects;                             // number of agents</span></span>
+<span id="cb99-8"><a href="#cb99-8" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=1, upper=N_subjects&gt; subj_id;</span></span>
+<span id="cb99-9"><a href="#cb99-9" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt;  y;</span></span>
+<span id="cb99-10"><a href="#cb99-10" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            blue1;</span></span>
+<span id="cb99-11"><a href="#cb99-11" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            total1;</span></span>
+<span id="cb99-12"><a href="#cb99-12" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            blue2;</span></span>
+<span id="cb99-13"><a href="#cb99-13" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt;            total2;</span></span>
+<span id="cb99-14"><a href="#cb99-14" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb99-15"><a href="#cb99-15" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_mu_logit_rho_mu;</span></span>
+<span id="cb99-16"><a href="#cb99-16" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_mu_logit_rho_sigma;</span></span>
+<span id="cb99-17"><a href="#cb99-17" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_mu_log_kappa_mu;</span></span>
+<span id="cb99-18"><a href="#cb99-18" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_mu_log_kappa_sigma;</span></span>
+<span id="cb99-19"><a href="#cb99-19" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_sigma_lambda;</span></span>
+<span id="cb99-20"><a href="#cb99-20" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_Omega_shape;</span></span>
+<span id="cb99-21"><a href="#cb99-21" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
+<span id="cb99-22"><a href="#cb99-22" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb99-23"><a href="#cb99-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb99-24"><a href="#cb99-24" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb99-25"><a href="#cb99-25" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[2] mu;                              // population means: (logit_rho, log_kappa)</span></span>
+<span id="cb99-26"><a href="#cb99-26" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[2] sigma;                  // population SDs</span></span>
+<span id="cb99-27"><a href="#cb99-27" aria-hidden="true" tabindex="-1"></a><span class="st">  cholesky_factor_corr[2] L_Omega;           // Cholesky factor of correlation matrix</span></span>
+<span id="cb99-28"><a href="#cb99-28" aria-hidden="true" tabindex="-1"></a><span class="st">  matrix[2, N_subjects] z;                   // standard normal deviates (NCP)</span></span>
+<span id="cb99-29"><a href="#cb99-29" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb99-30"><a href="#cb99-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb99-31"><a href="#cb99-31" aria-hidden="true" tabindex="-1"></a><span class="st">transformed parameters {</span></span>
+<span id="cb99-32"><a href="#cb99-32" aria-hidden="true" tabindex="-1"></a><span class="st">  // Reconstruct individual parameters on natural scale</span></span>
+<span id="cb99-33"><a href="#cb99-33" aria-hidden="true" tabindex="-1"></a><span class="st">  matrix[2, N_subjects] theta_raw = diag_pre_multiply(sigma, L_Omega) * z;</span></span>
+<span id="cb99-34"><a href="#cb99-34" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb99-35"><a href="#cb99-35" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0, upper=1&gt;[N_subjects] rho;</span></span>
+<span id="cb99-36"><a href="#cb99-36" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[N_subjects] kappa;</span></span>
+<span id="cb99-37"><a href="#cb99-37" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[N_subjects] weight_direct;</span></span>
+<span id="cb99-38"><a href="#cb99-38" aria-hidden="true" tabindex="-1"></a><span class="st">  vector&lt;lower=0&gt;[N_subjects] weight_social;</span></span>
 <span id="cb99-39"><a href="#cb99-39" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb99-40"><a href="#cb99-40" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb99-41"><a href="#cb99-41" aria-hidden="true" tabindex="-1"></a><span class="st">  // Population priors</span></span>
-<span id="cb99-42"><a href="#cb99-42" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(mu[1] | 0, 1.5);       // logit_rho: weakly informative</span></span>
-<span id="cb99-43"><a href="#cb99-43" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(mu[2] | log(2), 0.5);   // log_kappa: centered on SBA-like scaling</span></span>
-<span id="cb99-44"><a href="#cb99-44" aria-hidden="true" tabindex="-1"></a><span class="st">  target += exponential_lpdf(sigma | 2);         // moderate shrinkage on SDs</span></span>
-<span id="cb99-45"><a href="#cb99-45" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lkj_corr_cholesky_lpdf(L_Omega | 2); // weakly regularise correlation</span></span>
-<span id="cb99-46"><a href="#cb99-46" aria-hidden="true" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(to_vector(z));        // NCP deviates</span></span>
-<span id="cb99-47"><a href="#cb99-47" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb99-48"><a href="#cb99-48" aria-hidden="true" tabindex="-1"></a><span class="st">  // Likelihood (vectorised per trial)</span></span>
-<span id="cb99-49"><a href="#cb99-49" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb99-50"><a href="#cb99-50" aria-hidden="true" tabindex="-1"></a><span class="st">    int j = agent_id[i];</span></span>
-<span id="cb99-51"><a href="#cb99-51" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5</span></span>
-<span id="cb99-52"><a href="#cb99-52" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_direct[j] * blue1[i]</span></span>
-<span id="cb99-53"><a href="#cb99-53" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_social[j] * blue2[i];</span></span>
-<span id="cb99-54"><a href="#cb99-54" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5</span></span>
-<span id="cb99-55"><a href="#cb99-55" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_direct[j] * (total1[i] - blue1[i])</span></span>
-<span id="cb99-56"><a href="#cb99-56" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_social[j] * (total2[i] - blue2[i]);</span></span>
-<span id="cb99-57"><a href="#cb99-57" aria-hidden="true" tabindex="-1"></a><span class="st">    target += beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb99-58"><a href="#cb99-58" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb99-59"><a href="#cb99-59" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb99-60"><a href="#cb99-60" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb99-61"><a href="#cb99-61" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb99-62"><a href="#cb99-62" aria-hidden="true" tabindex="-1"></a><span class="st">  // Population summaries on natural scale</span></span>
-<span id="cb99-63"><a href="#cb99-63" aria-hidden="true" tabindex="-1"></a><span class="st">  real pop_rho   = inv_logit(mu[1]);</span></span>
-<span id="cb99-64"><a href="#cb99-64" aria-hidden="true" tabindex="-1"></a><span class="st">  real pop_kappa = exp(mu[2]);</span></span>
-<span id="cb99-65"><a href="#cb99-65" aria-hidden="true" tabindex="-1"></a><span class="st">  matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);</span></span>
-<span id="cb99-66"><a href="#cb99-66" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb99-67"><a href="#cb99-67" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb99-68"><a href="#cb99-68" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int pred_choice;</span></span>
-<span id="cb99-69"><a href="#cb99-69" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb99-70"><a href="#cb99-70" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb99-71"><a href="#cb99-71" aria-hidden="true" tabindex="-1"></a><span class="st">    int j = agent_id[i];</span></span>
-<span id="cb99-72"><a href="#cb99-72" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5</span></span>
-<span id="cb99-73"><a href="#cb99-73" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_direct[j] * blue1[i]</span></span>
-<span id="cb99-74"><a href="#cb99-74" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_social[j] * blue2[i];</span></span>
-<span id="cb99-75"><a href="#cb99-75" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5</span></span>
-<span id="cb99-76"><a href="#cb99-76" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_direct[j] * (total1[i] - blue1[i])</span></span>
-<span id="cb99-77"><a href="#cb99-77" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_social[j] * (total2[i] - blue2[i]);</span></span>
-<span id="cb99-78"><a href="#cb99-78" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i]     = beta_binomial_lpmf(choice[i] | 1, alpha_post, beta_post);</span></span>
-<span id="cb99-79"><a href="#cb99-79" aria-hidden="true" tabindex="-1"></a><span class="st">    pred_choice[i] = beta_binomial_rng(1, alpha_post, beta_post);</span></span>
-<span id="cb99-80"><a href="#cb99-80" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb99-81"><a href="#cb99-81" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb99-82"><a href="#cb99-82" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb99-83"><a href="#cb99-83" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb99-84"><a href="#cb99-84" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(MultilevelWBA_stan,</span>
-<span id="cb99-85"><a href="#cb99-85" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
-<span id="cb99-86"><a href="#cb99-86" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_multilevel_wba.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb99-40"><a href="#cb99-40" aria-hidden="true" tabindex="-1"></a><span class="st">  for (j in 1:N_subjects) {</span></span>
+<span id="cb99-41"><a href="#cb99-41" aria-hidden="true" tabindex="-1"></a><span class="st">    rho[j]           = inv_logit(mu[1] + theta_raw[1, j]);</span></span>
+<span id="cb99-42"><a href="#cb99-42" aria-hidden="true" tabindex="-1"></a><span class="st">    kappa[j]         = exp(mu[2] + theta_raw[2, j]);</span></span>
+<span id="cb99-43"><a href="#cb99-43" aria-hidden="true" tabindex="-1"></a><span class="st">    weight_direct[j] = rho[j] * kappa[j];</span></span>
+<span id="cb99-44"><a href="#cb99-44" aria-hidden="true" tabindex="-1"></a><span class="st">    weight_social[j] = (1.0 - rho[j]) * kappa[j];</span></span>
+<span id="cb99-45"><a href="#cb99-45" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb99-46"><a href="#cb99-46" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb99-47"><a href="#cb99-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb99-48"><a href="#cb99-48" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb99-49"><a href="#cb99-49" aria-hidden="true" tabindex="-1"></a><span class="st">  // Population priors</span></span>
+<span id="cb99-50"><a href="#cb99-50" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(mu[1] | prior_mu_logit_rho_mu, prior_mu_logit_rho_sigma);</span></span>
+<span id="cb99-51"><a href="#cb99-51" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(mu[2] | prior_mu_log_kappa_mu, prior_mu_log_kappa_sigma);</span></span>
+<span id="cb99-52"><a href="#cb99-52" aria-hidden="true" tabindex="-1"></a><span class="st">  target += exponential_lpdf(sigma | prior_sigma_lambda);</span></span>
+<span id="cb99-53"><a href="#cb99-53" aria-hidden="true" tabindex="-1"></a><span class="st">  target += lkj_corr_cholesky_lpdf(L_Omega | prior_Omega_shape);</span></span>
+<span id="cb99-54"><a href="#cb99-54" aria-hidden="true" tabindex="-1"></a><span class="st">  target += std_normal_lpdf(to_vector(z));</span></span>
+<span id="cb99-55"><a href="#cb99-55" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb99-56"><a href="#cb99-56" aria-hidden="true" tabindex="-1"></a><span class="st">  // Likelihood (vectorised per trial)</span></span>
+<span id="cb99-57"><a href="#cb99-57" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N_total) {</span></span>
+<span id="cb99-58"><a href="#cb99-58" aria-hidden="true" tabindex="-1"></a><span class="st">    int j = subj_id[i];</span></span>
+<span id="cb99-59"><a href="#cb99-59" aria-hidden="true" tabindex="-1"></a><span class="st">    real alpha_post = 0.5</span></span>
+<span id="cb99-60"><a href="#cb99-60" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_direct[j] * blue1[i]</span></span>
+<span id="cb99-61"><a href="#cb99-61" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_social[j] * blue2[i];</span></span>
+<span id="cb99-62"><a href="#cb99-62" aria-hidden="true" tabindex="-1"></a><span class="st">    real beta_post  = 0.5</span></span>
+<span id="cb99-63"><a href="#cb99-63" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_direct[j] * (total1[i] - blue1[i])</span></span>
+<span id="cb99-64"><a href="#cb99-64" aria-hidden="true" tabindex="-1"></a><span class="st">                    + weight_social[j] * (total2[i] - blue2[i]);</span></span>
+<span id="cb99-65"><a href="#cb99-65" aria-hidden="true" tabindex="-1"></a><span class="st">    target += beta_binomial_lpmf(y[i] | 1, alpha_post, beta_post);</span></span>
+<span id="cb99-66"><a href="#cb99-66" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb99-67"><a href="#cb99-67" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb99-68"><a href="#cb99-68" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb99-69"><a href="#cb99-69" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb99-70"><a href="#cb99-70" aria-hidden="true" tabindex="-1"></a><span class="st">  // Population summaries on natural scale</span></span>
+<span id="cb99-71"><a href="#cb99-71" aria-hidden="true" tabindex="-1"></a><span class="st">  real pop_rho   = inv_logit(mu[1]);</span></span>
+<span id="cb99-72"><a href="#cb99-72" aria-hidden="true" tabindex="-1"></a><span class="st">  real pop_kappa = exp(mu[2]);</span></span>
+<span id="cb99-73"><a href="#cb99-73" aria-hidden="true" tabindex="-1"></a><span class="st">  matrix[2, 2] Omega = multiply_lower_tri_self_transpose(L_Omega);</span></span>
+<span id="cb99-74"><a href="#cb99-74" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
+<span id="cb99-75"><a href="#cb99-75" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb99-76"><a href="#cb99-76" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb99-77"><a href="#cb99-77" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb99-78"><a href="#cb99-78" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb99-79"><a href="#cb99-79" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb99-80"><a href="#cb99-80" aria-hidden="true" tabindex="-1"></a><span class="st">      int j = subj_id[i];</span></span>
+<span id="cb99-81"><a href="#cb99-81" aria-hidden="true" tabindex="-1"></a><span class="st">      real a = 0.5 + weight_direct[j] * blue1[i] + weight_social[j] * blue2[i];</span></span>
+<span id="cb99-82"><a href="#cb99-82" aria-hidden="true" tabindex="-1"></a><span class="st">      real b = 0.5 + weight_direct[j] * (total1[i] - blue1[i]) </span></span>
+<span id="cb99-83"><a href="#cb99-83" aria-hidden="true" tabindex="-1"></a><span class="st">                   + weight_social[j] * (total2[i] - blue2[i]);</span></span>
+<span id="cb99-84"><a href="#cb99-84" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = beta_binomial_lpmf(y[i] | 1, a, b);</span></span>
+<span id="cb99-85"><a href="#cb99-85" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = beta_binomial_rng(1, a, b);</span></span>
+<span id="cb99-86"><a href="#cb99-86" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb99-87"><a href="#cb99-87" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb99-88"><a href="#cb99-88" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb99-89"><a href="#cb99-89" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb99-90"><a href="#cb99-90" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb99-91"><a href="#cb99-91" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(MultilevelWBA_stan,</span>
+<span id="cb99-92"><a href="#cb99-92" aria-hidden="true" tabindex="-1"></a>                <span class="at">dir =</span> <span class="st">"stan/"</span>,</span>
+<span id="cb99-93"><a href="#cb99-93" aria-hidden="true" tabindex="-1"></a>                <span class="at">basename =</span> <span class="st">"ch10_multilevel_wba.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_multilevel_wba.stan"</code></pre>
 </div>
@@ -4353,83 +4439,83 @@ y_{ij} &amp;\sim \text{Beta-Binomial}(1, \alpha_{post,ij}, \beta_{post,ij})
 <span id="cb115-14"><a href="#cb115-14" aria-hidden="true" tabindex="-1"></a>  )</span>
 <span id="cb115-15"><a href="#cb115-15" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>Initial log joint probability = -43.1473 
+<pre><code>Initial log joint probability = -45.7152 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
 Finished in  0.2 seconds.
-Initial log joint probability = -46.7054 
+Initial log joint probability = -54.572 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
 Finished in  0.1 seconds.
-Initial log joint probability = -61.856 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -37.94 
+Initial log joint probability = -48.0776 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
 Finished in  0.2 seconds.
-Initial log joint probability = -48.4679 
+Initial log joint probability = -55.7428 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -47.6848 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -43.9578 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
 Finished in  0.1 seconds.
-Initial log joint probability = -54.4695 
+Initial log joint probability = -44.4597 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
 Finished in  0.1 seconds.
-Initial log joint probability = -47.8255 
+Initial log joint probability = -42.7357 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -40.7571 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -46.5292 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -39.6929 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -50.6216 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -57.508 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -48.2967 
+Optimization terminated normally:  
+  Convergence detected: relative gradient magnitude is below tolerance 
+Finished in  0.2 seconds.
+Initial log joint probability = -44.1309 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
 Finished in  0.1 seconds.
-Initial log joint probability = -43.9027 
+Initial log joint probability = -43.2832 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -43.6388 
+Finished in  0.2 seconds.
+Initial log joint probability = -45.8483 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -37.5576 
+Finished in  0.2 seconds.
+Initial log joint probability = -45.3658 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -38.0048 
+Finished in  0.2 seconds.
+Initial log joint probability = -40.8497 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -49.1703 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -42.7245 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -51.7455 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -42.8781 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -50.0307 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -48.8207 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -50.4957 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -45.8023 
-Optimization terminated normally:  
-  Convergence detected: relative gradient magnitude is below tolerance 
-Finished in  0.1 seconds.
-Initial log joint probability = -47.7446 
+Finished in  0.2 seconds.
+Initial log joint probability = -49.8448 
 Optimization terminated normally:  
   Convergence detected: relative gradient magnitude is below tolerance 
 Finished in  0.1 seconds.</code></pre>
@@ -4974,40 +5060,44 @@ ML-WBA 0.000 </code></pre>
 <span id="cb130-9"><a href="#cb130-9" aria-hidden="true" tabindex="-1"></a>  })</span>
 <span id="cb130-10"><a href="#cb130-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">list</span>(</span>
 <span id="cb130-11"><a href="#cb130-11" aria-hidden="true" tabindex="-1"></a>    <span class="at">N =</span> <span class="fu">nrow</span>(all_data), <span class="at">J =</span> J,</span>
-<span id="cb130-12"><a href="#cb130-12" aria-hidden="true" tabindex="-1"></a>    <span class="at">agent_id =</span> all_data<span class="sc">$</span>agent_id,</span>
-<span id="cb130-13"><a href="#cb130-13" aria-hidden="true" tabindex="-1"></a>    <span class="at">choice   =</span> all_data<span class="sc">$</span>choice,</span>
-<span id="cb130-14"><a href="#cb130-14" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue1    =</span> all_data<span class="sc">$</span>blue1,</span>
-<span id="cb130-15"><a href="#cb130-15" aria-hidden="true" tabindex="-1"></a>    <span class="at">total1   =</span> all_data<span class="sc">$</span>total1,</span>
-<span id="cb130-16"><a href="#cb130-16" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue2    =</span> all_data<span class="sc">$</span>blue2,</span>
-<span id="cb130-17"><a href="#cb130-17" aria-hidden="true" tabindex="-1"></a>    <span class="at">total2   =</span> all_data<span class="sc">$</span>total2</span>
-<span id="cb130-18"><a href="#cb130-18" aria-hidden="true" tabindex="-1"></a>  )</span>
-<span id="cb130-19"><a href="#cb130-19" aria-hidden="true" tabindex="-1"></a>}</span>
-<span id="cb130-20"><a href="#cb130-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb130-21"><a href="#cb130-21" aria-hidden="true" tabindex="-1"></a>J_scen <span class="ot">&lt;-</span> <span class="dv">15</span></span>
-<span id="cb130-22"><a href="#cb130-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb130-23"><a href="#cb130-23" aria-hidden="true" tabindex="-1"></a><span class="co"># Scenario 1: SBA-Mimic (no individual variation)</span></span>
-<span id="cb130-24"><a href="#cb130-24" aria-hidden="true" tabindex="-1"></a>scen1_data <span class="ot">&lt;-</span> <span class="fu">generate_ml_data</span>(</span>
-<span id="cb130-25"><a href="#cb130-25" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_rhos   =</span> <span class="fu">rep</span>(<span class="fl">0.5</span>, J_scen),</span>
-<span id="cb130-26"><a href="#cb130-26" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_kappas =</span> <span class="fu">rep</span>(<span class="fl">2.0</span>, J_scen),</span>
-<span id="cb130-27"><a href="#cb130-27" aria-hidden="true" tabindex="-1"></a>  <span class="at">ev =</span> evidence_combinations</span>
-<span id="cb130-28"><a href="#cb130-28" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb130-29"><a href="#cb130-29" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb130-30"><a href="#cb130-30" aria-hidden="true" tabindex="-1"></a><span class="co"># Scenario 2: PBA Population (rho varies, kappa = 1)</span></span>
-<span id="cb130-31"><a href="#cb130-31" aria-hidden="true" tabindex="-1"></a>scen2_rhos <span class="ot">&lt;-</span> <span class="fu">plogis</span>(<span class="fu">rnorm</span>(J_scen, <span class="fl">0.5</span>, <span class="fl">0.5</span>))</span>
-<span id="cb130-32"><a href="#cb130-32" aria-hidden="true" tabindex="-1"></a>scen2_data <span class="ot">&lt;-</span> <span class="fu">generate_ml_data</span>(</span>
-<span id="cb130-33"><a href="#cb130-33" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_rhos   =</span> scen2_rhos,</span>
-<span id="cb130-34"><a href="#cb130-34" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_kappas =</span> <span class="fu">rep</span>(<span class="fl">1.0</span>, J_scen),</span>
-<span id="cb130-35"><a href="#cb130-35" aria-hidden="true" tabindex="-1"></a>  <span class="at">ev =</span> evidence_combinations</span>
-<span id="cb130-36"><a href="#cb130-36" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb130-37"><a href="#cb130-37" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb130-38"><a href="#cb130-38" aria-hidden="true" tabindex="-1"></a><span class="co"># Scenario 3: Full WBA population (both vary)</span></span>
-<span id="cb130-39"><a href="#cb130-39" aria-hidden="true" tabindex="-1"></a>scen3_draws <span class="ot">&lt;-</span> MASS<span class="sc">::</span><span class="fu">mvrnorm</span>(J_scen, <span class="at">mu =</span> <span class="fu">c</span>(<span class="fl">0.3</span>, <span class="fu">log</span>(<span class="fl">2.5</span>)),</span>
-<span id="cb130-40"><a href="#cb130-40" aria-hidden="true" tabindex="-1"></a>                              <span class="at">Sigma =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="fl">0.5</span>, <span class="sc">-</span><span class="fl">0.15</span>, <span class="sc">-</span><span class="fl">0.15</span>, <span class="fl">0.2</span>), <span class="dv">2</span>))</span>
-<span id="cb130-41"><a href="#cb130-41" aria-hidden="true" tabindex="-1"></a>scen3_data <span class="ot">&lt;-</span> <span class="fu">generate_ml_data</span>(</span>
-<span id="cb130-42"><a href="#cb130-42" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_rhos   =</span> <span class="fu">plogis</span>(scen3_draws[, <span class="dv">1</span>]),</span>
-<span id="cb130-43"><a href="#cb130-43" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_kappas =</span> <span class="fu">exp</span>(scen3_draws[, <span class="dv">2</span>]),</span>
-<span id="cb130-44"><a href="#cb130-44" aria-hidden="true" tabindex="-1"></a>  <span class="at">ev =</span> evidence_combinations</span>
-<span id="cb130-45"><a href="#cb130-45" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb130-12"><a href="#cb130-12" aria-hidden="true" tabindex="-1"></a>    <span class="at">agent_id   =</span> all_data<span class="sc">$</span>agent_id,</span>
+<span id="cb130-13"><a href="#cb130-13" aria-hidden="true" tabindex="-1"></a>    <span class="at">choice     =</span> all_data<span class="sc">$</span>choice,</span>
+<span id="cb130-14"><a href="#cb130-14" aria-hidden="true" tabindex="-1"></a>    <span class="at">N_total    =</span> <span class="fu">nrow</span>(all_data),</span>
+<span id="cb130-15"><a href="#cb130-15" aria-hidden="true" tabindex="-1"></a>    <span class="at">N_subjects =</span> J,</span>
+<span id="cb130-16"><a href="#cb130-16" aria-hidden="true" tabindex="-1"></a>    <span class="at">subj_id    =</span> all_data<span class="sc">$</span>agent_id,</span>
+<span id="cb130-17"><a href="#cb130-17" aria-hidden="true" tabindex="-1"></a>    <span class="at">y          =</span> all_data<span class="sc">$</span>choice,</span>
+<span id="cb130-18"><a href="#cb130-18" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue1      =</span> all_data<span class="sc">$</span>blue1,</span>
+<span id="cb130-19"><a href="#cb130-19" aria-hidden="true" tabindex="-1"></a>    <span class="at">total1     =</span> all_data<span class="sc">$</span>total1,</span>
+<span id="cb130-20"><a href="#cb130-20" aria-hidden="true" tabindex="-1"></a>    <span class="at">blue2      =</span> all_data<span class="sc">$</span>blue2,</span>
+<span id="cb130-21"><a href="#cb130-21" aria-hidden="true" tabindex="-1"></a>    <span class="at">total2     =</span> all_data<span class="sc">$</span>total2</span>
+<span id="cb130-22"><a href="#cb130-22" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb130-23"><a href="#cb130-23" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb130-24"><a href="#cb130-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb130-25"><a href="#cb130-25" aria-hidden="true" tabindex="-1"></a>J_scen <span class="ot">&lt;-</span> <span class="dv">15</span></span>
+<span id="cb130-26"><a href="#cb130-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb130-27"><a href="#cb130-27" aria-hidden="true" tabindex="-1"></a><span class="co"># Scenario 1: SBA-Mimic (no individual variation)</span></span>
+<span id="cb130-28"><a href="#cb130-28" aria-hidden="true" tabindex="-1"></a>scen1_data <span class="ot">&lt;-</span> <span class="fu">generate_ml_data</span>(</span>
+<span id="cb130-29"><a href="#cb130-29" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_rhos   =</span> <span class="fu">rep</span>(<span class="fl">0.5</span>, J_scen),</span>
+<span id="cb130-30"><a href="#cb130-30" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_kappas =</span> <span class="fu">rep</span>(<span class="fl">2.0</span>, J_scen),</span>
+<span id="cb130-31"><a href="#cb130-31" aria-hidden="true" tabindex="-1"></a>  <span class="at">ev =</span> evidence_combinations</span>
+<span id="cb130-32"><a href="#cb130-32" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb130-33"><a href="#cb130-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb130-34"><a href="#cb130-34" aria-hidden="true" tabindex="-1"></a><span class="co"># Scenario 2: PBA Population (rho varies, kappa = 1)</span></span>
+<span id="cb130-35"><a href="#cb130-35" aria-hidden="true" tabindex="-1"></a>scen2_rhos <span class="ot">&lt;-</span> <span class="fu">plogis</span>(<span class="fu">rnorm</span>(J_scen, <span class="fl">0.5</span>, <span class="fl">0.5</span>))</span>
+<span id="cb130-36"><a href="#cb130-36" aria-hidden="true" tabindex="-1"></a>scen2_data <span class="ot">&lt;-</span> <span class="fu">generate_ml_data</span>(</span>
+<span id="cb130-37"><a href="#cb130-37" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_rhos   =</span> scen2_rhos,</span>
+<span id="cb130-38"><a href="#cb130-38" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_kappas =</span> <span class="fu">rep</span>(<span class="fl">1.0</span>, J_scen),</span>
+<span id="cb130-39"><a href="#cb130-39" aria-hidden="true" tabindex="-1"></a>  <span class="at">ev =</span> evidence_combinations</span>
+<span id="cb130-40"><a href="#cb130-40" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb130-41"><a href="#cb130-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb130-42"><a href="#cb130-42" aria-hidden="true" tabindex="-1"></a><span class="co"># Scenario 3: Full WBA population (both vary)</span></span>
+<span id="cb130-43"><a href="#cb130-43" aria-hidden="true" tabindex="-1"></a>scen3_draws <span class="ot">&lt;-</span> MASS<span class="sc">::</span><span class="fu">mvrnorm</span>(J_scen, <span class="at">mu =</span> <span class="fu">c</span>(<span class="fl">0.3</span>, <span class="fu">log</span>(<span class="fl">2.5</span>)),</span>
+<span id="cb130-44"><a href="#cb130-44" aria-hidden="true" tabindex="-1"></a>                              <span class="at">Sigma =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="fl">0.5</span>, <span class="sc">-</span><span class="fl">0.15</span>, <span class="sc">-</span><span class="fl">0.15</span>, <span class="fl">0.2</span>), <span class="dv">2</span>))</span>
+<span id="cb130-45"><a href="#cb130-45" aria-hidden="true" tabindex="-1"></a>scen3_data <span class="ot">&lt;-</span> <span class="fu">generate_ml_data</span>(</span>
+<span id="cb130-46"><a href="#cb130-46" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_rhos   =</span> <span class="fu">plogis</span>(scen3_draws[, <span class="dv">1</span>]),</span>
+<span id="cb130-47"><a href="#cb130-47" aria-hidden="true" tabindex="-1"></a>  <span class="at">agent_kappas =</span> <span class="fu">exp</span>(scen3_draws[, <span class="dv">2</span>]),</span>
+<span id="cb130-48"><a href="#cb130-48" aria-hidden="true" tabindex="-1"></a>  <span class="at">ev =</span> evidence_combinations</span>
+<span id="cb130-49"><a href="#cb130-49" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb131"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb131-1"><a href="#cb131-1" aria-hidden="true" tabindex="-1"></a>fit_ml_scenario <span class="ot">&lt;-</span> <span class="cf">function</span>(stan_data, label) {</span>
@@ -6247,61 +6337,66 @@ ML-WBA 0.775 </code></pre>
 <span id="cb180-9"><a href="#cb180-9" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
 <span id="cb180-10"><a href="#cb180-10" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb180-11"><a href="#cb180-11" aria-hidden="true" tabindex="-1"></a><span class="st">data {</span></span>
-<span id="cb180-12"><a href="#cb180-12" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N;</span></span>
-<span id="cb180-13"><a href="#cb180-13" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0, upper=1&gt; choice;</span></span>
-<span id="cb180-14"><a href="#cb180-14" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue1;</span></span>
-<span id="cb180-15"><a href="#cb180-15" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total1;</span></span>
-<span id="cb180-16"><a href="#cb180-16" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; blue2;</span></span>
-<span id="cb180-17"><a href="#cb180-17" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int&lt;lower=0&gt; total2;</span></span>
-<span id="cb180-18"><a href="#cb180-18" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb180-19"><a href="#cb180-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb180-20"><a href="#cb180-20" aria-hidden="true" tabindex="-1"></a><span class="st">transformed data {</span></span>
-<span id="cb180-21"><a href="#cb180-21" aria-hidden="true" tabindex="-1"></a><span class="st">  // Convert raw counts to log-odds once to save computation</span></span>
-<span id="cb180-22"><a href="#cb180-22" aria-hidden="true" tabindex="-1"></a><span class="st">  real alpha0 = 0.5;</span></span>
-<span id="cb180-23"><a href="#cb180-23" aria-hidden="true" tabindex="-1"></a><span class="st">  real beta0  = 0.5;</span></span>
-<span id="cb180-24"><a href="#cb180-24" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] real lo_self;</span></span>
-<span id="cb180-25"><a href="#cb180-25" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] real lo_social;</span></span>
-<span id="cb180-26"><a href="#cb180-26" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb180-27"><a href="#cb180-27" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb180-28"><a href="#cb180-28" aria-hidden="true" tabindex="-1"></a><span class="st">    lo_self[i]   = log((alpha0 + blue1[i]) / (beta0 + total1[i] - blue1[i]));</span></span>
-<span id="cb180-29"><a href="#cb180-29" aria-hidden="true" tabindex="-1"></a><span class="st">    lo_social[i] = log((alpha0 + blue2[i]) / (beta0 + total2[i] - blue2[i]));</span></span>
-<span id="cb180-30"><a href="#cb180-30" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb180-31"><a href="#cb180-31" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb180-32"><a href="#cb180-32" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb180-33"><a href="#cb180-33" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
-<span id="cb180-34"><a href="#cb180-34" aria-hidden="true" tabindex="-1"></a><span class="st">  // Scaled between 0.5 (no trust) and 1.0 (full trust)</span></span>
-<span id="cb180-35"><a href="#cb180-35" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0.5, upper=1.0&gt; w_self;</span></span>
-<span id="cb180-36"><a href="#cb180-36" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0.5, upper=1.0&gt; w_other;</span></span>
-<span id="cb180-37"><a href="#cb180-37" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb180-38"><a href="#cb180-38" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb180-39"><a href="#cb180-39" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
-<span id="cb180-40"><a href="#cb180-40" aria-hidden="true" tabindex="-1"></a><span class="st">  // Weakly informative priors centered between 0.5 and 1.0</span></span>
-<span id="cb180-41"><a href="#cb180-41" aria-hidden="true" tabindex="-1"></a><span class="st">  w_self  ~ normal(0.75, 0.25);</span></span>
-<span id="cb180-42"><a href="#cb180-42" aria-hidden="true" tabindex="-1"></a><span class="st">  w_other ~ normal(0.75, 0.25);</span></span>
-<span id="cb180-43"><a href="#cb180-43" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb180-44"><a href="#cb180-44" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb180-45"><a href="#cb180-45" aria-hidden="true" tabindex="-1"></a><span class="st">    real L_post = jardri_f(lo_self[i], w_self) + </span></span>
-<span id="cb180-46"><a href="#cb180-46" aria-hidden="true" tabindex="-1"></a><span class="st">                  jardri_f(lo_social[i], w_other);</span></span>
-<span id="cb180-47"><a href="#cb180-47" aria-hidden="true" tabindex="-1"></a><span class="st">                  </span></span>
-<span id="cb180-48"><a href="#cb180-48" aria-hidden="true" tabindex="-1"></a><span class="st">    target += bernoulli_logit_lpmf(choice[i] | L_post);</span></span>
-<span id="cb180-49"><a href="#cb180-49" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb180-50"><a href="#cb180-50" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb180-51"><a href="#cb180-51" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb180-52"><a href="#cb180-52" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
-<span id="cb180-53"><a href="#cb180-53" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N] log_lik;</span></span>
-<span id="cb180-54"><a href="#cb180-54" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N] int posterior_pred;</span></span>
-<span id="cb180-55"><a href="#cb180-55" aria-hidden="true" tabindex="-1"></a><span class="st">  </span></span>
-<span id="cb180-56"><a href="#cb180-56" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N) {</span></span>
-<span id="cb180-57"><a href="#cb180-57" aria-hidden="true" tabindex="-1"></a><span class="st">    real L_post = jardri_f(lo_self[i], w_self) + </span></span>
-<span id="cb180-58"><a href="#cb180-58" aria-hidden="true" tabindex="-1"></a><span class="st">                  jardri_f(lo_social[i], w_other);</span></span>
-<span id="cb180-59"><a href="#cb180-59" aria-hidden="true" tabindex="-1"></a><span class="st">                  </span></span>
-<span id="cb180-60"><a href="#cb180-60" aria-hidden="true" tabindex="-1"></a><span class="st">    log_lik[i]        = bernoulli_logit_lpmf(choice[i] | L_post);</span></span>
-<span id="cb180-61"><a href="#cb180-61" aria-hidden="true" tabindex="-1"></a><span class="st">    posterior_pred[i] = bernoulli_logit_rng(L_post);</span></span>
-<span id="cb180-62"><a href="#cb180-62" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
-<span id="cb180-63"><a href="#cb180-63" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
-<span id="cb180-64"><a href="#cb180-64" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
-<span id="cb180-65"><a href="#cb180-65" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb180-66"><a href="#cb180-66" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(CI_Weights_stan, <span class="at">dir =</span> <span class="st">"stan/"</span>, <span class="at">basename =</span> <span class="st">"ch10_ci_weights_only.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<span id="cb180-12"><a href="#cb180-12" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=1&gt; N_total;</span></span>
+<span id="cb180-13"><a href="#cb180-13" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0, upper=1&gt; y;</span></span>
+<span id="cb180-14"><a href="#cb180-14" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue1;</span></span>
+<span id="cb180-15"><a href="#cb180-15" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total1;</span></span>
+<span id="cb180-16"><a href="#cb180-16" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; blue2;</span></span>
+<span id="cb180-17"><a href="#cb180-17" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int&lt;lower=0&gt; total2;</span></span>
+<span id="cb180-18"><a href="#cb180-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-19"><a href="#cb180-19" aria-hidden="true" tabindex="-1"></a><span class="st">  real prior_w_mu;</span></span>
+<span id="cb180-20"><a href="#cb180-20" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0&gt; prior_w_sigma;</span></span>
+<span id="cb180-21"><a href="#cb180-21" aria-hidden="true" tabindex="-1"></a><span class="st">  int&lt;lower=0, upper=1&gt; run_diagnostics;</span></span>
+<span id="cb180-22"><a href="#cb180-22" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb180-23"><a href="#cb180-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-24"><a href="#cb180-24" aria-hidden="true" tabindex="-1"></a><span class="st">transformed data {</span></span>
+<span id="cb180-25"><a href="#cb180-25" aria-hidden="true" tabindex="-1"></a><span class="st">  // Convert raw counts to log-odds once to save computation</span></span>
+<span id="cb180-26"><a href="#cb180-26" aria-hidden="true" tabindex="-1"></a><span class="st">  real alpha0 = 0.5;</span></span>
+<span id="cb180-27"><a href="#cb180-27" aria-hidden="true" tabindex="-1"></a><span class="st">  real beta0  = 0.5;</span></span>
+<span id="cb180-28"><a href="#cb180-28" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] real lo_self;</span></span>
+<span id="cb180-29"><a href="#cb180-29" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] real lo_social;</span></span>
+<span id="cb180-30"><a href="#cb180-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-31"><a href="#cb180-31" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N_total) {</span></span>
+<span id="cb180-32"><a href="#cb180-32" aria-hidden="true" tabindex="-1"></a><span class="st">    lo_self[i]   = log((alpha0 + blue1[i]) / (beta0 + total1[i] - blue1[i]));</span></span>
+<span id="cb180-33"><a href="#cb180-33" aria-hidden="true" tabindex="-1"></a><span class="st">    lo_social[i] = log((alpha0 + blue2[i]) / (beta0 + total2[i] - blue2[i]));</span></span>
+<span id="cb180-34"><a href="#cb180-34" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb180-35"><a href="#cb180-35" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb180-36"><a href="#cb180-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-37"><a href="#cb180-37" aria-hidden="true" tabindex="-1"></a><span class="st">parameters {</span></span>
+<span id="cb180-38"><a href="#cb180-38" aria-hidden="true" tabindex="-1"></a><span class="st">  // Scaled between 0.5 (no trust) and 1.0 (full trust)</span></span>
+<span id="cb180-39"><a href="#cb180-39" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0.5, upper=1.0&gt; w_self;</span></span>
+<span id="cb180-40"><a href="#cb180-40" aria-hidden="true" tabindex="-1"></a><span class="st">  real&lt;lower=0.5, upper=1.0&gt; w_other;</span></span>
+<span id="cb180-41"><a href="#cb180-41" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb180-42"><a href="#cb180-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-43"><a href="#cb180-43" aria-hidden="true" tabindex="-1"></a><span class="st">model {</span></span>
+<span id="cb180-44"><a href="#cb180-44" aria-hidden="true" tabindex="-1"></a><span class="st">  // Weakly informative priors centered between 0.5 and 1.0</span></span>
+<span id="cb180-45"><a href="#cb180-45" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(w_self | prior_w_mu, prior_w_sigma);</span></span>
+<span id="cb180-46"><a href="#cb180-46" aria-hidden="true" tabindex="-1"></a><span class="st">  target += normal_lpdf(w_other | prior_w_mu, prior_w_sigma);</span></span>
+<span id="cb180-47"><a href="#cb180-47" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-48"><a href="#cb180-48" aria-hidden="true" tabindex="-1"></a><span class="st">  for (i in 1:N_total) {</span></span>
+<span id="cb180-49"><a href="#cb180-49" aria-hidden="true" tabindex="-1"></a><span class="st">    real L_post = jardri_f(lo_self[i], w_self) + </span></span>
+<span id="cb180-50"><a href="#cb180-50" aria-hidden="true" tabindex="-1"></a><span class="st">                  jardri_f(lo_social[i], w_other);</span></span>
+<span id="cb180-51"><a href="#cb180-51" aria-hidden="true" tabindex="-1"></a><span class="st">    target += bernoulli_logit_lpmf(y[i] | L_post);</span></span>
+<span id="cb180-52"><a href="#cb180-52" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb180-53"><a href="#cb180-53" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb180-54"><a href="#cb180-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-55"><a href="#cb180-55" aria-hidden="true" tabindex="-1"></a><span class="st">generated quantities {</span></span>
+<span id="cb180-56"><a href="#cb180-56" aria-hidden="true" tabindex="-1"></a><span class="st">  vector[N_total] log_lik;</span></span>
+<span id="cb180-57"><a href="#cb180-57" aria-hidden="true" tabindex="-1"></a><span class="st">  array[N_total] int y_rep;</span></span>
+<span id="cb180-58"><a href="#cb180-58" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-59"><a href="#cb180-59" aria-hidden="true" tabindex="-1"></a><span class="st">  if (run_diagnostics) {</span></span>
+<span id="cb180-60"><a href="#cb180-60" aria-hidden="true" tabindex="-1"></a><span class="st">    for (i in 1:N_total) {</span></span>
+<span id="cb180-61"><a href="#cb180-61" aria-hidden="true" tabindex="-1"></a><span class="st">      real L_post = jardri_f(lo_self[i], w_self) + </span></span>
+<span id="cb180-62"><a href="#cb180-62" aria-hidden="true" tabindex="-1"></a><span class="st">                    jardri_f(lo_social[i], w_other);</span></span>
+<span id="cb180-63"><a href="#cb180-63" aria-hidden="true" tabindex="-1"></a><span class="st">      log_lik[i] = bernoulli_logit_lpmf(y[i] | L_post);</span></span>
+<span id="cb180-64"><a href="#cb180-64" aria-hidden="true" tabindex="-1"></a><span class="st">      y_rep[i]   = bernoulli_logit_rng(L_post);</span></span>
+<span id="cb180-65"><a href="#cb180-65" aria-hidden="true" tabindex="-1"></a><span class="st">    }</span></span>
+<span id="cb180-66"><a href="#cb180-66" aria-hidden="true" tabindex="-1"></a><span class="st">  }</span></span>
+<span id="cb180-67"><a href="#cb180-67" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span>
+<span id="cb180-68"><a href="#cb180-68" aria-hidden="true" tabindex="-1"></a><span class="st">"</span></span>
+<span id="cb180-69"><a href="#cb180-69" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-70"><a href="#cb180-70" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb180-71"><a href="#cb180-71" aria-hidden="true" tabindex="-1"></a><span class="fu">write_stan_file</span>(CI_Weights_stan, <span class="at">dir =</span> <span class="st">"stan/"</span>, <span class="at">basename =</span> <span class="st">"ch10_ci_weights_only.stan"</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>[1] "/Users/au209589/Dropbox/Teaching/AdvancedCognitiveModeling23_book/stan/ch10_ci_weights_only.stan"</code></pre>
 </div>
@@ -6738,7 +6833,99 @@ ML-WBA 0.775 </code></pre>
 <li><strong>Resource-rational models</strong> (Griffiths et al.&nbsp;2015) ask: what integration strategy is optimal given limited computational resources? The WBA can be interpreted as an approximation to full Bayesian inference under resource constraints.</li>
 <li><strong>Active inference</strong> (Friston 2010) frames perception and action as a unified process of minimising variational free energy, offering a different theoretical foundation for the same empirical phenomena.</li>
 </ul>
-<p><strong>This is the end of the core modelling sequence.</strong> Chapters 1–9 have traced the complete Bayesian cognitive modelling workflow: from pizza-stone physics (Ch. 1), through verbal and formal models of strategic behaviour (Chs. 2–3), parameter estimation (Ch. 5), model validation (Ch. 6), hierarchical extensions (Ch. 7), model comparison (Ch. 8), mixture structures (Ch. 9), and Bayesian cognitive theory (Ch. 10). The tools and habits of mind established here — generative modelling, principled validation, honest uncertainty — apply directly to any new domain or model you encounter.</p>
+<div class="callout callout-style-default callout-note callout-titled" title="Stan Engineering: What We Have Built Across Chapters 4–10">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">Note</span>Stan Engineering: What We Have Built Across Chapters 4–10
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p>Across this book’s first ten chapters we have introduced a layered set of Stan programming techniques. Before moving to the categorization chapters — where all of them combine — it is worth having the full picture in one place.</p>
+<p><strong>Stage I (Ch. 4–5): Foundations</strong></p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Technique</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Block placement</td>
+<td><code>transformed data</code> for data-only quantities; <code>transformed parameters</code> for parameter-dependent state; <code>model</code> for local accumulators; <code>generated quantities</code> for post-sampling diagnostics</td>
+</tr>
+<tr class="even">
+<td><code>run_diagnostics</code> flag</td>
+<td>Gate expensive <code>generated quantities</code> (PPC draws, <code>log_lik</code>) behind an <code>int&lt;lower=0,upper=1&gt;</code> data flag; set to 0 in SBC backends</td>
+</tr>
+<tr class="odd">
+<td>Priors as data</td>
+<td>Pass prior hyperparameters through the <code>data</code> block — no recompilation when adjusting priors; SBC stays in sync automatically</td>
+</tr>
+<tr class="even">
+<td>Pathfinder warm-start</td>
+<td>Run <code>mod$pathfinder(...)</code> first; pass the result as <code>init</code> to <code>mod$sample(...)</code> to cut warm-up by 30–60% on complex models</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Stage II (Ch. 6): Population Structure</strong></p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Technique</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Non-centered parameterization (NCP)</td>
+<td>Sample standardized offsets <span class="math inline">\(z_j \sim N(0,1)\)</span>; reconstruct cognitive parameters deterministically in <code>transformed parameters</code>. Eliminates Neal’s Funnel in sparse-data hierarchical models</td>
+</tr>
+<tr class="even">
+<td>Subject indexing</td>
+<td><code>subj_id</code> array (scatter-index) for exchangeable models; <code>subj_start/subj_end</code> contiguous-block for sequential models (Ch. 9+)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Stage III (Ch. 8–10): Process Mechanisms</strong></p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Technique</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Discrete marginalization</td>
+<td>Never sample discrete parameters with HMC; use <code>log_sum_exp</code> or <code>log_mix</code> to analytically integrate them out in the <code>model</code> block</td>
+</tr>
+<tr class="even">
+<td>Sequential state unrolling</td>
+<td>Recursive belief/memory state goes in <code>transformed parameters</code> with volatile state kept local in <code>{}</code>; only the quantities needed downstream are lifted to the saved-draw tape</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Stage IV (Ch. 11): High-Performance</strong></p>
+<p>The categorization chapters introduce the final layer: precomputing pairwise stimulus distances in <code>transformed data</code> (computed once rather than thousands of times), NCP for all individual parameters including attention weights (eliminating Dirichlet funnels), and <code>reduce_sum</code> for multi-threaded parallelism across subjects within a chain. The next chapter puts all of these together.</p>
+</div>
+</div>
+<p><strong>This is the end of the core modelling sequence.</strong> Chapters 1–10 have traced the complete Bayesian cognitive modelling workflow: from pizza-stone physics (Ch. 1), through verbal and formal models of strategic behaviour (Chs. 2–3), parameter estimation (Ch. 4), model validation (Ch. 5), hierarchical extensions (Ch. 6), model comparison (Ch. 7), mixture structures (Ch. 8), sequential cognition (Ch. 9), and Bayesian cognitive theory (Ch. 10). The tools and habits of mind established here — generative modelling, principled validation, honest uncertainty — apply directly to any new domain or model you encounter.</p>
 </section>
 </section>
 <section id="further-reading" class="level2" data-number="11.29">

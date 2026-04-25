@@ -1,0 +1,427 @@
+# Reparameterization Techniques {#sec-reparameterization}
+
+A **reparameterization** replaces one mathematical form of a parameter with another that
+is equivalent for inference but better behaved for HMC, easier to place priors on, or
+more directly interpretable in cognitive terms.
+This appendix collects every reparameterization used across the book, organized by the
+type of constraint the original parameter imposes.
+
+The key intuition throughout: **HMC works in unconstrained space**. Stan handles the
+Jacobian of any declared constraint (`<lower=0>`, `simplex`, etc.) automatically, but
+the efficiency of the sampler depends on the *shape* of the posterior in that unconstrained
+space. A good reparameterization flattens and regularizes that shape.
+
+---
+
+## Part I — Mapping Bounded Parameters to Unbounded Space {#sec-reparam-bounded}
+
+### 1. Probabilities [0, 1] — the Logit Transform {#sec-logit}
+
+*First introduced: @sec-inferring-rates (Chapter 4, logit bias model)*
+
+A probability $\theta \in [0,1]$ cannot use a Normal prior directly — Normal has infinite
+support, and the boundaries create hard walls that distort HMC trajectories.
+The logit transform maps $[0,1]$ to $(-\infty, +\infty)$:
+
+$$\text{logit}(\theta) = \log\!\left(\frac{\theta}{1-\theta}\right), \qquad
+  \text{logit}^{-1}(x) = \frac{1}{1+e^{-x}} \equiv \texttt{inv\_logit}(x)$$
+
+**Stan pattern:**
+```stan
+parameters {
+  real theta_logit;           // unconstrained — Normal prior works cleanly
+}
+transformed parameters {
+  real<lower=0,upper=1> theta = inv_logit(theta_logit);
+}
+model {
+  theta_logit ~ normal(0, 1.5);   // ≈ uniform on probability scale
+}
+```
+
+**Choosing the prior width on the logit scale:**
+
+| `normal(0, σ)` on logit scale | Implied prior on probability scale |
+|---|---|
+| σ = 0.5 | Concentrated near 0.5; rarely below 0.2 or above 0.8 |
+| σ = 1.0 | Moderately diffuse |
+| σ = 1.5 | Approximately uniform on [0,1] — the default for uninformative use |
+| σ = 3.0 | Heavy mass near 0 and 1; implies extreme determinism |
+
+**Cognitive uses:** choice bias, probability-matching weight, mixing proportion,
+learning rate, any rate parameter bounded by [0,1].
+
+**Stan shortcut:** `bernoulli_logit_lpmf(y | theta_logit)` accepts the log-odds directly,
+so the `inv_logit` transform in `transformed parameters` is only needed when you want
+to report $\theta$ on the probability scale in `generated quantities`.
+
+---
+
+### 2. Positive-Only Parameters — the Log Transform {#sec-log}
+
+*First introduced: @sec-categorization-exemplars (Chapter 11, GCM sensitivity $c$ and decay $\lambda$)*
+
+A parameter that must be strictly positive ($\theta > 0$) — sensitivity, scale, precision,
+rate — can be declared as `real<lower=0>`, but this creates a boundary at zero that
+HMC must negotiate. An unconstrained `real log_theta` with a Normal prior is geometrically
+smoother.
+
+$$\log\theta \in (-\infty, +\infty), \qquad \theta = e^{\log\theta} > 0$$
+
+**Stan pattern:**
+```stan
+parameters {
+  real log_c;          // log sensitivity — unconstrained
+  real log_lambda;     // log decay rate — unconstrained
+}
+transformed parameters {
+  real<lower=0> c      = exp(log_c);
+  real<lower=0> lambda = exp(log_lambda);
+}
+model {
+  log_c      ~ normal(0, 1);    // prior on log scale
+  log_lambda ~ normal(-1, 1);   // informative: moderate decay expected
+}
+```
+
+**Interpreting the log-scale prior:**
+
+| Prior on log θ | Implied range for θ | Cognitive interpretation |
+|---|---|---|
+| normal(0, 1) | ≈ [0.05, 20] (2 SD) | Broad uninformative prior for a scale parameter |
+| normal(log(2), 0.5) | Centred at 2, roughly [0.7, 5.5] | Informative: moderate sensitivity expected |
+| normal(-1, 0.5) | Centred at 0.37, roughly [0.15, 0.9] | Slow decay / weak forgetting |
+
+**Cognitive uses:** GCM sensitivity $c$, exponential decay rate $\lambda$, RL learning rate
+$\alpha$ (if modeled as positive but not bounded above 1), noise precision, inverse
+temperature $\beta$.
+
+::: {.callout-tip}
+## Log transform vs. `<lower=0>` declaration
+
+Declaring `real<lower=0> sigma` in `parameters` applies an exponential-map transform
+internally, so it is *mathematically equivalent* to declaring `real log_sigma` and
+computing `sigma = exp(log_sigma)`. The difference is:
+
+- `real<lower=0> sigma` → Stan chooses the unconstrained transform; you place the prior
+  directly on $\sigma$.
+- `real log_sigma` → you control the transform and place the prior on $\log\sigma$.
+
+The second form is preferred when you have **informative prior beliefs expressible on
+the log scale** or when the gradient geometry near zero is poor.
+:::
+
+---
+
+### 3. Parameters Bounded in [0, 1] with a Structural Interpretation — the Beta Reparameterization {#sec-beta-reparam}
+
+*Used in: @sec-inferring-rates (Chapter 4, forgetting rate), @sec-bayesian-models (Chapter 10, evidence weight $\rho$, allocation $p$)*
+
+Sometimes a [0,1] parameter is best understood as a **mean with an associated uncertainty**
+rather than as a log-odds. The Beta distribution has two equivalent parameterizations:
+
+| Parameterization | Parameters | Interpretation |
+|---|---|---|
+| Standard | $\alpha, \beta > 0$ | Shape parameters — not directly interpretable |
+| Mean + concentration | $\mu \in (0,1)$, $\kappa > 0$ | Mean $= \mu$; concentration $= \kappa$; variance $= \mu(1-\mu)/(\kappa+1)$ |
+
+$$\alpha = \mu\kappa, \qquad \beta = (1-\mu)\kappa$$
+
+```stan
+// Mean+concentration parameterization — more interpretable priors
+parameters {
+  real<lower=0,upper=1> mu;     // expected value
+  real<lower=0> kappa;          // concentration (larger = tighter around mu)
+}
+transformed parameters {
+  real<lower=0> alpha = mu * kappa;
+  real<lower=0> beta  = (1 - mu) * kappa;
+}
+model {
+  mu    ~ beta(2, 2);          // soft peak at 0.5; any value plausible
+  kappa ~ exponential(0.1);    // most agents moderately uncertain
+  y     ~ beta(alpha, beta);
+}
+```
+
+**When to prefer mean+concentration over logit:** When the cognitive claim *is* about
+the mean allocation (e.g., "this agent allocates $\rho$ of its weight to direct evidence"),
+and you want to reason separately about average tendency ($\mu$) and consistency ($\kappa$).
+
+---
+
+### 4. Weight Vectors Summing to One — Simplex Reparameterizations {#sec-simplex}
+
+*Used in: @sec-categorization-exemplars (Chapter 11, GCM attention weights $\mathbf{w}$)*
+
+A $K$-dimensional **simplex** ($w_k \geq 0$, $\sum_k w_k = 1$) can be parameterized in
+several ways. For $K = 2$ (two features), logit-normal NCP is always preferred (see
+@sec-reparameterization-ncp). For $K > 2$, the choice is less clear-cut.
+
+#### 4a. Dirichlet directly (simple, but problematic for hierarchical models)
+
+```stan
+parameters { simplex[K] w; }
+model      { w ~ dirichlet(alpha); }  // alpha: K-vector of concentration hyperparameters
+```
+
+Works well for single-subject models where concentration `alpha` is fixed.
+**Avoid in hierarchical models**: the Dirichlet + hyperprior-on-concentration geometry
+creates funnels identical to the NCP problem (Ch. 11 case study).
+
+#### 4b. Stick-breaking (unconstrained representation, K−1 free parameters)
+
+Decompose a $K$-simplex into $K-1$ unconstrained values using the sequential stick-breaking
+transform. Stan implements this automatically for `simplex` declarations — you never need
+to code it manually. But understanding it helps with custom implementations:
+
+$$v_k = \text{logit}(w_k^* + \epsilon_k), \quad
+  w_k = w_k^* \cdot \prod_{j<k}(1 - w_j^*), \quad w_K = 1 - \sum_{k<K} w_k$$
+
+For $K = 2$: reduces exactly to the logit transform on $w_1$, with $w_2 = 1 - w_1$.
+
+#### 4c. Logit-normal NCP for $K = 2$ (recommended for hierarchical models)
+
+```stan
+parameters {
+  real          pop_logit_w_mean;
+  real<lower=0> pop_logit_w_sd;
+  vector[J]     z_w;                        // standard-normal offsets
+}
+transformed parameters {
+  for (j in 1:J) {
+    real lw  = pop_logit_w_mean + pop_logit_w_sd * z_w[j];
+    w[j][1]  = inv_logit(lw);
+    w[j][2]  = 1.0 - w[j][1];
+  }
+}
+model { z_w ~ std_normal(); }
+```
+
+This was the fix for the 4 000 max_treedepth warnings in the multilevel decay GCM
+(Chapter 11). The centered Dirichlet + `kappa ~ exponential(0.1)` produced a funnel;
+the logit-normal NCP eliminated it entirely.
+
+---
+
+### 5. K-Way Choice Probabilities — the Softmax Transform {#sec-softmax}
+
+*Mentioned in: @sec-theory-of-mind (Chapter 9), @sec-categorization-exemplars (Chapter 11)*
+
+When an agent chooses among $K > 2$ options and the evidence for each option is a real-valued
+score $v_k$, the **softmax** maps scores to probabilities:
+
+$$p_k = \frac{e^{v_k / \tau}}{\sum_{j=1}^K e^{v_j / \tau}}$$
+
+where $\tau > 0$ is an **inverse temperature** (higher $\tau$ = more random; lower = more
+deterministic). For $K = 2$, softmax reduces to the logistic function.
+
+**Stan:**
+```stan
+// v is a vector of K utility/evidence values; tau is inverse temperature
+vector[K] p = softmax(v / tau);
+target += categorical_lpmf(choice | p);
+
+// Or equivalently, in log space (more numerically stable):
+target += categorical_logit_lpmf(choice | v / tau);
+```
+
+::: {.callout-tip}
+## Sampling `tau` vs. sampling `beta = 1/tau`
+
+Convention varies across the literature. Stan's `categorical_logit_lpmf` takes the
+**log-odds vector** directly, so it is natural to sample $\beta = 1/\tau$ (inverse
+temperature) on the log scale:
+
+```stan
+real log_beta;                        // log inverse-temperature
+// ...
+target += categorical_logit_lpmf(choice | exp(log_beta) * v);
+```
+
+This places a Normal prior on $\log\beta$, keeping sampling unconstrained.
+:::
+
+---
+
+## Part II — Priors on Scale Parameters {#sec-scale-priors}
+
+Scale parameters ($\sigma$, $\tau$, $\kappa$) must be positive and appear in hierarchical
+models as between-subject standard deviations. The prior on these parameters strongly
+affects sampling geometry near zero.
+
+### 6. Exponential, Half-Normal, and Half-Cauchy {#sec-scale-param-priors}
+
+*Used in: @sec-multilevel-models (Chapter 6, `sigma_theta ~ exponential(lambda)`)*
+
+| Prior | Stan syntax | Shape | Recommendation |
+|---|---|---|---|
+| Exponential($\lambda$) | `sigma ~ exponential(lambda)` | Monotone decreasing from 0; most mass near 0 | Default in this book; works well when small $\sigma$ is plausible |
+| Half-Normal($\sigma_0$) | `sigma ~ normal(0, sigma_0) T[0,]` | Bell-shaped; puts more mass away from 0 | Better when you expect moderate between-subject variance |
+| Half-Cauchy($s$) | `sigma ~ cauchy(0, s) T[0,]` | Heavy tails | Use when outlier subjects are plausible |
+
+**The book's choice** (exponential throughout) reflects a regularizing stance: most
+cognitive-parameter hierarchies are relatively homogeneous, so placing more mass near
+$\sigma = 0$ acts as a mild shrinkage prior that prevents the posterior from drifting
+to implausibly large between-subject variances.
+
+**Parameterizing the exponential:** `exponential(lambda)` has mean $1/\lambda$.
+Setting `lambda = 1` means the prior expects $\sigma \approx 1$ on the log-odds scale.
+For parameters whose population mean is on a different scale, adjust accordingly.
+
+```stan
+// Exponential prior for between-subject SD on the logit scale
+sigma ~ exponential(1);    // mean = 1 log-odds unit ≈ ±25 percentage points
+
+// Half-Normal alternative — more permissive
+sigma ~ normal(0, 0.5) T[0,];  // 95% prior mass below ~1 log-odds unit
+```
+
+::: {.callout-note}
+## Why not `<lower=0> real sigma` + `normal(0, σ₀)`?
+
+Stan accepts `sigma ~ normal(0, 0.5)` even when `sigma` is declared `<lower=0>`.
+This is a **truncated normal** — Stan evaluates the density only on $[0, \infty)$.
+For HMC, declaring the constraint `<lower=0>` is important; the prior statement handles
+the shape. The explicit `T[0,]` truncation notation is only needed inside `stan_code`
+blocks where Stan cannot infer the constraint from the declaration.
+:::
+
+---
+
+## Part III — Structural Reparameterizations {#sec-structural-reparam}
+
+### 7. Non-Centered Parameterization (NCP) {#sec-reparameterization-ncp}
+
+*Covered in detail in @sec-ncp (Appendix B)*
+
+The NCP separates the **location** ($\mu$) and **scale** ($\sigma$) of a hierarchical
+parameter from the individual-level deviations ($z_j \sim \mathcal{N}(0,1)$).
+
+```stan
+// Centered: theta_j ~ normal(mu, sigma)  ← funnel when sigma → 0
+// Non-Centered: theta_j = mu + sigma * z_j, z_j ~ std_normal()  ← always Gaussian
+```
+
+The NCP is the single most impactful reparameterization for hierarchical cognitive models.
+See @sec-ncp for full details, the K-simplex extension, and the Chapter 11 case study.
+
+---
+
+### 8. Probit Link — Signal Detection Theory {#sec-probit}
+
+The **probit link** uses the standard Normal CDF $\Phi$ in place of the logistic function:
+
+$$p = \Phi(d'), \qquad d' = \Phi^{-1}(p) \equiv \text{probit}(p)$$
+
+Stan function: `Phi(x)` (Normal CDF), `Phi_approx(x)` (fast rational approximation).
+
+The probit link is the natural choice whenever the cognitive model is derived from
+**signal detection theory (SDT)**: the sensitivity parameter $d'$ is directly the
+standardized distance between signal and noise distributions, and the criterion $c$
+is the decision threshold in the same units.
+
+```stan
+parameters {
+  real d_prime;     // sensitivity (positive = above chance)
+  real criterion;   // decision criterion
+}
+model {
+  d_prime   ~ normal(0, 2);
+  criterion ~ normal(0, 1);
+  for (i in 1:N) {
+    if (signal[i] == 1)
+      target += log(Phi( d_prime/2 - criterion));   // hit
+    else
+      target += log(Phi(-d_prime/2 - criterion));   // correct rejection
+  }
+}
+```
+
+**Logit vs. probit in practice:** The two links are very similar numerically (probit ≈
+logit × 0.607), and prior sensitivity analyses rarely distinguish them. Choose probit
+when the theoretical framework is SDT and interpretability in $d'$ units matters;
+choose logit for all other binary-outcome models because `bernoulli_logit_lpmf` is
+faster and numerically more stable.
+
+---
+
+### 9. Correlation Matrices — LKJ and Cholesky {#sec-lkj}
+
+*Covered in @sec-cholesky (Appendix B); introduced in @sec-multilevel-models (Chapter 6)*
+
+The **LKJ distribution** is the natural prior for correlation matrices.
+Its single parameter $\eta$ controls how much mass is placed near the identity matrix:
+
+| $\eta$ | Implied prior on correlations |
+|---|---|
+| $\eta = 1$ | Uniform over all valid correlation matrices |
+| $\eta = 2$ | Mild regularization toward identity (off-diagonal correlations shrunk toward 0) |
+| $\eta \to \infty$ | All mass on the identity (zero correlations) |
+
+**Always** sample the Cholesky factor `cholesky_factor_corr[K] L_Omega` and apply the
+`lkj_corr_cholesky` prior. Recover $\Omega = L_\Omega L_\Omega^\top$ in
+`generated quantities`. See @sec-cholesky for full code and a cost comparison.
+
+---
+
+## Part IV — Numerical Stability {#sec-numerical-stability}
+
+### 10. Log-Space Arithmetic {#sec-log-space}
+
+*Used throughout: `log_mix`, `log_sum_exp`, `log1m` in Chapters 8–11*
+
+Computing probabilities directly (multiplying small numbers together, then taking logs)
+leads to underflow for long trial sequences. Staying in **log space** throughout avoids this.
+
+| Operation | Unstable form | Stable Stan function |
+|---|---|---|
+| $\log(p_1 + p_2)$ | `log(exp(lp1) + exp(lp2))` | `log_sum_exp(lp1, lp2)` |
+| $\log(\pi p_1 + (1-\pi) p_2)$ | `log(pi*exp(lp1) + (1-pi)*exp(lp2))` | `log_mix(pi, lp1, lp2)` |
+| $\log(1 + e^x)$ | `log(1 + exp(x))` | `log1p_exp(x)` |
+| $\log(1 - e^x)$ (requires $x < 0$) | `log(1 - exp(x))` | `log1m_exp(x)` |
+| $\log(1 - p)$ | `log(1 - p)` | `log1m(p)` |
+| $\log \Phi(x)$ (Normal CDF) | `log(Phi(x))` | `log(Phi_approx(x))` or `normal_lcdf(x \| 0,1)` |
+
+```stan
+// Mixture likelihood in log space — numerically stable
+for (i in 1:N) {
+  real lp1 = bernoulli_logit_lpmf(y[i] | alpha);
+  real lp2 = bernoulli_logit_lpmf(y[i] | nu);
+  target  += log_mix(pi, lp1, lp2);   // never calls exp() on small values
+}
+
+// Accumulated log-probability for a trajectory
+real log_p = 0.0;
+for (t in 1:T)
+  log_p += log_mix(pi[t], lp_A[t], lp_B[t]);
+target += log_p;
+```
+
+::: {.callout-warning}
+## When `log_sum_exp` is not available
+
+For vectors: `log_sum_exp(v)` sums all elements of `v` in log-space.
+For accumulation inside a loop: maintain a running `log_p` and add each term.
+Never compute `sum(exp(log_probs))` and then take the log — this is the numerically
+unstable version that Stan's log-space functions exist to replace.
+:::
+
+---
+
+## Quick Reference {#sec-reparam-quick-ref}
+
+| Parameter type | Constraint | Recommended reparameterization | Chapter |
+|---|---|---|---|
+| Probability / rate | [0, 1] | Logit → `real theta_logit`, `inv_logit` in TP | Ch 4 |
+| Positive scale / rate | > 0 | Log → `real log_theta`, `exp` in TP | Ch 11 |
+| [0,1] with mean+variance story | [0, 1] | Beta mean+concentration (μ, κ) | Ch 10 |
+| Two-feature attention weight | simplex[2] | Logit-normal NCP | Ch 11 |
+| K-feature attention weight | simplex[K] | Stan `simplex` (auto stick-break); NCP for hierarchical | Ch 11 |
+| K-way choice probability | probability K-vector | Softmax of unconstrained scores / `categorical_logit` | Ch 9 |
+| Individual params drawn from population | real | Non-centered: $z \sim \mathcal{N}(0,1)$, $\theta = \mu + \sigma z$ | Ch 6 |
+| Between-subject standard deviation | > 0 | `exponential(1)` or `normal(0, 0.5) T[0,]` | Ch 6 |
+| Correlation matrix | positive-definite, diag = 1 | Cholesky factor + LKJ prior | Ch 6 |
+| SDT sensitivity | unconstrained | Probit: `Phi(d_prime)` | — |
+| Sum of log-probabilities | $(-\infty, 0]$ | `log_sum_exp`, `log_mix`, `log1p_exp` | Ch 8–11 |
+
