@@ -2225,6 +2225,153 @@ A secondary observation: the scatter of posterior means on the static panel stil
 
 ---
 
+## The Multilevel Decay GCM: Scaling to populations and changing environments
+
+Having demonstrated that memory decay is essential for non-stationary environments and that its parameters are identifiable given the right task structure, we now combine these mechanisms into a full hierarchical model. The **Multilevel Decay GCM** allows us to estimate individual cognitive differences while sharing information across the population to constrain our estimates. This is our "Final Boss" model: population-aware, psychologically realistic, and robust to environmental change.
+
+### Mathematical Formulation: The Hierarchical Architecture
+
+This model incorporates the Dirichlet centroid for attention weights, log-normal hierarchies for sensitivity and forgetting, and a logit-normal hierarchy for response bias.
+
+**Population-level distributions (Priors):**
+
+$$
+\begin{aligned}
+\bar{\mathbf{w}} &\sim \text{Dirichlet}(\boldsymbol{\alpha}_w) \\
+\kappa &\sim \text{Exponential}(\lambda_\kappa) \\
+\bar{\mu}_{\log c}, \bar{\sigma}_{\log c} &\sim \text{Priors} \\
+\bar{\mu}_{\log \lambda}, \bar{\sigma}_{\log \lambda} &\sim \text{Priors} \\
+\bar{\mu}_{\text{logit}\,\beta}, \bar{\sigma}_{\text{logit}\,\beta} &\sim \text{Priors}
+\end{aligned}
+$$
+
+**Individual-level parameters (for subject $j$):**
+
+$$
+\begin{aligned}
+\mathbf{w}_j &\sim \text{Dirichlet}(\kappa \cdot \bar{\mathbf{w}}) \\
+\log c_j &\sim \text{Normal}(\bar{\mu}_{\log c}, \bar{\sigma}_{\log c}) \\
+\log \lambda_j &\sim \text{Normal}(\bar{\mu}_{\log \lambda}, \bar{\sigma}_{\log \lambda}) \\
+\text{logit}(\beta_j) &\sim \text{Normal}(\bar{\mu}_{\text{logit}\,\beta}, \bar{\sigma}_{\text{logit}\,\beta})
+\end{aligned}
+$$
+
+**Trial-level Generative Process (for trial $i$ of subject $j$):**
+
+$$
+\begin{aligned}
+d_{iej} &= \sum_f w_{jf} |x_{if} - x_{ef}| \\
+\eta_{iej} &= e^{-\lambda_j(i - t_e)} \cdot e^{-c_j d_{iej}} \\
+m_{k,ij} &= \frac{\sum_{e \in C_k} \eta_{iej}}{\sum_{e \in C_k} e^{-\lambda_j(i - t_e)}} \\
+p_{ij} &= \frac{\beta_j \cdot m_{1,ij}}{\beta_j \cdot m_{1,ij} + (1 - \beta_j) \cdot m_{0,ij}} \\
+y_{ij} &\sim \text{Bernoulli}(p_{ij})
+\end{aligned}
+$$
+
+*   **Shrinkage:** The model uses the population means to "pull" uncertain individual estimates toward the group average. This is especially useful for $\lambda_j$ in scenarios where an individual's data might be locally uninformative.
+*   **Effective Sample Size:** The denominator of $m_{k,ij}$ is now the **decay-weighted effective number of exemplars**, ensuring that old, forgotten evidence doesn't inflate the mean similarity.
+
+### Simulating Data for the Multilevel Decay GCM
+
+We simulate a population of agents performing the **Smooth Drift** task. This scenario is the most "ecological": it requires agents to continuously update their boundaries, making both $\lambda$ (forgetting) and population-level centroids highly relevant.
+
+```{r ch12_simulate_multilevel_decay_data}
+simulate_multilevel_decay_gcm <- function(n_subjects, stimulus_info, n_blocks,
+                                          base_seed,
+                                          pop_w, kappa,
+                                          pop_log_c_mean, pop_log_c_sd,
+                                          pop_log_lambda_mean, pop_log_lambda_sd,
+                                          pop_logit_bias_mean, pop_logit_bias_sd) {
+  n_features   <- length(pop_w)
+  alpha_params <- pmax(1e-9, kappa * pop_w)
+
+  set.seed(base_seed)
+  ind_w          <- MCMCpack::rdirichlet(n_subjects, alpha_params)
+  ind_log_c      <- rnorm(n_subjects, pop_log_c_mean, pop_log_c_sd)
+  ind_log_lambda <- rnorm(n_subjects, pop_log_lambda_mean, pop_log_lambda_sd)
+  ind_logit_bias <- rnorm(n_subjects, pop_logit_bias_mean, pop_logit_bias_sd)
+
+  true_params <- tibble(
+    agent_id           = seq_len(n_subjects),
+    log_c_true         = ind_log_c,
+    log_lambda_true    = ind_log_lambda,
+    logit_bias_true    = ind_logit_bias,
+    c_true             = exp(ind_log_c),
+    lambda_true        = exp(ind_log_lambda),
+    bias_true          = plogis(ind_logit_bias)
+  )
+  for (f in seq_len(n_features))
+    true_params[[paste0("w", f, "_true")]] <- ind_w[, f]
+
+  all_agent_data <- vector("list", n_subjects)
+  for (j in seq_len(n_subjects)) {
+    subject_seed <- base_seed * 1000 + j
+    # We use the 'drift' scenario for the final multilevel check
+    all_agent_data[[j]] <- simulate_decay_agent(
+      agent_id      = j,
+      scenario      = "drift",
+      w             = as.numeric(ind_w[j, ]),
+      c             = exp(ind_log_c[j]),
+      lambda        = exp(ind_log_lambda[j]),
+      bias          = plogis(ind_logit_bias[j]),
+      subject_seed  = subject_seed
+    )
+  }
+
+  list(data = bind_rows(all_agent_data), true_params = true_params)
+}
+
+n_subjects_sim <- 10
+pop_params_sim <- list(
+  pop_w               = c(0.8, 0.2),
+  kappa               = 15,
+  pop_log_c_mean      = log(2.5),
+  pop_log_c_sd        = 0.4,
+  pop_log_lambda_mean = log(0.2), # median lambda = 0.2
+  pop_log_lambda_sd   = 0.5,
+  pop_logit_bias_mean = 0,
+  pop_logit_bias_sd   = 0.3
+)
+
+sim_file_ml_decay         <- here("simdata", "ch12_gcm_ml_decay_sim_data.csv")
+true_params_file_ml_decay  <- here("simdata", "ch12_gcm_ml_decay_true_params.csv")
+
+if (regenerate_simulations || !file.exists(sim_file_ml_decay)) {
+  ml_decay_sim_output <- simulate_multilevel_decay_gcm(
+    n_subjects          = n_subjects_sim,
+    stimulus_info       = stimulus_info,
+    n_blocks            = n_blocks,
+    base_seed           = 42,
+    pop_w               = pop_params_sim$pop_w,
+    kappa               = pop_params_sim$kappa,
+    pop_log_c_mean      = pop_params_sim$pop_log_c_mean,
+    pop_log_c_sd        = pop_params_sim$pop_log_c_sd,
+    pop_log_lambda_mean = pop_params_sim$pop_log_lambda_mean,
+    pop_log_lambda_sd   = pop_params_sim$pop_log_lambda_sd,
+    pop_logit_bias_mean = pop_params_sim$pop_logit_bias_mean,
+    pop_logit_bias_sd   = pop_params_sim$pop_logit_bias_sd
+  )
+  multilevel_decay_data    <- ml_decay_sim_output$data
+  multilevel_decay_params  <- ml_decay_sim_output$true_params
+  write_csv(multilevel_decay_data,   sim_file_ml_decay)
+  write_csv(multilevel_decay_params, true_params_file_ml_decay)
+} else {
+  multilevel_decay_data    <- read_csv(sim_file_ml_decay,    show_col_types = FALSE)
+  multilevel_decay_params  <- read_csv(true_params_file_ml_decay, show_col_types = FALSE)
+}
+
+ggplot(multilevel_decay_data,
+       aes(x = trial_within_subject, y = cumulative_accuracy, group = agent_id)) +
+  geom_line(alpha = 0.2, color = "grey30") +
+  stat_summary(fun = mean, geom = "line", aes(group = 1),
+               color = "#0072B2", linewidth = 1.5) +
+  labs(
+    title    = "Multilevel Learning Curves: Smooth Drift Scenario",
+    subtitle = "Population-level tracking of a moving category boundary",
+    x = "Trial", y = "Cumulative Accuracy"
+  )
+```
+
 
 
 ### GCM in Context: Strengths and Limitations
