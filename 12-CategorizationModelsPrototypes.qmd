@@ -2,16 +2,18 @@
 
 ```{r ch13_setup, include=FALSE}
 knitr::opts_chunk$set(
-  echo    = TRUE,
-  message = FALSE,
-  warning = FALSE,
+  echo      = TRUE,
+  warning   = FALSE,
+  message   = FALSE,
   fig.width  = 8,
-  fig.height = 5
+  fig.height = 5,
+  fig.align  = "center",
+  out.width  = "80%",
+  dpi        = 300
 )
 
-# Set to TRUE to rerun simulations and Stan fits.
-# FALSE loads pre-computed results from 'simdata/'.
-regenerate_simulations <- TRUE
+# Set to TRUE to rerun all Stan fits and heavy simulations; FALSE loads saved results.
+regenerate_simulations <- FALSE
 
 # Set to TRUE to run the long-running validation chunks
 # (LFO-CV, precision analysis, SBC). FALSE loads cached results
@@ -28,7 +30,7 @@ pacman::p_load(
   tidybayes,    # tidy extraction of draws
   bayesplot,    # MCMC diagnostic plots
   loo,          # LOO-CV and PSIS
-  SBC,          # Simulation-Based Calibration
+  SBC,          # Simulation-Based Calibration Checks
   priorsense,   # prior sensitivity
   future,       # parallel processing
   furrr,        # parallel functional programming
@@ -55,9 +57,9 @@ for (d in c("stan", "simdata", "simmodels")) {
 # tibble summarising the mandatory MCMC diagnostic battery for a cmdstanr
 # fit, and prints a warning if any threshold is breached. Chapters 11, 12,
 # 13, and 15 all call this so the diagnostic table looks the same everywhere.
-diagnostic_summary_table <- function(fit, pars = NULL) {
+diagnostic_summary_table <- function(fit, params = NULL) {
   diag <- fit$diagnostic_summary(quiet = TRUE)
-  draws_summary <- fit$summary(variables = pars)
+  draws_summary <- fit$summary(variables = params)
 
   # Calculate individual metrics
   n_div <- sum(diag$num_divergent)
@@ -177,7 +179,7 @@ plan(multisession, workers = max(1, availableCores() - 1))
 > | 3.5 Prior sensitivity | §"Prior Sensitivity Analysis" — `priorsense::powerscale_sensitivity()` |
 > | 4.5 LOO-PIT (randomised, binary) | §"Randomised LOO-PIT Calibration" |
 > | 4.6 LFO-CV | §"Leave-Future-Out Cross-Validation" — inherited from Ch 11 |
-> | 6b. SBC (single-subject) | §"Simulation-Based Calibration" |
+> | 6b. SBC (single-subject) | §"Simulation-Based Calibration Checks" |
 > | 6d. Precision analysis | §"Precision Analysis: How CI Width Scales With N" |
 > | Identifiability check | § (r vs decisional temperature) |
 > | 1ML. Forward simulator (multilevel) | `simulate_multilevel_prototype()` |
@@ -965,7 +967,7 @@ Before reading anything off the posterior, we curate the diagnostic table. Earli
 if (!is.null(fit_proto_single)) {
   diag_tbl <- diagnostic_summary_table(
     fit_proto_single,
-    pars = c("log_r", "r_value", "log_q", "q_value")
+    params = c("log_r", "r_value", "log_q", "q_value")
   )
   print(diag_tbl)
 }
@@ -1438,7 +1440,7 @@ if (!is.null(fit_proto_single)) {
 ---
 
 
-## Simulation-Based Calibration (SBC)
+## Simulation-Based Calibration Checks (SBC)
 
 Parameter recovery at specific true values is a necessary but not sufficient validation. SBC checks that the full posterior is correctly calibrated across the entire prior distribution — that if the true `log_r` and `log_q` were drawn from their priors, the posterior would on average contain each true value in the appropriate fraction of its probability mass. We use the `SBC` package for consistency with Chapters 6, 8, and 11.
 
@@ -1574,6 +1576,10 @@ For the production version of this material we recommend $S \geq 1000$ iteration
 The SBC result above exposes a structural problem. Under the static Kruschke paradigm, $\log r$ is cleanly recovered but $\log q$ is not — its ECDF-difference curve drifts outside the simultaneous band and its posterior often collapses toward the prior. This is not a coding bug or a sampler problem: it is a genuine identifiability failure caused by a mismatch between the *parameter* (process noise on prototype drift) and the *task* (fixed category centres with no drift to track).
 
 Three generative processes stress this identifiability question differently. We implement all three and run the full validation battery on each.
+
+::: {.callout-note title="Scenario order differs from Chapter 11"}
+Chapter 11 arranged the three scenarios in order of increasing $\lambda$ preference (static → drift → contingent shift). Here the order is **static → contingent shift → drift**, which reflects increasing *assumption match* between the Kalman filter's Gaussian-drift prior and the data-generating process. The scenarios are the same; the ordering principle is different because the two models have different structural homes for non-stationarity.
+:::
 
 1. **Static Kruschke (baseline).** Fixed category labels. The Kalman filter's process-noise prior assumes smooth Gaussian drift; under stationary data, no amount of $q$ improves fit once transient learning is over. We expect $\log q$ to remain weakly identified — this is the failure case we need to diagnose clearly.
 2. **Performance-contingent abrupt shifts.** After the agent reaches a streak of $k$ consecutive correct responses, all category labels flip. Post-flip recovery is *fast* for agents whose $q$ lets the covariance re-inflate after surprise, and *slow* for agents whose $q$ is tiny — so $q$ acquires a direct behavioural signature. But the true process has abrupt jumps, which the filter's Gaussian-drift prior does not literally contain; this is a misspecified-but-informative scenario.
@@ -1889,8 +1895,8 @@ if (regenerate_simulations || !file.exists(scenario_fit_file)) {
 
 ```{r ch13_scenario_diagnostics}
 scenario_diag_tbls <- purrr::imap_dfr(scenario_fits, function(fit, scen) {
-  tbl <- diagnostic_summary_table(fit, pars = c("log_r", "log_q",
-                                                "r_value", "q_value"))
+  tbl <- diagnostic_summary_table(fit, params = c("log_r", "log_q",
+                                                  "r_value", "q_value"))
   tbl |> mutate(scenario = scen)
 })
 print(scenario_diag_tbls |>
@@ -2063,7 +2069,7 @@ ggplot(scenario_recovery_long, aes(x = truth, y = estimated,
 
 **Interpretation.** The `log_r` row is near-diagonal across scenarios — $r$ is identified by within-category decision sharpness, which every scenario exercises. The `log_q` row is the diagnostic: diffuse scatter on static data (the parameter is under-constrained), tighter on drift, and comparably tight on contingent-shift. The contingent-shift result is noteworthy — the data-generating process has abrupt jumps that the filter's smooth-drift prior cannot exactly reproduce, yet recovery still works because post-shift recovery speed loads specifically on $q$.
 
-### Simulation-Based Calibration Across Scenarios
+### Simulation-Based Calibration Checks Across Scenarios
 
 SBC is the formal calibration test. Each scenario gets its own generator drawing $(\log r, \log q)$ from their priors.
 
@@ -2749,7 +2755,7 @@ if (regenerate_simulations || !file.exists(fit_filepath_ml_proto)) {
 if (!is.null(fit_proto_ml)) {
   pop_vars_ml <- c("pop_log_r_mean", "pop_log_r_sd", "pop_log_q_mean", "pop_log_q_sd")
 
-  diag_tbl_ml <- diagnostic_summary_table(fit_proto_ml, pars = pop_vars_ml)
+  diag_tbl_ml <- diagnostic_summary_table(fit_proto_ml, params = pop_vars_ml)
   print(diag_tbl_ml)
 
   if (any(c(diag_tbl_ml$n_divergent > 0,
@@ -2848,6 +2854,216 @@ if (!is.null(fit_proto_ml)) {
 ```
 
 **Reading the population posterior.** The red dashed lines mark the true parameter values used to generate the data. Well-calibrated inference should show the posterior clearly shifted from the prior and centred near the true value. With 20 subjects each contributing 64 trials, the population mean is well-identified; the population SD requires more subjects before its posterior narrows substantially (see §"Multilevel SBC" below for the coverage analysis).
+
+### Cross-Scenario Population Recovery
+
+Mirroring Chapter 11's three-population analysis, we simulate one population per scenario and verify that the multilevel prototype model recovers population parameters with the same scenario-dependence observed at the single-subject level. The key prediction: `pop_log_r_mean` should be well-recovered in all three scenarios (observation noise directly shapes every per-trial likelihood); `pop_log_q_mean` should be poorly recovered in static data (no drift to track) and cleanly recovered in the smooth-drift scenario (assumption-matched generative process).
+
+```{r ch13_ml_scenario_sim_function}
+simulate_ml_proto_scenario <- function(
+    n_subjects, stimulus_info, n_blocks, scenario, base_seed,
+    pop_log_r_mean, pop_log_r_sd,
+    pop_log_q_mean = LOG_Q_PRIOR_MEAN,
+    pop_log_q_sd   = 0.5) {
+
+  set.seed(base_seed)
+  z_log_r    <- rnorm(n_subjects, 0, 1)
+  subj_log_r <- pop_log_r_mean + pop_log_r_sd * z_log_r
+  subj_r     <- exp(subj_log_r)
+
+  z_log_q    <- rnorm(n_subjects, 0, 1)
+  subj_log_q <- pop_log_q_mean + pop_log_q_sd * z_log_q
+  subj_q     <- exp(subj_log_q)
+
+  true_params <- tibble(
+    agent_id   = seq_len(n_subjects),
+    scenario   = scenario,
+    log_r_true = subj_log_r, r_true = subj_r,
+    log_q_true = subj_log_q, q_true = subj_q
+  )
+
+  sim_data <- map_dfr(seq_len(n_subjects), function(j) {
+    sched <- make_subject_schedule(stimulus_info, n_blocks,
+                                   seed = base_seed * 100 + j)
+    simulate_prototype_agent_scenario(
+      agent_id = j, scenario = scenario,
+      r_value  = subj_r[j], q_value = subj_q[j],
+      schedule = sched
+    )
+  })
+
+  list(data = sim_data, true_params = true_params)
+}
+```
+
+```{r ch13_ml_scenario_simulate}
+n_subjects_ml_scen <- 10
+pop_params_ml_scen <- list(
+  pop_log_r_mean = log(1.5),    # population median r = 1.5
+  pop_log_r_sd   = 0.5,
+  pop_log_q_mean = log(0.15),   # population median q = 0.15
+  pop_log_q_sd   = 0.5
+)
+ml_proto_scenarios <- c("static", "contingent_shift", "drift")
+
+ml_proto_scen_files <- map(ml_proto_scenarios, function(scen) list(
+  data  = here("simdata", paste0("ch13_proto_ml_scen_data_",  scen, ".csv")),
+  truth = here("simdata", paste0("ch13_proto_ml_scen_truth_", scen, ".csv"))
+)) |> setNames(ml_proto_scenarios)
+
+ml_scen_files_exist <- all(
+  file.exists(unlist(map(ml_proto_scen_files, ~ c(.x$data, .x$truth))))
+)
+
+if (regenerate_simulations || !ml_scen_files_exist) {
+  ml_proto_scen_sims <- map(ml_proto_scenarios, function(scen) {
+    out <- simulate_ml_proto_scenario(
+      n_subjects     = n_subjects_ml_scen,
+      stimulus_info  = stimulus_info,
+      n_blocks       = n_blocks,
+      scenario       = scen,
+      base_seed      = match(scen, ml_proto_scenarios) * 1000 + 77,
+      pop_log_r_mean = pop_params_ml_scen$pop_log_r_mean,
+      pop_log_r_sd   = pop_params_ml_scen$pop_log_r_sd,
+      pop_log_q_mean = pop_params_ml_scen$pop_log_q_mean,
+      pop_log_q_sd   = pop_params_ml_scen$pop_log_q_sd
+    )
+    write_csv(out$data,        ml_proto_scen_files[[scen]]$data)
+    write_csv(out$true_params, ml_proto_scen_files[[scen]]$truth)
+    out
+  }) |> setNames(ml_proto_scenarios)
+} else {
+  ml_proto_scen_sims <- map(ml_proto_scenarios, function(scen) list(
+    data        = read_csv(ml_proto_scen_files[[scen]]$data,  show_col_types = FALSE),
+    true_params = read_csv(ml_proto_scen_files[[scen]]$truth, show_col_types = FALSE)
+  )) |> setNames(ml_proto_scenarios)
+}
+
+ml_proto_scen_all <- map_dfr(ml_proto_scenarios, function(scen)
+  ml_proto_scen_sims[[scen]]$data |> mutate(scenario = scen)
+) |>
+  mutate(scenario = factor(scenario, levels = ml_proto_scenarios,
+                           labels = c("Static", "Contingent shift", "Smooth drift")))
+
+ggplot(ml_proto_scen_all,
+       aes(x = trial_within_subject, y = performance, group = agent_id)) +
+  geom_line(alpha = 0.25, color = "grey40") +
+  stat_summary(fun = mean, geom = "line", aes(group = 1),
+               color = "#009E73", linewidth = 1.4) +
+  facet_wrap(~scenario, ncol = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") +
+  labs(
+    title    = "Multilevel Prototype Model: learning curves across scenarios",
+    subtitle = paste0(n_subjects_ml_scen,
+                      " agents per scenario; grey = individuals, green = population mean"),
+    x = "Trial", y = "Cumulative accuracy"
+  )
+```
+
+```{r ch13_ml_scenario_fit}
+build_ml_proto_stan_data <- function(ml_data) {
+  sorted <- ml_data |>
+    mutate(subj_id_stan = as.integer(factor(agent_id))) |>
+    arrange(subj_id_stan, trial_within_subject)
+
+  bounds <- sorted |>
+    mutate(row_idx = row_number()) |>
+    group_by(subj_id_stan) |>
+    summarise(subj_start = min(row_idx), subj_end = max(row_idx),
+              .groups = "drop") |>
+    arrange(subj_id_stan)
+
+  list(
+    N_total                   = nrow(sorted),
+    N_subjects                = max(sorted$subj_id_stan),
+    N_features                = 2L,
+    subj_start                = bounds$subj_start,
+    subj_end                  = bounds$subj_end,
+    y                         = as.integer(sorted$sim_response),
+    cat_one                   = as.integer(sorted$category_feedback),
+    obs                       = as.matrix(sorted[, c("height", "position")]),
+    initial_mu_cat0           = c(2.5, 2.5),
+    initial_mu_cat1           = c(2.5, 2.5),
+    initial_sigma_diag        = 10.0,
+    pop_log_r_mean_prior_mean = LOG_R_PRIOR_MEAN,
+    pop_log_r_mean_prior_sd   = LOG_R_PRIOR_SD,
+    pop_log_r_sd_prior_rate   = 2.0,
+    pop_log_q_mean_prior_mean = LOG_Q_PRIOR_MEAN,
+    pop_log_q_mean_prior_sd   = LOG_Q_PRIOR_SD,
+    pop_log_q_sd_prior_rate   = 2.0
+  )
+}
+
+ml_proto_scen_fit_files <- map_chr(ml_proto_scenarios, function(scen)
+  here("simmodels", paste0("ch13_proto_ml_scen_fit_", scen, ".rds"))
+) |> setNames(ml_proto_scenarios)
+
+if (regenerate_simulations || !all(file.exists(ml_proto_scen_fit_files))) {
+  ml_proto_scen_fits <- map(ml_proto_scenarios, function(scen) {
+    cat("Fitting multilevel prototype — scenario:", scen, "\n")
+    dat <- build_ml_proto_stan_data(ml_proto_scen_sims[[scen]]$data)
+    fit <- mod_prototype_ml$sample(
+      data            = dat,
+      chains          = 4,
+      parallel_chains = min(4, availableCores()),
+      iter_warmup     = 1500,
+      iter_sampling   = 1500,
+      refresh         = 200,
+      adapt_delta     = 0.95,
+      max_treedepth   = 12
+    )
+    fit$save_object(ml_proto_scen_fit_files[[scen]])
+    fit
+  }) |> setNames(ml_proto_scenarios)
+} else {
+  ml_proto_scen_fits <- map(ml_proto_scen_fit_files, readRDS) |>
+    setNames(ml_proto_scenarios)
+}
+```
+
+```{r ch13_ml_scenario_recovery}
+pop_vars_scen <- c("pop_log_r_mean", "pop_log_r_sd",
+                   "pop_log_q_mean", "pop_log_q_sd")
+
+true_vals_scen <- tibble(
+  variable = pop_vars_scen,
+  true_val = c(
+    pop_params_ml_scen$pop_log_r_mean,
+    pop_params_ml_scen$pop_log_r_sd,
+    pop_params_ml_scen$pop_log_q_mean,
+    pop_params_ml_scen$pop_log_q_sd
+  )
+)
+
+ml_proto_scen_recovery <- map_dfr(ml_proto_scenarios, function(scen) {
+  ml_proto_scen_fits[[scen]]$summary(variables = pop_vars_scen) |>
+    dplyr::select(variable, mean, q5, q95) |>
+    mutate(scenario = scen)
+}) |>
+  left_join(true_vals_scen, by = "variable") |>
+  mutate(scenario = factor(scenario, levels = ml_proto_scenarios,
+                           labels = c("Static", "Contingent shift", "Smooth drift")))
+
+ggplot(ml_proto_scen_recovery,
+       aes(x = scenario, y = mean, ymin = q5, ymax = q95, color = scenario)) +
+  geom_pointrange() +
+  geom_hline(aes(yintercept = true_val), linetype = "dashed", color = "red") +
+  facet_wrap(~variable, scales = "free_y", ncol = 2) +
+  scale_color_manual(values = c("#999999", "#E69F00", "#009E73")) +
+  labs(
+    title    = "Multilevel Population Recovery Across Scenarios",
+    subtitle = "Points = posterior mean; bars = 90% CI; red dashes = true generating values",
+    x = NULL, y = "Posterior estimate"
+  ) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+**Cross-scenario population recovery.** `pop_log_r_mean` is well-recovered in all three scenarios: observation noise directly shapes every per-trial likelihood, so the data always constrain $r$ at the population level. `pop_log_q_mean` tells a different story. On static data the 90% CI is wide and centred near the prior mean — partial pooling across 10 subjects cannot manufacture information that no individual trial provides. On contingent-shift data the CI narrows as reversal dynamics provide a collective signal; subjects with more reversals lend strength to those with fewer. On drift data both population means are cleanly recovered, with the 90% CI sitting close to the true value — the assumption-matched scenario scales cleanly from the single-subject to the multilevel level.
+
+**Comparison with Chapter 11.** The decay GCM's cross-scenario multilevel analysis showed that `pop_log_lambda_mean` was most clearly recovered on *contingent-shift* data. Here `pop_log_q_mean` is most clearly recovered on *drift* data. The contrast reflects the models' different generative stories: the GCM's general-purpose decay kernel captures contingent shifts as well as drift (forgetting is useful whenever old evidence is stale, regardless of *why* it became stale); the Kalman filter's smooth-drift prior is most consistent with the scenario where prototypes literally undergo Gaussian random-walk drift.
+
+---
 
 ## Multilevel SBC
 
@@ -3013,7 +3229,126 @@ print(p_sbc_indiv_proto)
 
 * **Scatter plots (population and individual recovery).** Points along the red dashed identity line confirm that the posterior means are unbiased estimators of the generating values. Systematic curvature (points arching away from the line at the extremes) would indicate either prior-boundary effects or insufficient data per subject.
 
-* **Comparison with single-subject SBC (§"Simulation-Based Calibration" above).** The single-subject SBC used $S = 500$ iterations of one agent each; the multilevel SBC uses $S = 200$ iterations of 10 agents each. The multilevel SBC is the authoritative check for multi-subject inference: it verifies that partial pooling does not distort individual-level posteriors and that population hyperparameters are jointly calibrated with per-subject parameters.
+* **Comparison with single-subject SBC (§"Simulation-Based Calibration Checks" above).** The single-subject SBC used $S = 500$ iterations of one agent each; the multilevel SBC uses $S = 200$ iterations of 10 agents each. The multilevel SBC is the authoritative check for multi-subject inference: it verifies that partial pooling does not distort individual-level posteriors and that population hyperparameters are jointly calibrated with per-subject parameters.
+
+### Multilevel SBC on Drift Data: The Assumption-Matched Case
+
+The SBC above uses static data, which deliberately exposes the `pop_log_q` calibration failure — the population-level counterpart of the single-subject failure documented in §"Simulation-Based Calibration Checks". We now run a second multilevel SBC using the **smooth-drift** scenario, where the Kalman filter's generative story is literally true of the environment. This is the assumption-matched multilevel check: if the model is correctly specified *and* the task provides drift signal at the individual level, the population-level posterior should be well-calibrated across both parameters.
+
+```{r ch13_sbc_multilevel_drift}
+sbc_ml_drift_filepath <- here("simdata", "ch13_sbc_proto_ml_drift_results.rds")
+
+if (regenerate_simulations || !file.exists(sbc_ml_drift_filepath)) {
+  n_sbc_iterations_ml_drift <- 200
+  n_subjects_sbc_drift      <- 10
+
+  proto_ml_drift_generator <- SBC_generator_function(
+    function() {
+      pop_log_r_mean <- rnorm(1, LOG_R_PRIOR_MEAN, LOG_R_PRIOR_SD)
+      pop_log_r_sd   <- rexp(1, 2.0)
+      pop_log_q_mean <- rnorm(1, LOG_Q_PRIOR_MEAN, LOG_Q_PRIOR_SD)
+      pop_log_q_sd   <- rexp(1, 2.0)
+
+      z_log_r    <- rnorm(n_subjects_sbc_drift, 0, 1)
+      subj_log_r <- pop_log_r_mean + pop_log_r_sd * z_log_r
+      subj_r     <- exp(subj_log_r)
+
+      z_log_q    <- rnorm(n_subjects_sbc_drift, 0, 1)
+      subj_log_q <- pop_log_q_mean + pop_log_q_sd * z_log_q
+      subj_q     <- exp(subj_log_q)
+
+      all_dat <- map_dfr(seq_len(n_subjects_sbc_drift), function(j) {
+        sched    <- make_subject_schedule(stimulus_info, n_blocks,
+                                          seed = sample.int(1e8, 1))
+        drift_tr <- make_drift_trajectory(nrow(sched), drift_sigma = 0.05,
+                                          seed = sample.int(1e8, 1))
+        simulate_prototype_scenario(
+          r_value    = subj_r[j],
+          q_value    = subj_q[j],
+          schedule   = sched,
+          scenario   = "drift",
+          drift_traj = drift_tr
+        ) |> mutate(agent_id = j)
+      })
+
+      sorted <- all_dat |>
+        mutate(subj_id_stan = as.integer(factor(agent_id))) |>
+        arrange(subj_id_stan, trial_within_subject)
+
+      bounds <- sorted |>
+        mutate(row_idx = row_number()) |>
+        group_by(subj_id_stan) |>
+        summarise(subj_start = min(row_idx), subj_end = max(row_idx),
+                  .groups = "drop") |>
+        arrange(subj_id_stan)
+
+      list(
+        variables = list(
+          pop_log_r_mean    = pop_log_r_mean,
+          pop_log_r_sd      = pop_log_r_sd,
+          `subj_log_r[1]`   = subj_log_r[1],
+          pop_log_q_mean    = pop_log_q_mean,
+          pop_log_q_sd      = pop_log_q_sd,
+          `subj_log_q[1]`   = subj_log_q[1]
+        ),
+        generated = list(
+          N_total                   = nrow(sorted),
+          N_subjects                = n_subjects_sbc_drift,
+          N_features                = 2L,
+          subj_start                = bounds$subj_start,
+          subj_end                  = bounds$subj_end,
+          y                         = as.integer(sorted$sim_response),
+          cat_one                   = as.integer(sorted$category_feedback),
+          obs                       = as.matrix(sorted[, c("height", "position")]),
+          initial_mu_cat0           = c(2.5, 2.5),
+          initial_mu_cat1           = c(2.5, 2.5),
+          initial_sigma_diag        = 10.0,
+          pop_log_r_mean_prior_mean = LOG_R_PRIOR_MEAN,
+          pop_log_r_mean_prior_sd   = LOG_R_PRIOR_SD,
+          pop_log_r_sd_prior_rate   = 2.0,
+          pop_log_q_mean_prior_mean = LOG_Q_PRIOR_MEAN,
+          pop_log_q_mean_prior_sd   = LOG_Q_PRIOR_SD,
+          pop_log_q_sd_prior_rate   = 2.0
+        )
+      )
+    }
+  )
+
+  proto_ml_drift_backend <- SBC_backend_cmdstan_sample(
+    mod_prototype_ml,
+    iter_warmup   = 1000,
+    iter_sampling = 1000,
+    chains        = 2,
+    adapt_delta   = 0.95,
+    refresh       = 0
+  )
+
+  proto_ml_drift_datasets <- generate_datasets(
+    proto_ml_drift_generator,
+    n_sims = n_sbc_iterations_ml_drift
+  )
+
+  sbc_results_ml_drift <- compute_SBC(
+    proto_ml_drift_datasets,
+    proto_ml_drift_backend,
+    cache_mode     = "results",
+    cache_location = here("simdata", "ch13_sbc_proto_ml_drift_cache"),
+    keep_fits      = FALSE
+  )
+  saveRDS(sbc_results_ml_drift, sbc_ml_drift_filepath)
+  cat("Multilevel prototype SBC (drift) results computed and saved.\n")
+} else {
+  sbc_results_ml_drift <- readRDS(sbc_ml_drift_filepath)
+  cat("Loaded existing multilevel prototype SBC (drift) results.\n")
+}
+
+plot_ecdf_diff(sbc_results_ml_drift) +
+  ggtitle("Multilevel SBC: smooth drift scenario")
+plot_rank_hist(sbc_results_ml_drift) +
+  ggtitle("Rank histograms — multilevel drift")
+```
+
+**Reading the drift multilevel SBC.** Under the assumption-matched scenario all six curves should remain inside the simultaneous band and rank histograms should be approximately uniform. Contrast with the static multilevel SBC above: `pop_log_q_mean` and `subj_log_q[1]` should shift from calibration failure (static) to calibration success (drift). `pop_log_q_sd` is the most demanding curve — even on drift data, estimating the *spread* of individual $\log q$ values requires enough between-subject variability to be visible above the within-subject noise. The two multilevel SBC panels together — static as failure case, drift as success case — provide the population-level analogue of the single-subject SBC trilogy from §"Non-Stationary Environments".
 
 ---
 
@@ -3056,4 +3391,12 @@ The Kalman filter prototype model provides a dynamic, computationally plausible 
 
 As a Stan model it has a particularly clean shape: with two parameters and a fully deterministic likelihood, Pathfinder initialization is reliable, parameter recovery is tractable, the diagnostic battery is nearly trivial to satisfy, and SBC is straightforward. That cleanliness is *why* this chapter is the right place in the trio to introduce LFO-CV — the algorithm is most legible when there are only two parameters to re-weight and the per-trial filter is fast. Chapters 11, 13, and 15 inherit `psis_lfo_kalman()` (and its GCM sibling `psis_lfo_gcm()` from Chapter 11) so that the LFO-CV caveat that earlier drafts of this material repeated three times across three chapters is now discharged in one place.
 
-The next chapter introduces a third perspective — rule-based models — which makes categorization decisions through explicit hypothesis testing rather than continuous similarity to either stored examples or running averages. That chapter also confronts a problem the Kalman model lets us sidestep: when the cognitive theory's likelihood is intractable in Stan, what is the principled response? Chapter 13 takes up that question, and the ABC-based answer it develops is what makes the cross-architecture comparison in Chapter 15 finally interpretable.
+The next chapter introduces a third perspective — rule-based models — which makes categorization decisions through explicit hypothesis testing rather than continuous similarity to either stored examples or running averages.
+
+::: {.callout-warning title="Prepare for a structural shift in Chapter 13"}
+Chapter 13 differs from Chapters 11 and 12 in one load-bearing way: **the cognitive theory (a Bayesian particle filter over discrete rule hypotheses) has no Stan-tractable likelihood**. The resampling step is non-differentiable and the latent particle trajectories cannot be marginalised analytically. The chapter therefore introduces two distinct models — Model A, the cognitive theory fitted via Neural Posterior Estimation (NPE); and Model B, a tractable Stan proxy (a marginalised mixture over a fixed candidate rule set). The validation battery applies separately to each. A flat SBC rank histogram for Model B does *not* validate Model A. The gap between the two posteriors on $\varepsilon$ is the chapter's main empirical finding: the structural bias you accept when you replace an intractable cognitive theory with a tractable proxy.
+
+Coming from this chapter, the key conceptual shift is: the Kalman filter gave us a clean two-parameter Stan model where process noise $q$ was both interpretable (drift speed) and identifiable from non-stationary data. The rule particle filter has an analogous mutation parameter $\mu$, but it enters as a general-purpose rejuvenation mechanism rather than as a literal model of how the environment changes — which means identifiability patterns differ, and the assumption-match story is less tight. Chapter 13's scenario analysis (§"Assumption Match Across Scenarios") spells this out.
+:::
+
+Chapter 13 also confronts the NPE pipeline that replaces the ABC-based approach of earlier drafts: schedule-fixed simulations, a learned embedding network, and SBC + expected coverage for validation. The cross-architecture comparison in Chapter 15 inherits these NPE networks — each model gets one trained inference network, and the full multi-subject comparison runs in seconds thanks to amortized inference.

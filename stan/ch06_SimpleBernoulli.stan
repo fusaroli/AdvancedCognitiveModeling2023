@@ -14,7 +14,7 @@ parameters {
   real<lower=0, upper=1> theta; // The bias parameter (probability), constrained between 0 and 1
 }
 
-// 3. Model Block: Defines the priors and the likelihood
+// 3. Model Block: Defines the priors and the data model (used as likelihood during inference)
 model {
   // Prior: Our belief about theta *before* seeing the data.
   // We use a Beta(1, 1) prior, which is equivalent to a Uniform(0, 1) distribution.

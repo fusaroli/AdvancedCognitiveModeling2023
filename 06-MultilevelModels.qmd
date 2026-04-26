@@ -36,7 +36,7 @@ pacman::p_load(
   loo,             # PSIS-LOO out-of-sample predictive cross-validation
   priorsense,      # Analytical prior sensitivity via power-scaling
   DiagrammeR,      # Generative structural visualizations (DAGs)
-  SBC,             # Simulation-Based Calibration
+  SBC,             # Simulation-Based Calibration Checks
   marginaleffects # Conditional predictive interpretations on the outcome scale
 )
 
@@ -110,7 +110,7 @@ After completing this chapter, you will be able to:
 
 * **Model Parameter Correlations**: Implement and interpret models that estimate correlations between individual-level parameters (via  Cholesky-factorized correlation matrices $\mathbf{L}_\Omega$).
 
-* **Perform Comprehensive Model Checks**: Apply a rigorous Bayesian workflow to hierarchical models (Predictive Checks, Prior-Posterior Update Checks, Sensitivity Analysis, Parameter Recovery, Simulation-Based Calibration, etc).
+* **Perform Comprehensive Model Checks**: Apply a rigorous Bayesian workflow to hierarchical models (Predictive Checks, Prior-Posterior Update Checks, Sensitivity Analysis, Parameter Recovery, Simulation-Based Calibration Checks, etc).
 
 * **Apply to Cognitive Questions**: Use multilevel modeling to investigate individual differences in cognitive strategies (e.g., bias, memory, WSLS).
 
@@ -739,10 +739,10 @@ priorsense::powerscale_plot_quantities(ps_seq) +
 
 The sensitivity analysis reveals that our population variance ($\sigma_\theta$) exhibits a prior-data conflict. This is a feature, not a bug, of partial pooling: our Exponential prior applies regularizing pressure toward zero variance (complete pooling), while the empirical data resists this pull to account for individual differences.
 
-### Simulation-Based Calibration (SBC)
+### Simulation-Based Calibration Checks (SBC)
 
-Parameter recovery on a single dataset is anecdotal. A single success might just mean we got lucky with a benign region of the parameter space. To mathematically guarantee that our NUTS sampler is unbiased and our posterior uncertainties are perfectly calibrated across the entire prior space, we must perform Simulation-Based Calibration (SBC).
-The logic of SBC is structurally elegant: if we generate a ground-truth parameter $\theta_{\text{true}}$ from the prior, generate data from the likelihood conditional on $\theta_{\text{true}}$, and compute the posterior, then the posterior must not systematically over- or under-estimate $\theta_{\text{true}}$. Under a well-calibrated sampler, the rank of the true parameter value within the sorted posterior draws will be uniformly distributed:$$r \sim \text{Uniform}(0, S)$$where $S$ is the number of posterior samples.
+Parameter recovery on a single dataset is anecdotal. A single success might just mean we got lucky with a benign region of the parameter space. To mathematically guarantee that our NUTS sampler is unbiased and our posterior uncertainties are perfectly calibrated across the entire prior space, we must perform Simulation-Based Calibration Checks (SBC).
+The logic of SBC is structurally elegant: if we generate a ground-truth parameter $\theta_{\text{true}}$ from the prior, generate data from the data model conditional on $\theta_{\text{true}}$, and compute the posterior, then the posterior must not systematically over- or under-estimate $\theta_{\text{true}}$. Under a well-calibrated sampler, the rank of the true parameter value within the sorted posterior draws will be uniformly distributed:$$r \sim \text{Uniform}(0, S)$$where $S$ is the number of posterior samples.
 If the model is overconfident (the posterior is too narrow and misses the truth), the rank histogram will be U-shaped. If it is underconfident (the posterior is too wide), it will form an inverted U-shape. Asymmetries indicate directional bias.
 
 ### Setting up the SBC Pipeline
@@ -1387,11 +1387,11 @@ ggplot(divergence_profile, aes(x = mu_theta, y = sigma_theta, color = had_diverg
   theme_classic()
 ```
 
-#### Posterior Simulation-Based Calibration: Probing Local Geometry
+#### Posterior Simulation-Based Calibration Checks: Probing Local Geometry
 
 Prior SBC tested our sampler across the entire prior space — it asked whether NUTS is unbiased when the true parameters could be anything the prior assigns non-negligible mass to. This is a global guarantee, and it is necessary. But it is not sufficient. A sampler can be globally unbiased yet struggle precisely in the regions that matter most: the posterior neighborhoods that the actual observed data force us into. When the likelihood is highly informative — as it typically is once we have a few hundred trials per agent — the posterior concentrates sharply in a small corner of the prior space. The sampler must now take large numbers of tiny, precise steps in a geometrically restricted region. Prior SBC never directly stresses this regime, because most of its simulated universes place the true parameter somewhere across the full prior, and only a fraction happen to fall in the data-rich posterior neighborhood.
 
-Posterior SBC (PSBC) is a complementary local diagnostic that directly targets this regime. The logic inverts the generative direction. Instead of drawing true parameters from the prior, we draw them from the *fitted posterior* — a distribution that has already been conditioned on our actual data and therefore concentrates in precisely the region the sampler will need to navigate in practice. Concretely: we sample a single draw $\tilde{\theta}^{(s)}$ from the posterior ($\theta \mid y_{\text{obs}}$), treat it as a ground truth, generate a synthetic dataset $\tilde{y}^{(s)} \sim p(y \mid \tilde{\theta}^{(s)})$ from the likelihood, fit the model to $\tilde{y}^{(s)}$, and record where $\tilde{\theta}^{(s)}$ falls in the resulting posterior. If the sampler is locally well-calibrated, these ranks are again uniform — but now over the concentrated geometry of the posterior, not the diffuse geometry of the prior. A U-shaped rank histogram here means the sampler is overconfident *specifically when the data are informative*, which is exactly the failure mode we need to detect. Implementing this requires us to write a *factory function*: a function that closes over a fitted model object and a data structure, and returns a new generator function that the `SBC` package can call repeatedly to produce fresh $({\tilde{\theta}}, \tilde{y})$ pairs. If this pattern is unfamiliar, read it as a function that *builds* generators rather than *being* one — `make_psbc_generator(fit_cp, stan_data_centered)` does not itself generate a dataset; it returns a self-contained callable that will do so every time the SBC machinery invokes it.
+Posterior SBC (PSBC) is a complementary local diagnostic that directly targets this regime. The logic inverts the generative direction. Instead of drawing true parameters from the prior, we draw them from the *fitted posterior* — a distribution that has already been conditioned on our actual data and therefore concentrates in precisely the region the sampler will need to navigate in practice. Concretely: we sample a single draw $\tilde{\theta}^{(s)}$ from the posterior ($\theta \mid y_{\text{obs}}$), treat it as a ground truth, generate a synthetic dataset $\tilde{y}^{(s)} \sim p(y \mid \tilde{\theta}^{(s)})$ from the data model, fit the model to $\tilde{y}^{(s)}$, and record where $\tilde{\theta}^{(s)}$ falls in the resulting posterior. If the sampler is locally well-calibrated, these ranks are again uniform — but now over the concentrated geometry of the posterior, not the diffuse geometry of the prior. A U-shaped rank histogram here means the sampler is overconfident *specifically when the data are informative*, which is exactly the failure mode we need to detect. Implementing this requires us to write a *factory function*: a function that closes over a fitted model object and a data structure, and returns a new generator function that the `SBC` package can call repeatedly to produce fresh $({\tilde{\theta}}, \tilde{y})$ pairs. If this pattern is unfamiliar, read it as a function that *builds* generators rather than *being* one — `make_psbc_generator(fit_cp, stan_data_centered)` does not itself generate a dataset; it returns a self-contained callable that will do so every time the SBC machinery invokes it.
 
 ```{r ch07_psbc_execution}
 # 1. Define a robust factory function for the PSBC generator
@@ -2538,7 +2538,7 @@ powerscale_plot_quantities(ps_seq_mem) +
 
 Pay particular attention to the `rho` panel. Because the correlation is identified only from across-agent covariation, it has fewer effective observations than the marginal population parameters. If `rho` shows strong sensitivity to prior scaling, the data contain limited information about the correlation structure and the LKJ prior is doing meaningful regularization.
 
-#### Simulation-Based Calibration (SBC)
+#### Simulation-Based Calibration Checks (SBC)
 
 Parameter recovery on a single dataset is anecdotal. We must prove that the sampler is globally unbiased across the entire prior space.
 

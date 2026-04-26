@@ -34,7 +34,7 @@ pacman::p_load(
   tidybayes,    # tidy extraction of draws
   bayesplot,    # Bayesian visualization
   loo,          # LOO-CV model comparison
-  SBC,          # Simulation-Based Calibration (ECDF-diff plots)
+  SBC,          # Simulation-Based Calibration Checks (ECDF-diff plots)
   priorsense,   # prior sensitivity via power-scaling
   MCMCpack      # rdirichlet
 )
@@ -307,7 +307,7 @@ This transition highlights the fundamentally **path-dependent** nature of cognit
 
 #### Parameters: Cognitive Commitment, Algebraic Role, Stan Parameterization
 
-**Attention weights $w$.** Cognitively, $w$ is a simplex of dimension-specific attention weights. Algebraically, $w$ enters the distance formula as the per-dimension coefficient in the attention-weighted city-block metric. At the Stan level $w$ is declared as `simplex[nfeatures]`, which enforces $w_m \ge 0$ and $\sum_m w_m = 1$ directly.
+**Attention weights $w$.** Cognitively, $w$ is a simplex of dimension-specific attention weights. Algebraically, $w$ enters the distance formula as the per-dimension coefficient in the attention-weighted city-block metric. At the Stan level $w$ is declared as `simplex[N_features]`, which enforces $w_m \ge 0$ and $\sum_m w_m = 1$ directly.
 
 **Sensitivity $c$.** Cognitively, $c$ represents perceptual discriminability. Algebraically, $c$ is the exponential decay rate in $\eta_{ij} = e^{-c\, d_{ij}}$. At the Stan level, we sample an unconstrained `real log_c` and set `c = exp(log_c)` in `transformed parameters`.
 
@@ -925,7 +925,7 @@ mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 #### What each block does:
 
 * **`transformed data`**: Builds the `abs_diff[i, j, f]` tensor. Evaluated exactly once per chain.
-* **`parameters`**: `simplex[nfeatures] w`, unconstrained `real log_c`, and `real<lower=0, upper=1> bias`.
+* **`parameters`**: `simplex[N_features] w`, unconstrained `real log_c`, and `real<lower=0, upper=1> bias`.
 * **`transformed parameters`**: Caches `prob_cat1[i]` in a single forward pass over trials.
 * **`model`**: Priors followed by a vectorised one-line likelihood.
 * **`generated quantities`**: `log_lik[i]` as a per-trial lookup, and `lprior` for `priorsense`.
@@ -949,16 +949,17 @@ agent_to_fit <- simulated_responses |>
 stopifnot(nrow(agent_to_fit) == total_trials)
 
 gcm_data_single <- list(
-  ntrials          = nrow(agent_to_fit),
-  nfeatures        = 2,
-  y                = agent_to_fit$sim_response,
-  obs              = as.matrix(agent_to_fit[, c("height", "position")]),
-  cat_feedback     = agent_to_fit$category_feedback,
-  w_prior_alpha    = c(1, 1),
-  log_c_prior_mean = LOG_C_PRIOR_MEAN,
-  log_c_prior_sd   = LOG_C_PRIOR_SD,
-  bias_prior_alpha = 1,
-  bias_prior_beta  = 1
+  N_total           = nrow(agent_to_fit),
+  N_features        = 2L,
+  y                 = as.integer(agent_to_fit$sim_response),
+  obs               = as.matrix(agent_to_fit[, c("height", "position")]),
+  cat_feedback      = as.integer(agent_to_fit$category_feedback),
+  prior_w_alpha     = c(1, 1),
+  prior_log_c_mu    = LOG_C_PRIOR_MEAN,
+  prior_log_c_sigma = LOG_C_PRIOR_SD,
+  prior_bias_alpha  = 1,
+  prior_bias_beta   = 1,
+  run_diagnostics   = 1L
 )
 
 fit_filepath_single <- here("simmodels", "ch12_gcm_single_fit.rds")
@@ -1162,7 +1163,7 @@ psis_lfo_gcm <- function(stan_model,
 
   fit_subset <- function(n_train, seed) {
     sub_data <- full_data
-    sub_data$ntrials      <- n_train
+    sub_data$N_total      <- n_train
     sub_data$y            <- sub_data$y[1:n_train]
     sub_data$obs          <- sub_data$obs[1:n_train, , drop = FALSE]
     sub_data$cat_feedback <- sub_data$cat_feedback[1:n_train]
@@ -1181,7 +1182,7 @@ psis_lfo_gcm <- function(stan_model,
   predict_future <- function(fit, full_data) {
     full_n   <- length(full_data$y)
     ext_data <- full_data
-    ext_data$ntrials <- full_n
+    ext_data$N_total <- full_n
 
     gq_fit <- stan_model$generate_quantities(
       fitted_params   = fit,
@@ -1298,7 +1299,7 @@ exact_lfo_filepath <- here("simdata", "ch12_exact_lfo_single.rds")
 if (regenerate_simulations || !file.exists(exact_lfo_filepath)) {
   exact_results <- map_dfr(exact_lfo_grid, function(n_train) {
     sub_data <- gcm_data_single
-    sub_data$ntrials      <- n_train
+    sub_data$N_total      <- n_train
     sub_data$y            <- sub_data$y[1:n_train]
     sub_data$obs          <- sub_data$obs[1:n_train, , drop = FALSE]
     sub_data$cat_feedback <- sub_data$cat_feedback[1:n_train]
@@ -1400,7 +1401,7 @@ if (!is.null(fit_gcm_single)) {
 
 ---
 
-### Single-Subject Simulation-Based Calibration (SBC)
+### Single-Subject Simulation-Based Calibration Checks (SBC)
 
 SBC checks the internal consistency and calibration of the entire Bayesian inference procedure across the *whole* prior. It asks: "If the true parameters really came from our specified priors, would our inference procedure produce posteriors that are statistically consistent with those priors?"
 
@@ -1436,16 +1437,17 @@ if (regenerate_simulations || !file.exists(sbc_single_filepath)) {
           bias   = bias_true
         ),
         generated = list(
-          ntrials          = nrow(sbc_schedule),
-          nfeatures        = 2L,
-          y                = as.integer(sim$sim_response),
-          obs              = as.matrix(sbc_schedule[, c("height", "position")]),
-          cat_feedback     = as.integer(sbc_schedule$category_feedback),
-          w_prior_alpha    = c(1, 1),
-          log_c_prior_mean = LOG_C_PRIOR_MEAN,
-          log_c_prior_sd   = LOG_C_PRIOR_SD,
-          bias_prior_alpha = 1,
-          bias_prior_beta  = 1
+          N_total           = nrow(sbc_schedule),
+          N_features        = 2L,
+          y                 = as.integer(sim$sim_response),
+          obs               = as.matrix(sbc_schedule[, c("height", "position")]),
+          cat_feedback      = as.integer(sbc_schedule$category_feedback),
+          prior_w_alpha     = c(1, 1),
+          prior_log_c_mu    = LOG_C_PRIOR_MEAN,
+          prior_log_c_sigma = LOG_C_PRIOR_SD,
+          prior_bias_alpha  = 1,
+          prior_bias_beta   = 1,
+          run_diagnostics   = 1L
         )
       )
     }
@@ -2093,7 +2095,7 @@ ggplot(decay_recovery_long, aes(x = truth, y = estimated, color = had_divergence
 
 **Interpretation.** The `log_c` row is near-diagonal across all three scenarios — the sensitivity parameter is well-identified regardless of task structure. The `log_lambda` row is the diagnostic: scatter under static data (the decay parameter is weakly identified, so posterior means regress toward the prior mean), considerably tighter under drift, and tightest under contingent-shift — the reversal dynamics load directly on $\lambda$. This is the empirical answer to the identifiability question from the chapter-12 planning discussion: the parameter that is partially confounded under a stationary task is cleanly recovered as soon as the task exercises the mechanism the parameter encodes.
 
-### Simulation-Based Calibration Across Scenarios
+### Simulation-Based Calibration Checks Across Scenarios
 
 SBC is the calibration test proper: draw parameters from their priors, simulate data with those parameters, fit the model, and check that the posterior ranks of the true parameter are uniform. We run a separate SBC sweep for each scenario.
 
@@ -2223,6 +2225,23 @@ A secondary observation: the scatter of posterior means on the static panel stil
 
 **How the three scenarios match the model's assumptions.** The decay GCM explicitly assumes exemplars decay exponentially as a function of trial age and have no other way of being overridden. The *static* scenario violates nothing but offers no signal for $\lambda$. The *smooth-drift* scenario is a reasonable match: exponentially downweighting past exemplars is a defensible approximation to "evidence collected under a different category mean is stale." The *contingent-shift* scenario is a genuine misspecification — the true data-generating process has abrupt reversals that no smooth decay can exactly reproduce. What saves recovery there is that the post-shift dynamics depend specifically on how fast old evidence can be effectively ignored, and the decay rate is the only parameter in the model that controls that speed. The posterior predictive checks at scenario transitions (not plotted here) should reveal systematic underperformance right after each flip — the reader is encouraged to add one and confirm. That residual misfit is the handle for a future extension with an explicit change-point mechanism.
 
+### The $c$/$\lambda$ Joint Posterior: Ridge Geometry and Task Resolution
+
+The pair plots from the single-agent scenario fits revealed a `log_c`/`log_lambda` ridge on static data. Understanding the geometry of this ridge — and why task structure resolves it — is worth making explicit, because Chapter 12 faces a structurally similar problem ($q$/$r$ in the Kalman filter) and resolves it differently.
+
+**Why does the ridge form?** Both $c$ and $\lambda$ narrow the effective contribution of any given exemplar to the category mean:
+
+* A high $c$ shrinks contributions from spatially distant exemplars (similarity decays faster with distance).
+* A high $\lambda$ shrinks contributions from temporally distant exemplars (similarity decays faster with trial age).
+
+Under a stationary task with balanced categories, distance and age are nearly uncorrelated — older exemplars are not systematically farther from the current stimulus. This means that increasing $c$ and decreasing $\lambda$ (or vice versa) can produce nearly the same observed choice probabilities, creating the elongated posterior ridge you see in the pair plots.
+
+**Why is the GCM ridge less severe than the Kalman filter's $q$/$r$ ridge?** The two parameters operate on orthogonal dimensions: $c$ operates on the spatial axis (feature distances), $\lambda$ on the temporal axis (trial age). Even under static data, choice probabilities have some leverage on each independently — $c$ is constrained by how performance differs across stimuli at varying spatial distances, while $\lambda$ is partially constrained by the early-learning transient (the model must form initial memories before it can categorize, and the learning rate is $\lambda$-dependent). In the Kalman filter, $q$ and $r$ both scale the *same* likelihood at decision time (the multivariate normal variance at trial $t$ is a function of both), so their directions are more nearly collinear and the ridge is typically more severe. Chapter 12 introduces an explicit reparameterization (the SNR parameter $\rho = q/r$) to address this; the GCM does not need it here.
+
+**Task structure as the primary handle.** The SBC results above confirm that the contingent-shift scenario cleanly resolves $\lambda$ without any reparameterization. The reversal dynamics create a temporal structure that spatial sensitivity cannot account for: the *time* at which performance drops is determined by $\lambda$ (how fast old, now-wrong exemplars are forgotten) in a way that is independent of $c$ (which only governs how much nearby vs. distant exemplars are weighted). This is the key empirical signature of a parameter that is theoretically identifiable but under-constrained by a particular task design: swap in a task that exercises the mechanism, and identifiability follows.
+
+**When would reparameterization be needed for the GCM?** If you needed to run the decay GCM exclusively on static data — for example, when fitting archival datasets collected before non-stationary paradigms were standard — the ridge would be a genuine sampling problem. In that case, a reparameterization analogous to Ch. 12's SNR approach could help: write $\log s = \log c + \log \lambda$ (the overall "forgetting rate" in combined spatial-temporal units) and $\log d = \log c - \log \lambda$ (the relative weighting of spatial vs. temporal decay). The joint posterior of $(\log s, \log d)$ would have a narrower marginal in the $\log s$ direction (identified by overall accuracy) and a wider marginal in the $\log d$ direction (the degenerate direction). On non-stationary data the present parameterisation performs well without this change, so we do not implement it here — but the reader should recognise the family resemblance with Ch. 12's solution.
+
 ---
 
 ## The Multilevel Decay GCM: Scaling to populations and changing environments
@@ -2231,30 +2250,31 @@ Having demonstrated that memory decay is essential for non-stationary environmen
 
 ### Mathematical Formulation: The Hierarchical Architecture
 
-This model incorporates the Dirichlet centroid for attention weights, log-normal hierarchies for sensitivity and forgetting, and a logit-normal hierarchy for response bias.
+This model uses log-normal hierarchies for sensitivity and forgetting, and logit-normal hierarchies for attention and response bias. With two features, the simplex-valued attention vector $\mathbf{w}_j$ is fully determined by $w_{j,1}$, so the natural simplex hierarchy (Dirichlet around a population mean $\bar{\mathbf{w}}$ with concentration $\kappa$) collapses to a Beta on $w_{j,1}$. We use a **logit-normal** in its place — equivalent in support and shape to the Beta, but its non-centered parameterisation samples much more cleanly than a Dirichlet hierarchy in NUTS, which is what `ch12_gcm_ml_decay.stan` implements.
 
 **Population-level distributions (Priors):**
 
 $$
 \begin{aligned}
-\bar{\mathbf{w}} &\sim \text{Dirichlet}(\boldsymbol{\alpha}_w) \\
-\kappa &\sim \text{Exponential}(\lambda_\kappa) \\
+\bar{\mu}_{\text{logit}\,w_1}, \bar{\sigma}_{\text{logit}\,w_1} &\sim \text{Priors} \\
 \bar{\mu}_{\log c}, \bar{\sigma}_{\log c} &\sim \text{Priors} \\
 \bar{\mu}_{\log \lambda}, \bar{\sigma}_{\log \lambda} &\sim \text{Priors} \\
 \bar{\mu}_{\text{logit}\,\beta}, \bar{\sigma}_{\text{logit}\,\beta} &\sim \text{Priors}
 \end{aligned}
 $$
 
-**Individual-level parameters (for subject $j$):**
+**Individual-level parameters (for subject $j$, with $w_{j,2} = 1 - w_{j,1}$):**
 
 $$
 \begin{aligned}
-\mathbf{w}_j &\sim \text{Dirichlet}(\kappa \cdot \bar{\mathbf{w}}) \\
+\text{logit}(w_{j,1}) &\sim \text{Normal}(\bar{\mu}_{\text{logit}\,w_1}, \bar{\sigma}_{\text{logit}\,w_1}) \\
 \log c_j &\sim \text{Normal}(\bar{\mu}_{\log c}, \bar{\sigma}_{\log c}) \\
 \log \lambda_j &\sim \text{Normal}(\bar{\mu}_{\log \lambda}, \bar{\sigma}_{\log \lambda}) \\
 \text{logit}(\beta_j) &\sim \text{Normal}(\bar{\mu}_{\text{logit}\,\beta}, \bar{\sigma}_{\text{logit}\,\beta})
 \end{aligned}
 $$
+
+Each individual-level scalar uses a non-centered offset (`z ~ N(0,1)`, with the actual parameter equal to `pop_mean + pop_sd * z`) to avoid the funnel that direct centred parameterisations produce when subject-level data are weakly informative.
 
 **Trial-level Generative Process (for trial $i$ of subject $j$):**
 
@@ -2273,104 +2293,337 @@ $$
 
 ### Simulating Data for the Multilevel Decay GCM
 
-We simulate a population of agents performing the **Smooth Drift** task. This scenario is the most "ecological": it requires agents to continuously update their boundaries, making both $\lambda$ (forgetting) and population-level centroids highly relevant.
+We simulate three small populations of agents — one per scenario (static, smooth drift, performance-contingent shifts) — using the **same** population-level parameters across scenarios. Subject-level parameters are drawn around the population means using the logit-normal/log-normal hierarchies that match the Stan model exactly. Because the simulator and the inference model now share a parameterisation, recovery scatters can be read directly without translating between Dirichlet concentration and logit SD.
 
 ```{r ch12_simulate_multilevel_decay_data}
 simulate_multilevel_decay_gcm <- function(n_subjects, stimulus_info, n_blocks,
+                                          scenario,
                                           base_seed,
-                                          pop_w, kappa,
-                                          pop_log_c_mean, pop_log_c_sd,
+                                          pop_logit_w_mean,    pop_logit_w_sd,
+                                          pop_log_c_mean,      pop_log_c_sd,
                                           pop_log_lambda_mean, pop_log_lambda_sd,
                                           pop_logit_bias_mean, pop_logit_bias_sd) {
-  n_features   <- length(pop_w)
-  alpha_params <- pmax(1e-9, kappa * pop_w)
-
   set.seed(base_seed)
-  ind_w          <- MCMCpack::rdirichlet(n_subjects, alpha_params)
-  ind_log_c      <- rnorm(n_subjects, pop_log_c_mean, pop_log_c_sd)
+  ind_logit_w    <- rnorm(n_subjects, pop_logit_w_mean,    pop_logit_w_sd)
+  ind_w1         <- plogis(ind_logit_w)
+  ind_log_c      <- rnorm(n_subjects, pop_log_c_mean,      pop_log_c_sd)
   ind_log_lambda <- rnorm(n_subjects, pop_log_lambda_mean, pop_log_lambda_sd)
   ind_logit_bias <- rnorm(n_subjects, pop_logit_bias_mean, pop_logit_bias_sd)
 
   true_params <- tibble(
-    agent_id           = seq_len(n_subjects),
-    log_c_true         = ind_log_c,
-    log_lambda_true    = ind_log_lambda,
-    logit_bias_true    = ind_logit_bias,
-    c_true             = exp(ind_log_c),
-    lambda_true        = exp(ind_log_lambda),
-    bias_true          = plogis(ind_logit_bias)
+    agent_id        = seq_len(n_subjects),
+    scenario        = scenario,
+    logit_w_true    = ind_logit_w,
+    w1_true         = ind_w1,
+    w2_true         = 1 - ind_w1,
+    log_c_true      = ind_log_c,
+    c_true          = exp(ind_log_c),
+    log_lambda_true = ind_log_lambda,
+    lambda_true     = exp(ind_log_lambda),
+    logit_bias_true = ind_logit_bias,
+    bias_true       = plogis(ind_logit_bias)
   )
-  for (f in seq_len(n_features))
-    true_params[[paste0("w", f, "_true")]] <- ind_w[, f]
 
   all_agent_data <- vector("list", n_subjects)
   for (j in seq_len(n_subjects)) {
     subject_seed <- base_seed * 1000 + j
-    # We use the 'drift' scenario for the final multilevel check
     all_agent_data[[j]] <- simulate_decay_agent(
-      agent_id      = j,
-      scenario      = "drift",
-      w             = as.numeric(ind_w[j, ]),
-      c             = exp(ind_log_c[j]),
-      lambda        = exp(ind_log_lambda[j]),
-      bias          = plogis(ind_logit_bias[j]),
-      subject_seed  = subject_seed
+      agent_id     = j,
+      scenario     = scenario,
+      w            = c(ind_w1[j], 1 - ind_w1[j]),
+      c            = exp(ind_log_c[j]),
+      lambda       = exp(ind_log_lambda[j]),
+      bias         = plogis(ind_logit_bias[j]),
+      subject_seed = subject_seed
     )
   }
 
-  list(data = bind_rows(all_agent_data), true_params = true_params)
+  list(
+    data        = bind_rows(all_agent_data),
+    true_params = true_params
+  )
 }
 
 n_subjects_sim <- 10
 pop_params_sim <- list(
-  pop_w               = c(0.8, 0.2),
-  kappa               = 15,
-  pop_log_c_mean      = log(2.5),
+  pop_logit_w_mean    = 0,        # median w1 ≈ 0.5
+  pop_logit_w_sd      = 0.7,      # ±2SD covers w1 ∈ (0.20, 0.80)
+  pop_log_c_mean      = log(2.0), # population median c = 2
   pop_log_c_sd        = 0.4,
-  pop_log_lambda_mean = log(0.2), # median lambda = 0.2
+  pop_log_lambda_mean = log(0.2), # population median λ = 0.2
   pop_log_lambda_sd   = 0.5,
   pop_logit_bias_mean = 0,
   pop_logit_bias_sd   = 0.3
 )
 
-sim_file_ml_decay         <- here("simdata", "ch12_gcm_ml_decay_sim_data.csv")
-true_params_file_ml_decay  <- here("simdata", "ch12_gcm_ml_decay_true_params.csv")
+ml_scenarios <- c("static", "drift", "contingent_shift")
 
-if (regenerate_simulations || !file.exists(sim_file_ml_decay)) {
-  ml_decay_sim_output <- simulate_multilevel_decay_gcm(
-    n_subjects          = n_subjects_sim,
-    stimulus_info       = stimulus_info,
-    n_blocks            = n_blocks,
-    base_seed           = 42,
-    pop_w               = pop_params_sim$pop_w,
-    kappa               = pop_params_sim$kappa,
-    pop_log_c_mean      = pop_params_sim$pop_log_c_mean,
-    pop_log_c_sd        = pop_params_sim$pop_log_c_sd,
-    pop_log_lambda_mean = pop_params_sim$pop_log_lambda_mean,
-    pop_log_lambda_sd   = pop_params_sim$pop_log_lambda_sd,
-    pop_logit_bias_mean = pop_params_sim$pop_logit_bias_mean,
-    pop_logit_bias_sd   = pop_params_sim$pop_logit_bias_sd
-  )
-  multilevel_decay_data    <- ml_decay_sim_output$data
-  multilevel_decay_params  <- ml_decay_sim_output$true_params
-  write_csv(multilevel_decay_data,   sim_file_ml_decay)
-  write_csv(multilevel_decay_params, true_params_file_ml_decay)
+ml_decay_files <- map(ml_scenarios, function(scen) list(
+  data  = here("simdata", paste0("ch12_gcm_ml_decay_data_",  scen, ".csv")),
+  truth = here("simdata", paste0("ch12_gcm_ml_decay_truth_", scen, ".csv"))
+)) |> setNames(ml_scenarios)
+
+ml_files_exist <- all(file.exists(unlist(map(ml_decay_files, ~ c(.x$data, .x$truth)))))
+
+if (regenerate_simulations || !ml_files_exist) {
+  ml_decay_sims <- map(ml_scenarios, function(scen) {
+    out <- simulate_multilevel_decay_gcm(
+      n_subjects          = n_subjects_sim,
+      stimulus_info       = stimulus_info,
+      n_blocks            = n_blocks,
+      scenario            = scen,
+      base_seed           = match(scen, ml_scenarios) * 1000 + 42,
+      pop_logit_w_mean    = pop_params_sim$pop_logit_w_mean,
+      pop_logit_w_sd      = pop_params_sim$pop_logit_w_sd,
+      pop_log_c_mean      = pop_params_sim$pop_log_c_mean,
+      pop_log_c_sd        = pop_params_sim$pop_log_c_sd,
+      pop_log_lambda_mean = pop_params_sim$pop_log_lambda_mean,
+      pop_log_lambda_sd   = pop_params_sim$pop_log_lambda_sd,
+      pop_logit_bias_mean = pop_params_sim$pop_logit_bias_mean,
+      pop_logit_bias_sd   = pop_params_sim$pop_logit_bias_sd
+    )
+    write_csv(out$data,        ml_decay_files[[scen]]$data)
+    write_csv(out$true_params, ml_decay_files[[scen]]$truth)
+    out
+  }) |> setNames(ml_scenarios)
 } else {
-  multilevel_decay_data    <- read_csv(sim_file_ml_decay,    show_col_types = FALSE)
-  multilevel_decay_params  <- read_csv(true_params_file_ml_decay, show_col_types = FALSE)
+  ml_decay_sims <- map(ml_scenarios, function(scen) list(
+    data        = read_csv(ml_decay_files[[scen]]$data,  show_col_types = FALSE),
+    true_params = read_csv(ml_decay_files[[scen]]$truth, show_col_types = FALSE)
+  )) |> setNames(ml_scenarios)
 }
 
-ggplot(multilevel_decay_data,
+ml_decay_all <- map_dfr(ml_scenarios, function(scen)
+  ml_decay_sims[[scen]]$data |> mutate(scenario = scen)
+) |>
+  mutate(scenario = factor(scenario, levels = ml_scenarios,
+                           labels = c("Static", "Smooth drift",
+                                      "Performance-contingent")))
+
+ggplot(ml_decay_all,
        aes(x = trial_within_subject, y = cumulative_accuracy, group = agent_id)) +
-  geom_line(alpha = 0.2, color = "grey30") +
+  geom_line(alpha = 0.25, color = "grey30") +
   stat_summary(fun = mean, geom = "line", aes(group = 1),
-               color = "#0072B2", linewidth = 1.5) +
+               color = "#0072B2", linewidth = 1.4) +
+  facet_wrap(~scenario, ncol = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") +
   labs(
-    title    = "Multilevel Learning Curves: Smooth Drift Scenario",
-    subtitle = "Population-level tracking of a moving category boundary",
-    x = "Trial", y = "Cumulative Accuracy"
+    title    = "Multilevel Decay GCM: simulated learning curves across scenarios",
+    subtitle = paste0(n_subjects_sim, " agents per scenario; thin grey = individuals, ",
+                      "thick blue = population mean"),
+    x = "Trial", y = "Cumulative accuracy"
   )
 ```
+
+The static panel converges quickly to ceiling; smooth drift plateaus below ceiling because the boundary keeps moving; performance-contingent shifts produce a noisy plateau as different subjects flip at different absolute trials and average over each other.
+
+### Stan Implementation
+
+The `stan/ch12_gcm_ml_decay.stan` model implements the hierarchy described above, with three architectural choices that matter for performance:
+
+* **The trial-by-trial likelihood lives in the `model` block, not in `transformed parameters`.** Memory is held in plain `int` arrays during the loop, so the autodiff tape never sees the per-trial scan. `prob_cat1` and (optionally gated) `log_lik` are recomputed once per saved draw in `generated quantities`.
+* **All hierarchies are non-centered** (logit-normal NCP for `w_1`; standard z-offset for `log_c`, `log_lambda`, and `logit_bias`).
+* **Pairwise feature distances are precomputed in `transformed data`**, indexed by `stim_id` instead of read from per-trial features.
+
+```{r ch12_ml_decay_stan_compile}
+stan_file_gcm_ml_decay <- here("stan", "ch12_gcm_ml_decay.stan")
+mod_gcm_ml_decay       <- cmdstan_model(stan_file_gcm_ml_decay)
+```
+
+### Building the Stan Data List
+
+```{r ch12_ml_decay_stan_data_builder}
+build_ml_stan_data <- function(ml_data, stimulus_info, run_diagnostics = 0L) {
+  ml_data <- ml_data |>
+    arrange(agent_id, trial_within_subject) |>
+    mutate(row = row_number())
+
+  unique_stim <- stimulus_info |>
+    arrange(stimulus) |>
+    mutate(unique_idx = row_number())
+  stim_lookup <- setNames(unique_stim$unique_idx, unique_stim$stimulus)
+
+  subj_idx <- ml_data |>
+    group_by(agent_id) |>
+    summarise(start = min(row), end = max(row), .groups = "drop") |>
+    arrange(agent_id)
+
+  list(
+    N_total                = nrow(ml_data),
+    N_subjects             = nrow(subj_idx),
+    N_features             = 2L,
+    N_unique_stim          = nrow(unique_stim),
+    max_trials_per_subject = as.integer(max(subj_idx$end - subj_idx$start + 1L)),
+
+    subj_start             = as.integer(subj_idx$start),
+    subj_end               = as.integer(subj_idx$end),
+
+    stim_id                = as.integer(stim_lookup[as.character(ml_data$stimulus_id)]),
+    y                      = as.integer(ml_data$sim_response),
+    unique_obs             = as.matrix(unique_stim[, c("height", "position")]),
+    cat_feedback           = as.integer(ml_data$observed_feedback),
+
+    prior_pop_logit_w_mean      = 0,
+    prior_pop_logit_w_sigma     = 1.0,
+    prior_pop_logit_w_sd_lambda = 2.0,
+    prior_pop_log_c_mu          = LOG_C_PRIOR_MEAN,
+    prior_pop_log_c_sigma       = LOG_C_PRIOR_SD,
+    prior_pop_log_c_lambda      = 2.0,
+    prior_pop_log_lambda_mu     = LOG_LAMBDA_PRIOR_MEAN,
+    prior_pop_log_lambda_sigma  = LOG_LAMBDA_PRIOR_SD,
+    prior_pop_log_lambda_lambda = 2.0,
+    prior_pop_logit_bias_mu     = 0,
+    prior_pop_logit_bias_sigma  = 1.0,
+    prior_pop_logit_bias_lambda = 2.0,
+
+    run_diagnostics             = as.integer(run_diagnostics)
+  )
+}
+```
+
+The `Exponential(2)` priors on the population SDs (`*_lambda = 2`) have median 0.35 and 95th percentile ≈ 1.5 — wide enough to allow real between-subject variation, tight enough to keep NUTS off the worst part of the funnel when only 10 subjects are observed. We keep `run_diagnostics = 0` for the main fits because we will not run LFO at the multilevel level here; flip it to `1` only when computing per-trial `log_lik` is needed.
+
+### Fitting the Multilevel Decay GCM Across Scenarios
+
+We compile once and fit each scenario in turn. With 10 subjects × 64 trials × 4 chains × 2000 iterations, expect each fit to take a few minutes on a modern laptop.
+
+```{r ch12_ml_decay_fit_per_scenario}
+ml_decay_fit_files <- map(ml_scenarios, function(scen)
+  here("simmodels", paste0("ch12_gcm_ml_decay_fit_", scen, ".rds"))
+) |> setNames(ml_scenarios)
+
+if (regenerate_simulations || !all(file.exists(unlist(ml_decay_fit_files)))) {
+  ml_decay_fits <- map(ml_scenarios, function(scen) {
+    cat("Fitting multilevel decay GCM:", scen, "\n")
+    dat <- build_ml_stan_data(ml_decay_sims[[scen]]$data, stimulus_info,
+                              run_diagnostics = 0L)
+    fit <- mod_gcm_ml_decay$sample(
+      data            = dat,
+      seed            = 700 + match(scen, ml_scenarios),
+      chains          = 4,
+      parallel_chains = min(4, availableCores()),
+      iter_warmup     = 1000,
+      iter_sampling   = 1000,
+      adapt_delta     = 0.95,
+      max_treedepth   = 12,
+      refresh         = 200,
+      init            = 0.5
+    )
+    fit$save_object(ml_decay_fit_files[[scen]])
+    fit
+  }) |> setNames(ml_scenarios)
+  cat("Multilevel decay GCM fits computed and saved.\n")
+} else {
+  ml_decay_fits <- map(ml_scenarios, function(scen)
+    readRDS(ml_decay_fit_files[[scen]])
+  ) |> setNames(ml_scenarios)
+  cat("Loaded existing multilevel decay GCM fits.\n")
+}
+```
+
+### MCMC Diagnostic Battery
+
+```{r ch12_ml_decay_diagnostics}
+ml_decay_diag <- map_dfr(ml_scenarios, function(scen) {
+  diagnostic_summary_table(
+    ml_decay_fits[[scen]],
+    params = c("pop_logit_w_mean",    "pop_log_c_mean",
+               "pop_log_lambda_mean", "pop_logit_bias_mean",
+               "pop_logit_w_sd",      "pop_log_c_sd",
+               "pop_log_lambda_sd",   "pop_logit_bias_sd")
+  ) |> mutate(scenario = scen)
+})
+
+print(ml_decay_diag |>
+        dplyr::select(scenario, metric, value, threshold, pass))
+```
+
+If the model is healthy you will see no divergences, R̂ < 1.01 across all population parameters, and ESS comfortably above 400 for the population means. Subject-level scalars typically have somewhat lower ESS, especially for `log_lambda` under the static scenario — the data carry little information about forgetting when the boundary never moves, so the posterior is partly pinned by the prior and the partial pooling toward the population mean.
+
+### Population-Level Recovery
+
+```{r ch12_ml_decay_population_recovery}
+pop_truth <- with(pop_params_sim, tibble(
+  variable = c("pop_logit_w_mean", "pop_log_c_mean",
+               "pop_log_lambda_mean", "pop_logit_bias_mean"),
+  truth    = c(pop_logit_w_mean, pop_log_c_mean,
+               pop_log_lambda_mean, pop_logit_bias_mean)
+))
+
+pop_summary <- map_dfr(ml_scenarios, function(scen) {
+  ml_decay_fits[[scen]]$summary(variables = pop_truth$variable) |>
+    mutate(scenario = scen)
+}) |>
+  left_join(pop_truth, by = "variable") |>
+  mutate(scenario = factor(scenario, levels = ml_scenarios,
+                           labels = c("Static", "Drift", "Contingent shift")),
+         variable = factor(variable, levels = pop_truth$variable))
+
+ggplot(pop_summary, aes(y = scenario, x = mean, color = scenario)) +
+  geom_pointrange(aes(xmin = q5, xmax = q95), size = 0.6) +
+  geom_vline(aes(xintercept = truth), linetype = "dashed", color = "red") +
+  facet_wrap(~variable, scales = "free_x", ncol = 2) +
+  scale_color_viridis_d(option = "plasma", end = 0.85) +
+  labs(
+    title    = "Population-level parameter recovery",
+    subtitle = "Posterior mean ± 90% CI; red dashed = simulation truth",
+    x = NULL, y = NULL
+  ) +
+  theme(legend.position = "none")
+```
+
+The expected pattern: `pop_log_c_mean` and `pop_logit_bias_mean` recover cleanly across all three scenarios; `pop_log_lambda_mean` is well-recovered under drift and contingent-shift but pulled toward the prior under static (the data simply lack a forgetting signal); `pop_logit_w_mean` is recovered everywhere but with wider posteriors when attention has little leverage on accuracy.
+
+### Subject-Level Recovery and Shrinkage
+
+```{r ch12_ml_decay_subject_recovery}
+subj_recovery <- map_dfr(ml_scenarios, function(scen) {
+  fit   <- ml_decay_fits[[scen]]
+  truth <- ml_decay_sims[[scen]]$true_params
+
+  s <- fit$summary(variables = c("subj_log_c", "subj_log_lambda")) |>
+    mutate(
+      param    = if_else(stringr::str_detect(variable, "log_c"),
+                         "log_c", "log_lambda"),
+      agent_id = as.integer(stringr::str_extract(variable, "\\d+"))
+    ) |>
+    dplyr::select(agent_id, param, est_mean = mean, est_q5 = q5, est_q95 = q95)
+
+  truth_long <- truth |>
+    dplyr::select(agent_id, log_c_true, log_lambda_true) |>
+    pivot_longer(cols = c(log_c_true, log_lambda_true),
+                 names_to = "param", values_to = "truth") |>
+    mutate(param = if_else(param == "log_c_true", "log_c", "log_lambda"))
+
+  s |>
+    left_join(truth_long, by = c("agent_id", "param")) |>
+    mutate(scenario = scen)
+}) |>
+  mutate(scenario = factor(scenario, levels = ml_scenarios,
+                           labels = c("Static", "Drift", "Contingent shift")))
+
+ggplot(subj_recovery, aes(x = truth, y = est_mean, color = scenario)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+  geom_pointrange(aes(ymin = est_q5, ymax = est_q95), alpha = 0.7) +
+  facet_grid(param ~ scenario, scales = "free") +
+  scale_color_viridis_d(option = "plasma", end = 0.85) +
+  labs(
+    title    = "Subject-level parameter recovery (with partial pooling)",
+    subtitle = "Posterior mean ± 90% CI vs simulation truth",
+    x = "True value", y = "Posterior estimate"
+  ) +
+  theme(legend.position = "none")
+```
+
+The `log_c` row should be tight along the identity across scenarios. The `log_lambda` row is the diagnostic: scattered and pulled toward the population mean under static (visible shrinkage when an individual's data is uninformative), tighter along the diagonal under drift, and tightest under contingent-shift — consistent with the single-subject recovery results from earlier in the chapter.
+
+### What changes when you scale up
+
+Three things to keep in mind when adapting this model to real data:
+
+1. **Sample size enters twice.** With more subjects, the population SDs become better identified, which shrinks subject-level estimates more aggressively toward the population mean — desirable when individual-level data is noisy, but worth checking visually.
+2. **Sequential-trial costs scale linearly.** Doubling trials per subject doubles per-leapfrog cost; doubling subjects doubles it again. Going from this 10×64 toy to a 100×200 dataset is a ~30× increase in wall time, not 30 different fits to manage.
+3. **Static-scenario behaviour is the canary.** If `pop_log_lambda_mean` and `pop_log_lambda_sd` start to diverge or drag at `max_treedepth` on real data, your task is probably structurally closer to "static" than you think — there is not enough non-stationarity for $\lambda$ to be identified at the population level. Reduce the model or accept that $\lambda$ is pinned by the prior and report it as such.
 
 
 
@@ -2391,5 +2644,30 @@ ggplot(multilevel_decay_data,
 * **Sequential structure and LOO**: Because the GCM is path-dependent, standard LOO-CV is technically invalid — but this chapter implements LFO-CV (Bürkner et al., 2020) as the canonical sequential-model cross-validation.
 
 In the next two chapters we explore alternative approaches — prototype models (Ch. 12) and rule-based models (Ch. 13) — that address some of these limitations while introducing their own strengths and challenges.
+
+### Looking Ahead to Chapter 12: The Six-Step Pipeline in the Prototype Model
+
+Chapter 12 applies the same six-step pipeline to a prototype-based model. Before moving on, it is worth tracing explicitly how each stage maps from the GCM to the Kalman filter prototype model — because the chapters are designed as a matched pair, and the contrasts at each stage are the core theoretical content.
+
+| Pipeline Stage | GCM (this chapter) | Kalman Filter Prototype (Ch. 12) |
+| :--- | :--- | :--- |
+| **1. Input representation** | Stimuli as points in continuous feature space (height, position). | Same feature space; stimuli used as Kalman observations. |
+| **2. Attention** | Explicit attention weights $w_f$ summing to 1; estimated from data. | No explicit attention weights; covariance structure implicitly weights dimensions. |
+| **3. Intermediate representation** | **All** past exemplars stored verbatim; memory grows trial by trial. | One prototype $\vec{\mu}_k$ per category, updated by each observation; memory is constant-size. |
+| **4. Evidential mechanism** | Similarity to each stored exemplar, exponentially decaying with distance and (in the extended model) trial age. | Mahalanobis-like distance from the current stimulus to each prototype, scaled by the running covariance $\Sigma_k$. |
+| **5. Decision rule** | Luce choice axiom: $p(\text{cat}_1) = \frac{\beta \cdot \bar{\eta}_1}{\beta \cdot \bar{\eta}_1 + (1-\beta) \cdot \bar{\eta}_0}$. | Same Luce choice axiom; the per-trial probability is computed from the Kalman-filter likelihood ratio. |
+| **6. Learning** | Accumulate: each trial's exemplar enters permanent (but decaying) memory. No structural update. | Update: the Kalman gain $K$ shifts $\vec{\mu}_k$ toward the new observation and reduces $\Sigma_k$; the prediction step (process noise $Q$) can re-inflate $\Sigma_k$ between trials. |
+
+The key tension is at **Stage 3 and Stage 6**. The GCM treats every trial as permanently informative (modulo forgetting); the prototype model treats each trial as an observation that refines a running summary. As a result:
+
+* The GCM is maximally sensitive to specific exemplars and their spatial arrangement. The prototype model is sensitive only to the category centroid and spread.
+* The GCM's non-stationarity mechanism (decay $\lambda$) operates *retrospectively* — old exemplars become less influential as time passes. The Kalman filter's mechanism (process noise $q$) operates *prospectively* — future observations are expected to diverge from the current prototype.
+* Both mechanisms are phenomenologically similar under smooth drift. They diverge most sharply under abrupt shifts: the GCM gradually forgets old contradicting exemplars, while the Kalman filter re-inflates uncertainty after surprising observations and quickly reacquires the new prototype.
+
+::: {.callout-note title="What to watch for when reading Chapter 12"}
+1. **The $q$/$r$ identifiability problem.** The Kalman filter's two parameters ($r$ = observation noise, $q$ = process noise) are more tightly confounded under static data than the GCM's $c$/$\lambda$ pair — they both scale the *same* decision-time likelihood rather than operating on orthogonal axes (see §"The $c$/$\lambda$ Joint Posterior" above). Ch. 12 introduces an explicit reparameterization (the SNR parameter $\rho = q/r$) to diagnose and partially resolve this.
+2. **The scenario order is deliberately reversed.** Ch. 12 arranges scenarios as static → contingent shift → drift (increasing assumption match for the Kalman filter), while this chapter used static → drift → contingent shift (increasing $\lambda$ preference). The three scenarios are identical; only the ordering logic differs.
+3. **No attention weights.** Removing $w$ and $\beta$ from the parameter set makes the prototype model simpler to diagnose — SBC rank histograms have two curves instead of four, and pair plots have one panel instead of six. That simplicity is *why* Ch. 12 is the right place to introduce LFO-CV in detail: the algorithm is most legible when the model is lean.
+:::
 
 ---

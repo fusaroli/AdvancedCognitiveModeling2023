@@ -330,7 +330,7 @@ window.Quarto = {
   <li><a href="#measuring-power-the-f1-score" id="toc-measuring-power-the-f1-score" class="nav-link" data-scroll-target="#measuring-power-the-f1-score"><span class="header-section-number">8.10.2</span> Measuring Power: The F1 Score</a></li>
   <li><a href="#designing-the-experiment-trials-participants-and-task-structure" id="toc-designing-the-experiment-trials-participants-and-task-structure" class="nav-link" data-scroll-target="#designing-the-experiment-trials-participants-and-task-structure"><span class="header-section-number">8.10.3</span> Designing the Experiment: Trials, Participants, and Task Structure</a></li>
   <li><a href="#the-impact-of-task-design-better-data-vs.-more-data" id="toc-the-impact-of-task-design-better-data-vs.-more-data" class="nav-link" data-scroll-target="#the-impact-of-task-design-better-data-vs.-more-data"><span class="header-section-number">8.10.4</span> The Impact of Task Design: Better Data vs.&nbsp;More Data</a></li>
-  <li><a href="#beyond-binary-recovery-simulation-based-calibration-for-models" id="toc-beyond-binary-recovery-simulation-based-calibration-for-models" class="nav-link" data-scroll-target="#beyond-binary-recovery-simulation-based-calibration-for-models"><span class="header-section-number">8.10.5</span> Beyond Binary Recovery: Simulation-Based Calibration for Models</a></li>
+  <li><a href="#beyond-binary-recovery-simulation-based-calibration-checks-for-models" id="toc-beyond-binary-recovery-simulation-based-calibration-checks-for-models" class="nav-link" data-scroll-target="#beyond-binary-recovery-simulation-based-calibration-checks-for-models"><span class="header-section-number">8.10.5</span> Beyond Binary Recovery: Simulation-Based Calibration Checks for Models</a></li>
   <li><a href="#from-binary-wins-to-probabilistic-power" id="toc-from-binary-wins-to-probabilistic-power" class="nav-link" data-scroll-target="#from-binary-wins-to-probabilistic-power"><span class="header-section-number">8.10.6</span> From Binary Wins to Probabilistic Power</a></li>
   <li><a href="#a-philosophical-technical-note-mathcalm-closed-vs.-mathcalm-open" id="toc-a-philosophical-technical-note-mathcalm-closed-vs.-mathcalm-open" class="nav-link" data-scroll-target="#a-philosophical-technical-note-mathcalm-closed-vs.-mathcalm-open"><span class="header-section-number">8.10.7</span> A Philosophical Technical Note: <span class="math inline">\(\mathcal{M}\)</span>-closed vs.&nbsp;<span class="math inline">\(\mathcal{M}\)</span>-open</a></li>
   <li><a href="#running-model-sbc-the-code-pipeline" id="toc-running-model-sbc-the-code-pipeline" class="nav-link" data-scroll-target="#running-model-sbc-the-code-pipeline"><span class="header-section-number">8.10.8</span> Running Model SBC: The Code Pipeline</a></li>
@@ -394,7 +394,7 @@ window.Quarto = {
 <li><p>Diagnose LOO-PIT calibration: Evaluate whether a model’s predictive uncertainty matches reality using randomized PIT values and the formal POT-C test.</p></li>
 <li><p>Interpret loo_compare() and Bayesian Stacking: Reason about the <span class="math inline">\(|elpd\_diff|/se\_diff\)</span> ratio and use stacking weights to find the optimal predictive mixture of models.</p></li>
 <li><p>Conduct Power Analysis for Model Recovery: Use 2x2 confusion matrices and 2D trade-off plots (Trials vs.&nbsp;Participants) to determine if an experimental design is discriminative enough to identify the true cognitive mechanism.</p></li>
-<li><p>Evaluate Model Calibration via SBC: Move beyond binary “wins” to assess the probabilistic calibration of model weights using Simulation-Based Calibration for Models.</p></li>
+<li><p>Evaluate Model Calibration via SBC: Move beyond binary “wins” to assess the probabilistic calibration of model weights using Simulation-Based Calibration Checks for Models.</p></li>
 <li><p>Identify sequentially dependent data: Recognize when trial-level exchangeability is violated and describe the Leave-Future-Out (LFO-CV) remedy.</p></li>
 </ul>
 </section>
@@ -2610,15 +2610,15 @@ model2 -337.9      23.4 </code></pre>
 </div>
 <p>This visualization delivers a stark warning. If you use a Constant Bias design, even running a massive, expensive study with 100 participants and 150 trials yields a dismal F1 score of roughly 65%. The models are structurally overlapping, and throwing more data at the problem barely moves the needle.By simply changing the code of the task to include a Reversal (costing exactly <span class="math inline">\(0\)</span> extra dollars and <span class="math inline">\(0\)</span> extra minutes of participant time), a much smaller study of just 40 participants and 90 trials achieves a highly reliable 84% F1 score.</p>
 </section>
-<section id="beyond-binary-recovery-simulation-based-calibration-for-models" class="level3" data-number="8.10.5">
-<h3 data-number="8.10.5" class="anchored" data-anchor-id="beyond-binary-recovery-simulation-based-calibration-for-models"><span class="header-section-number">8.10.5</span> Beyond Binary Recovery: Simulation-Based Calibration for Models</h3>
+<section id="beyond-binary-recovery-simulation-based-calibration-checks-for-models" class="level3" data-number="8.10.5">
+<h3 data-number="8.10.5" class="anchored" data-anchor-id="beyond-binary-recovery-simulation-based-calibration-checks-for-models"><span class="header-section-number">8.10.5</span> Beyond Binary Recovery: Simulation-Based Calibration Checks for Models</h3>
 </section>
 <section id="from-binary-wins-to-probabilistic-power" class="level3" data-number="8.10.6">
 <h3 data-number="8.10.6" class="anchored" data-anchor-id="from-binary-wins-to-probabilistic-power"><span class="header-section-number">8.10.6</span> From Binary Wins to Probabilistic Power</h3>
 <p>Traditional model recovery treats model comparison as a binary, “winner-takes-all” election. If ELPD_A &gt; ELPD_B by even 0.1 nats, Model A gets a “1” for accuracy, and Model B gets a “0”. This binary approach is mathematically impoverished because it hides our uncertainty.</p>
 <p>In a fully Bayesian workflow, we prefer a probabilistic approach. Instead of asking “Did the true model win?”, we can ask “How much stacking weight does the true model receive?”</p>
 <p>This transforms our understanding of statistical power. Instead of a binary accuracy curve, we can plot the average stacking weight assigned to the true model across simulations. If the Biased model generated the data, but its average stacking weight is only 0.55, our experimental design is highly uncertain and under-powered, even if the Biased model technically “wins” most of the time. Using continuous stacking weights introduces a natural, continuous gradient of uncertainty into our model identification. By using stacking weights, we move from a discrete ‘Correct/Incorrect’ recovery metric to a continuous measure of probabilistic power. This allows us to quantify exactly how much uncertainty remains in our model identification even when the true model ‘wins’ the comparison.</p>
-<p>This realization leads us directly to the ultimate check of our entire model comparison pipeline: Model Simulation-Based Calibration (Model SBC).</p>
+<p>This realization leads us directly to the ultimate check of our entire model comparison pipeline: Model Simulation-Based Calibration Checks (Model SBC).</p>
 </section>
 <section id="a-philosophical-technical-note-mathcalm-closed-vs.-mathcalm-open" class="level3" data-number="8.10.7">
 <h3 data-number="8.10.7" class="anchored" data-anchor-id="a-philosophical-technical-note-mathcalm-closed-vs.-mathcalm-open"><span class="header-section-number">8.10.7</span> A Philosophical Technical Note: <span class="math inline">\(\mathcal{M}\)</span>-closed vs.&nbsp;<span class="math inline">\(\mathcal{M}\)</span>-open</h3>
@@ -2630,7 +2630,7 @@ model2 -337.9      23.4 </code></pre>
 <ul>
 <li><p>Sample a true model <span class="math inline">\(M\)</span> (e.g., a coin flip between Biased and Memory).</p></li>
 <li><p>Sample parameters strictly from that specific model’s prior.</p></li>
-<li><p>Simulate data from the likelihood.Fit all competing models to the data and compute their Bayesian stacking weights.</p></li>
+<li><p>Simulate data from the data model. Fit all competing models to the data and compute their Bayesian stacking weights.</p></li>
 <li><p>Repeat this thousands of times.</p></li>
 </ul>
 <p>Because running 2,000 simulations and fitting two multilevel Stan models to each would take hours (or days) on a standard laptop, we will not execute it live here. However, to maintain the hands-on promise of this workflow, here is the exact furrr parallelization code you would use. Notice how it elevates the target to loo::loo_model_weights().</p>

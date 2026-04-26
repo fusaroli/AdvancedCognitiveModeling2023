@@ -23,6 +23,7 @@ The techniques are ordered by first appearance in the book.
 | 13 | [Sequential state unrolling](#sec-sequential-state) | Ch 9 |
 | 14 | [`reduce_sum` parallelism](#sec-reduce-sum) | Ch 11 |
 | 15 | [Combining techniques](#sec-compound-speedups) | Ch 6, 11 |
+| 16 | [Sampler and compiler options](#sec-sampler-options) | App B |
 
 ---
 
@@ -365,6 +366,23 @@ overnight at `adapt_delta = 0.99, max_treedepth = 20`. Switching to logit-normal
 the funnel geometry entirely.
 :::
 
+::: {.callout-tip}
+## When centered parameterization is preferred
+
+NCP is not always the right choice. When the data are highly informative relative to the prior,
+the *centered* parameterization can be more efficient. In that regime, the group-level variance
+$\sigma$ is well-constrained by the data, so the individual-level parameters $\theta_j$ are
+tightly funneled by the likelihood rather than the prior — and HMC can navigate the centered
+geometry directly without the stretched $z$-offsets that NCP introduces.
+
+A practical heuristic (the **park rule**): prefer NCP when the per-group sample size is small
+relative to the between-group variance (data are weak); prefer CP when data are plentiful and
+the posterior for $\sigma$ is far from zero. When in doubt, fit both and compare diagnostics.
+
+See [Vehtari et al. — the park rule](https://avehtari.github.io/Bayesian-Workflow/park_rule/park_rule.html)
+for a formal treatment with diagnostics to guide the choice.
+:::
+
 ---
 
 ## 9. Cholesky Factorization for Correlation Matrices {#sec-cholesky}
@@ -691,6 +709,71 @@ tibble(
 
 ---
 
+## 16. Sampler and Compiler Options {#sec-sampler-options}
+
+*Reference: [Options for improving Stan sampling speed](https://blog.mc-stan.org/2022/08/03/options-for-improving-stan-sampling-speed/)*
+
+The techniques in §1–15 reduce the *work per leapfrog step*. The options below change how
+the sampler and compiler behave around those steps. They are cheap to try and often give
+meaningful savings with no code changes.
+
+### Sampler options (passed to `$sample()`)
+
+| Option | Default | Guidance |
+|---|---|---|
+| `adapt_delta` | 0.80 | Raise to 0.90–0.95 when divergences persist after NCP; higher values force smaller step sizes and more leapfrog steps per transition |
+| `max_treedepth` | 10 | Raise to 12–15 only when `max_treedepth` warnings dominate; raising without fixing geometry just burns time |
+| `iter_warmup` | 1000 | Lower to 500 on well-conditioned models; raise to 2000 when E-BFMI warnings persist across chains |
+| `iter_sampling` | 1000 | Raise when posterior tails matter (e.g., rare-event predictions) or when $\hat{R}$ instability is numerical rather than geometric |
+| `chains` | 4 | Never run fewer than 4 — $\hat{R}$ requires between-chain comparison |
+| `parallel_chains` | 1 | Set to `chains` when fitting a single model; reduce when running many parallel fits |
+
+```r
+fit <- mod$sample(
+  data           = stan_data,
+  chains         = 4,
+  parallel_chains = 4,
+  iter_warmup    = 1000,
+  iter_sampling  = 1000,
+  adapt_delta    = 0.90,     # raise from 0.80 if divergences persist
+  max_treedepth  = 12        # raise from 10 if treedepth warnings dominate
+)
+```
+
+### Compiler optimizations
+
+Stan models are compiled to C++. Enabling processor-specific optimizations costs nothing
+at runtime but can save 10–30% on algebraically intensive models (GCMs, ToM).
+
+```r
+mod <- cmdstan_model(
+  stan_file,
+  cpp_options = list(
+    stan_threads = TRUE,          # required for reduce_sum (§14)
+    CXXFLAGS = "-O3 -march=native" # processor-specific vectorization
+  )
+)
+```
+
+::: {.callout-warning}
+## `-march=native` portability
+
+Binaries compiled with `-march=native` use CPU instructions specific to the build machine.
+Do not share compiled Stan objects across machines with different processor families.
+Recompile on the target machine.
+:::
+
+### Output size
+
+By default Stan saves 8-significant-figure draws. For large models with many generated
+quantities, reduce to 6 to halve `.csv` file sizes with negligible precision loss:
+
+```r
+fit <- mod$sample(..., sig_figs = 6)
+```
+
+---
+
 ## Quick Reference {#sec-stan-quick-ref}
 
 | Problem observed | Technique | Section |
@@ -710,3 +793,6 @@ tibble(
 | Discrete latent variables (indicators, regimes) | Marginalise with `log_mix` | [§12](#sec-log-mix) |
 | Trial-to-trial latent state in likelihood | Sequential unrolling in `transformed parameters` | [§13](#sec-sequential-state) |
 | Many subjects, multi-core machine | `reduce_sum` intra-chain parallelism | [§14](#sec-reduce-sum) |
+| Divergences / treedepth / slow warm-up | Sampler options (`adapt_delta`, `max_treedepth`) | [§16](#sec-sampler-options) |
+| Slow compilation or runtime on algebraic models | Compiler flags (`-O3 -march=native`) | [§16](#sec-sampler-options) |
+| Large `.csv` output files | Reduce `sig_figs` to 6 | [§16](#sec-sampler-options) |

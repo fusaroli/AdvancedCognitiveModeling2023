@@ -300,8 +300,9 @@ window.Quarto = {
   <li><a href="#sec-structural-reparam" id="toc-sec-structural-reparam" class="nav-link" data-scroll-target="#sec-structural-reparam"><span class="header-section-number">C.3</span> Part III — Structural Reparameterizations</a>
   <ul class="collapse">
   <li><a href="#sec-reparameterization-ncp" id="toc-sec-reparameterization-ncp" class="nav-link" data-scroll-target="#sec-reparameterization-ncp"><span class="header-section-number">C.3.1</span> 7. Non-Centered Parameterization (NCP)</a></li>
-  <li><a href="#sec-probit" id="toc-sec-probit" class="nav-link" data-scroll-target="#sec-probit"><span class="header-section-number">C.3.2</span> 8. Probit Link — Signal Detection Theory</a></li>
-  <li><a href="#sec-lkj" id="toc-sec-lkj" class="nav-link" data-scroll-target="#sec-lkj"><span class="header-section-number">C.3.3</span> 9. Correlation Matrices — LKJ and Cholesky</a></li>
+  <li><a href="#sec-sum-to-zero" id="toc-sec-sum-to-zero" class="nav-link" data-scroll-target="#sec-sum-to-zero"><span class="header-section-number">C.3.2</span> 8. Sum-to-Zero Constraint for Group Effects</a></li>
+  <li><a href="#sec-probit" id="toc-sec-probit" class="nav-link" data-scroll-target="#sec-probit"><span class="header-section-number">C.3.3</span> 10. Probit Link — Signal Detection Theory</a></li>
+  <li><a href="#sec-lkj" id="toc-sec-lkj" class="nav-link" data-scroll-target="#sec-lkj"><span class="header-section-number">C.3.4</span> 11. Correlation Matrices — LKJ and Cholesky</a></li>
   </ul></li>
   <li><a href="#sec-numerical-stability" id="toc-sec-numerical-stability" class="nav-link" data-scroll-target="#sec-numerical-stability"><span class="header-section-number">C.4</span> Part IV — Numerical Stability</a>
   <ul class="collapse">
@@ -653,31 +654,73 @@ window.Quarto = {
 <p>The NCP is the single most impactful reparameterization for hierarchical cognitive models. See <a href="AppB-StanOptimization.html#sec-ncp" class="quarto-xref"><span>Section B.8</span></a> for full details, the K-simplex extension, and the Chapter 11 case study.</p>
 <hr>
 </section>
-<section id="sec-probit" class="level3" data-number="C.3.2">
-<h3 data-number="C.3.2" class="anchored" data-anchor-id="sec-probit"><span class="header-section-number">C.3.2</span> 8. Probit Link — Signal Detection Theory</h3>
+<section id="sec-sum-to-zero" class="level3" data-number="C.3.2">
+<h3 data-number="C.3.2" class="anchored" data-anchor-id="sec-sum-to-zero"><span class="header-section-number">C.3.2</span> 8. Sum-to-Zero Constraint for Group Effects</h3>
+<p><em>Relevant context: <a href="https://avehtari.github.io/Bayesian-Workflow/park_rule/park_rule.html">Vehtari et al.&nbsp;— the park rule</a></em></p>
+<p>The standard <strong>corner constraint</strong> for ANOVA-style group effects fixes one group as the reference (its effect is zero) and estimates all others relative to it. This is a valid identification strategy but it creates an asymmetry: the reference group’s effect is absorbed into the intercept, making the intercept’s prior inadvertently informative about one specific group.</p>
+<p>The <strong>sum-to-zero constraint</strong> (<span class="math inline">\(\sum_{k=1}^K \alpha_k = 0\)</span>) is a symmetric alternative. Every group effect is estimated relative to the grand mean, the intercept retains a clean interpretation as the overall mean, and priors on group effects are exchangeable.</p>
+<p><strong>Stan implementation via QR decomposition:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="kw">data</span> {</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">int</span>&lt;<span class="kw">lower</span>=<span class="dv">1</span>&gt; K;                   <span class="co">// number of groups</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">matrix</span>[K<span class="dv">-1</span>, K] A;                 <span class="co">// sum-to-zero contrast matrix (precomputed in R)</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="kw">parameters</span> {</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>  <span class="dt">vector</span>[K<span class="dv">-1</span>] alpha_raw;            <span class="co">// K-1 free parameters</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="kw">transformed parameters</span> {</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>  <span class="dt">vector</span>[K] alpha = A' * alpha_raw; <span class="co">// K effects summing to zero</span></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a><span class="kw">model</span> {</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>  alpha_raw ~ normal(<span class="dv">0</span>, <span class="dv">1</span>);</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p><strong>Build the contrast matrix in R:</strong></p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Helmert-style QR contrast matrix enforcing sum-to-zero</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>make_sum_zero_matrix <span class="ot">&lt;-</span> <span class="cf">function</span>(K) {</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  Q <span class="ot">&lt;-</span> <span class="fu">qr.Q</span>(<span class="fu">qr</span>(<span class="fu">rep</span>(<span class="dv">1</span>, K)), <span class="at">complete =</span> <span class="cn">TRUE</span>)[, <span class="sc">-</span><span class="dv">1</span>]</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">t</span>(Q)   <span class="co"># (K-1) x K matrix: A %*% alpha = 0 iff sum(alpha) = 0</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>A <span class="ot">&lt;-</span> <span class="fu">make_sum_zero_matrix</span>(K)   <span class="co"># pass this as data to Stan</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="callout callout-style-default callout-tip callout-titled">
+<div class="callout-header d-flex align-content-center">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">Tip</span>When to prefer sum-to-zero over corner constraints
+</div>
+</div>
+<div class="callout-body-container callout-body">
+<p>Use sum-to-zero when (a) no group is a natural reference, (b) you want exchangeable priors on all group effects, or (c) the intercept should represent the grand mean rather than one group’s baseline. The constraint has no effect on the likelihood — only on identifiability and prior geometry.</p>
+</div>
+</div>
+<hr>
+</section>
+<section id="sec-probit" class="level3" data-number="C.3.3">
+<h3 data-number="C.3.3" class="anchored" data-anchor-id="sec-probit"><span class="header-section-number">C.3.3</span> 10. Probit Link — Signal Detection Theory</h3>
 <p>The <strong>probit link</strong> uses the standard Normal CDF <span class="math inline">\(\Phi\)</span> in place of the logistic function:</p>
 <p><span class="math display">\[p = \Phi(d'), \qquad d' = \Phi^{-1}(p) \equiv \text{probit}(p)\]</span></p>
 <p>Stan function: <code>Phi(x)</code> (Normal CDF), <code>Phi_approx(x)</code> (fast rational approximation).</p>
 <p>The probit link is the natural choice whenever the cognitive model is derived from <strong>signal detection theory (SDT)</strong>: the sensitivity parameter <span class="math inline">\(d'\)</span> is directly the standardized distance between signal and noise distributions, and the criterion <span class="math inline">\(c\)</span> is the decision threshold in the same units.</p>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="kw">parameters</span> {</span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> d_prime;     <span class="co">// sensitivity (positive = above chance)</span></span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> criterion;   <span class="co">// decision criterion</span></span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>}</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="kw">model</span> {</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>  d_prime   ~ normal(<span class="dv">0</span>, <span class="dv">2</span>);</span>
-<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>  criterion ~ normal(<span class="dv">0</span>, <span class="dv">1</span>);</span>
-<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span>:N) {</span>
-<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> (signal[i] == <span class="dv">1</span>)</span>
-<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>      <span class="kw">target +=</span> log(Phi( d_prime/<span class="dv">2</span> - criterion));   <span class="co">// hit</span></span>
-<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span></span>
-<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>      <span class="kw">target +=</span> log(Phi(-d_prime/<span class="dv">2</span> - criterion));   <span class="co">// correct rejection</span></span>
-<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>  }</span>
-<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="kw">parameters</span> {</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> d_prime;     <span class="co">// sensitivity (positive = above chance)</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> criterion;   <span class="co">// decision criterion</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="kw">model</span> {</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>  d_prime   ~ normal(<span class="dv">0</span>, <span class="dv">2</span>);</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>  criterion ~ normal(<span class="dv">0</span>, <span class="dv">1</span>);</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span>:N) {</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> (signal[i] == <span class="dv">1</span>)</span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>      <span class="kw">target +=</span> log(Phi( d_prime/<span class="dv">2</span> - criterion));   <span class="co">// hit</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>      <span class="kw">target +=</span> log(Phi(-d_prime/<span class="dv">2</span> - criterion));   <span class="co">// correct rejection</span></span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <p><strong>Logit vs.&nbsp;probit in practice:</strong> The two links are very similar numerically (probit ≈ logit × 0.607), and prior sensitivity analyses rarely distinguish them. Choose probit when the theoretical framework is SDT and interpretability in <span class="math inline">\(d'\)</span> units matters; choose logit for all other binary-outcome models because <code>bernoulli_logit_lpmf</code> is faster and numerically more stable.</p>
 <hr>
 </section>
-<section id="sec-lkj" class="level3" data-number="C.3.3">
-<h3 data-number="C.3.3" class="anchored" data-anchor-id="sec-lkj"><span class="header-section-number">C.3.3</span> 9. Correlation Matrices — LKJ and Cholesky</h3>
+<section id="sec-lkj" class="level3" data-number="C.3.4">
+<h3 data-number="C.3.4" class="anchored" data-anchor-id="sec-lkj"><span class="header-section-number">C.3.4</span> 11. Correlation Matrices — LKJ and Cholesky</h3>
 <p><em>Covered in <a href="AppB-StanOptimization.html#sec-cholesky" class="quarto-xref"><span>Section B.9</span></a> (Appendix B); introduced in <a href="06-MultilevelModels.html" class="quarto-xref"><span>Chapter 7</span></a> (Chapter 6)</em></p>
 <p>The <strong>LKJ distribution</strong> is the natural prior for correlation matrices. Its single parameter <span class="math inline">\(\eta\)</span> controls how much mass is placed near the identity matrix:</p>
 <table class="caption-top table">
@@ -762,18 +805,18 @@ window.Quarto = {
 </tr>
 </tbody>
 </table>
-<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Mixture likelihood in log space — numerically stable</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span>:N) {</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> lp1 = bernoulli_logit_lpmf(y[i] | alpha);</span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> lp2 = bernoulli_logit_lpmf(y[i] | nu);</span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>  <span class="kw">target  +=</span> log_mix(pi, lp1, lp2);   <span class="co">// never calls exp() on small values</span></span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>}</span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="co">// Accumulated log-probability for a trajectory</span></span>
-<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="dt">real</span> log_p = <span class="fl">0.0</span>;</span>
-<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (t <span class="cf">in</span> <span class="dv">1</span>:T)</span>
-<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>  log_p += log_mix(pi[t], lp_A[t], lp_B[t]);</span>
-<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a><span class="kw">target +=</span> log_p;</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb13"><pre class="sourceCode stan code-with-copy"><code class="sourceCode stan"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Mixture likelihood in log space — numerically stable</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span>:N) {</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> lp1 = bernoulli_logit_lpmf(y[i] | alpha);</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>  <span class="dt">real</span> lp2 = bernoulli_logit_lpmf(y[i] | nu);</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>  <span class="kw">target  +=</span> log_mix(pi, lp1, lp2);   <span class="co">// never calls exp() on small values</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="co">// Accumulated log-probability for a trajectory</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="dt">real</span> log_p = <span class="fl">0.0</span>;</span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (t <span class="cf">in</span> <span class="dv">1</span>:T)</span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>  log_p += log_mix(pi[t], lp_A[t], lp_B[t]);</span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="kw">target +=</span> log_p;</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="callout callout-style-default callout-warning callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
@@ -863,12 +906,18 @@ window.Quarto = {
 <td>Ch 6</td>
 </tr>
 <tr class="even">
+<td>Group effects (no natural reference)</td>
+<td>sum-to-zero</td>
+<td>QR contrast matrix → <code>A' * alpha_raw</code></td>
+<td>App C §8</td>
+</tr>
+<tr class="odd">
 <td>SDT sensitivity</td>
 <td>unconstrained</td>
 <td>Probit: <code>Phi(d_prime)</code></td>
 <td>—</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Sum of log-probabilities</td>
 <td><span class="math inline">\((-\infty, 0]\)</span></td>
 <td><code>log_sum_exp</code>, <code>log_mix</code>, <code>log1p_exp</code></td>

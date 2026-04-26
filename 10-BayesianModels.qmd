@@ -28,7 +28,7 @@ pacman::p_load(
   patchwork,   # plot composition
   loo,         # PSIS-LOO and LFO-CV
   priorsense,  # prior sensitivity
-  SBC,         # Simulation-Based Calibration
+  SBC,         # Simulation-Based Calibration Checks
   furrr,       # parallel map
   future,       # parallel backend
   here
@@ -2161,7 +2161,7 @@ bayesplot::ppc_pit_ecdf(y = y_obs, pit = pit_vals) +
 The results of this analysis vary a bit from run to run. Most of the time the calibration looks fine. Sometimes, participants seem more deterministic than probability matching predicts, as indicated by the LOO-PIT showing a hump. This generally would indicate that a softmax observation model might be better at capturing the data. However, this is simulated data from the beta-binomial, so we know we are right in using a beta-binomial and we will keep doing so. With empirical data we wouldn't be as sure :-)
 In any case, remember: all diagnostics are part of a critical evaluation, not deterministic rules!
 
-## Simulation-Based Calibration (SBC)
+## Simulation-Based Calibration Checks (SBC)
 
 Now that we have roughly working models (we can identify the ratio pretty decently), we validate them systematically with SBC. This provides a global certificate that our posteriors are well-calibrated across the entire prior space.
 
@@ -3919,7 +3919,7 @@ p_ws <- ggplot(recovery_ml, aes(x = weight_social)) +
 Look for three features. First, $\rho$ recovery should be tight — this parameter is well-identified from conflict trials, just as in the single-agent case. Second, $\kappa$ recovery will be noisier — the total evidence scale is harder to pin down from binary outcomes. Third, agents at the extremes should be *pulled toward the centre* relative to their true values. This is partial pooling in action: the hierarchical prior regularises extreme estimates. The strength of this shrinkage depends on how informative each agent's data are relative to the population distribution.
 
 
-## Simulation-Based Calibration (SBC): Multilevel Models
+## Simulation-Based Calibration Checks (SBC): Multilevel Models
 
 SBC is *more* critical for multilevel models than for single-agent models. The hierarchical posterior geometry — with its potential funnels, correlations, and partial-pooling dynamics — creates subtle failure modes that standard MCMC diagnostics may miss. We run SBC for both the ML-WBA and ML-PBA.
 
@@ -5447,11 +5447,11 @@ generated quantities {
 write_stan_file(CI_Interference_stan, dir = "stan/", basename = "ch10_ci_interference.stan")
 ```
 
-### Simulation-Based Calibration (SBC): Pinpointing the Source of Complexity
+### Simulation-Based Calibration Checks (SBC): Pinpointing the Source of Complexity
 
 With our three models written natively in Stan, we face a significant computational challenge. The `jardri_f` transformation is highly non-linear. Furthermore, the loop parameters ($\alpha$) multiply the evidence *before* it passes through this transformation, and the interference model creates feedback loops between the two sources. 
 
-When parameters interact multiplicatively inside non-linear bounds, **identifiability issues** are almost guaranteed. To see exactly where these problems emerge, we will run Simulation-Based Calibration (SBC) on all three models in our pedagogical sequence: 
+When parameters interact multiplicatively inside non-linear bounds, **identifiability issues** are almost guaranteed. To see exactly where these problems emerge, we will run Simulation-Based Calibration Checks (SBC) on all three models in our pedagogical sequence: 
 1. Weights Only
 2. Weights + Loops
 3. Full Interference

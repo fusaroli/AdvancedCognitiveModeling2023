@@ -34,7 +34,7 @@ This chapter introduces the strict diagnostic battery required to validate any c
 
 * **Validate Identifiability (Parameter Recovery):** Show that your model can accurately recover known ground-truth parameters across different noise levels.
 
-* **Calibrate Uncertainty (Simulation-Based Calibration):** Use SBC to guarantee your computational engine is unbiased and your posterior uncertainties are mathematically sound.
+* **Calibrate Uncertainty (Simulation-Based Calibration Checks):** Use SBC to guarantee your computational engine is unbiased and your posterior uncertainties are mathematically sound.
 
 * **Perform Posterior Predictive Checks:** Simulate data from your *fitted* model to assess whether it can reproduce key patterns observed in the actual data.
 
@@ -102,7 +102,7 @@ pacman::p_load(
   bayesplot,    # Specialized plotting functions for Bayesian models
   patchwork,    # For easily combining multiple ggplot plots
   priorsense,   # For automated prior sensitivity analysis
-  SBC,          # Simulation-Based Calibration
+  SBC,          # Simulation-Based Calibration Checks
   future,       # Parallel processing
   furrr         # Parallel mapping
 )
@@ -157,7 +157,7 @@ Note that we are adding data for the prior parameters, so we can quickly change 
 
 ::: {.callout-tip title="Stan Efficiency Rule 2 — Conditional Diagnostics: The `run_diagnostics` Flag"}
 
-The six-phase validation pipeline requires **thousands of Stan fits** during SBC (Simulation-Based Calibration). Each SBC iteration only needs to verify posterior calibration — it does **not** need:
+The six-phase validation pipeline requires **thousands of Stan fits** during SBC (Simulation-Based Calibration Checks). Each SBC iteration only needs to verify posterior calibration — it does **not** need:
 
 - PPC draws (`y_rep`) — these require one `bernoulli_rng()` call per observation per draw
 - Pointwise log-likelihoods (`log_lik`) — needed for LOO-CV, but LOO is not run on SBC fits
@@ -457,7 +457,7 @@ The algorithm mirrors the prior predictive check, but instead of sampling from t
 
 * Draw from the Posterior: For each MCMC sample $s$, take the inferred parameter $\theta^{(s)}$.
 
-* Simulate Replications: Generate a synthetic dataset $y_{\text{rep}}^{(s)}$ of the exact same dimensions as the empirical data, using the assumed likelihood:$$y_{\text{rep}}^{(s)} \sim \text{Bernoulli}(\theta^{(s)})$$
+* Simulate Replications: Generate a synthetic dataset $y_{\text{rep}}^{(s)}$ of the exact same dimensions as the empirical data, using the data model:$$y_{\text{rep}}^{(s)} \sim \text{Bernoulli}(\theta^{(s)})$$
 
 * Evaluate Test Statistics: Calculate theoretically relevant summary statistics $T(y_{\text{rep}}^{(s)})$ and compare them against the empirical statistic $T(y)$.
 
@@ -1098,11 +1098,11 @@ By faceting across our experimental design ($N$) and plotting the generative gro
 
 2. Asymptotic Consistency: As we scale to $N=240$, the geometry snaps into focus. The estimates lock perfectly onto the diagonal identity line, and the uncertainty bounds collapse. We have mathematically proven that if we run an experiment with 120 to 240 trials, our cognitive architecture is very likely to identify the true underlying bias of the agent.
 
-### Phase 6b. Simulation-Based Calibration (SBC)
+### Phase 6b. Simulation-Based Calibration Checks (SBC)
 
 This is the final crucible for our Simple Biased Agent. Parameter recovery (Phase 6a) proved that the mean of our posterior is asymptotically consistent. However, we want a more direct test of whether the uncertainty of the model is well calibrated.
 
-If our inference systematically generates posterior distributions that are too narrow (overconfident) or too wide (underconfident), our 95% Credible Intervals are fictions. To formally investigate whether our posterior geometry is calibrated across the entire prior space, we must execute Simulation-Based Calibration (SBC).
+If our inference systematically generates posterior distributions that are too narrow (overconfident) or too wide (underconfident), our 95% Credible Intervals are fictions. To formally investigate whether our posterior geometry is calibrated across the entire prior space, we must execute Simulation-Based Calibration Checks (SBC).
 
 #### The Mathematical Theorem of SBC
 
@@ -1110,7 +1110,7 @@ SBC relies on a fundamental self-consistency property of Bayesian inference. If 
 
 1. Draw a ground-truth parameter from the exact prior: $\tilde{\theta} \sim p(\theta)$
 
-2. Simulate a dataset from the exact likelihood: $\tilde{y} \sim p(y \mid \tilde{\theta})$
+2. Simulate a dataset from the data model: $\tilde{y} \sim p(y \mid \tilde{\theta})$
 
 3. Sample the posterior using our Stan engine: $p(\theta \mid \tilde{y})$
 
@@ -1449,7 +1449,7 @@ The self-consistency property of Bayes' theorem extends to any valid distributio
 
 1. Draw a "true" parameter $\tilde{\theta}$ from the fitted posterior: $\tilde{\theta} \sim p(\theta \mid y_{obs})$.
 
-2. Simulate a new synthetic dataset $\tilde{y}$ from the likelihood: $\tilde{y} \sim p(y \mid \tilde{\theta})$.
+2. Simulate a new synthetic dataset $\tilde{y}$ from the data model: $\tilde{y} \sim p(y \mid \tilde{\theta})$.
 
 3. Fit the model to this synthetic data to get a "new" posterior $p(\theta \mid \tilde{y}, y_{obs})$.
 
@@ -2130,7 +2130,7 @@ cat("Reversal dataset saved to:", reversal_data_file, "\n")
 cat("Load in Ch. 7 and Ch. 8 with: readRDS(here('simdata', 'ch07_reversal_data.rds'))\n")
 ```
 
-Finally, we run Simulation-Based Calibration. We use the SBC package to guarantee that our logit(memory) parameterization doesn't introduce hidden biases in the sampler's rank statistics.
+Finally, we run Simulation-Based Calibration Checks. We use the SBC package to guarantee that our logit(memory) parameterization doesn't introduce hidden biases in the sampler's rank statistics.
 
 ```{r ch06_memory_sbc}
 # 1. Define the Generator using our simulate_function

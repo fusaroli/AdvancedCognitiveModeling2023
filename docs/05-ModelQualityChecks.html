@@ -312,7 +312,7 @@ window.Quarto = {
   <li><a href="#phase-6-computational-calibration" id="toc-phase-6-computational-calibration" class="nav-link" data-scroll-target="#phase-6-computational-calibration"><span class="header-section-number">6.9</span> Phase 6: Computational Calibration</a>
   <ul class="collapse">
   <li><a href="#a.-parameter-recovery-and-posterior-shrinkage" id="toc-a.-parameter-recovery-and-posterior-shrinkage" class="nav-link" data-scroll-target="#a.-parameter-recovery-and-posterior-shrinkage"><span class="header-section-number">6.9.1</span> 6a. Parameter Recovery and Posterior Shrinkage</a></li>
-  <li><a href="#phase-6b.-simulation-based-calibration-sbc" id="toc-phase-6b.-simulation-based-calibration-sbc" class="nav-link" data-scroll-target="#phase-6b.-simulation-based-calibration-sbc"><span class="header-section-number">6.9.2</span> Phase 6b. Simulation-Based Calibration (SBC)</a></li>
+  <li><a href="#phase-6b.-simulation-based-calibration-checks-sbc" id="toc-phase-6b.-simulation-based-calibration-checks-sbc" class="nav-link" data-scroll-target="#phase-6b.-simulation-based-calibration-checks-sbc"><span class="header-section-number">6.9.2</span> Phase 6b. Simulation-Based Calibration Checks (SBC)</a></li>
   <li><a href="#phase-6c-posterior-sbc" id="toc-phase-6c-posterior-sbc" class="nav-link" data-scroll-target="#phase-6c-posterior-sbc"><span class="header-section-number">6.9.3</span> Phase 6c: Posterior SBC</a></li>
   </ul></li>
   <li><a href="#extending-checks-to-the-memory-model" id="toc-extending-checks-to-the-memory-model" class="nav-link" data-scroll-target="#extending-checks-to-the-memory-model"><span class="header-section-number">6.10</span> Extending Checks to the Memory Model</a>
@@ -356,7 +356,7 @@ window.Quarto = {
 <ul>
 <li><p><strong>Assess Generative Plausibility (Prior Predictive Checks):</strong> Simulate data from your model’s priors <em>before</em> fitting to ensure the mathematical bounds and prior assumptions are physically and cognitively plausible, that is, generate plausible behaviors.</p></li>
 <li><p><strong>Validate Identifiability (Parameter Recovery):</strong> Show that your model can accurately recover known ground-truth parameters across different noise levels.</p></li>
-<li><p><strong>Calibrate Uncertainty (Simulation-Based Calibration):</strong> Use SBC to guarantee your computational engine is unbiased and your posterior uncertainties are mathematically sound.</p></li>
+<li><p><strong>Calibrate Uncertainty (Simulation-Based Calibration Checks):</strong> Use SBC to guarantee your computational engine is unbiased and your posterior uncertainties are mathematically sound.</p></li>
 <li><p><strong>Perform Posterior Predictive Checks:</strong> Simulate data from your <em>fitted</em> model to assess whether it can reproduce key patterns observed in the actual data.</p></li>
 <li><p><strong>Visualize Prior-Posterior Updates:</strong> Compare prior and posterior distributions to understand how the data informed parameter estimates.</p></li>
 <li><p><strong>Test Robustness (Sensitivity Analysis):</strong> Evaluate how sensitive your parameter estimates are to the choice of prior distributions using both manual methods and the <code>priorsense</code> package.</p></li>
@@ -447,7 +447,7 @@ window.Quarto = {
 <span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  bayesplot,    <span class="co"># Specialized plotting functions for Bayesian models</span></span>
 <span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>  patchwork,    <span class="co"># For easily combining multiple ggplot plots</span></span>
 <span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  priorsense,   <span class="co"># For automated prior sensitivity analysis</span></span>
-<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>  SBC,          <span class="co"># Simulation-Based Calibration</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>  SBC,          <span class="co"># Simulation-Based Calibration Checks</span></span>
 <span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>  future,       <span class="co"># Parallel processing</span></span>
 <span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>  furrr         <span class="co"># Parallel mapping</span></span>
 <span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>)</span>
@@ -508,7 +508,7 @@ window.Quarto = {
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>The six-phase validation pipeline requires <strong>thousands of Stan fits</strong> during SBC (Simulation-Based Calibration). Each SBC iteration only needs to verify posterior calibration — it does <strong>not</strong> need:</p>
+<p>The six-phase validation pipeline requires <strong>thousands of Stan fits</strong> during SBC (Simulation-Based Calibration Checks). Each SBC iteration only needs to verify posterior calibration — it does <strong>not</strong> need:</p>
 <ul>
 <li>PPC draws (<code>y_rep</code>) — these require one <code>bernoulli_rng()</code> call per observation per draw</li>
 <li>Pointwise log-likelihoods (<code>log_lik</code>) — needed for LOO-CV, but LOO is not run on SBC fits</li>
@@ -775,7 +775,7 @@ window.Quarto = {
 <p>The algorithm mirrors the prior predictive check, but instead of sampling from the prior, we condition on the learned posterior <span class="math inline">\(p(\theta \mid y)\)</span>:</p>
 <ul>
 <li><p>Draw from the Posterior: For each MCMC sample <span class="math inline">\(s\)</span>, take the inferred parameter <span class="math inline">\(\theta^{(s)}\)</span>.</p></li>
-<li><p>Simulate Replications: Generate a synthetic dataset <span class="math inline">\(y_{\text{rep}}^{(s)}\)</span> of the exact same dimensions as the empirical data, using the assumed likelihood:<span class="math display">\[y_{\text{rep}}^{(s)} \sim \text{Bernoulli}(\theta^{(s)})\]</span></p></li>
+<li><p>Simulate Replications: Generate a synthetic dataset <span class="math inline">\(y_{\text{rep}}^{(s)}\)</span> of the exact same dimensions as the empirical data, using the data model:<span class="math display">\[y_{\text{rep}}^{(s)} \sim \text{Bernoulli}(\theta^{(s)})\]</span></p></li>
 <li><p>Evaluate Test Statistics: Calculate theoretically relevant summary statistics <span class="math inline">\(T(y_{\text{rep}}^{(s)})\)</span> and compare them against the empirical statistic <span class="math inline">\(T(y)\)</span>.</p></li>
 </ul>
 <p>We must interrogate these predictions critically. Our model assumes independent, identically distributed (i.i.d.) Bernoulli trials. But what if the participant exhibited sequential dependencies, such as a “win-stay/lose-shift” strategy? If so, our model might successfully capture the overall choice proportion (the sum), but it will fail catastrophically to reproduce the sequential structure (e.g., the maximum run-length of identical choices).</p>
@@ -1451,16 +1451,16 @@ Likelihood selection: all data
 <li><p>Asymptotic Consistency: As we scale to <span class="math inline">\(N=240\)</span>, the geometry snaps into focus. The estimates lock perfectly onto the diagonal identity line, and the uncertainty bounds collapse. We have mathematically proven that if we run an experiment with 120 to 240 trials, our cognitive architecture is very likely to identify the true underlying bias of the agent.</p></li>
 </ol>
 </section>
-<section id="phase-6b.-simulation-based-calibration-sbc" class="level3" data-number="6.9.2">
-<h3 data-number="6.9.2" class="anchored" data-anchor-id="phase-6b.-simulation-based-calibration-sbc"><span class="header-section-number">6.9.2</span> Phase 6b. Simulation-Based Calibration (SBC)</h3>
+<section id="phase-6b.-simulation-based-calibration-checks-sbc" class="level3" data-number="6.9.2">
+<h3 data-number="6.9.2" class="anchored" data-anchor-id="phase-6b.-simulation-based-calibration-checks-sbc"><span class="header-section-number">6.9.2</span> Phase 6b. Simulation-Based Calibration Checks (SBC)</h3>
 <p>This is the final crucible for our Simple Biased Agent. Parameter recovery (Phase 6a) proved that the mean of our posterior is asymptotically consistent. However, we want a more direct test of whether the uncertainty of the model is well calibrated.</p>
-<p>If our inference systematically generates posterior distributions that are too narrow (overconfident) or too wide (underconfident), our 95% Credible Intervals are fictions. To formally investigate whether our posterior geometry is calibrated across the entire prior space, we must execute Simulation-Based Calibration (SBC).</p>
+<p>If our inference systematically generates posterior distributions that are too narrow (overconfident) or too wide (underconfident), our 95% Credible Intervals are fictions. To formally investigate whether our posterior geometry is calibrated across the entire prior space, we must execute Simulation-Based Calibration Checks (SBC).</p>
 <section id="the-mathematical-theorem-of-sbc" class="level4" data-number="6.9.2.1">
 <h4 data-number="6.9.2.1" class="anchored" data-anchor-id="the-mathematical-theorem-of-sbc"><span class="header-section-number">6.9.2.1</span> The Mathematical Theorem of SBC</h4>
 <p>SBC relies on a fundamental self-consistency property of Bayesian inference. If we:</p>
 <ol type="1">
 <li><p>Draw a ground-truth parameter from the exact prior: <span class="math inline">\(\tilde{\theta} \sim p(\theta)\)</span></p></li>
-<li><p>Simulate a dataset from the exact likelihood: <span class="math inline">\(\tilde{y} \sim p(y \mid \tilde{\theta})\)</span></p></li>
+<li><p>Simulate a dataset from the data model: <span class="math inline">\(\tilde{y} \sim p(y \mid \tilde{\theta})\)</span></p></li>
 <li><p>Sample the posterior using our Stan engine: <span class="math inline">\(p(\theta \mid \tilde{y})\)</span></p></li>
 </ol>
 <p>Then the rank of the true parameter <span class="math inline">\(\tilde{\theta}\)</span> within the posterior draws must be strictly Uniformly distributed. If we repeat this process 1,000 times, any deviation from uniformity mathematically proves that our computational engine is structurally biased or our model is misspecified.</p>
@@ -1872,7 +1872,7 @@ Likelihood selection: all data
 <p>The self-consistency property of Bayes’ theorem extends to any valid distribution. In PSBC, we treat our empirical posterior as a “local prior”:</p>
 <ol type="1">
 <li><p>Draw a “true” parameter <span class="math inline">\(\tilde{\theta}\)</span> from the fitted posterior: <span class="math inline">\(\tilde{\theta} \sim p(\theta \mid y_{obs})\)</span>.</p></li>
-<li><p>Simulate a new synthetic dataset <span class="math inline">\(\tilde{y}\)</span> from the likelihood: <span class="math inline">\(\tilde{y} \sim p(y \mid \tilde{\theta})\)</span>.</p></li>
+<li><p>Simulate a new synthetic dataset <span class="math inline">\(\tilde{y}\)</span> from the data model: <span class="math inline">\(\tilde{y} \sim p(y \mid \tilde{\theta})\)</span>.</p></li>
 <li><p>Fit the model to this synthetic data to get a “new” posterior <span class="math inline">\(p(\theta \mid \tilde{y}, y_{obs})\)</span>.</p></li>
 <li><p>Check Ranks: The rank of <span class="math inline">\(\tilde{\theta}\)</span> within the new posterior must still be Uniform.</p></li>
 </ol>
@@ -2116,14 +2116,14 @@ Likelihood selection: all data
 <div class="cell-output cell-output-stdout">
 <pre><code>Running MCMC with 4 chains, at most 8 in parallel...
 
-Chain 1 finished in 0.4 seconds.
-Chain 2 finished in 0.4 seconds.
-Chain 3 finished in 0.4 seconds.
-Chain 4 finished in 0.4 seconds.
+Chain 1 finished in 0.6 seconds.
+Chain 2 finished in 0.6 seconds.
+Chain 3 finished in 0.5 seconds.
+Chain 4 finished in 0.6 seconds.
 
 All 4 chains finished successfully.
-Mean chain execution time: 0.4 seconds.
-Total execution time: 0.6 seconds.</code></pre>
+Mean chain execution time: 0.6 seconds.
+Total execution time: 0.9 seconds.</code></pre>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb49"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="co"># --- Visualizing the Cognitive State ---</span></span>
 <span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Let's observe how the model 'thinks' the memory state evolved</span></span>
@@ -2149,10 +2149,10 @@ Total execution time: 0.6 seconds.</code></pre>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb50"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>fit_mem_gq<span class="sc">$</span><span class="fu">summary</span>(<span class="fu">c</span>(<span class="st">"bias"</span>, <span class="st">"beta"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code># A tibble: 2 × 10
-  variable   mean median    sd   mad      q5   q95  rhat ess_bulk ess_tail
-  &lt;chr&gt;     &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
-1 bias     0.0877 0.0915 0.341 0.343 -0.470  0.645  1.00    1715.    2574.
-2 beta     0.572  0.561  0.336 0.338  0.0395 1.15   1.00    1677.    2002.</code></pre>
+  variable   mean median    sd   mad     q5   q95  rhat ess_bulk ess_tail
+  &lt;chr&gt;     &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;  &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+1 bias     -0.146 -0.142 0.443 0.445 -0.882 0.571  1.00    1679.    2183.
+2 beta      0.967  0.964 0.334 0.336  0.432 1.52   1.00    1638.    1744.</code></pre>
 </div>
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb52"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a>diagnostic_summary <span class="ot">&lt;-</span> fit_mem_gq<span class="sc">$</span><span class="fu">diagnostic_summary</span>()</span>
 <span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a></span>
@@ -2594,7 +2594,7 @@ Correlation with constant-bias design: ~0.9</code></pre>
 <pre><code>Load in Ch. 7 and Ch. 8 with: readRDS(here('simdata', 'ch07_reversal_data.rds'))</code></pre>
 </div>
 </div>
-<p>Finally, we run Simulation-Based Calibration. We use the SBC package to guarantee that our logit(memory) parameterization doesn’t introduce hidden biases in the sampler’s rank statistics.</p>
+<p>Finally, we run Simulation-Based Calibration Checks. We use the SBC package to guarantee that our logit(memory) parameterization doesn’t introduce hidden biases in the sampler’s rank statistics.</p>
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb71"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb71-1"><a href="#cb71-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. Define the Generator using our simulate_function</span></span>
 <span id="cb71-2"><a href="#cb71-2" aria-hidden="true" tabindex="-1"></a>sbc_memory_generator_fn <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>

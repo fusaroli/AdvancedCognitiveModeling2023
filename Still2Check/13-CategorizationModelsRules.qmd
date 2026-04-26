@@ -8,11 +8,14 @@ format:
 
 ```{r ch14_setup, include=FALSE}
 knitr::opts_chunk$set(
-  echo    = TRUE,
-  message = FALSE,
-  warning = FALSE,
+  echo      = TRUE,
+  message   = FALSE,
+  warning   = FALSE,
   fig.width  = 8,
-  fig.height = 5
+  fig.height = 5,
+  fig.align  = "center",
+  out.width  = "80%",
+  dpi        = 300
 )
 
 # Set to TRUE to rerun simulations and Stan fits.
@@ -33,7 +36,7 @@ pacman::p_load(
   tidybayes,    # tidy extraction of draws
   bayesplot,    # MCMC diagnostic plots
   loo,          # LOO-CV and PSIS
-  SBC,          # Simulation-Based Calibration
+  SBC,          # Simulation-Based Calibration Checks
   priorsense,   # prior sensitivity
   future,       # parallel processing
   furrr,        # parallel functional programming
@@ -69,9 +72,9 @@ for (d in c("stan", "simdata", "simmodels")) {
 
 # ── Shared diagnostic helper (canonical version lives in Ch 11) ──────────────
 # Re-defined here for standalone use. Same signature as Ch 11 / Ch 12.
-diagnostic_summary_table <- function(fit, pars = NULL) {
+diagnostic_summary_table <- function(fit, params = NULL) {
   diag <- fit$diagnostic_summary(quiet = TRUE)
-  draws_summary <- fit$summary(variables = pars)
+  draws_summary <- fit$summary(variables = params)
 
   out <- tibble(
     n_divergent      = sum(diag$num_divergent),
@@ -246,6 +249,25 @@ The distinction between rule-based and similarity-based approaches lies not just
 | **Individual Differences** | Different rules | Different attention weights |
 | **Generalization Pattern** | Rectangle-like regions | Similarity-gradient regions |
 
+### Rule-Based Categorization in the Six-Step Pipeline
+
+Chapters 11 and 12 used a six-stage framework to locate GCM and the Kalman filter prototype in the space of possible categorization models. The rule-based model occupies a distinct position at almost every stage:
+
+| Stage | GCM (Ch. 11) | Kalman prototype (Ch. 12) | Rule particle filter (Ch. 13) |
+|---|---|---|---|
+| **1. Input representation** | Raw feature vector | Raw feature vector | Raw feature vector |
+| **2. Attention** | Continuous weights $w_d$ across all features | None (equal implicit weight) | Selective — only rule-relevant dimensions attend; irrelevant dimensions are structurally ignored |
+| **3. Intermediate representation** | Per-category similarity sums | Per-category Gaussian running mean + covariance | Weighted distribution over discrete rule hypotheses $\{r_1, \ldots, r_N\}$ |
+| **4. Evidential mechanism** | Luce-ratio over similarities | Ratio of Gaussian likelihoods | Weighted vote over rule predictions, softened by $\varepsilon$ |
+| **5. Decision rule** | Softmax threshold | Softmax threshold | Same |
+| **6. Learning** | Exemplar accumulation (decay at rate $\lambda$) | Kalman update (process noise $q$) | Sequential Monte Carlo: weight update → resample → (mutate at rate $\mu$) |
+
+The key contrasts are at stages 2, 3, and 6. At stage 2, the rule model is the only one that uses *structural* selective attention — the rule itself encodes which dimensions are relevant, rather than learned continuous weights. At stage 3, the model maintains a *hypothesis distribution* over discrete logical objects, not a similarity sum or a running mean. At stage 6, learning is a particle filter rather than a closed-form update, which is why the likelihood is intractable and NPE is required to fit Model A.
+
+::: {.callout-note title="Why the six-step pipeline does not produce a single clean Stan model here"}
+In Chapters 11 and 12, each stage of the pipeline mapped onto a differentiable Stan operation: gradient-based sampling could reach every parameter. In Chapter 13, stage 3 (the discrete hypothesis distribution) and stage 6 (the stochastic resample step) break differentiability. The particle filter is a valid Bayesian cognitive model, but it is not a Stan model. This is why the chapter introduces two models: Model A is the cognitive theory, fitted via NPE; Model B is a tractable differentiable proxy, fitted via HMC.
+:::
+
 ### Representing and Evaluating Rules
 
 How can we represent a rule computationally? For our 2D stimuli (height, position), a simple rule might involve one or both dimensions and a threshold.
@@ -270,6 +292,21 @@ rule_example_2d <- list(
   operations        = c(">", "<"),
   logic             = "AND",
   prediction_if_true = 0
+)
+
+# Example: a nested rule — (Height > 2.5) AND ((Height > 3.5) OR (Position < 2.0))
+# Cognitive reading: "tall-enough AND (very tall OR low on screen)"
+# This is a RULEX-style conjunctive rule with a disjunctive exception clause.
+# The 'nested_logic' field marks this as a three-condition rule; the first
+# condition is in clause A and clauses B and C are combined by the inner connective.
+# The outer connective links clause A with (B OR C).
+rule_example_nested <- list(
+  dimensions         = c(1, 1, 2),      # features for each of the 3 conditions
+  thresholds         = c(2.5, 3.5, 2.0),
+  operations         = c(">", ">", "<"),
+  outer_logic        = "AND",           # connects clause A with (B inner_logic C)
+  inner_logic        = "OR",            # connects clauses B and C
+  prediction_if_true = 1
 )
 ```
 
@@ -296,8 +333,22 @@ evaluate_rule <- function(rule, stimulus) {
     condition_met <- if (rule$logic == "AND") c1 & c2
                      else if (rule$logic == "OR") c1 | c2
                      else stop("Invalid logic in 2D rule")
+
+  } else if (length(rule$dimensions) == 3 && !is.null(rule$outer_logic)) {
+    # Nested rule: A outer_logic (B inner_logic C)
+    # rule$outer_logic connects condition 1 with the (2 inner_logic 3) clause
+    cA <- eval_cond(rule$dimensions[1], rule$thresholds[1], rule$operations[1])
+    cB <- eval_cond(rule$dimensions[2], rule$thresholds[2], rule$operations[2])
+    cC <- eval_cond(rule$dimensions[3], rule$thresholds[3], rule$operations[3])
+    inner <- if (rule$inner_logic == "OR") cB | cC
+             else if (rule$inner_logic == "AND") cB & cC
+             else stop("Invalid inner_logic in nested rule")
+    condition_met <- if (rule$outer_logic == "AND") cA & inner
+                     else if (rule$outer_logic == "OR") cA | inner
+                     else stop("Invalid outer_logic in nested rule")
+
   } else {
-    stop("Rule dimension count not supported (only 1 or 2)")
+    stop("Rule dimension count not supported (only 1, 2, or 3-nested)")
   }
 
   ifelse(condition_met, rule$prediction_if_true, 1L - rule$prediction_if_true)
@@ -309,6 +360,10 @@ cat("Rule 1 Prediction:", evaluate_rule(rule_example_1d, test_stimulus),
     "(Expected: 0 — Height 2.5 is not > 3.5)\n")
 cat("Rule 2 Prediction:", evaluate_rule(rule_example_2d, test_stimulus),
     "(Expected: 1 — Height > 2 TRUE, Position < 3 FALSE; AND => FALSE => predicts 1)\n")
+# Nested rule test: Height > 2.5 TRUE; inner: Height > 3.5 FALSE OR Position < 2.0 FALSE => FALSE
+# outer AND: TRUE AND FALSE => FALSE => predicts 0 (complementary of prediction_if_true = 1)
+cat("Nested Rule Prediction:", evaluate_rule(rule_example_nested, test_stimulus),
+    "(Expected: 0 — outer A=TRUE but inner B=FALSE OR C=FALSE => FALSE)\n")
 ```
 
 ---
@@ -356,12 +411,12 @@ The persona's Phase 0 interrogation is unusually consequential for this chapter,
 >
 > 1. **$N_{\text{particles}}$.** Earlier versions used 50, 100, 150, or 200 in different sub-sections without justification. We commit here to a single defended default: $N_{\text{particles}} = 100$, interpretable as a working-memory bound on the number of hypotheses an agent can maintain simultaneously. This is the value used everywhere in the chapter unless explicitly varied (in §"Sensitivity to $N_{\text{particles}}$" and in the NPE subsection where it can become a free parameter).
 > 2. **$\text{max\_dims} = 2$.** The rule grammar allows up to two-condition rules (1D or 2D). We test sensitivity to this in §"Rule Grammar: Formal Specification" by also fitting under $\text{max\_dims} = 1$ and $\text{max\_dims} = 3$.
-> 3. **Operator and logic sets.** $\{>, <\}$ and $\{\text{AND}, \text{OR}\}$. No negation, no equality, no nested logic. These are commitments to a specific rule language and they bias the inferential conclusions just as much as the prior on $\varepsilon$ does. The prior-sensitivity machinery (`priorsense::powerscale_sensitivity`) cannot detect bias from these choices because the bias is in the structural prior, not the parametric prior over $\varepsilon$.
+> 3. **Operator and logic sets.** $\{>, <\}$ and $\{\text{AND}, \text{OR}\}$. No negation, no equality. We support flat two-condition rules (1D or 2D) and nested three-condition rules of the form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$; see §"Rule Grammar: Formal Specification." No deeper nesting. These are commitments to a specific rule language and they bias the inferential conclusions just as much as the prior on $\varepsilon$ does. The prior-sensitivity machinery (`priorsense::powerscale_sensitivity`) cannot detect bias from these choices because the bias is in the structural prior, not the parametric prior over $\varepsilon$.
 > 4. **Resampling threshold = 0.5.** The particle filter resamples when $\text{ESS} < N_{\text{particles}} \times 0.5$. This controls how aggressively the agent reorganises its hypothesis set. We test sensitivity to this in §"Sensitivity to Resampling Threshold."
 
 > **Q5 — Are the candidate rules in Model B truly prior to the data?**
 >
-> No, and this is the part of the chapter that earlier drafts admitted in a single bracketed remark and then ignored. **The five candidate rules in Model B are picked by looking at the stimulus layout.** Strictly speaking, then, $p(\text{rule} = r) = 1/R$ is not a prior — it is an empirical approximation to the *posterior* over rules, conditional on having inspected the data-generating structure. The honest framings are either (i) treat the candidate set as a sensitivity analysis ("we test what fit a hand-picked rule set provides; results are conditional on this set"), or (ii) generate the candidate rules blind by running the particle filter on a *separately simulated* dataset and using its converged top rules. Both options are exercised in §"Discharging the Post-Hoc Rule Selection."
+> No, and this is the part of the chapter that earlier drafts admitted in a single bracketed remark and then ignored. **The seven candidate rules in Model B are picked by looking at the stimulus layout.** Strictly speaking, then, $p(\text{rule} = r) = 1/R$ is not a prior — it is an empirical approximation to the *posterior* over rules, conditional on having inspected the data-generating structure. The honest framings are either (i) treat the candidate set as a sensitivity analysis ("we test what fit a hand-picked rule set provides; results are conditional on this set"), or (ii) generate the candidate rules blind by running the particle filter on a *separately simulated* dataset and using its converged top rules. Both options are exercised in §"Discharging the Post-Hoc Rule Selection."
 
 **Summary of Phase 0 commitments.** Two models, not one. Model A is the cognitive theory, has no Stan-tractable likelihood, and is fitted via Neural Posterior Estimation (NPE). Model B is a tractable proxy with a hand-picked rule set; it admits the full HMC validation pipeline but the validation tests the proxy, not the theory. $N_{\text{particles}}$ is fixed at 100 with an explicit cognitive interpretation; the resampling threshold is fixed at 0.5 with a sensitivity sweep. The rule grammar is documented formally below. The Stan candidate rule set is treated as a sensitivity-analysis condition, not as a prior. The chapter's main empirical contribution is the **gap between the NPE posterior on $\varepsilon$ under Model A and the Stan posterior on $\varepsilon$ under Model B** — that gap is the structural bias you accept when you replace the cognitive theory with a tractable proxy.
 
@@ -383,14 +438,21 @@ where:
 * $L \in \{\text{AND}, \text{OR}\}$ is the logical connective; only used when $|D| = 2$.
 * $c \in \{0, 1\}$ is the prediction emitted when all conditions are satisfied. The complementary prediction is emitted otherwise.
 
-The number of distinct rules in this grammar is finite (although large). For $\text{max\_dims} = 2$ on a 2-feature task: $|\mathcal{R}| = 2 \cdot |T_{\text{grid}}| \cdot 2 \cdot 2 + \binom{2}{2} \cdot |T_{\text{grid}}|^2 \cdot 4 \cdot 2 \cdot 2$, where $|T_{\text{grid}}|$ is the threshold discretisation. With a continuous threshold space the grammar has uncountably many rules, but they fall into a finite set of structurally distinct equivalence classes (one per (dimension subset, operator pattern, logical connective, prediction polarity) combination).
+**Extended grammar: nested three-condition rules.** We also support a second rule form that captures RULEX-style exception clauses (Nosofsky et al. 1994):
+
+$$r_{\text{nested}} = (d_A, t_A, o_A, d_B, t_B, o_B, d_C, t_C, o_C, L_{\text{outer}}, L_{\text{inner}}, c)$$
+
+evaluated as $\text{condition}_A\ L_{\text{outer}}\ (\text{condition}_B\ L_{\text{inner}}\ \text{condition}_C)$. The inner clause $(B\ L_{\text{inner}}\ C)$ acts as a disjunctive exception when $L_{\text{outer}} = \text{AND}$ and $L_{\text{inner}} = \text{OR}$: "the rule applies if A holds, but only unless the exception (B OR C) saves a stimulus from the incorrect prediction." Cognitive reading of `rule_example_nested`: "predict Cat 1 if Height > 2.5 AND (Height > 3.5 OR Position < 2.0)" — a tall-enough stimulus qualifies, *and* especially if it is very tall or at a low screen position. With only two features in the Kruschke task, the feature index $d_A$ may coincide with $d_B$ or $d_C$ without loss of generality; the thresholds differ, so the conditions are not redundant.
+
+The number of distinct rules in this grammar is finite (although large). For $\text{max\_dims} = 2$ flat rules on a 2-feature task: $|\mathcal{R}| = 2 \cdot |T_{\text{grid}}| \cdot 2 \cdot 2 + \binom{2}{2} \cdot |T_{\text{grid}}|^2 \cdot 4 \cdot 2 \cdot 2$, where $|T_{\text{grid}}|$ is the threshold discretisation. Nested three-condition rules add $2^3 \cdot |T_{\text{grid}}|^3 \cdot 4 \cdot 2$ additional equivalence classes. With a continuous threshold space the grammar has uncountably many rules in both forms.
 
 **Commitments encoded in this grammar:**
 
-* No negation operator. A rule cannot say "NOT (Height > 2)." Negation can be partially recovered by flipping $c$ and choosing the complementary inequality, but compound negations across two conditions cannot be expressed.
+* No negation operator. A rule cannot say "NOT (Height > 2)." Negation can be partially recovered by flipping $c$ and choosing the complementary inequality, but compound negations cannot be expressed.
 * No equality operator. Strict inequalities only.
-* Maximum two conditions per rule. A reader who believes humans use rules with three or more dimensions in this task will need to relax `max_dims`.
-* Continuous thresholds. The grammar treats thresholds as a continuous parameter, not a categorical choice. This is what makes the rule space combinatorial-times-continuous and what defeats analytical marginalisation in Stan.
+* Maximum two conditions per flat rule, or three conditions in a nested rule. A reader who believes humans use deeper rule trees will need to extend the grammar further.
+* Continuous thresholds. This defeats analytical marginalisation in Stan (see §"Phase 0: Two Models, Not One").
+* Nested rules use a fixed two-level tree: one outer condition and one inner clause of two conditions. Deeper trees (e.g., A AND (B AND (C OR D))) are not implemented.
 
 We will test sensitivity to `max_dims` in the dedicated subsection, and the operator/logic-set commitments are flagged in §"Limitations."
 
@@ -444,26 +506,47 @@ Model A is exactly such a model: $\theta = (\varepsilon, N_{\text{particles}}, \
 # Generate a single random rule.
 # This is the implementation of the formal grammar from §"Rule Grammar".
 generate_random_rule <- function(n_features,
-                                 max_dims     = MAX_RULE_DIMS,
-                                 feature_range = list(c(0, 5), c(0, 5))) {
-  num_dims   <- sample(seq_len(max_dims), 1)
-  dims_used  <- sort(sample(seq_len(n_features), size = num_dims, replace = FALSE))
+                                 max_dims      = MAX_RULE_DIMS,
+                                 feature_range = list(c(0, 5), c(0, 5)),
+                                 nested_prob   = 0.25) {
+  # With probability nested_prob, generate a nested 3-condition rule (if
+  # there are >= 2 features and the grammar allows it). Otherwise generate
+  # a flat 1- or 2-condition rule as before.
+  use_nested <- (n_features >= 2) && (runif(1) < nested_prob)
 
-  thresholds <- numeric(num_dims)
-  operations <- character(num_dims)
-  for (k in seq_len(num_dims)) {
-    di           <- dims_used[k]
-    thresholds[k] <- runif(1, feature_range[[di]][1], feature_range[[di]][2])
-    operations[k] <- sample(RULE_OPERATORS, 1)
+  sample_thresh <- function(di) runif(1, feature_range[[di]][1], feature_range[[di]][2])
+
+  if (use_nested) {
+    # Three conditions; dimensions may repeat (same feature, different thresholds)
+    dims_used  <- sample(seq_len(n_features), size = 3, replace = TRUE)
+    thresholds <- mapply(sample_thresh, dims_used)
+    operations <- sample(RULE_OPERATORS, 3, replace = TRUE)
+    list(
+      dimensions         = dims_used,
+      thresholds         = thresholds,
+      operations         = operations,
+      outer_logic        = sample(RULE_LOGIC, 1),
+      inner_logic        = sample(RULE_LOGIC, 1),
+      prediction_if_true = sample(0:1, 1)
+    )
+  } else {
+    num_dims  <- sample(seq_len(min(max_dims, n_features)), 1)
+    dims_used <- sort(sample(seq_len(n_features), size = num_dims, replace = FALSE))
+    thresholds <- numeric(num_dims)
+    operations <- character(num_dims)
+    for (k in seq_len(num_dims)) {
+      di            <- dims_used[k]
+      thresholds[k] <- sample_thresh(di)
+      operations[k] <- sample(RULE_OPERATORS, 1)
+    }
+    list(
+      dimensions        = dims_used,
+      thresholds        = thresholds,
+      operations        = operations,
+      logic             = if (num_dims == 2) sample(RULE_LOGIC, 1) else NA,
+      prediction_if_true = sample(0:1, 1)
+    )
   }
-
-  list(
-    dimensions        = dims_used,
-    thresholds        = thresholds,
-    operations        = operations,
-    logic             = if (num_dims == 2) sample(RULE_LOGIC, 1) else NA,
-    prediction_if_true = sample(0:1, 1)
-  )
 }
 
 # Initialize N particles with equal weights.
@@ -957,7 +1040,7 @@ We parameterise $\varepsilon$ on the logit scale — $\text{logit}(\varepsilon) 
 **Critical structural facts about Model B that distinguish it from Model A:**
 
 * **No learning dynamics.** Model B treats all trials as conditionally exchangeable given $\varepsilon$. There is no trial-by-trial weight update, no resampling, no rule discovery. The agent's behaviour is determined entirely by which rule it follows (drawn once from the candidate set) and the noise rate $\varepsilon$.
-* **Fixed candidate rule set.** The $R = 5$ rules are picked by inspecting the Kruschke stimulus layout. Phase 0 Q5 surfaced this as a post-hoc choice; §"Discharging the Post-Hoc Rule Selection" tests sensitivity.
+* **Fixed candidate rule set.** The $R = 7$ rules are picked by inspecting the Kruschke stimulus layout (5 flat rules + 2 nested rules of the form $A \text{ op } (B \text{ inner } C)$). Phase 0 Q5 surfaced this as a post-hoc choice; §"Discharging the Post-Hoc Rule Selection" tests sensitivity.
 * **Closed-form Bernoulli likelihood.** Marginalised analytically with `log_sum_exp`. HMC handles it cleanly.
 * **No path-dependence.** Standard PSIS-LOO is technically valid (see §"LFO-CV Does Not Apply Here").
 
@@ -1034,9 +1117,10 @@ rule_simplified_stan <- "
 // No sequential learning in this model: it treats all trials as conditionally
 // exchangeable given error_prob and the rule mixture.
 //
-// The 5 rules below cover the main decision structures visible in the
-// Kruschke stimulus layout — see §'Discharging the Post-Hoc Rule Selection'
-// for the sensitivity analysis on this choice.
+// The 7 rules below cover the main decision structures visible in the
+// Kruschke stimulus layout, including two nested rules of the form
+// A op (B inner C) that cannot be expressed as flat 2D conjunctions/disjunctions.
+// See §'Discharging the Post-Hoc Rule Selection' for the sensitivity analysis.
 
 data {
   int<lower=1> ntrials;
@@ -1065,13 +1149,23 @@ transformed parameters {
     real h = obs[i, 1];
     real p = obs[i, 2];
 
+    // ── Flat 1D and 2D rules (same as original 5) ──────────────────────────
     int pred1 = h > 2.5 ? 1 : 0;
     int pred2 = p < 2.5 ? 1 : 0;
     int pred3 = (h > 2.0 && p > 3.0) ? 1 : 0;
     int pred4 = (h < 2.0 || p < 2.0) ? 0 : 1;
     int pred5 = (h > 2.5 && p < 3.5) ? 1 : 0;
+    // ── Nested rules: A op (B inner C) ─────────────────────────────────────
+    // pred6: (h > 3.5) OR ((h > 1.5) AND (p < 1.5))
+    //   Cognitive reading: "very tall, OR (some height AND very low position)"
+    //   Perfectly classifies the 8 Kruschke stimuli.
+    int pred6 = (h > 3.5 || (h > 1.5 && p < 1.5)) ? 1 : 0;
+    // pred7: (h > 1.5) AND ((p < 2.5) OR (h > 3.5))
+    //   Cognitive reading: "some height AND (low position OR very tall)"
+    //   Also perfectly classifies the 8 Kruschke stimuli.
+    int pred7 = (h > 1.5 && (p < 2.5 || h > 3.5)) ? 1 : 0;
 
-    int R = 5;
+    int R = 7;
 
     vector[R] lp;
     lp[1] = bernoulli_lpmf(y[i] | pred1 == 1 ? 1 - error_prob : error_prob);
@@ -1079,6 +1173,8 @@ transformed parameters {
     lp[3] = bernoulli_lpmf(y[i] | pred3 == 1 ? 1 - error_prob : error_prob);
     lp[4] = bernoulli_lpmf(y[i] | pred4 == 1 ? 1 - error_prob : error_prob);
     lp[5] = bernoulli_lpmf(y[i] | pred5 == 1 ? 1 - error_prob : error_prob);
+    lp[6] = bernoulli_lpmf(y[i] | pred6 == 1 ? 1 - error_prob : error_prob);
+    lp[7] = bernoulli_lpmf(y[i] | pred7 == 1 ? 1 - error_prob : error_prob);
 
     lp_marginal[i] = log_sum_exp(lp) - log(R);
   }
@@ -1182,7 +1278,7 @@ The persona's Phase 3.0 says: curate the diagnostics, even when they are nearly 
 if (!is.null(fit_rule_stan)) {
   diag_tbl <- diagnostic_summary_table(
     fit_rule_stan,
-    pars = c("logit_error_prob", "error_prob")
+    params = c("logit_error_prob", "error_prob")
   )
   print(diag_tbl)
 
@@ -1219,10 +1315,10 @@ if (!is.null(fit_rule_stan)) {
   eps_draws  <- as_draws_df(fit_rule_stan$draws("error_prob"))$error_prob
   n_draws    <- length(eps_draws)
   obs_mat    <- as.matrix(fit_schedule[, c("height", "position")])
-  R_rules    <- 5L
+  R_rules    <- 7L
   n_obs      <- nrow(fit_schedule)
 
-  # Per-rule predictions on the observed stimulus sequence
+  # Per-rule predictions on the observed stimulus sequence (7 rules: 5 flat + 2 nested)
   rule_preds <- matrix(0L, nrow = R_rules, ncol = n_obs)
   for (i in seq_len(n_obs)) {
     h <- obs_mat[i, 1]; p <- obs_mat[i, 2]
@@ -1231,6 +1327,8 @@ if (!is.null(fit_rule_stan)) {
     rule_preds[3, i] <- as.integer(h > 2.0 && p > 3.0)
     rule_preds[4, i] <- as.integer(!(h < 2.0 || p < 2.0))
     rule_preds[5, i] <- as.integer(h > 2.5 && p < 3.5)
+    rule_preds[6, i] <- as.integer(h > 3.5 || (h > 1.5 && p < 1.5))  # nested: OR with inner AND
+    rule_preds[7, i] <- as.integer(h > 1.5 && (p < 2.5 || h > 3.5))  # nested: AND with inner OR
   }
 
   set.seed(2026)
@@ -1344,7 +1442,7 @@ if (!is.null(fit_rule_stan)) {
   n_obs          <- nrow(fit_schedule)
 
   set.seed(11)
-  rule_idx_per_draw <- sample.int(5L, n_draws_full, replace = TRUE)
+  rule_idx_per_draw <- sample.int(7L, n_draws_full, replace = TRUE)
 
   # Per (draw, trial) p_cat1
   p_draws <- matrix(0, nrow = n_draws_full, ncol = n_obs)
@@ -1571,7 +1669,7 @@ Phase 0 Q5 surfaced the fact that Model B's candidate rules are picked by inspec
 
 We define three alternative candidate rule sets and refit Model B on the same data:
 
-* **Set A** — the original 5 hand-picked rules (the ones in the Stan code above).
+* **Set A** — the 7 hand-picked rules (the ones in the Stan code above: 5 flat + 2 nested).
 * **Set B** — 5 rules generated *blind* by running Model A on a separately-simulated training dataset and taking its top-weighted rules at the end of training. The training data is generated with $\varepsilon = 0.1$ on a different schedule than the fitting data. This is the "honest" version of the candidate set.
 * **Set C** — 5 rules deliberately chosen to be *bad* (rules that disagree with most stimuli), as a stress test.
 
@@ -1628,13 +1726,15 @@ generated quantities {
   cmdstan_model(fname)
 }
 
-# Set A: original hand-picked rules (replicate the existing model)
+# Set A: hand-picked rules — 5 flat + 2 nested (replicates Model B exactly)
 rules_A <- c(
   "h > 2.5 ? 1 : 0",
   "p < 2.5 ? 1 : 0",
   "(h > 2.0 && p > 3.0) ? 1 : 0",
   "(h < 2.0 || p < 2.0) ? 0 : 1",
-  "(h > 2.5 && p < 3.5) ? 1 : 0"
+  "(h > 2.5 && p < 3.5) ? 1 : 0",
+  "(h > 3.5 || (h > 1.5 && p < 1.5)) ? 1 : 0",
+  "(h > 1.5 && (p < 2.5 || h > 3.5)) ? 1 : 0"
 )
 
 # Set B: blind rules from a fresh Model A run on a separate seed
@@ -1904,7 +2004,7 @@ real_sbc_generator <- SBC_generator_function(
     eps_true       <- plogis(logit_eps_true)
 
     # Use the SAME generator as Model B's mixture: draw a rule, generate Bernoulli responses
-    rule_idx <- sample.int(5L, 1)
+    rule_idx <- sample.int(7L, 1)
     sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
     obs_mat  <- as.matrix(sched[, c("height", "position")])
     n_trials <- nrow(obs_mat)
@@ -1916,7 +2016,9 @@ real_sbc_generator <- SBC_generator_function(
              as.integer(p < 2.5),
              as.integer(h > 2.0 && p > 3.0),
              as.integer(!(h < 2.0 || p < 2.0)),
-             as.integer(h > 2.5 && p < 3.5))
+             as.integer(h > 2.5 && p < 3.5),
+             as.integer(h > 3.5 || (h > 1.5 && p < 1.5)),
+             as.integer(h > 1.5 && (p < 2.5 || h > 3.5)))
     }
     preds  <- vapply(seq_len(n_trials), rule_pred_for_trial, integer(1))
     p_cat1 <- ifelse(preds == 1, 1 - eps_true, eps_true)
@@ -1982,8 +2084,8 @@ if (!is.null(fit_rule_stan)) {
       logit_eps_true <- sample(fitted_logit_eps, 1)
       eps_true       <- plogis(logit_eps_true)
 
-      # Generate from Model B's own mixture (same as real SBC)
-      rule_idx <- sample.int(5L, 1)
+      # Generate from Model B's own mixture (same as real SBC; 7 rules)
+      rule_idx <- sample.int(7L, 1)
       sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
       obs_mat  <- as.matrix(sched[, c("height", "position")])
       n_trials <- nrow(obs_mat)
@@ -1995,7 +2097,9 @@ if (!is.null(fit_rule_stan)) {
                as.integer(p < 2.5),
                as.integer(h > 2.0 && p > 3.0),
                as.integer(!(h < 2.0 || p < 2.0)),
-               as.integer(h > 2.5 && p < 3.5))
+               as.integer(h > 2.5 && p < 3.5),
+               as.integer(h > 3.5 || (h > 1.5 && p < 1.5)),
+               as.integer(h > 1.5 && (p < 2.5 || h > 3.5)))
       }
       preds  <- vapply(seq_len(n_trials), rule_pred_for_trial, integer(1))
       p_cat1 <- ifelse(preds == 1, 1 - eps_true, eps_true)
@@ -2666,6 +2770,18 @@ simulate_rule_agent_scenario <- function(agent_id, scenario,
 }
 ```
 
+::: {.callout-note title="Scenario order across the three chapters"}
+All three chapters use the same three scenarios (static Kruschke, performance-contingent abrupt shifts, smooth drift), but the order in which they are presented differs because the ordering principle differs for each model:
+
+| Chapter | Ordering principle | Order |
+|---|---|---|
+| Ch. 11 — Decay GCM | Increasing $\lambda$ preference (higher recency = larger effect of non-stationarity) | Static → Drift → Contingent shift |
+| Ch. 12 — Kalman prototype | Increasing assumption match (Gaussian drift is the model's structural home) | Static → Contingent shift → Drift |
+| Ch. 13 — Rule particle filter | Increasing structural demand on the mutation mechanism | Static → Contingent shift → Drift |
+
+Chapters 12 and 13 share the same presentation order, but for different reasons: the Kalman prototype is *best matched* to drift data (its process-noise assumption generates exactly Gaussian drift), whereas the particle filter uses mutation as a *general-purpose rejuvenation* that works for both non-stationary scenarios. The scenarios are the same across all three chapters; readers should compare the learning-curve patterns across chapters to see how the structural differences between models show up in their sensitivity to non-stationarity.
+:::
+
 ### Visualising the Three Scenarios
 
 We simulate 8 agents per cell across a 3 × 3 grid of scenarios × mutation rates, at fixed $\varepsilon = 0.1$ and $N_{\text{particles}} = 100$. As in Chapters 11 and 12, we expect mutation to *hurt* on static data (it purges rules that already match) and *help* on non-stationary data (it injects fresh candidates the filter can reweight when the environment changes).
@@ -2785,7 +2901,7 @@ Rule-based models, particularly Model A (the particle filter), offer several cog
 * **Complex boundaries**: requires very complex rules or many simple rules to approximate non-axis-aligned or curved boundaries.
 * **Graded typicality**: doesn't easily explain why some category members seem more typical than others.
 * **Feature learning**: standard models assume predefined features; they don't typically learn which features are relevant from raw input.
-* **Rule grammar is a structural prior** (Phase 0 Q4): the chapter commits to $\{>, <\}$ operators, $\{\text{AND}, \text{OR}\}$ logical connectives, $\text{max\_dims} = 2$, and continuous thresholds. Different grammars would give different posteriors. Sensitivity to `max_dims` is exercised in §"Sensitivity to `max_dims`"; sensitivity to operators and connectives is left as an exercise.
+* **Rule grammar is a structural prior** (Phase 0 Q4): the chapter commits to $\{>, <\}$ operators, $\{\text{AND}, \text{OR}\}$ logical connectives, flat rules up to $\text{max\_dims} = 2$ conditions, nested three-condition rules of the form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$, and continuous thresholds. Different grammars would give different posteriors. Sensitivity to `max_dims` is exercised in §"Sensitivity to `max_dims`"; sensitivity to operators and connectives (including deeper nesting) is left as an exercise.
 * **Model B is structurally biased relative to Model A** (Phase 0 Q3, Q5): the Stan proxy is a different model from the cognitive theory. Validation of Model B (LOO, prior sensitivity, real SBC, PSBC) tests the proxy. The NPE vs Stan comparison in §"The Main Empirical Result" and the gap demonstration make the bias visible. Chapter 15 should report both posteriors when comparing rule-based models against GCM and prototype.
 * **NPE has its own approximation error**: the NPE posterior is the output of a learned normalising flow, which is an approximation to the true posterior. We validate it via SBC + expected coverage (§"NPE Validation"); if both pass, the approximation error is small enough to trust. Unlike rejection ABC, NPE does not depend on hand-crafted summary statistics — the embedding network learns the relevant features end-to-end — and it does not depend on a tolerance parameter.
 * **Cross-language step**: NPE requires Python (`sbi` + `torch`) accessed via `reticulate`. This adds a dependency but is well-documented and the interface is stable. The alternative — reimplementing normalising flows in R — is not advisable.

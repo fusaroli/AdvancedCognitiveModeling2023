@@ -308,7 +308,62 @@ See @sec-ncp for full details, the K-simplex extension, and the Chapter 11 case 
 
 ---
 
-### 8. Probit Link — Signal Detection Theory {#sec-probit}
+### 8. Sum-to-Zero Constraint for Group Effects {#sec-sum-to-zero}
+
+*Relevant context: [Vehtari et al. — the park rule](https://avehtari.github.io/Bayesian-Workflow/park_rule/park_rule.html)*
+
+The standard **corner constraint** for ANOVA-style group effects fixes one group as the
+reference (its effect is zero) and estimates all others relative to it.
+This is a valid identification strategy but it creates an asymmetry: the reference group's
+effect is absorbed into the intercept, making the intercept's prior inadvertently informative
+about one specific group.
+
+The **sum-to-zero constraint** ($\sum_{k=1}^K \alpha_k = 0$) is a symmetric alternative.
+Every group effect is estimated relative to the grand mean, the intercept retains a
+clean interpretation as the overall mean, and priors on group effects are exchangeable.
+
+**Stan implementation via QR decomposition:**
+
+```stan
+data {
+  int<lower=1> K;                   // number of groups
+  matrix[K-1, K] A;                 // sum-to-zero contrast matrix (precomputed in R)
+}
+parameters {
+  vector[K-1] alpha_raw;            // K-1 free parameters
+}
+transformed parameters {
+  vector[K] alpha = A' * alpha_raw; // K effects summing to zero
+}
+model {
+  alpha_raw ~ normal(0, 1);
+}
+```
+
+**Build the contrast matrix in R:**
+
+```r
+# Helmert-style QR contrast matrix enforcing sum-to-zero
+make_sum_zero_matrix <- function(K) {
+  Q <- qr.Q(qr(rep(1, K)), complete = TRUE)[, -1]
+  t(Q)   # (K-1) x K matrix: A %*% alpha = 0 iff sum(alpha) = 0
+}
+
+A <- make_sum_zero_matrix(K)   # pass this as data to Stan
+```
+
+::: {.callout-tip}
+## When to prefer sum-to-zero over corner constraints
+
+Use sum-to-zero when (a) no group is a natural reference, (b) you want exchangeable
+priors on all group effects, or (c) the intercept should represent the grand mean rather
+than one group's baseline. The constraint has no effect on the likelihood — only on
+identifiability and prior geometry.
+:::
+
+---
+
+### 10. Probit Link — Signal Detection Theory {#sec-probit}
 
 The **probit link** uses the standard Normal CDF $\Phi$ in place of the logistic function:
 
@@ -346,7 +401,7 @@ faster and numerically more stable.
 
 ---
 
-### 9. Correlation Matrices — LKJ and Cholesky {#sec-lkj}
+### 11. Correlation Matrices — LKJ and Cholesky {#sec-lkj}
 
 *Covered in @sec-cholesky (Appendix B); introduced in @sec-multilevel-models (Chapter 6)*
 
@@ -422,6 +477,7 @@ unstable version that Stan's log-space functions exist to replace.
 | Individual params drawn from population | real | Non-centered: $z \sim \mathcal{N}(0,1)$, $\theta = \mu + \sigma z$ | Ch 6 |
 | Between-subject standard deviation | > 0 | `exponential(1)` or `normal(0, 0.5) T[0,]` | Ch 6 |
 | Correlation matrix | positive-definite, diag = 1 | Cholesky factor + LKJ prior | Ch 6 |
+| Group effects (no natural reference) | sum-to-zero | QR contrast matrix → `A' * alpha_raw` | App C §8 |
 | SDT sensitivity | unconstrained | Probit: `Phi(d_prime)` | — |
 | Sum of log-probabilities | $(-\infty, 0]$ | `log_sum_exp`, `log_mix`, `log1p_exp` | Ch 8–11 |
 
