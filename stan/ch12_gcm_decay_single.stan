@@ -1,14 +1,5 @@
-// Generalized Context Model with Memory Decay — Single Subject
-//
-// Extension of ch12_gcm_single.stan adding a recency-weight parameter
-// log_lambda. Each stored exemplar is downweighted by exp(-lambda * age)
-// in the category-similarity average, where age = i - trial_of_exemplar.
-// The classical GCM is recovered in the limit lambda -> 0.
-//
-// Category evidence is a decay-weighted *mean* similarity:
-//   s_A = sum_{j in A} exp(-lambda * age_j) * eta(i, j)
-//         / sum_{j in A} exp(-lambda * age_j)
 
+// Generalized Context Model with Memory Decay — Single Subject
 data {
   int<lower=1> N_total;
   int<lower=1> N_features;
@@ -124,3 +115,4 @@ generated quantities {
     normal_lpdf(log_lambda   | prior_log_lambda_mu, prior_log_lambda_sigma) +
     beta_lpdf(bias           | prior_bias_alpha,    prior_bias_beta);
 }
+

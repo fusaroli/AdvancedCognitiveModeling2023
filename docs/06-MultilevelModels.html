@@ -2669,19 +2669,14 @@ Likelihood selection: all data
 <span id="cb84-31"><a href="#cb84-31" aria-hidden="true" tabindex="-1"></a>  fit_memory <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(fit_memory_path)</span>
 <span id="cb84-32"><a href="#cb84-32" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<pre><code>
-We raise `adapt_delta` to 0.90. The bivariate NCP is well-behaved globally, but the correlation parameter $\rho$ introduces a curved direction that can require longer leapfrog trajectories. The higher target acceptance rate forces the dual-averaging algorithm to find a smaller step size, reducing integration error along this direction. If `max_treedepth` warnings appear (distinct from divergences), raise `max_treedepth` further — do not raise `adapt_delta` in response to those.
-
-#### Assessing the fitting process
-
-Even if the Stan compiler finishes without explicit warnings, our workflow demands that we systematically verify the geometry of the posterior and the efficiency of the sampler.
-
-
-::: {.cell layout-align="center"}
-
-```{.r .cell-code}
-#fit_memory$cmdstan_diagnose()
-fit_memory$diagnostic_summary()</code></pre>
+<p>We raise <code>adapt_delta</code> to 0.90. The bivariate NCP is well-behaved globally, but the correlation parameter <span class="math inline">\(\rho\)</span> introduces a curved direction that can require longer leapfrog trajectories. The higher target acceptance rate forces the dual-averaging algorithm to find a smaller step size, reducing integration error along this direction. If <code>max_treedepth</code> warnings appear (distinct from divergences), raise <code>max_treedepth</code> further — do not raise <code>adapt_delta</code> in response to those.</p>
+</section>
+<section id="assessing-the-fitting-process-1" class="level4" data-number="7.6.3.3">
+<h4 data-number="7.6.3.3" class="anchored" data-anchor-id="assessing-the-fitting-process-1"><span class="header-section-number">7.6.3.3</span> Assessing the fitting process</h4>
+<p>Even if the Stan compiler finishes without explicit warnings, our workflow demands that we systematically verify the geometry of the posterior and the efficiency of the sampler.</p>
+<div class="cell" data-layout-align="center">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb85"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb85-1"><a href="#cb85-1" aria-hidden="true" tabindex="-1"></a><span class="co">#fit_memory$cmdstan_diagnose()</span></span>
+<span id="cb85-2"><a href="#cb85-2" aria-hidden="true" tabindex="-1"></a>fit_memory<span class="sc">$</span><span class="fu">diagnostic_summary</span>()</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>$num_divergent
 [1] 0 0 0 0
@@ -2692,11 +2687,11 @@ $num_max_treedepth
 $ebfmi
 [1] 0.7753663 0.6990873 0.7302008 0.7121430</code></pre>
 </div>
-<p>:::</p>
+</div>
 <p>We are looking for strict zeros in <code>num_divergent</code>. With the NCP, this should hold. Any divergences here are a signal that <code>adapt_delta</code> needs further adjustment, the priors are misspecified, or there is a structural model issue.</p>
 </section>
-<section id="chain-mixing-and-stationarity-hatr-1" class="level4" data-number="7.6.3.3">
-<h4 data-number="7.6.3.3" class="anchored" data-anchor-id="chain-mixing-and-stationarity-hatr-1"><span class="header-section-number">7.6.3.3</span> Chain Mixing and Stationarity (<span class="math inline">\(\hat{R}\)</span>)</h4>
+<section id="chain-mixing-and-stationarity-hatr-1" class="level4" data-number="7.6.3.4">
+<h4 data-number="7.6.3.4" class="anchored" data-anchor-id="chain-mixing-and-stationarity-hatr-1"><span class="header-section-number">7.6.3.4</span> Chain Mixing and Stationarity (<span class="math inline">\(\hat{R}\)</span>)</h4>
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb87"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb87-1"><a href="#cb87-1" aria-hidden="true" tabindex="-1"></a>draws_memory <span class="ot">&lt;-</span> fit_memory<span class="sc">$</span><span class="fu">draws</span>()</span>
 <span id="cb87-2"><a href="#cb87-2" aria-hidden="true" tabindex="-1"></a></span>
@@ -2791,12 +2786,12 @@ $ebfmi
 </div>
 </div>
 <p>The potential scale reduction factor (<span class="math inline">\(\hat{R}\)</span>) must be below 1.01 for all parameters. The correlation parameter <code>rho</code> is informed only by covariation <em>across</em> agents, not within any individual agent’s trial sequence, so its ESS will be lower than the marginal parameters. ESS &gt; 400 remains our threshold. An ESS below 200 for <code>rho</code> warrants investigation of the correlation manifold geometry.</p>
-<section id="effective-sample-size-ess-1" class="level5" data-number="7.6.3.3.1">
-<h5 data-number="7.6.3.3.1" class="anchored" data-anchor-id="effective-sample-size-ess-1"><span class="header-section-number">7.6.3.3.1</span> Effective Sample Size (ESS)</h5>
+<section id="effective-sample-size-ess-1" class="level5" data-number="7.6.3.4.1">
+<h5 data-number="7.6.3.4.1" class="anchored" data-anchor-id="effective-sample-size-ess-1"><span class="header-section-number">7.6.3.4.1</span> Effective Sample Size (ESS)</h5>
 <p>Monitor <code>ess_tail</code> for <code>sigma[1]</code> and <code>sigma[2]</code>. Population SDs can develop mild funnel-like behavior even under NCP when the likelihood is highly informative about individual parameters, because the <span class="math inline">\(z_j\)</span> draws must simultaneously explain many agents. If <code>ess_tail</code> is low for the sigmas but <code>ess_bulk</code> is acceptable, raising <code>adapt_delta</code> further or running more warmup iterations is the correct response.</p>
 </section>
-<section id="energy-e-bfmi" class="level5" data-number="7.6.3.3.2">
-<h5 data-number="7.6.3.3.2" class="anchored" data-anchor-id="energy-e-bfmi"><span class="header-section-number">7.6.3.3.2</span> Energy (E-BFMI)</h5>
+<section id="energy-e-bfmi" class="level5" data-number="7.6.3.4.2">
+<h5 data-number="7.6.3.4.2" class="anchored" data-anchor-id="energy-e-bfmi"><span class="header-section-number">7.6.3.4.2</span> Energy (E-BFMI)</h5>
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb89"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb89-1"><a href="#cb89-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mcmc_nuts_energy</span>(<span class="fu">nuts_params</span>(fit_memory)) <span class="sc">+</span></span>
 <span id="cb89-2"><a href="#cb89-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(</span>
@@ -2813,8 +2808,8 @@ $ebfmi
 </div>
 </section>
 </section>
-<section id="posterior-parameter-correlations-1" class="level4" data-number="7.6.3.4">
-<h4 data-number="7.6.3.4" class="anchored" data-anchor-id="posterior-parameter-correlations-1"><span class="header-section-number">7.6.3.4</span> Posterior Parameter Correlations</h4>
+<section id="posterior-parameter-correlations-1" class="level4" data-number="7.6.3.5">
+<h4 data-number="7.6.3.5" class="anchored" data-anchor-id="posterior-parameter-correlations-1"><span class="header-section-number">7.6.3.5</span> Posterior Parameter Correlations</h4>
 <div class="cell" data-layout-align="center">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb90"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb90-1"><a href="#cb90-1" aria-hidden="true" tabindex="-1"></a><span class="fu">mcmc_pairs</span>(</span>
 <span id="cb90-2"><a href="#cb90-2" aria-hidden="true" tabindex="-1"></a>  draws_memory,</span>
