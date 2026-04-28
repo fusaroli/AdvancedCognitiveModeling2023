@@ -76,29 +76,41 @@ diagnostic_summary_table <- function(fit, params = NULL) {
   diag <- fit$diagnostic_summary(quiet = TRUE)
   draws_summary <- fit$summary(variables = params)
 
-  out <- tibble(
-    n_divergent      = sum(diag$num_divergent),
-    n_max_treedepth  = sum(diag$num_max_treedepth),
-    min_ebfmi        = round(min(diag$ebfmi), 3),
-    max_rhat         = round(max(draws_summary$rhat,    na.rm = TRUE), 4),
-    min_ess_bulk     = round(min(draws_summary$ess_bulk, na.rm = TRUE), 0),
-    min_ess_tail     = round(min(draws_summary$ess_tail, na.rm = TRUE), 0)
-  ) |>
-    mutate(
-      max_mcse_ratio = {
-        ratios <- draws_summary$mcse_mean / draws_summary$sd
-        round(max(ratios, na.rm = TRUE), 4)
-      }
+  n_div    <- sum(diag$num_divergent)
+  max_rhat <- round(max(draws_summary$rhat,     na.rm = TRUE), 2)
+  min_bulk <- round(min(draws_summary$ess_bulk,  na.rm = TRUE), 0)
+  min_tail <- round(min(draws_summary$ess_tail,  na.rm = TRUE), 0)
+  min_ebfmi <- round(min(diag$ebfmi), 3)
+
+  mcse_col <- intersect(names(draws_summary), c("mcse_mean", "mcse", "mcse_cp"))[1]
+  if (!is.na(mcse_col)) {
+    max_mcse <- round(max(draws_summary[[mcse_col]] / draws_summary$sd, na.rm = TRUE), 4)
+  } else {
+    max_mcse <- round(max(1 / sqrt(draws_summary$ess_bulk), na.rm = TRUE), 4)
+  }
+
+  out <- tibble::tibble(
+    metric = c(
+      "Divergences (zero tolerance)",
+      "Max rank-normalised R-hat",
+      "Min bulk ESS",
+      "Min tail ESS",
+      "Min E-BFMI",
+      "Max MCSE / posterior SD"
+    ),
+    value = c(n_div, max_rhat, min_bulk, min_tail, min_ebfmi, max_mcse),
+    threshold = c("== 0", "< 1.01", "> 400", "> 400", "> 0.2", "< 0.05"),
+    pass = c(
+      n_div == 0,
+      max_rhat < 1.01,
+      min_bulk > 400,
+      min_tail > 400,
+      min_ebfmi > 0.2,
+      max_mcse < 0.05
     )
+  )
 
-  ok_div  <- out$n_divergent     == 0
-  ok_rhat <- out$max_rhat        <  1.01
-  ok_bulk <- out$min_ess_bulk    >  400
-  ok_tail <- out$min_ess_tail    >  400
-  ok_ebfmi<- out$min_ebfmi       >  0.2
-  ok_mcse <- out$max_mcse_ratio  <  0.05
-
-  if (!all(c(ok_div, ok_rhat, ok_bulk, ok_tail, ok_ebfmi, ok_mcse))) {
+  if (!all(out$pass)) {
     warning(
       "MCMC diagnostic battery: at least one threshold breached. ",
       "Inspect divergences and reparameterize before interpreting the posterior.",
@@ -2626,7 +2638,7 @@ mutate_particles <- function(particles, mutation_prob, n_features,
 
 ### Scenario-Aware Particle Filter
 
-We extend `rule_particle_filter` to take a `mutation_prob` argument and a `scenario` switch that controls how the true feedback sequence is produced. The scenarios mirror Chapters 11 and 12 exactly: static Kruschke, performance-contingent abrupt shifts, and smooth drift.
+We extend `rule_particle_filter` to take a `mutation_prob` argument and a `scenario` switch that controls how the true feedback sequence is produced. The scenarios follow the canonical framework from Chapter 11: static Kruschke, performance-contingent abrupt shifts, and smooth drift (in that order). Note that contingent-shift flips are endogenous to the agent's own accuracy — a noisier agent triggers fewer flips and accumulates less information about $\mu$ (see Chapter 11 for discussion).
 
 ```{r ch14_drift_trajectory}
 make_drift_trajectory <- function(ntrials, drift_sigma = 0.05, seed = 1) {
@@ -2770,16 +2782,16 @@ simulate_rule_agent_scenario <- function(agent_id, scenario,
 }
 ```
 
-::: {.callout-note title="Scenario order across the three chapters"}
-All three chapters use the same three scenarios (static Kruschke, performance-contingent abrupt shifts, smooth drift), but the order in which they are presented differs because the ordering principle differs for each model:
+::: {.callout-note title="Unified scenario framework across the three chapters"}
+All three chapters use the same three scenarios in the same order (static → contingent shift → drift), reflecting **increasing assumption match** between the scenario's data-generating process and the model's structural commitments. The canonical definition and rationale are in Chapter 11. What differs across chapters is *how well* the assumption-matched scenario actually matches:
 
-| Chapter | Ordering principle | Order |
-|---|---|---|
-| Ch. 11 — Decay GCM | Increasing $\lambda$ preference (higher recency = larger effect of non-stationarity) | Static → Drift → Contingent shift |
-| Ch. 12 — Kalman prototype | Increasing assumption match (Gaussian drift is the model's structural home) | Static → Contingent shift → Drift |
-| Ch. 13 — Rule particle filter | Increasing structural demand on the mutation mechanism | Static → Contingent shift → Drift |
+| Chapter | Model | Contingent shift | Smooth drift |
+|---|---|---|---|
+| Ch. 11 — Decay GCM | Exemplar memory with forgetting | Misspecified (no abrupt mechanism); strong $\lambda$ signal via post-flip recovery | Graceful degradation; approximate match |
+| Ch. 12 — Kalman prototype | Gaussian-drift prototype tracker | Misspecified; filter smooths the reversal | **Exact match**: Gaussian drift is the model's native story |
+| Ch. 13 — Rule particle filter | Bayesian particle filter + mutation | Approximate; mutation lets the filter recover | Approximate; mutation supplies fresh candidates but does not track direction |
 
-Chapters 12 and 13 share the same presentation order, but for different reasons: the Kalman prototype is *best matched* to drift data (its process-noise assumption generates exactly Gaussian drift), whereas the particle filter uses mutation as a *general-purpose rejuvenation* that works for both non-stationary scenarios. The scenarios are the same across all three chapters; readers should compare the learning-curve patterns across chapters to see how the structural differences between models show up in their sensitivity to non-stationarity.
+Readers should compare the learning-curve panels across chapters to see how each model's structural commitments show up in its sensitivity to the two non-stationary scenarios. The Kalman prototype is uniquely well-matched to smooth drift; the decay GCM and the rule filter are both general-purpose in ways that make them approximately suitable for either non-stationary scenario, for different mechanistic reasons.
 :::
 
 ### Visualising the Three Scenarios

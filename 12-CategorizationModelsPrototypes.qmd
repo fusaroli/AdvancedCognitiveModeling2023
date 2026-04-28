@@ -1577,12 +1577,10 @@ The SBC result above exposes a structural problem. Under the static Kruschke par
 
 Three generative processes stress this identifiability question differently. We implement all three and run the full validation battery on each.
 
-::: {.callout-note title="Scenario order differs from Chapter 11"}
-Chapter 11 arranged the three scenarios in order of increasing $\lambda$ preference (static → drift → contingent shift). Here the order is **static → contingent shift → drift**, which reflects increasing *assumption match* between the Kalman filter's Gaussian-drift prior and the data-generating process. The scenarios are the same; the ordering principle is different because the two models have different structural homes for non-stationarity.
-:::
+As established in the canonical scenario framework introduced in Chapter 11, all three categorization chapters use the same three scenarios in the same order (static → contingent shift → drift), reflecting increasing assumption match between the scenario's data-generating process and the model's structural commitments.
 
 1. **Static Kruschke (baseline).** Fixed category labels. The Kalman filter's process-noise prior assumes smooth Gaussian drift; under stationary data, no amount of $q$ improves fit once transient learning is over. We expect $\log q$ to remain weakly identified — this is the failure case we need to diagnose clearly.
-2. **Performance-contingent abrupt shifts.** After the agent reaches a streak of $k$ consecutive correct responses, all category labels flip. Post-flip recovery is *fast* for agents whose $q$ lets the covariance re-inflate after surprise, and *slow* for agents whose $q$ is tiny — so $q$ acquires a direct behavioural signature. But the true process has abrupt jumps, which the filter's Gaussian-drift prior does not literally contain; this is a misspecified-but-informative scenario.
+2. **Performance-contingent abrupt shifts.** After the agent reaches a streak of $k$ consecutive correct responses, all category labels flip. Post-flip recovery is *fast* for agents whose $q$ lets the covariance re-inflate after surprise, and *slow* for agents whose $q$ is tiny — so $q$ acquires a direct behavioural signature. But the true process has abrupt jumps, which the filter's Gaussian-drift prior does not literally contain; this is a misspecified-but-informative scenario. Note that these shifts are *endogenous* to the agent's own accuracy — a noisier agent triggers fewer flips and accumulates less information about $q$ (see Chapter 11 for discussion).
 3. **Smooth drift.** Category centres in feature space follow an independent random walk; labels are assigned trial-by-trial by proximity to the current drifted centres. This is the **assumption-matched** scenario: the Kalman filter's generative story (prototypes drift as Gaussian random walks) is now literally true of the environment. We expect $\log q$ to be cleanly identified and SBC to pass.
 
 The three scenarios span the spectrum of assumption match — **none → misspecified → exact** — and the SBC signatures should sort in that order.
@@ -1751,7 +1749,7 @@ simulate_prototype_agent_scenario <- function(agent_id, scenario,
       log_q_true   = log(q_value)
     ) |>
     group_by(agent_id) |>
-    mutate(cumulative_accuracy = cumsum(correct) / row_number()) |>
+    mutate(performance = cumsum(correct) / row_number()) |>
     ungroup()
 }
 ```
@@ -2883,12 +2881,10 @@ simulate_ml_proto_scenario <- function(
   )
 
   sim_data <- map_dfr(seq_len(n_subjects), function(j) {
-    sched <- make_subject_schedule(stimulus_info, n_blocks,
-                                   seed = base_seed * 100 + j)
     simulate_prototype_agent_scenario(
-      agent_id = j, scenario = scenario,
-      r_value  = subj_r[j], q_value = subj_q[j],
-      schedule = sched
+      agent_id     = j, scenario = scenario,
+      r_value      = subj_r[j], q_value = subj_q[j],
+      subject_seed = base_seed * 100 + j
     )
   })
 
@@ -3397,6 +3393,7 @@ The next chapter introduces a third perspective — rule-based models — which 
 Chapter 13 differs from Chapters 11 and 12 in one load-bearing way: **the cognitive theory (a Bayesian particle filter over discrete rule hypotheses) has no Stan-tractable likelihood**. The resampling step is non-differentiable and the latent particle trajectories cannot be marginalised analytically. The chapter therefore introduces two distinct models — Model A, the cognitive theory fitted via Neural Posterior Estimation (NPE); and Model B, a tractable Stan proxy (a marginalised mixture over a fixed candidate rule set). The validation battery applies separately to each. A flat SBC rank histogram for Model B does *not* validate Model A. The gap between the two posteriors on $\varepsilon$ is the chapter's main empirical finding: the structural bias you accept when you replace an intractable cognitive theory with a tractable proxy.
 
 Coming from this chapter, the key conceptual shift is: the Kalman filter gave us a clean two-parameter Stan model where process noise $q$ was both interpretable (drift speed) and identifiable from non-stationary data. The rule particle filter has an analogous mutation parameter $\mu$, but it enters as a general-purpose rejuvenation mechanism rather than as a literal model of how the environment changes — which means identifiability patterns differ, and the assumption-match story is less tight. Chapter 13's scenario analysis (§"Assumption Match Across Scenarios") spells this out.
+
 :::
 
 Chapter 13 also confronts the NPE pipeline that replaces the ABC-based approach of earlier drafts: schedule-fixed simulations, a learned embedding network, and SBC + expected coverage for validation. The cross-architecture comparison in Chapter 15 inherits these NPE networks — each model gets one trained inference network, and the full multi-subject comparison runs in seconds thanks to amortized inference.

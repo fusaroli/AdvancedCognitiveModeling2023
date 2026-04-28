@@ -303,6 +303,7 @@ which computes $\log\!\left[\pi \cdot p_1 + (1-\pi) \cdot p_2\right]$ in a numer
 **Block placement note.** The per-observation `log_mix` sum lives inside the `model` block as a local computation — it contributes to `target` but `z_i` is never stored. The parameters we do sample (`alpha`, `nu`) are continuous and HMC can take gradients through them. In `generated quantities`, we can *recover* posterior expectations of $z_i$ via a Bayes-rule calculation if needed, but we do not sample it.
 
 **Why the loop is necessary here.** Unlike a pure Bernoulli likelihood, `log_mix` operates on a single observation at a time. There is no vectorized Stan function for mixture likelihoods across observations (because each call is itself a sum of two terms that depend on the observation), so the explicit `for (i in 1:n)` loop is correct and unavoidable for the single-subject model. For the multilevel model we will see how to structure this loop across subjects to enable future parallelization.
+
 :::
 
 ```{r ch09_write-single-stan}
