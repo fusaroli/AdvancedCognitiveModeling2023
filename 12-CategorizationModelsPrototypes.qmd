@@ -165,28 +165,6 @@ plan(multisession, workers = max(1, availableCores() - 1))
 > on `log_r`, per-subject NCP offsets, and the full multilevel SBC battery
 > (population and individual calibration).
 
-# Prototype-Based Models of Categorization
-
-> **📋 Validation battery roadmap for this chapter**
->
-> | 0. Conceptual interrogation | |
-> | 1. Forward simulator (single) | `prototype_kalman()` and `simulate_prototype_agent()` |
-> | 2. Stan implementation (single) | §"The Prototype Model in Stan" — `prob` in `transformed parameters` |
-> | 3.0 MCMC diagnostic battery | §"Mandatory MCMC Diagnostic Battery" — uses `diagnostic_summary_table()` |
-> | 3.2 Prior predictive | §"Prior Predictive Check" |
-> | 3.3 Posterior predictive | §"Posterior Predictive Check" |
-> | 3.4 Prior–posterior update | §"Prior–Posterior Update Plot" |
-> | 3.5 Prior sensitivity | §"Prior Sensitivity Analysis" — `priorsense::powerscale_sensitivity()` |
-> | 4.5 LOO-PIT (randomised, binary) | §"Randomised LOO-PIT Calibration" |
-> | 4.6 LFO-CV | §"Leave-Future-Out Cross-Validation" — inherited from Ch 11 |
-> | 6b. SBC (single-subject) | §"Simulation-Based Calibration Checks" |
-> | 6d. Precision analysis | §"Precision Analysis: How CI Width Scales With N" |
-> | Identifiability check | § (r vs decisional temperature) |
-> | 1ML. Forward simulator (multilevel) | `simulate_multilevel_prototype()` |
-> | 2ML. Stan implementation (multilevel) | §"Implementing the Multilevel Prototype Model in Stan" — NCP over `log_r` and `log_q` |
-> | 3ML. MCMC diagnostics (multilevel) | §"Mandatory MCMC Diagnostic Battery (Multilevel)" |
-> | 6cML. Multilevel SBC (pop + individual) | §"Multilevel SBC" — ECDF-diff + recovery for `pop_log_r_mean`, `pop_log_r_sd`, `pop_log_q_mean`, `pop_log_q_sd`, `subj_log_r[1]`, `subj_log_q[1]` |
-
 ## Rethinking Category Representation: From Examples to Averages
 
 In the previous chapter, we explored the Generalized Context Model (GCM), an exemplar model where every encountered example is stored in memory. This approach is powerful but raises questions about cognitive efficiency. Do we really store every single instance we encounter?
@@ -206,6 +184,46 @@ Consider learning about common categories like "birds" or "chairs". While specif
 | Memory Cost | Low (one prototype per category) | High (potentially all examples) |
 | Key Information | Central tendency & variance | Specific instances & their labels |
 | Sensitivity | Less sensitive to specific examples | Highly sensitive to specific examples |
+
+::: {.callout-note}
+
+### Historical Context: From Typicality Effects to Dynamic Prototypes
+
+The prototype approach to categorization did not emerge fully formed. It arose as the solution to a specific failure mode of the dominant view — and then itself had to be rescued from static simplicity by importing engineering mathematics.
+
+#### The Classical View and Its Discontents
+
+Through the 1950s and into the 1960s, both philosophers and psychologists took it for granted that concepts had *defining features*: necessary and sufficient conditions that every member must satisfy. A bachelor is an unmarried adult male — full stop. Categorization, on this view, was logical: check the features, apply the rule. The model is appealingly crisp, but Wittgenstein had already noted the trouble in *Philosophical Investigations* (1953): most ordinary categories — *game*, *furniture*, *bird* — resist such definitions. Family resemblance, not shared essence, seemed to be the operative structure.
+
+The empirical broadside came from Eleanor Rosch [@rosch1973natural; @rosch1975cognitive; @rosch1976basic]. In a series of influential experiments she documented **typicality effects**: robins are judged faster and more confidently as birds than penguins are; desk chairs are more chair-like than beanbags. Categories showed graded membership rather than all-or-nothing inclusion. Rosch also identified a privileged **basic level** — the level of abstraction (dog, not animal and not poodle) at which objects are most efficiently perceived, named, and remembered. Neither observation is compatible with the classical view, which predicts uniform membership within a category and no principled distinction across levels.
+
+#### The Prototype as Psychological Mechanism
+
+Rosch's work raised the question of *representation*: if not a rule, what mental structure supports graded membership? The answer on offer was a **prototype** — a summary representation encoding the central tendency of encountered category members. New objects are categorized by their distance from stored prototypes; items close to the prototype are typical, items distant are atypical.
+
+Formal prototype models predated Rosch's program. @posner1968genesis showed that subjects who had studied distorted dot patterns without ever seeing the prototype nonetheless recognized the prototype at the end as highly familiar — abstraction was occurring implicitly. @reed1972pattern implemented an explicit prototype-matching classifier and showed it outperformed several alternatives on face-classification data. These early models computed a **static average** from training examples: the prototype was fixed after learning and then used as a lookup.
+
+#### Static Prototypes and the Exemplar Challenge
+
+The clean elegance of static prototype models made them obvious targets for empirical attack. @medin1978context showed that, on certain category structures, the Context Model (a pure exemplar model) fit human data significantly better than a prototype model could. The critical cases were **exception items**: an atypical member of one category that closely resembles the other category's prototype. Exemplar models accommodate exceptions naturally — the deviant item is stored individually. A static prototype, by definition, assimilates the deviant item into the average, smoothing away the very information that drives behavior.
+
+Through the 1980s and early 1990s, the prototype-versus-exemplar debate generated substantial empirical literature. The consensus, codified in @smith1998prototype, was that neither account was universally superior: prototype-like effects dominated in some conditions (large training sets, brief study times, transfer to novel stimuli) while exemplar-like effects dominated in others (small training sets, extended learning, highly distinctive items). The field was left with a theoretical draw that demanded either a hybrid architecture or a shift in the question being asked.
+
+#### From Static Averaging to Bayesian Updating
+
+The decisive conceptual move was to ask not *what is stored* but *how the representation is updated*. A static average treats all observed exemplars symmetrarily regardless of when they were encountered. This is inconsistent with the well-documented finding that recent experiences carry more weight than remote ones [@gluck1988conditioning; @estes1994classification]. It is also inconsistent with the ability to track categories that drift over time — the clothing you learn is "fashionable" today may not be fashionable in five years.
+
+The Kalman filter [@kalman1960new], developed originally for aerospace navigation, provided an off-the-shelf solution. It is the **minimum-variance unbiased estimator** for a linear-Gaussian dynamical system: at each step it computes exactly how much weight to place on the new observation versus the accumulated prior, using the relative magnitudes of measurement noise $R$ and process noise $Q$. When $Q = 0$ the prototype is assumed static and learning rate decays monotonically — recovering the classical static average as a special case. When $Q > 0$ the prototype can drift and the steady-state Kalman gain remains positive, allowing perpetual sensitivity to new observations.
+
+Applications of Kalman-style updating to human learning appear across multiple domains: classical conditioning [@dayan2000learning], interval timing, and reward prediction. The prototype-learning context is a natural fit because the Kalman filter formalises the very trade-off prototype theory requires: balance between the accumulated representation (prior) and the informational content of the newest instance (likelihood). The two-parameter family $(r, q)$ instantiates the entire spectrum from pure exemplar-like responsiveness ($r$ small, steep gain) to heavily smoothed prototype abstraction ($r$ large, shallow gain, slow forgetting).
+
+#### The Bayesian Identity
+
+The Kalman filter is not merely an engineering heuristic applied to psychology: it is the exact Bayesian posterior for a Gaussian state-space model. The prototype at trial $t$ is the posterior mean $\mathbb{E}[\mu_t \mid x_{1:t}]$; the covariance $\Sigma_t$ is the posterior variance. Recognising this identity connects the prototype model to the broader programme of **rational analysis** [@anderson1991adaptive] and **Bayesian models of cognition** [@tenenbaum2011grow]: the learner is performing optimal inference about a latent category structure given noisy, sequentially arriving evidence. The parameters $r$ and $q$ then carry clear psychological interpretations — observation noise (how variable are category members around the prototype?) and process noise (how rapidly does the category itself change?) — rather than being purely phenomenological fitting coefficients.
+
+This framing also clarifies the key difference from the GCM: where the GCM stores the full history and retrieves it at decision time, the Kalman prototype model **compresses** the history into sufficient statistics (mean and covariance) that are updated recursively. The compression is lossless when the generative model is Gaussian and linear — which is why recovery and SBC are cleaner here than in most cognitive models of comparable scope.
+
+:::
 
 ## Modeling Dynamic Prototypes: The Kalman Filter
 

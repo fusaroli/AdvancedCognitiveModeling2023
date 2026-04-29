@@ -338,7 +338,35 @@ Note that the update rule only applies to the value of the action that was actua
   * $V_t$: The estimated value (e.g., probability of win) at trial $t$.
   * $\alpha \in [0, 1]$: The Learning Rate. High $\alpha$ = fast forgetting; Low $\alpha$ = long memory.
   * $PE$: The difference between what happened and what was expected.
-  
+
+::: {.callout-note}
+
+### Historical Context: From Behaviorism to Bayesian Belief — The Prediction-Error Lineage
+
+The simple update rule $V_t = V_{t-1} + \alpha \cdot (Outcome_t - V_{t-1})$ looks almost trivially obvious once written down. Getting there took cognitive science roughly four decades and required overturning an entire paradigm.
+
+#### The Behaviorist Prohibition
+
+For the first half of the twentieth century, scientific psychology largely banned the internal state variable $V_t$ from its vocabulary. The dominant framework — Hullian behaviorism [@hull1943principles] and its variants — insisted that a rigorous account of learning had to be stated purely in terms of observable stimuli and responses, with no reference to unobservable mental states. Tolman's [@tolman1948cognitive] proposal that rats form "cognitive maps" — internal representations of their environment — was widely regarded as an embarrassing lapse into mentalism. The prediction error $(Outcome - V)$ cannot exist without $V$, and $V$ is a latent belief. The entire framework of the models in this chapter was conceptually prohibited.
+
+#### The Rescorla-Wagner Pivot
+
+The rehabilitation came from classical conditioning research, and specifically from the realisation that conditioning depends not on the raw presence of the unconditioned stimulus but on *how surprising* it is. @rescorla1972theory introduced the prediction-error rule into learning theory to explain blocking [@kamin1969predictability]: if one cue already perfectly predicts an outcome, adding a second cue produces no conditioning to it, because the outcome is not surprising. This "blocking effect" is exactly what the prediction-error term captures — when $V_{t-1}$ already equals $Outcome_t$, the error is zero and no updating occurs. Rescorla and Wagner's model was the first to make the internal expectation $V_t$ an explicit, load-bearing quantity in a learning equation.
+
+The impact was immediate and lasting. The prediction-error rule turned out to be the correct description of dopamine neuron firing [@schultz1997neural]: dopamine neurons respond to unpredicted rewards (positive prediction error), are suppressed by predicted-but-absent rewards (negative prediction error), and are silent when rewards are fully predicted (zero error). The same equation that Rescorla and Wagner derived from behavioral blocking data in 1972 became the neural currency of reinforcement learning two decades later.
+
+#### From Fixed to Adaptive Learning Rates: the Kalman Filter
+
+Rescorla-Wagner's $\alpha$ is fixed — the same step size applies on trial 1 as on trial 1000. This is cognitively unrealistic: a rational agent should trust new observations more when they are uncertain about the current state, and less when they are confident. @dayan2000learning showed that Rescorla-Wagner is a special case of the **Kalman filter** [@kalman1960new] obtained by setting the process noise to zero (a static environment). In the full Kalman filter, the learning rate becomes the Kalman Gain $K_t = \sigma^2_{t-1} / (\sigma^2_{t-1} + \sigma^2_{noise})$ — a quantity that starts high (large prior uncertainty) and shrinks as evidence accumulates. The same update rule, but now the step size is endogenous and principled rather than fixed and arbitrary.
+
+#### Hierarchical Uncertainty: the HGF
+
+The Kalman filter still assumes that $\sigma^2_{noise}$ — the volatility of the environment — is known and fixed. Real environments are not: sometimes the rules change slowly, sometimes rapidly. @mathys2011bayesian introduced the **Hierarchical Gaussian Filter (HGF)** to handle this: a hierarchy of Kalman filters where the volatility at one level is itself tracked and updated at the level above. The learning rate for beliefs about the world now adapts continuously to inferred volatility, and there is a separate meta-learning rate $\kappa$ governing how quickly volatility estimates are revised. The HGF is, formally, just another application of the prediction-error principle — but applied recursively across levels of abstraction.
+
+The three-decade arc from R-W (1972) to the Kalman filter connection (2000) to the HGF (2011) is a story about the same core idea — *update in proportion to surprise* — being successively liberated from artificial constraints: first the prohibition on latent states, then the constraint of a fixed learning rate, then the assumption of known and constant volatility.
+
+:::
+
 ### Level 4: The Bayesian Update (Static Uncertainty)
 
 In RL, the learning rate $\alpha$ is a fixed number. In Bayesian inference, the "learning rate" becomes adaptive based on uncertainty.

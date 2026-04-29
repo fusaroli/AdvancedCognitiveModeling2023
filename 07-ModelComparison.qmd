@@ -115,6 +115,34 @@ After completing this chapter, you will be able to:
 
 * Identify sequentially dependent data: Recognize when trial-level exchangeability is violated and describe the Leave-Future-Out (LFO-CV) remedy.
 
+::: {.callout-note}
+
+### Historical Context: From Fit to Prediction — The History of Model Selection
+
+How to choose among competing models is one of the oldest unsolved problems in statistics. The modern answer — estimate out-of-sample predictive accuracy — is less obvious than it sounds, and the path to it passed through several influential wrong turns.
+
+#### The In-Sample Era: Likelihood and R²
+
+The classical approach was to ask which model assigns the highest probability to the observed data: the maximum likelihood. This criterion was the backbone of hypothesis testing (Fisher, 1922; Neyman & Pearson, 1933) and dominated empirical science throughout the twentieth century. Its failure mode was known — a model with enough free parameters can fit any finite dataset perfectly — but was treated as a matter of scientific judgment rather than a formal problem. The coefficient of determination $R^2$ shared the same flaw: it increases monotonically with model complexity and therefore cannot serve as a principled selection criterion.
+
+#### Information Criteria: AIC and BIC
+
+The first principled solution came from information theory. @akaike1974new derived the **Akaike Information Criterion** (AIC) by asking a precise question: what is the expected Kullback-Leibler divergence between the true data-generating distribution and the distribution implied by a fitted model, evaluated on *new* data from the same process? The answer, to leading order, is $-2\log\hat{L} + 2k$, where $\hat{L}$ is the maximized likelihood and $k$ is the number of free parameters. The penalty term $2k$ is a correction for the optimism of in-sample fit: a model that uses $k$ extra parameters gains approximately $2k$ units of log-likelihood purely by fitting noise, and AIC subtracts this back out.
+
+@schwarz1978estimating derived the **Bayesian Information Criterion** (BIC) from a different starting point — approximating the log marginal likelihood under a diffuse prior — and obtained a penalty of $k \log n$ that grows with sample size and more aggressively penalises complexity. AIC and BIC dominated applied statistics through the 1980s and 1990s, but both inherit a key limitation: they are computed on the training data and require asymptotic approximations whose validity in small, heterogeneous cognitive datasets is difficult to verify.
+
+#### Cross-Validation and the Equivalence Theorem
+
+@stone1977asymptotic proved a result that initially seemed surprising: AIC and leave-one-out cross-validation (LOO-CV) are **asymptotically equivalent**. Cross-validation — holding out each observation in turn, refitting on the rest, and evaluating predictive accuracy on the held-out point — gives the same answer as AIC in large samples, but without requiring asymptotic approximations or a count of free parameters. This equivalence is important because cross-validation is model-agnostic: it works on any model that can generate predictions, whether or not its parameter count is well-defined (as is the case for hierarchical Bayesian models where effective complexity is data-dependent).
+
+#### PSIS-LOO: Making Cross-Validation Affordable
+
+The practical obstacle to LOO-CV was computational: for a model fit to $N$ observations, exact LOO requires $N$ separate refits. @vehtari2017practical solved this with **Pareto-Smoothed Importance Sampling LOO** (PSIS-LOO). The key insight is that a model fit to all $N$ observations already contains, implicitly, the posterior for each leave-one-out model — the left-out observation simply receives zero weight. Importance sampling reweights the full-data posterior to approximate the leave-one-out posterior, and Pareto-smoothing of the importance weights stabilises the estimator and, crucially, provides a per-observation diagnostic (the $\hat{k}$ statistic) that flags when the approximation is unreliable. This diagnostic turned model comparison from a black-box number into an interpretable workflow: high $\hat{k}$ observations are not just nuisances but windows into the structure of the data that the model is struggling to predict.
+
+The arc from AIC (1974) to PSIS-LOO (2017) is a story about a single conceptual shift — from *how well does the model fit what we have seen?* to *how well does the model predict what we have not yet seen?* — being made progressively more rigorous, more computationally feasible, and more transparent about its own failure modes.
+
+:::
+
 ## Why In-Sample Fit Fails: The Overfitting Trap
 
 The most naive approach to comparing two models is to ask which fits the training data better. The problem with this criterion is that it is systematically biased toward more complex models. A model with enough free parameters can memorize any finite dataset. But memorization is not understanding — a model that has memorized the noise in its training data will make poor predictions on new data it has never seen.

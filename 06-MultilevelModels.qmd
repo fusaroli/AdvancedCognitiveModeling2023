@@ -96,6 +96,34 @@ Hierarchical modeling offers a principled, data-driven middle ground. Instead of
 * **The Bayesian Compromise**: The estimation of an individual's parameter ($\theta_j$) is a precision-weighted combination of their own empirical data (the likelihood) and the population distribution (the hierarchical prior).
 * **Shrinkage**: Estimates for individuals with sparse or noisy data are "shrunk" toward the population mean $\mu$. This is a mathematical mechanism that regularizes inference, preventing overfitting and yielding more robust out-of-sample estimates.
 
+::: {.callout-note}
+
+### Historical Context: Shrinkage, Partial Pooling, and the Recovery of Individual Differences
+
+The hierarchical model is now a standard tool, but the intellectual path to it was surprisingly contentious. Accepting partial pooling required overturning the intuition — deeply held by statisticians trained in classical estimation theory — that combining information from different units is always a form of cheating.
+
+#### Mixed Models in the Fields
+
+The mathematical foundations were laid not in cognitive science but in animal breeding. @henderson1950estimation needed to estimate the genetic merit of individual bulls from data on their offspring, spread across farms that differed in management and feeding. The complete-pooling solution (assume all farms are identical) was agronomically wrong; the no-pooling solution (analyse each farm in isolation) wasted the information that herds from the same breed share a common distribution of genetic merit. Henderson's **Best Linear Unbiased Prediction** (BLUP) formalised the middle path: individual estimates are shrunk toward the population mean by an amount that depends on how much data each individual contributes. The same equations appear, under different names, as the core of the hierarchical models in this chapter.
+
+#### Stein's Paradox and the Optimality of Shrinkage
+
+The theoretical justification arrived from a different direction, and it was deeply counterintuitive. @james1961estimation proved that the ordinary (no-pooling) estimator of three or more means is *inadmissible* under squared-error loss: there always exists a shrinkage estimator — one that pulls all estimates toward a common value — with uniformly lower expected loss. This is Stein's paradox. It implies that, regardless of whether the true means are related to each other, you are statistically better off treating them as exchangeable draws from a common distribution than estimating each independently. The result was controversial because it seemed to say that knowing the speed of light should improve your estimate of the boiling point of water — which is absurd — but the paradox dissolves once you recognise that the admissibility comparison is over the *joint* vector of estimates, not individual components.
+
+#### Bayesian Formalisation
+
+@lindley1972bayes showed that the James-Stein estimator is a Bayesian posterior mean under the assumption that the true parameters are drawn from a common normal distribution — exactly the hierarchical prior structure used in this chapter. This connected the frequentist inadmissibility result to a principled Bayesian generative story: shrinkage is not a trick but the natural consequence of treating individuals as exchangeable members of a population. @gelman1992inference and @gelman1995bayesian developed the computational infrastructure (via MCMC) that made this formalism applicable to realistic psychological datasets.
+
+#### Into Cognitive Science
+
+The adoption of hierarchical models in cognitive science was slow. For much of the 1990s and early 2000s, individual-differences research either fitted separate models to each participant and then performed a second-stage group analysis — the "two-stage" procedure that discards uncertainty — or fitted a single population model that ignored individual variation entirely. @rouder2005introduction and @rouder2008bayesian demonstrated that hierarchical models substantially improve parameter recovery in reaction-time and signal-detection contexts: individual estimates derived from partial pooling are closer to the true generating values than either the complete-pooling or no-pooling alternatives, especially for participants who contribute few trials. The shrinkage plot at the end of this chapter makes this advantage visible directly: you can watch the model borrow strength from the population to regularise noisy individuals.
+
+#### Non-Centred Parameterisation and Neal's Funnel
+
+The one purely computational contribution to this story came from @neal2003slice and was adopted as standard practice by the Stan community via @betancourt2013hamiltonian. When individual parameters are parameterised as $\theta_j = \mu + \sigma \cdot z_j$ with $z_j \sim \mathcal{N}(0,1)$ — the non-centred form — the geometry of the posterior becomes approximately Gaussian and Hamiltonian Monte Carlo can traverse it efficiently. In the centred form $\theta_j \sim \mathcal{N}(\mu, \sigma^2)$, the posterior develops a funnel geometry near $\sigma \approx 0$ that causes HMC to diverge. The non-centred parameterisation is the single most important practical technique in hierarchical Bayesian computation, and the reason the models in this chapter spend time on it.
+
+:::
+
 ## Learning Objectives
 
 After completing this chapter, you will be able to:
