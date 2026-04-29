@@ -3366,6 +3366,498 @@ plot_rank_hist(sbc_results_ml_drift) +
 
 ---
 
+## Extending the Prototype Model: Selective Attention
+
+The prototype model developed so far has two free parameters — observation noise $r$ and process noise $q$ — and treats all stimulus features as equally important. Every dimension contributes identically to the Mahalanobis distance between a new stimulus and the stored prototype. This is a strong assumption that is often violated in real categorization tasks: people selectively attend to features that are diagnostic of category membership and largely ignore irrelevant ones.
+
+In the Kruschke (1993) task, for instance, height and position both vary, but one of them may be far more informative for deciding which category a stimulus belongs to. A model without attention has no way to capture this selectivity. The GCM handles it through explicit attention weights $w_k$ that stretch or compress feature dimensions before computing distance. Here we extend the prototype model in the same spirit.
+
+### The Idea: Rescaling the Feature Space
+
+The conceptually cleanest way to add attention is to **rescale each feature dimension before the model does anything at all**. Define a vector of attention weights $\mathbf{w} = (w_1, w_2, \ldots, w_K)$ with $w_k \geq 0$ and $\sum_k w_k = 1$. Then, before every computation — learning and decision alike — replace the raw stimulus vector $\vec{x}$ with its attention-weighted version:
+
+$$\tilde{x}_k = w_k \cdot x_k$$
+
+The Kalman filter then operates entirely in this **rescaled feature space**. Prototype means, prototype covariances, Kalman gain, and decision probabilities are all computed on $\tilde{\mathbf{x}}$, not on the raw $\mathbf{x}$.
+
+Geometrically, high $w_k$ *magnifies* dimension $k$: small raw differences on that feature become large differences in the rescaled space, making the model more sensitive to variation there. Low $w_k$ *compresses* dimension $k$: large raw differences shrink to nearly nothing, and that feature barely influences the prototype update or the decision.
+
+### Why Not Rescale Through the Noise Matrix Instead?
+
+An alternative approach would be to keep the raw features and instead inflate or deflate the noise matrix $R$ by attention: $R = \text{diag}(r / w_1, \ldots, r / w_K)$. This is mathematically similar in spirit but creates a **parameter redundancy** for model fitting: multiplying all $w_k$ by a constant $c$ and dividing $r$ by the same $c$ leaves $R$ unchanged. The likelihood depends only on the ratio $r / w_k$, so the individual values of $r$ and the $w_k$ are not separately identifiable — the posterior degenerates into a ridge, SBC fails, and recovery is poor.
+
+Rescaling the feature space (Option 2) avoids this because $\mathbf{w}$ and $r$ play genuinely distinct roles:
+
+* **$\mathbf{w}$** controls the *shape* of the decision boundary — which features matter relative to each other.
+* **$r$** controls the *overall sharpness* of similarity — how steeply similarity falls off with distance, across all features simultaneously.
+
+These are not interchangeable when $\mathbf{w}$ is constrained to the simplex ($\sum_k w_k = 1$), because any rescaling of $r$ changes the overall sharpness without changing the relative weighting. The posterior geometry is well-conditioned and SBC works cleanly.
+
+### Prior on Attention Weights: The Dirichlet Distribution
+
+The natural prior for a probability vector on a simplex is the **Dirichlet distribution**:
+
+$$\mathbf{w} \sim \text{Dirichlet}(\boldsymbol{\alpha})$$
+
+With a symmetric concentration parameter $\boldsymbol{\alpha} = (1, 1, \ldots, 1)$ this is the uniform distribution over the simplex — every allocation of attention is equally probable a priori. With $\alpha_k > 1$ the prior pushes toward equal weights (more concentrated near the centroid); with $\alpha_k < 1$ it pushes toward sparse solutions where attention is concentrated on one feature.
+
+For two features, $\text{Dirichlet}(1, 1)$ is equivalent to $w_1 \sim \text{Uniform}(0, 1)$ with $w_2 = 1 - w_1$. It is the minimally informative choice: it says nothing about which feature will be more diagnostic, only that attention must sum to one.
+
+### R Implementation
+
+The implementation is a thin wrapper around the existing `prototype_kalman` function: rescale the observations and the initial means before passing them in. The Kalman filter itself is unchanged.
+
+```{r ch13_attention_r_function}
+# Prototype model with selective attention via feature-space rescaling.
+#
+# The core idea: multiply each feature dimension k by attention weight w_k
+# before any computation. This stretches dimensions the learner attends to
+# and compresses dimensions they ignore. The Kalman filter then operates
+# entirely in the rescaled space — both the prototype update and the
+# categorization decision use rescaled features.
+#
+# w_values  : attention weights (length = nfeatures, must sum to 1)
+# r_value   : observation noise variance (scalar > 0)
+# q_value   : process noise / prototype drift rate (scalar >= 0)
+# obs       : matrix of raw observations (trials x features)
+# cat_one   : vector of true category labels (0 or 1) for feedback
+
+prototype_kalman_attention <- function(w_values,
+                                       r_value,
+                                       q_value,
+                                       obs,
+                                       cat_one,
+                                       initial_mu         = NULL,
+                                       initial_sigma_diag = 10.0,
+                                       quiet              = TRUE) {
+
+  n_features <- ncol(obs)
+
+  # Validate attention weights: they must be non-negative and sum to 1.
+  # Small numerical deviations are tolerated (e.g., from optimisation).
+  stopifnot(length(w_values) == n_features)
+  stopifnot(all(w_values >= 0))
+  w_values <- w_values / sum(w_values)   # renormalise defensively
+
+  # Rescale all raw observations by attention weights.
+  # After this point, the model never sees the original feature values.
+  # This is the single change that adds attention to the model.
+  obs_scaled <- sweep(obs, 2, w_values, "*")
+
+  # Rescale the initial prototype means to match the rescaled space.
+  # If we initialise at 2.5 in the original space, a feature with w_k = 0.9
+  # starts at 2.25 in the rescaled space, which is consistent.
+  if (is.null(initial_mu)) {
+    mu0_raw <- rep(2.5, n_features)
+    mu1_raw <- rep(2.5, n_features)
+  } else {
+    mu0_raw <- initial_mu[[1]]
+    mu1_raw <- initial_mu[[2]]
+  }
+  mu0_scaled <- w_values * mu0_raw
+  mu1_scaled <- w_values * mu1_raw
+
+  # Everything from here on is identical to prototype_kalman().
+  # The Kalman filter does not "know" that the space has been rescaled —
+  # it simply receives rescaled inputs and returns rescaled prototype means.
+  prototype_kalman(
+    r_value            = r_value,
+    q_value            = q_value,
+    obs                = obs_scaled,
+    cat_one            = cat_one,
+    initial_mu         = list(mu0_scaled, mu1_scaled),
+    initial_sigma_diag = initial_sigma_diag,
+    quiet              = quiet
+  )
+}
+
+# Wrapper: generates per-agent schedule then calls prototype_kalman_attention
+simulate_prototype_attention_agent <- function(agent_id, r_value, q_value,
+                                               w_values,
+                                               stimulus_info, n_blocks,
+                                               subject_seed) {
+  schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  obs      <- as.matrix(schedule[, c("height", "position")])
+  cat_one  <- schedule$category_feedback
+
+  result <- prototype_kalman_attention(
+    w_values           = w_values,
+    r_value            = r_value,
+    q_value            = q_value,
+    obs                = obs,
+    cat_one            = cat_one,
+    initial_mu         = list(rep(2.5, 2), rep(2.5, 2)),
+    initial_sigma_diag = 10.0,
+    quiet              = TRUE
+  )
+
+  schedule |>
+    mutate(
+      agent_id       = agent_id,
+      r_value_true   = r_value,
+      q_value_true   = q_value,
+      w1_true        = w_values[1],
+      w2_true        = w_values[2],
+      prob_cat1      = result$prob_cat1,
+      sim_response   = result$sim_response,
+      correct        = as.integer(category_feedback == sim_response)
+    ) |>
+    group_by(agent_id) |>
+    mutate(performance = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+```
+
+### What Does Attention Actually Do?
+
+Before fitting, it is worth building intuition about what different attention allocations produce. We simulate three agents who share the same $r$ and $q$ but differ in how they weight the two features:
+
+* **Balanced** ($w_1 = w_2 = 0.5$): Both features contribute equally. This is the same as the original model with half the observation scale.
+* **Height-focused** ($w_1 = 0.9,\ w_2 = 0.1$): The model is nearly ten times more sensitive to height differences than to position differences.
+* **Position-focused** ($w_1 = 0.1,\ w_2 = 0.9$): The reverse.
+
+```{r ch13_attention_simulation}
+attn_param_df <- tibble(
+  agent_id     = 1:5,
+  r_value      = 2.0,
+  q_value      = 0.1,
+  subject_seed = 1:5
+) |>
+  cross_join(
+    tibble(
+      condition = c("Balanced", "Height-focused", "Position-focused"),
+      w1        = c(0.5, 0.9, 0.1),
+      w2        = c(0.5, 0.1, 0.9)
+    )
+  )
+
+attn_sim_file <- here("simdata", "ch13_attention_simulated_responses.csv")
+
+if (regenerate_simulations || !file.exists(attn_sim_file)) {
+  cat("Simulating attention agents...\n")
+  attention_responses <- future_pmap_dfr(
+    list(
+      agent_id     = attn_param_df$agent_id,
+      r_value      = attn_param_df$r_value,
+      q_value      = attn_param_df$q_value,
+      w_values     = map2(attn_param_df$w1, attn_param_df$w2, c),
+      subject_seed = attn_param_df$subject_seed
+    ),
+    simulate_prototype_attention_agent,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    .options = furrr_options(seed = TRUE)
+  ) |>
+    left_join(
+      attn_param_df |> select(agent_id, condition, w1, w2),
+      by = c("agent_id", "w1_true" = "w1", "w2_true" = "w2")
+    )
+  write_csv(attention_responses, attn_sim_file)
+} else {
+  attention_responses <- read_csv(attn_sim_file, show_col_types = FALSE)
+}
+
+# Summarise accuracy by block and attention condition
+attention_responses |>
+  group_by(condition, block) |>
+  summarise(mean_correct = mean(correct), .groups = "drop") |>
+  ggplot(aes(x = block, y = mean_correct, colour = condition)) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.5) +
+  scale_y_continuous(limits = c(0.4, 1.0), labels = scales::percent) +
+  labs(
+    title    = "Effect of Attention Allocation on Learning Curves",
+    subtitle = "r = 2.0, q = 0.1; three agents per condition (averaged over 5 seeds)",
+    x        = "Block", y = "Proportion Correct", colour = "Attention"
+  )
+```
+
+The height-focused and position-focused agents will diverge in accuracy because the Kruschke task is not symmetrically diagnostic in the two dimensions. The agent that attends to the more diagnostic feature should learn faster and reach higher asymptotic accuracy.
+
+### Distance, Similarity, and the Role of Each Parameter
+
+It is worth being precise about where `w` and `r` enter the calculation, because the two parameters are sometimes conflated.
+
+**Distance.** After rescaling, the quantity that actually measures how far a stimulus is from a prototype is the Mahalanobis distance in the rescaled space:
+
+$$d_C = (\mathbf{w} \odot \vec{x} - \mathbf{w} \odot \vec{\mu}_C)^T (\Sigma_C + R)^{-1} (\mathbf{w} \odot \vec{x} - \mathbf{w} \odot \vec{\mu}_C)$$
+
+The attention weights $\mathbf{w}$ live entirely inside this distance expression. A feature with high $w_k$ is magnified before the subtraction, so a one-unit raw difference on that dimension contributes more to $d_C$ than a one-unit difference on a low-$w_k$ dimension. Attention shapes the *geometry* of the feature space: it determines which dimensions count as "far apart."
+
+**Similarity.** The similarity of a stimulus to a prototype is the exponential of (minus half) the distance:
+
+$$\text{similarity}_C \propto \exp\!\left(-\tfrac{1}{2}\, d_C\right)$$
+
+This is just the multivariate normal density, which is what `dmvnorm` / `multi_normal_lpdf` computes. The attention weights do not touch this step. Once the distance is computed, the conversion to similarity is fixed in shape.
+
+**The role of $r$.** The observation noise $r$ enters through $(\Sigma_C + R)^{-1}$ inside the distance expression. It controls how quickly similarity falls off with distance — the analogue of the GCM's sensitivity parameter $c$. Large $r$ inflates $R$, which inflates the denominator of the Mahalanobis distance, which shrinks $d_C$ for any fixed raw difference. The result is a flatter bell curve: even stimuli far from the prototype receive non-trivial similarity. Small $r$ does the opposite: the bell curve is sharp and similarity drops steeply with distance.
+
+**Why the two parameters are not redundant.** Multiplying all $w_k$ by a constant $\lambda$ multiplies every element of $d_C$ by $\lambda^2$. Multiplying $r$ by $\lambda^2$ divides the same expression by $\lambda^2$. So if we allowed $\mathbf{w}$ to be an unconstrained positive vector, we could always absorb any rescaling of $\mathbf{w}$ into $r$, and the likelihood would be unchanged — a perfect ridge. The simplex constraint $\sum_k w_k = 1$ breaks this: once the total scale of $\mathbf{w}$ is fixed, only the *relative* weighting across features is free, and that cannot be absorbed into the scalar $r$. The two parameters then play genuinely distinct roles: $\mathbf{w}$ controls the *shape* of the distance metric (which features matter), $r$ controls its *overall scale* (how steeply similarity falls off).
+
+This is the structural reason why Option 2 (rescale features, constrain $\mathbf{w}$ to the simplex) gives a well-identified posterior, while Option 1 (inflate noise by $r / w_k$, no simplex constraint) does not.
+
+### The Attention Prototype Model in Stan
+
+Adding attention to the Stan model requires three changes relative to the two-parameter version:
+
+1. **Declare** attention weights as a `simplex` parameter.
+2. **Add** a Dirichlet prior in the model block.
+3. **Rescale** the stimulus vector `x` by `w` inside the Kalman loop.
+
+The initial means must also be rescaled to the attention-weighted space, exactly as in the R implementation. Everything else — the Kalman prediction step, the Mahalanobis decision, the Kalman update — is structurally unchanged.
+
+```{r ch13_stan_attention_model}
+prototype_attention_stan <- "
+// Prototype Model with Selective Attention — Feature-Space Rescaling
+//
+// Parameters:
+//   log_r  : log observation noise (same role as in the base model)
+//   log_q  : log process noise     (same role as in the base model)
+//   w      : attention simplex (length = nfeatures, sums to 1)
+//
+// Attention mechanism:
+//   Before any computation on trial i, we replace the raw stimulus x[i]
+//   with its attention-rescaled version  x_tilde = w .* x[i]  (element-wise).
+//   Initial prototype means are also rescaled: mu_init_tilde = w .* mu_init.
+//   The Kalman filter then runs entirely in this rescaled space.
+//   w and r are NOT redundant: w controls the *shape* of the decision
+//   boundary (which features matter); r controls overall decisional
+//   sharpness. Redundancy would arise if we had instead written
+//   R = diag(r ./ w), which Option 1 would require.
+
+data {
+  int<lower=1> ntrials;
+  int<lower=1> nfeatures;
+  array[ntrials] int<lower=0, upper=1> cat_one;
+  array[ntrials] int<lower=0, upper=1> y;
+  array[ntrials, nfeatures] real obs;
+
+  vector[nfeatures] initial_mu_cat0;
+  vector[nfeatures] initial_mu_cat1;
+  real<lower=0> initial_sigma_diag;
+
+  real prior_logr_mean;
+  real<lower=0> prior_logr_sd;
+  real prior_logq_mean;
+  real<lower=0> prior_logq_sd;
+
+  // Dirichlet concentration parameters for the attention prior.
+  // alpha = rep_vector(1, nfeatures) gives a uniform prior over the simplex:
+  // every allocation of attention is equally likely a priori.
+  vector<lower=0>[nfeatures] alpha_w;
+}
+
+parameters {
+  real log_r;
+  real log_q;
+  // Stan's simplex type enforces w_k >= 0 and sum(w) = 1 automatically.
+  simplex[nfeatures] w;
+}
+
+transformed parameters {
+  real<lower=0> r_value = exp(log_r);
+  real<lower=0> q_value = exp(log_q);
+
+  array[ntrials] real<lower=1e-9, upper=1-1e-9> p;
+
+  {
+    // Rescale the initial means into the attention-weighted space.
+    // This keeps the initial prototype location consistent with the
+    // rescaled observations that the filter will receive.
+    vector[nfeatures] mu_cat0 = w .* initial_mu_cat0;
+    vector[nfeatures] mu_cat1 = w .* initial_mu_cat1;
+
+    matrix[nfeatures, nfeatures] sigma_cat0 =
+      diag_matrix(rep_vector(initial_sigma_diag, nfeatures));
+    matrix[nfeatures, nfeatures] sigma_cat1 =
+      diag_matrix(rep_vector(initial_sigma_diag, nfeatures));
+
+    // r and q matrices are unchanged: attention acts on the data, not
+    // on the noise structure (this is the key difference from Option 1).
+    matrix[nfeatures, nfeatures] r_matrix =
+      diag_matrix(rep_vector(r_value, nfeatures));
+    matrix[nfeatures, nfeatures] q_matrix =
+      diag_matrix(rep_vector(q_value, nfeatures));
+    matrix[nfeatures, nfeatures] I_mat =
+      diag_matrix(rep_vector(1.0, nfeatures));
+
+    for (i in 1:ntrials) {
+      // Rescale the raw stimulus by attention weights before any computation.
+      // This is the only line that differs from the base model's loop.
+      vector[nfeatures] x = w .* to_vector(obs[i]);
+
+      // ── Prediction step (unchanged from base model) ────────────────────────
+      sigma_cat0 = sigma_cat0 + q_matrix;
+      sigma_cat1 = sigma_cat1 + q_matrix;
+
+      // ── Decision (unchanged from base model) ──────────────────────────────
+      // x is now in the rescaled space; prototypes are also in the rescaled
+      // space. The Mahalanobis distance is computed in that common space.
+      matrix[nfeatures, nfeatures] cov0 = sigma_cat0 + r_matrix;
+      matrix[nfeatures, nfeatures] cov1 = sigma_cat1 + r_matrix;
+
+      real log_p0 = multi_normal_lpdf(x | mu_cat0, cov0);
+      real log_p1 = multi_normal_lpdf(x | mu_cat1, cov1);
+      real prob1  = exp(log_p1 - log_sum_exp(log_p0, log_p1));
+
+      p[i] = fmax(1e-9, fmin(1 - 1e-9, prob1));
+
+      // ── Update (unchanged from base model) ────────────────────────────────
+      if (cat_one[i] == 1) {
+        vector[nfeatures] innov = x - mu_cat1;
+        matrix[nfeatures, nfeatures] S  = sigma_cat1 + r_matrix;
+        matrix[nfeatures, nfeatures] K  = mdivide_right_spd(sigma_cat1, S);
+        matrix[nfeatures, nfeatures] IK = I_mat - K;
+        mu_cat1    = mu_cat1 + K * innov;
+        sigma_cat1 = IK * sigma_cat1 * IK' + K * r_matrix * K';
+        sigma_cat1 = 0.5 * (sigma_cat1 + sigma_cat1');
+      } else {
+        vector[nfeatures] innov = x - mu_cat0;
+        matrix[nfeatures, nfeatures] S  = sigma_cat0 + r_matrix;
+        matrix[nfeatures, nfeatures] K  = mdivide_right_spd(sigma_cat0, S);
+        matrix[nfeatures, nfeatures] IK = I_mat - K;
+        mu_cat0    = mu_cat0 + K * innov;
+        sigma_cat0 = IK * sigma_cat0 * IK' + K * r_matrix * K';
+        sigma_cat0 = 0.5 * (sigma_cat0 + sigma_cat0');
+      }
+    }
+  }
+}
+
+model {
+  // Priors on noise parameters: same as base model.
+  target += normal_lpdf(log_r | prior_logr_mean, prior_logr_sd);
+  target += normal_lpdf(log_q | prior_logq_mean, prior_logq_sd);
+
+  // Prior on attention weights: uniform over the simplex.
+  // Dirichlet(1, 1, ...) = no preference for any feature a priori.
+  // To favour equal attention (e.g., a regularisation prior), increase alpha.
+  target += dirichlet_lpdf(w | alpha_w);
+
+  target += bernoulli_lpmf(y | p);
+}
+
+generated quantities {
+  vector[ntrials] log_lik;
+  real lprior;
+  for (i in 1:ntrials)
+    log_lik[i] = bernoulli_lpmf(y[i] | p[i]);
+  lprior = normal_lpdf(log_r | prior_logr_mean, prior_logr_sd) +
+           normal_lpdf(log_q | prior_logq_mean, prior_logq_sd) +
+           dirichlet_lpdf(w | alpha_w);
+}
+"
+
+stan_file_attn <- here("stan", "ch13_prototype_attention.stan")
+write_stan_file(prototype_attention_stan, dir = here("stan"),
+                basename = "ch13_prototype_attention.stan")
+mod_prototype_attention <- cmdstan_model(stan_file_attn)
+cat("Attention prototype Stan model compiled successfully.\n")
+```
+
+**Key aspects of the Stan implementation:**
+
+* **New parameter `w`**: Declared as `simplex[nfeatures]`. Stan enforces the sum-to-one constraint internally; we never need to manually project onto the simplex.
+* **`alpha_w` passed as data**: This lets the caller tune the Dirichlet prior without recompiling. Passing `rep(1, nfeatures)` gives a uniform prior; passing `rep(2, nfeatures)` gently favours equal attention.
+* **One extra line in the loop**: `vector[nfeatures] x = w .* to_vector(obs[i]);` replaces the base model's `vector[nfeatures] x = to_vector(obs[i]);`. Everything else is structurally identical.
+* **Initial means rescaled**: `mu_cat0 = w .* initial_mu_cat0` rather than `initial_mu_cat0` directly. Forgetting this would create an inconsistency: the filter would receive rescaled stimuli but compare them against unrescaled prototypes on the very first trial.
+
+### Parameter Recovery
+
+We fit the attention model to a simulated height-focused agent ($w_1 = 0.9,\ w_2 = 0.1$) to check that Stan can recover both the noise parameters and the attention weights.
+
+```{r ch13_attention_fit}
+# Use the height-focused agent, first seed
+attn_agent <- attention_responses |>
+  filter(condition == "Height-focused", agent_id == 1)
+
+stopifnot(nrow(attn_agent) == total_trials)
+
+attn_data <- list(
+  ntrials            = nrow(attn_agent),
+  nfeatures          = 2L,
+  cat_one            = attn_agent$category_feedback,
+  y                  = attn_agent$sim_response,
+  obs                = as.matrix(attn_agent[, c("height", "position")]),
+  initial_mu_cat0    = c(2.5, 2.5),
+  initial_mu_cat1    = c(2.5, 2.5),
+  initial_sigma_diag = 10.0,
+  prior_logr_mean    = LOG_R_PRIOR_MEAN,
+  prior_logr_sd      = LOG_R_PRIOR_SD,
+  prior_logq_mean    = LOG_Q_PRIOR_MEAN,
+  prior_logq_sd      = LOG_Q_PRIOR_SD,
+  # Uniform Dirichlet: no preference for either feature a priori
+  alpha_w            = c(1.0, 1.0)
+)
+
+attn_fit_file <- here("simmodels", "ch13_proto_attention_fit.rds")
+
+if (regenerate_simulations || !file.exists(attn_fit_file)) {
+  pf_attn <- mod_prototype_attention$pathfinder(
+    data = attn_data, seed = 123, num_paths = 4, refresh = 0
+  )
+  fit_attn <- mod_prototype_attention$sample(
+    data            = attn_data,
+    init            = pf_attn,
+    seed            = 123,
+    chains          = 4,
+    parallel_chains = min(4, availableCores()),
+    iter_warmup     = 1000,
+    iter_sampling   = 1500,
+    refresh         = 300,
+    adapt_delta     = 0.9
+  )
+  fit_attn$save_object(attn_fit_file)
+  cat("Attention model fit computed and saved.\n")
+} else {
+  fit_attn <- readRDS(attn_fit_file)
+  cat("Loaded existing attention model fit.\n")
+}
+
+fit_attn$summary(variables = c("log_r", "r_value", "log_q", "q_value", "w[1]", "w[2]"))
+```
+
+```{r ch13_attention_recovery_plot}
+# Overlay posterior on true values for a visual parameter recovery check.
+# True values: r = 2.0, q = 0.1, w[1] = 0.9, w[2] = 0.1
+true_vals <- tibble(
+  parameter = c("r_value", "q_value", "w[1]", "w[2]"),
+  truth     = c(2.0, 0.1, 0.9, 0.1)
+)
+
+fit_attn$draws(variables = c("r_value", "q_value", "w[1]", "w[2]"),
+               format = "df") |>
+  pivot_longer(cols = c("r_value", "q_value", "w[1]", "w[2]"),
+               names_to = "parameter", values_to = "value") |>
+  left_join(true_vals, by = "parameter") |>
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7) +
+  geom_vline(aes(xintercept = truth), colour = "red", linewidth = 0.8,
+             linetype = "dashed") +
+  facet_wrap(~parameter, scales = "free", ncol = 2) +
+  labs(
+    title    = "Attention Prototype: Parameter Recovery",
+    subtitle = "Red dashed line = true generating value",
+    x = "Parameter value", y = "Posterior draws"
+  )
+```
+
+A successful recovery plot shows each posterior histogram clearly enclosing its red dashed line. The attention weights $w[1]$ and $w[2]$ are the most demanding parameters to recover: because they live on the simplex, $w[2] = 1 - w[1]$ for two features, so all information about attention comes from a single degree of freedom. When one feature is strongly dominant ($w_k$ close to 0 or 1), recovery is typically sharp because the likelihood is highly sensitive to that ratio. When attention is more balanced, the posterior widens.
+
+> **What if the true agent had equal attention but was fit with the attention model?** The posterior on $\mathbf{w}$ should be broad and centred near $(0.5, 0.5)$, and $r$ should recover the same value as the base model. This is the correct Bayesian response: the model expresses uncertainty about a parameter it cannot identify from the data, rather than forcing a spurious extreme value.
+
+### The Trade-Off: Interpretability vs. Identifiability
+
+Adding attention weights increases the number of free parameters from 2 to $2 + (K - 1)$ (the $-1$ is because the simplex constraint removes one degree of freedom). For $K = 2$ features this is a total of 3 parameters, a modest increase. For higher-dimensional feature spaces the parameter count grows, and attention weights may become individually unidentifiable if many features are similarly diagnostic.
+
+The attention prototype model is most useful in tasks where:
+
+1. **Features vary in diagnosticity** — not all dimensions carry equal information about category membership.
+2. **Enough trials are available** — with only 64 trials (8 stimuli × 8 blocks), the posterior on $\mathbf{w}$ will often remain broad, especially if the true $w$ is close to $(0.5, 0.5)$.
+3. **The question is comparative** — fitting both the base model and the attention model and comparing their ELPDs (via LFO-CV, since path-dependence still applies) tells you whether allowing selective attention meaningfully improves predictive accuracy.
+
+---
+
 ## Cognitive Insights and Model Comparison
 
 The Kalman filter prototype model offers valuable insights:
@@ -3378,7 +3870,7 @@ The Kalman filter prototype model offers valuable insights:
 
 * The GCM stores every detail; the prototype model abstracts.
 * The GCM is sensitive to specific outliers; the prototype model is less so (outliers get averaged in).
-* The GCM requires explicit attention weights ($w$) as free parameters; attention in the Kalman filter can emerge implicitly if uncertainty differs across dimensions (though not explored in detail here).
+* The GCM requires explicit attention weights ($w$) as free parameters; the prototype model can be extended with the same mechanism via feature-space rescaling, as developed in §"Extending the Prototype Model: Selective Attention" above.
 * The GCM's sensitivity parameter $c$ controls generalization globally; the Kalman filter's $r$ controls how rapidly the prototype absorbs new information, providing a different kind of flexibility.
 
 A note of caution about ELPD comparisons in Chapter 15: now that LFO-CV is implemented for both the GCM (Chapter 11) and the Kalman prototype (this chapter), the comparison between them is on equal predictive footing. The rule mixture model in Chapter 13 is conditionally exchangeable and uses standard PSIS-LOO, which is technically valid for *that* model — but the comparison across architectures is still a comparison of fundamentally different generative processes, and "ELPD is higher" should not be read as "this is the right cognitive theory." See Chapter 13 for the deeper version of this caveat (and the ABC-based alternative comparison framework that resolves it more cleanly).
@@ -3398,6 +3890,8 @@ A note of caution about ELPD comparisons in Chapter 15: now that LFO-CV is imple
 * **Process noise identifiability**: The model includes process noise $Q = q \cdot I$, but $q$ and $r$ are partially confounded under the static Kruschke (1993) paradigm — both affect the effective likelihood width at decision time. Separate identifiability requires non-stationary data where prototypes demonstrably shift. The SBC analysis shows the extent of this confound, and the precision analysis quantifies how many trials of category drift are needed to pin down $q$.
 
 * **Structural priors**: The initial means, initial covariances, and diagonal observation-noise structure are fixed by hand. None of these is inferred from data. A reader who finds the model behaving oddly on a new dataset should re-examine these choices before concluding that the cognitive theory is wrong.
+
+* **Mahalanobis distance, not city-block**: The GCM allows the modeller to choose between Euclidean and city-block distance. City-block is often preferred for *separable* dimensions — features perceived independently, such as height and position in the Kruschke task — because it better matches how people combine information across such dimensions [@shepard1987toward]. The prototype model has no such choice: Mahalanobis distance is not a design decision but a mathematical consequence of the Gaussian generative model. The multivariate normal density evaluated at $\vec{x}$ *is* the exponentiated Mahalanobis distance; substituting city-block would require replacing the Gaussian likelihood with a Laplace one and abandoning the Kalman update equations. The model therefore inherits a geometric assumption — that the feature space is Euclidean — that may not hold for perceptually separable stimuli.
 
 ## Conclusion
 
