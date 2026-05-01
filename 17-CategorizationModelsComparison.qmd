@@ -1,0 +1,1212 @@
+---
+title: "Comparing Categorization Models"
+format:
+  html:
+    code-fold: true
+    code-tools: true
+---
+
+```{r ch16_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 9,
+  fig.height = 5
+)
+
+regenerate_fits <- FALSE   # set TRUE to refit all Stan models to the common dataset
+run_npe_track   <- FALSE   # set TRUE to run the NPE second-track comparison (requires sbi)
+
+pacman::p_load(
+  tidyverse,    # data manipulation and visualization
+  mvtnorm,      # multivariate normal (Kalman boundary)
+  patchwork,    # combining plots
+  cmdstanr,     # Stan interface
+  posterior,    # tidy posterior arrays
+  bayesplot,    # MCMC diagnostics and LOO-PIT
+  loo,          # LOO-CV, model comparison, stacking
+  priorsense,   # prior sensitivity
+  future,       # parallel processing
+  furrr,        # parallel functional programming
+  reticulate    # Python interop for sbi (NPE track)
+)
+
+theme_set(theme_classic())
+
+# ── Prior hyperparameters (must match Chapters 12–14 exactly) ────────────────
+LOG_C_PRIOR_MEAN     <- log(2)
+LOG_C_PRIOR_SD       <- 1.0
+LOG_R_PRIOR_MEAN     <- 0
+LOG_R_PRIOR_SD       <- 1.0
+# Normal(0, 1.5) ≈ uniform on the probability scale (matches Ch. 14)
+LOGIT_ERROR_PRIOR_MEAN <- 0.0
+LOGIT_ERROR_PRIOR_SD   <- 1.5
+
+# ── Structural commitments for the rule particle filter (Model A) ────────────
+# Inherited from Ch. 14; used by the NPE track.
+N_PARTICLES_FIXED  <- 100
+MAX_RULE_DIMS      <- 2
+RULE_OPERATORS     <- c(">", "<")
+RULE_LOGIC         <- c("AND", "OR")
+RESAMPLE_THRESHOLD <- 0.5
+
+plan(multisession, workers = max(1, parallel::detectCores() - 1))
+
+for (d in c("stan", "simdata", "simmodels")) {
+  if (!dir.exists(d)) dir.create(d)
+}
+
+# ── Kruschke (1993) stimulus set ─────────────────────────────────────────────
+stimulus_info <- tibble(
+  stimulus      = c(5, 3, 7, 1, 8, 2, 6, 4),
+  height        = c(1, 1, 2, 2, 3, 3, 4, 4),
+  position      = c(2, 3, 1, 4, 1, 4, 2, 3),
+  category_true = c(0, 0, 1, 0, 1, 0, 1, 1)
+)
+n_blocks         <- 8
+n_stim_per_block <- nrow(stimulus_info)
+total_trials     <- n_blocks * n_stim_per_block
+
+make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
+  set.seed(seed)
+  n_stim <- nrow(stimulus_info)
+  sequence <- unlist(lapply(seq_len(n_blocks), function(b)
+    sample(stimulus_info$stimulus, n_stim, replace = FALSE)))
+  tibble(
+    trial_within_subject = seq_along(sequence),
+    block                = rep(seq_len(n_blocks), each = n_stim),
+    stimulus_id          = sequence
+  ) |>
+    left_join(stimulus_info, by = c("stimulus_id" = "stimulus")) |>
+    rename(category_feedback = category_true) |>
+    dplyr::select(trial_within_subject, block, stimulus_id,
+                  height, position, category_feedback)
+}
+```
+
+> **📍 Where we are in the Bayesian modeling workflow:**
+> Chapters 12–14 each built, validated, and fitted a single-agent model
+> to its own simulated dataset. Chapter 15 applied all three model families in
+> simulation mode on the Alien Game. This chapter assembles the **formal model
+> comparison** in **two tracks**:
+>
+> **Track 1 (Stan proxies, LOO/LFO-CV):** We fit all three Stan models to the
+> **same** common dataset, compute LOO scores, report ELPD differences with
+> standard errors, visualize stacking weights, and compare decision boundaries.
+> **Crucially, the rule model in this track is Model B — the tractable Stan
+> proxy from Chapter 14, not Model A (the particle filter).** Comparing LOO
+> for the real GCM against LOO for the rule *proxy* is an apples-to-oranges
+> comparison, and the reader should know it.
+>
+> **Track 2 (NPE, cognitive theories on common footing):** We fit all three
+> cognitive theories — the GCM forward simulator, the Kalman prototype forward
+> simulator, and the rule particle filter (Model A) — via Neural Posterior
+> Estimation (NPE) using the `sbi` Python package. Each model gets its own
+> trained inference network, validated with Simulation-Based Calibration Checks
+> (SBC) + expected coverage, and compared via posterior predictive accuracy on
+> the common dataset. This track resolves the apples-to-oranges problem: all
+> three models are fitted as simulator-based models with no tractability
+> advantage for any one of them. The gap between the two tracks' conclusions
+> is the chapter's main empirical finding.
+>
+> Chapter 17 applies this full two-track pipeline to human data from
+> Tylén et al. (2023).
+
+## Three Perspectives on Categorization
+
+Throughout this module, we have explored three major approaches to modeling categorization:
+
+1. **Exemplar Models (GCM)**: Categories are represented by storing individual examples, and categorization decisions are based on similarity to these stored exemplars.
+
+2. **Prototype Models (Kalman Filter)**: Categories are represented by their central tendencies or prototypes, which are dynamically updated as new examples are encountered.
+
+3. **Rule-Based Models (Bayesian Particle Filter / Stan mixture)**: Categories are represented by explicit rules that define category boundaries, with rules discovered through hypothesis testing. **Two distinct models exist for this architecture** (see Ch. 14): Model A (the particle filter — the cognitive theory, fitted via NPE) and Model B (the Stan marginalised mixture — a tractable proxy). Track 1 uses Model B; Track 2 uses Model A.
+
+Each approach captures different aspects of human categorization and makes distinct predictions about behavior. In this chapter, we systematically compare these models to understand their relative strengths, limitations, and complementary insights.
+
+---
+
+## Phase 0: Structural Commitments for This Chapter
+
+Before writing a single line of comparison code, we surface the load-bearing decisions that determine what this chapter's comparison actually measures.
+
+> **Q1 — Why does Track 1 use Model B (the Stan proxy) rather than Model A (the cognitive theory)?**
+>
+> Model A — the particle filter — has an intractable likelihood: no closed-form expression exists for $P(y_{1:T} \mid \theta)$ because the joint probability requires integrating over an exponentially large space of rule trajectories. Stan's HMC sampler requires evaluating and differentiating the log-likelihood, which is impossible for Model A. Model B is a tractable approximation: it marginalises over a **fixed, finite** set of candidate rules ($R = 5$ in our Kruschke-task implementation), treating the evidence as conditionally independent given the error probability parameter. This gives a closed-form likelihood and makes HMC fitting possible.
+>
+> **What this means for the comparison**: Track 1's rule model is a *proxy*. Its LOO score measures how well a static mixture over 5 hand-picked rules predicts held-out responses — not how well the rule-learning cognitive theory predicts them. Comparing Model B's ELPD against the GCM's ELPD is, strictly speaking, an apples-to-oranges comparison. Track 2 resolves this by fitting all three cognitive theories via NPE, where tractability is not a constraint.
+>
+> **What we commit to here:** Track 1 uses Model B and we flag this asymmetry explicitly at every point where the comparison is reported. The reader should treat Track 1's rule model ELPD as a lower bound on what the cognitive theory (Model A) would achieve if it were tractable.
+
+> **Q2 — What does "fair comparison" require, and does using GCM-generated data guarantee the GCM wins?**
+>
+> A fair model comparison requires: (a) the same observations $y_{1:T}$ and stimulus sequences $x_{1:T}$ entering every model's likelihood; (b) the same cross-validation protocol for every model; (c) priors calibrated to the same scale. Our common dataset satisfies (a) and (c). Condition (b) is partially violated: LOO is technically valid for Model B (conditionally exchangeable) but only approximate for the GCM and Kalman filter (path-dependent). LFO-CV resolves this but is expensive; we defer full LFO-CV to Chapter 17.
+>
+> **Does GCM-generated data guarantee the GCM wins?** No. Three failure modes exist: (i) numerical instability in the GCM's sequential memory computation could produce poor log-likelihood values despite correct model specification; (ii) if the GCM's prior is too diffuse, the posterior may not concentrate on the true parameters within 64 trials; (iii) the finite candidate-rule set of Model B may happen to contain a rule that is nearly optimal for the specific GCM trajectory we generated, letting Model B "win" despite being the wrong model. These are empirical questions; the comparison is designed to be informative, not guaranteed.
+>
+> **What we commit to here:** we generate data from the GCM with known parameters, fit all three models, and report the comparison honestly — including the path-dependence caveat. If the GCM does not win, we diagnose why before concluding anything about the models.
+
+> **Q3 — What does NPE add that ABC (from Ch. 14) doesn't?**
+>
+> ABC (introduced in Chapter 14) requires hand-crafted summary statistics and a rejection threshold. Its accuracy depends on how well the chosen summaries capture the full likelihood. NPE (Neural Posterior Estimation) trains a neural network to directly estimate the posterior $P(\theta \mid y)$ without summary statistics — it uses the full response vector as input. Key differences:
+>
+> * **ABC** is non-parametric and requires no training data, but scales poorly with parameter dimensionality and is sensitive to the choice of summary statistics.
+> * **NPE** amortises the inference cost: after one training run (expensive), inference on new observations is essentially free. But it requires a large training set ($\geq$10k simulations) and the posterior approximation is only as good as the training data coverage and the neural architecture.
+>
+> In this chapter's context, NPE is the right choice because we are comparing *three* models and want to run inference on a single common dataset. ABC would require separate tuning of summary statistics for each model. NPE trains one network per model and produces posteriors that are comparable on a common scale.
+>
+> **What we commit to here:** we train NPE networks with $n = 20{,}000$ simulations per model (set to a lower number in the default run; increase `n_train` for production). We validate each network with a Simulation-Based Calibration Checks (SBC) spot-check before using it for inference.
+
+> **Q4 — Why is LOO exact for the rule model but approximate for the GCM and Kalman filter?**
+>
+> Standard PSIS-LOO estimates the ELPD for the prediction task: "given all observations *except* trial $t$, how well does the model predict trial $t$?" This is well-defined if the likelihood of trial $t$ does not depend on which other trials are included — i.e., the observations are **conditionally exchangeable** given the parameters.
+>
+> * **Model B** (Stan rule proxy): once `error_prob` is fixed, every trial's likelihood is $P(y_t \mid \theta) = (1-\varepsilon)^{[y_t = \hat{y}_t]} \varepsilon^{[y_t \neq \hat{y}_t]}$ — a function only of the current trial's stimulus and response. No memory. Conditionally exchangeable. LOO is exact.
+>
+> * **GCM and Kalman filter**: the response probability at trial $t$ depends on the entire history $y_{1:t-1}$ through the exemplar memory (GCM) or Kalman filter state. Leaving out trial $t$ in LOO conditions on a counterfactual memory state — one that was never built during training. The LOO predictive is for a prediction problem that does not correspond to any reachable experimental state. LOO is approximate.
+>
+> LFO-CV leaves out a contiguous block of *future* trials and refits on the past, properly respecting temporal dependency. It is the correct tool for path-dependent models. We report approximate LOO here for comparability, but note every path-dependent ELPD as approximate and defer exact LFO-CV to Chapter 17.
+>
+> **What we commit to here:** approximate LOO for GCM and Kalman, exact LOO for Model B. All ELPD differences involving the GCM or Kalman are flagged with the approximation caveat. Track 2's NPE posterior predictive accuracy does not have this problem (no LOO; we evaluate predictive accuracy on the observed data under the posterior).
+
+> **Q5 — What can go wrong with the NPE training, and how do we detect it?**
+>
+> Three main failure modes:
+>
+> 1. **Training data coverage failure**: if the prior is too narrow to cover the true parameters, or too wide so that most simulations produce uninformative responses, the trained network will not generalise to the observed data. Detected by: poor SBC coverage, or posterior concentrating at the prior boundary.
+> 2. **Neural architecture underfitting**: if the network lacks capacity to represent the posterior, it will produce over-dispersed or biased posteriors. Detected by: SBC rank histograms that are U-shaped (over-dispersed) or hump-shaped (over-concentrated).
+> 3. **Label/data mismatch**: if the simulator and the real data use different conventions (e.g., 0-indexed vs. 1-indexed responses), the posterior will be nonsense. Detected by: posterior predictive accuracy near chance.
+>
+> **What we commit to here:** we run a 200-iteration SBC spot-check on the GCM NPE network (the generating model for the common dataset) and plot rank histograms. Full 1000-iteration SBC for all three networks is in Chapter 17 where human data is analysed.
+
+**Summary of Phase 0 commitments.** Track 1 uses Model B (the Stan proxy) for the rule architecture and flags this asymmetry everywhere. Track 2 uses NPE to fit all three cognitive theories on equal footing, validated with SBC. LOO is exact for Model B and approximate for the GCM and Kalman filter; LFO-CV is deferred to Chapter 17. The common dataset is GCM-generated, giving a known ground truth, but the GCM winning is not guaranteed and diagnosed if it fails.
+
+---
+
+## Theoretical Comparison
+
+### Core Assumptions
+
+| Model Type | Category Representation | Decision Process | Learning Mechanism |
+|------------|-------------------------|------------------|-------------------|
+| **Exemplar (GCM)** | Individual instances | Summed similarity to all stored exemplars | Storage of examples; attention reweighting |
+| **Prototype (Kalman)** | Central tendency + uncertainty | Similarity to category prototype | Incremental Kalman filter update |
+| **Rule-Based (Model B proxy)** | Fixed candidate decision boundaries | Weighted vote over candidate rules | Weight update by Bayesian likelihood |
+
+### Psychological Processes
+
+| Model Type | Attention | Memory | Generalization |
+|------------|-----------|--------|----------------|
+| **Exemplar** | Continuous weights across dimensions ($w$) | Detailed memory for all specific examples | Similarity-gradient; sensitive to specific exemplars |
+| **Prototype** | Implicit through prototype uncertainty | Abstract summary (mean + covariance) | Centred around prototype; less sensitive to specific examples |
+| **Rule-Based** | Selective focus on rule-relevant dimensions | Memory for rules, not examples | Sharp boundaries defined by threshold conditions |
+
+---
+
+## Mathematical Comparison
+
+### Exemplar Model (GCM)
+
+$$P(C_A \mid x) = \frac{\sum_{i \in A} \eta(x, x_i)}{\sum_{i \in A} \eta(x, x_i) + \sum_{j \in B} \eta(x, x_j)}$$
+
+where $\eta(x, x_i) = e^{-c \cdot d(x, x_i)}$ and $d(x, x_i) = \sum_{m} w_m \lvert x_m - x_{i,m} \rvert$.
+
+### Prototype Model (Kalman Filter)
+
+$$P(C_A \mid x) = \frac{\mathcal{N}(x \mid \mu_A,\, \Sigma_A + R)}{\mathcal{N}(x \mid \mu_A,\, \Sigma_A + R) + \mathcal{N}(x \mid \mu_B,\, \Sigma_B + R)}$$
+
+where $\mu_A, \Sigma_A$ are the running prototype mean and covariance for category A, and $R = r \cdot I$ is the observation noise matrix.
+
+### Rule-Based Model — Model B (Stan marginalised mixture, *not* the particle filter)
+
+> **⚠️ Track 1 structural-bias caveat.** The model fitted below is **Model B** —
+> the static, conditionally exchangeable mixture over a fixed candidate rule
+> set from Chapter 14. It is *not* Model A (the particle filter), which is the
+> actual cognitive theory. Model B has no learning dynamics, no resampling, no
+> working-memory bound. Comparing Model B's LOO against the GCM's LOO
+> compares a proxy against a real theory. Track 2 (§"NPE Comparison Under the
+> Cognitive Theories") resolves this by fitting all three cognitive theories
+> via NPE on common footing.
+
+$$P(C_A \mid x) = \sum_{r=1}^{R} P(C_A \mid x, \text{rule}_r) \cdot P(\text{rule}_r)$$
+
+where $P(C_A \mid x, \text{rule}_r) = 1 - \varepsilon$ if rule $r$ predicts category A, and $\varepsilon$ otherwise, and $P(\text{rule}_r) = 1/R$ (uniform prior over the $R$ candidate rules).
+
+---
+
+## A Common Dataset for Fair Comparison
+
+Chapters 12–14 each fitted their models to **different** simulated datasets. To compare models meaningfully we need them all estimated on the **same data**. A fair comparison requires identical observations $y_{1:T}$ and stimulus sequences $x_{1:T}$ entering each model's likelihood.
+
+We generate a fresh common dataset here by simulating one agent from the GCM with moderate parameters, then fitting all three Stan models to that agent's responses. This design choice — using GCM-generated data — is deliberate: if the GCM generated the data, a well-functioning model comparison should prefer the GCM. If it does not, we have learned something about the models' identifiability on this task (see Phase 0 Q2).
+
+```{r ch16_common_data}
+# ── GCM simulation function (from Ch. 12) ───────────────────────────────────
+gcm_simulate <- function(w, log_c, bias, obs, cat_feedback, quiet = TRUE) {
+  c_val     <- exp(log_c)
+  ntrials   <- nrow(obs)
+  nfeatures <- ncol(obs)
+  prob_cat1 <- numeric(ntrials)
+  sim_response <- numeric(ntrials)
+  memory_obs  <- matrix(NA_real_, nrow = 0, ncol = nfeatures)
+  memory_cat  <- numeric(0)
+  for (i in seq_len(ntrials)) {
+    stim <- as.numeric(obs[i, ])
+    n_mem <- nrow(memory_obs)
+    has0  <- any(memory_cat == 0)
+    has1  <- any(memory_cat == 1)
+    if (n_mem == 0 || !has0 || !has1) {
+      p <- bias
+    } else {
+      sims <- vapply(seq_len(n_mem), function(e)
+        exp(-c_val * sum(w * abs(stim - memory_obs[e, ]))), numeric(1))
+      s1 <- sum(sims[memory_cat == 1])
+      s0 <- sum(sims[memory_cat == 0])
+      den <- s1 + s0
+      p   <- if (den > 1e-9) bias * s1 / (bias * s1 + (1 - bias) * s0) else bias
+    }
+    prob_cat1[i]    <- pmax(1e-9, pmin(1 - 1e-9, p))
+    sim_response[i] <- rbinom(1, 1, prob_cat1[i])
+    memory_obs      <- rbind(memory_obs, stim)
+    memory_cat      <- c(memory_cat, cat_feedback[i])
+  }
+  tibble(prob_cat1 = prob_cat1, sim_response = sim_response)
+}
+
+# ── Generate the common dataset ──────────────────────────────────────────────
+TRUE_W     <- c(0.2, 0.8)
+TRUE_LOG_C <- log(2.5)
+TRUE_BIAS  <- 0.5
+
+common_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 2025)
+common_sim <- gcm_simulate(
+  w            = TRUE_W,
+  log_c        = TRUE_LOG_C,
+  bias         = TRUE_BIAS,
+  obs          = as.matrix(common_schedule[, c("height", "position")]),
+  cat_feedback = common_schedule$category_feedback
+)
+
+common_data_df <- common_schedule |>
+  mutate(
+    y_obs   = common_sim$sim_response,
+    prob_gcm = common_sim$prob_cat1
+  )
+
+cat("Common dataset: n =", nrow(common_data_df), "trials\n")
+cat("True GCM parameters: w = (", TRUE_W, "), c =",
+    round(exp(TRUE_LOG_C), 2), ", bias =", TRUE_BIAS, "\n")
+cat("Proportion of category-1 responses:", round(mean(common_data_df$y_obs), 3), "\n")
+```
+
+---
+
+## Fitting All Three Stan Models to the Common Dataset
+
+We load the compiled Stan models from Chapters 12–14 and fit them to the common dataset.
+
+```{r ch16_load_models}
+load_or_compile <- function(stan_file) {
+  if (file.exists(stan_file)) {
+    cmdstan_model(stan_file)
+  } else {
+    stop("Stan model not found: ", stan_file,
+         "\nRun the corresponding chapter first, or set regenerate_fits = TRUE.")
+  }
+}
+
+mod_gcm    <- load_or_compile("stan/W11_gcm_single.stan")
+mod_kalman <- load_or_compile("stan/W12_prototype_single.stan")
+mod_rule   <- load_or_compile("stan/W13_rule_simplified.stan")
+```
+
+```{r ch16_build_stan_data}
+# ── GCM data ─────────────────────────────────────────────────────────────────
+gcm_data_common <- list(
+  ntrials          = nrow(common_data_df),
+  nfeatures        = 2L,
+  y                = common_data_df$y_obs,
+  obs              = as.matrix(common_data_df[, c("height", "position")]),
+  cat_feedback     = common_data_df$category_feedback,
+  w_prior_alpha    = c(1, 1),
+  log_c_prior_mean = LOG_C_PRIOR_MEAN,
+  log_c_prior_sd   = LOG_C_PRIOR_SD,
+  bias_prior_alpha = 1,
+  bias_prior_beta  = 1
+)
+
+# ── Kalman data ───────────────────────────────────────────────────────────────
+kalman_data_common <- list(
+  ntrials            = nrow(common_data_df),
+  nfeatures          = 2L,
+  cat_one            = common_data_df$category_feedback,
+  y                  = common_data_df$y_obs,
+  obs                = as.matrix(common_data_df[, c("height", "position")]),
+  initial_mu_cat0    = c(2.5, 2.5),
+  initial_mu_cat1    = c(2.5, 2.5),
+  initial_sigma_diag = 10.0,
+  prior_logr_mean    = LOG_R_PRIOR_MEAN,
+  prior_logr_sd      = LOG_R_PRIOR_SD
+)
+
+# ── Rule data ─────────────────────────────────────────────────────────────────
+rule_data_common <- list(
+  ntrials                = nrow(common_data_df),
+  nfeatures              = 2L,
+  y                      = common_data_df$y_obs,
+  obs                    = as.matrix(common_data_df[, c("height", "position")]),
+  prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+  prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+)
+```
+
+```{r ch16_fit_models}
+fit_common_gcm_path    <- "simmodels/W16_fit_gcm.rds"
+fit_common_kalman_path <- "simmodels/W16_fit_kalman.rds"
+fit_common_rule_path   <- "simmodels/W16_fit_rule.rds"
+
+run_fit <- function(mod, data, seed, adapt_delta = 0.9,
+                    iter_w = 1000, iter_s = 1500,
+                    chains = 4) {
+  pf <- tryCatch(
+    mod$pathfinder(data = data, seed = seed, num_paths = 4, refresh = 0),
+    error = function(e) {
+      message("Pathfinder failed; falling back to default init. Reason: ", e$message)
+      NULL
+    }
+  )
+  mod$sample(
+    data            = data,
+    init            = if (!is.null(pf)) pf else 0.5,
+    seed            = seed,
+    chains          = chains,
+    parallel_chains = min(chains, max(1, parallel::detectCores() - 1)),
+    iter_warmup     = iter_w,
+    iter_sampling   = iter_s,
+    refresh         = 300,
+    adapt_delta     = adapt_delta
+  )
+}
+
+if (regenerate_fits) {
+  cat("Fitting GCM to common dataset...\n")
+  fit_gcm <- run_fit(mod_gcm, gcm_data_common, seed = 2025)
+  fit_gcm$save_object(fit_common_gcm_path)
+
+  cat("Fitting Kalman prototype model to common dataset...\n")
+  fit_kalman <- run_fit(mod_kalman, kalman_data_common, seed = 2025)
+  fit_kalman$save_object(fit_common_kalman_path)
+
+  cat("Fitting Stan rule model (Model B) to common dataset...\n")
+  fit_rule <- run_fit(mod_rule, rule_data_common, seed = 2025)
+  fit_rule$save_object(fit_common_rule_path)
+
+  cat("All fits complete.\n")
+} else {
+  fits_exist <- all(file.exists(
+    fit_common_gcm_path, fit_common_kalman_path, fit_common_rule_path
+  ))
+  if (fits_exist) {
+    fit_gcm    <- readRDS(fit_common_gcm_path)
+    fit_kalman <- readRDS(fit_common_kalman_path)
+    fit_rule   <- readRDS(fit_common_rule_path)
+    cat("Loaded all three model fits from simmodels/.\n")
+  } else {
+    cat("Fit files not found. Set regenerate_fits = TRUE to run.\n")
+    fit_gcm <- fit_kalman <- fit_rule <- NULL
+  }
+}
+
+if (!is.null(fit_gcm)) {
+  cat("\n── GCM diagnostics ──\n")
+  fit_gcm$cmdstan_diagnose()
+  cat("\n── Kalman diagnostics ──\n")
+  fit_kalman$cmdstan_diagnose()
+  cat("\n── Rule (Model B) diagnostics ──\n")
+  fit_rule$cmdstan_diagnose()
+}
+```
+
+---
+
+## Quantitative Model Comparison with LOO
+
+With all three models fitted to the same data, we can compute and compare their expected log pointwise predictive densities (ELPD).
+
+### The LFO-CV Caveat
+
+Standard PSIS-LOO estimates the ELPD for a leave-one-out prediction task under the assumption that observations are **conditionally exchangeable** given the parameters. As established in Phase 0 Q4, this assumption holds for Model B but is violated for the GCM and Kalman filter. We report standard LOO here for comparability, with the understanding that ELPD differences between the GCM / Kalman models and the rule model are approximate and should be confirmed with LFO-CV before drawing firm conclusions. Chapter 17 performs this confirmation on human data.
+
+```{r ch16_loo}
+if (!is.null(fit_gcm)) {
+  ll_gcm    <- fit_gcm$draws("log_lik",    format = "matrix")
+  ll_kalman <- fit_kalman$draws("log_lik", format = "matrix")
+  ll_rule   <- fit_rule$draws("log_lik",   format = "matrix")
+
+  loo_gcm    <- loo::loo(ll_gcm,    cores = 4)
+  loo_kalman <- loo::loo(ll_kalman, cores = 4)
+  loo_rule   <- loo::loo(ll_rule,   cores = 4)
+
+  cat("\n═══ GCM (ELPD approx. – path-dependent, LFO-CV needed) ═══\n")
+  print(loo_gcm)
+  cat("\n═══ Kalman (ELPD approx. – path-dependent, LFO-CV needed) ═══\n")
+  print(loo_kalman)
+  cat("\n═══ Rule Model B (ELPD exact – conditionally exchangeable, but proxy) ═══\n")
+  print(loo_rule)
+}
+```
+
+### Pareto-$\hat{k}$ Diagnostics
+
+```{r ch16_pareto_k, fig.height=4}
+if (!is.null(fit_gcm)) {
+  par(mfrow = c(1, 3))
+  plot(loo_gcm,    label_points = TRUE, main = "GCM: Pareto-k")
+  plot(loo_kalman, label_points = TRUE, main = "Kalman: Pareto-k")
+  plot(loo_rule,   label_points = TRUE, main = "Rule Model B: Pareto-k")
+  par(mfrow = c(1, 1))
+
+  k_max_gcm    <- max(loo_gcm$diagnostics$pareto_k)
+  k_max_kalman <- max(loo_kalman$diagnostics$pareto_k)
+  k_max_rule   <- max(loo_rule$diagnostics$pareto_k)
+
+  if (any(c(k_max_gcm, k_max_kalman, k_max_rule) >= 0.7)) {
+    cat("\n⚠ At least one model has Pareto-k ≥ 0.7.",
+        "\nConsider loo::loo_moment_match() before interpreting ELPD differences.\n")
+  }
+}
+```
+
+### ELPD Comparison
+
+```{r ch16_loo_compare}
+if (!is.null(fit_gcm)) {
+  comparison <- loo::loo_compare(loo_gcm, loo_kalman, loo_rule)
+  print(comparison)
+
+  cat("\nNote: ELPD differences for GCM and Kalman are approximate due to path-dependence.",
+      "\nThe rule model score is for Model B (the proxy), not Model A (the cognitive theory).",
+      "\nLFO-CV (Chapter 17) and NPE Track 2 (below) provide the correct estimates.\n")
+}
+```
+
+### ELPD Dot-and-Whisker Plot
+
+```{r ch16_elpd_plot}
+if (!is.null(fit_gcm)) {
+  elpd_summary <- tibble(
+    model = c("GCM (exemplar)", "Kalman (prototype)", "Rule Model B (Stan proxy)"),
+    elpd  = c(
+      loo_gcm$estimates["elpd_loo",    "Estimate"],
+      loo_kalman$estimates["elpd_loo", "Estimate"],
+      loo_rule$estimates["elpd_loo",   "Estimate"]
+    ),
+    se    = c(
+      loo_gcm$estimates["elpd_loo",    "SE"],
+      loo_kalman$estimates["elpd_loo", "SE"],
+      loo_rule$estimates["elpd_loo",   "SE"]
+    ),
+    path_dependent = c(TRUE, TRUE, FALSE)
+  ) |>
+    mutate(model = fct_reorder(model, elpd))
+
+  ggplot(elpd_summary, aes(x = elpd, y = model, color = path_dependent)) +
+    geom_pointrange(aes(xmin = elpd - 2 * se, xmax = elpd + 2 * se),
+                    size = 0.8, linewidth = 1.2) +
+    geom_vline(
+      xintercept = max(elpd_summary$elpd),
+      linetype = "dashed", color = "grey40"
+    ) +
+    scale_color_manual(
+      values  = c("FALSE" = "#0072B2", "TRUE" = "#D55E00"),
+      name    = "LOO valid?",
+      labels  = c("FALSE" = "Exact (exchangeable)", "TRUE" = "Approx. (path-dep.)")
+    ) +
+    labs(
+      title    = "ELPD Comparison Across Three Categorization Models",
+      subtitle = "Points: ELPD; ranges: ±2 SE.\nOrange = approximate LOO (path-dependent models; LFO-CV needed).",
+      x        = "Expected Log Predictive Density (ELPD)",
+      y        = NULL
+    )
+}
+```
+
+### Stacking Weights
+
+```{r ch16_stacking}
+if (!is.null(fit_gcm)) {
+  stacking_w <- loo::loo_model_weights(
+    list(GCM = loo_gcm, Kalman = loo_kalman, Rule = loo_rule),
+    method = "stacking"
+  )
+  cat("Bayesian stacking weights:\n")
+  print(stacking_w)
+
+  pbma_w <- loo::loo_model_weights(
+    list(GCM = loo_gcm, Kalman = loo_kalman, Rule = loo_rule),
+    method = "pseudobma"
+  )
+  cat("\nPseudo-BMA weights (for comparison):\n")
+  print(pbma_w)
+
+  weights_df <- tibble(
+    model   = names(stacking_w),
+    stacking = as.numeric(stacking_w),
+    pbma     = as.numeric(pbma_w)
+  ) |>
+    pivot_longer(c(stacking, pbma), names_to = "method", values_to = "weight")
+
+  ggplot(weights_df, aes(x = weight, y = model, fill = method)) +
+    geom_col(position = position_dodge(width = 0.6), width = 0.5, alpha = 0.8) +
+    scale_fill_manual(
+      values = c("stacking" = "#0072B2", "pbma" = "#E69F00"),
+      name   = "Method"
+    ) +
+    scale_x_continuous(limits = c(0, 1), labels = scales::percent) +
+    labs(
+      title    = "Model Weights: Stacking vs. Pseudo-BMA",
+      subtitle = "Stacking minimises LOO loss; pseudo-BMA is proportional to exp(ELPD).",
+      x        = "Weight", y = NULL
+    )
+}
+```
+
+**How to interpret stacking weights**: A model receiving weight 0 contributes nothing beyond what the other models already predict. A model receiving weight 1 means the ensemble is equivalent to that model alone.
+
+### LOO-PIT
+
+The LOO-PIT checks whether the posterior predictive distribution is well-calibrated for each held-out observation. For the Stan rule model (Model B), where LOO is technically valid, this is the most rigorous available calibration check.
+
+```{r ch16_loo_pit}
+if (!is.null(fit_rule)) {
+  y_obs     <- rule_data_common$y
+  draws_rule_p <- fit_rule$draws(
+    variables = paste0("log_lik"),
+    format    = "matrix"
+  )
+
+  bayesplot::ppc_loo_pit_overlay(
+    y    = y_obs,
+    yrep = matrix(
+      rbinom(length(y_obs) * 500, 1,
+             as.numeric(fit_rule$summary("error_prob")$mean)),
+      nrow = 500
+    ),
+    lw = weights(loo_rule$psis_object)
+  ) +
+    labs(
+      title    = "LOO-PIT: Rule Model B (Stan proxy)",
+      subtitle = "Uniform distribution = well-calibrated predictive distribution"
+    )
+}
+```
+
+> For the GCM and Kalman filter, LOO-PIT is shown for completeness but
+> must be interpreted cautiously: because these models are path-dependent,
+> the leave-one-out predictive distributions are conditioned on counterfactual
+> memory states and do not correspond to predictions we could evaluate in a
+> new experiment.
+
+---
+
+## Prior Sensitivity Analysis
+
+```{r ch16_prior_sensitivity}
+if (!is.null(fit_gcm)) {
+  cat("── GCM prior sensitivity ──\n")
+  ps_gcm <- priorsense::powerscale_sensitivity(fit_gcm)
+  print(ps_gcm)
+
+  cat("\n── Kalman prior sensitivity ──\n")
+  ps_kalman <- priorsense::powerscale_sensitivity(fit_kalman)
+  print(ps_kalman)
+
+  cat("\n── Rule model (Model B) prior sensitivity ──\n")
+  ps_rule <- priorsense::powerscale_sensitivity(fit_rule)
+  print(ps_rule)
+
+  priorsense::powerscale_plot_dens(ps_gcm,
+    variables = c("log_c", "w[1]", "bias")) +
+    labs(title = "GCM: Prior Sensitivity")
+  priorsense::powerscale_plot_dens(ps_kalman,
+    variables = c("log_r", "r_value")) +
+    labs(title = "Kalman: Prior Sensitivity")
+  priorsense::powerscale_plot_dens(ps_rule,
+    variables = c("logit_error_prob", "error_prob")) +
+    labs(title = "Rule Model B: Prior Sensitivity")
+}
+```
+
+---
+
+## Track 1 Summary
+
+The LOO-based comparison above provides a first answer to "which model best predicts held-out responses on GCM-generated data." But it has a load-bearing limitation: **the rule model in Track 1 is Model B — a tractable proxy, not the cognitive theory.** Model B has no learning dynamics, no resampling, no working-memory bound. Its LOO score tells you how well a static mixture over five hand-picked rules predicts the data; it does *not* tell you how well the rule-learning cognitive theory predicts the data. Comparing Model B's LOO against the GCM's LOO is comparing a proxy against a real theory, and interpreting the result as "the GCM beats the rule model" would be an over-claim.
+
+Track 2 resolves this by fitting all three cognitive theories via Neural Posterior Estimation (NPE) on the same common dataset. The comparison is then on common footing: all three are simulator-based models, none has a tractability advantage.
+
+---
+
+## Track 2: NPE Comparison Under the Cognitive Theories
+
+> **📦 Python dependency.** Track 2 requires the `sbi` Python package (accessed
+> via `reticulate`). Install with: `pip install sbi torch`. All Track 2 code
+> blocks are gated behind `run_npe_track <- FALSE`; set to `TRUE` to run.
+> Training 20,000 simulations per model takes 5–15 minutes per model on a
+> modern CPU; use a GPU for the neural network training step if available.
+
+This section fits the same common dataset under all three cognitive theories using NPE. The pipeline for each model is identical:
+
+1. Define the forward simulator (from Chapters 12–14).
+2. Hold the observed schedule fixed; sample parameters from the prior and simulate responses.
+3. Train an NPE inference network (neural spline flow with learned embedding).
+4. Validate with Simulation-Based Calibration Checks (SBC) + expected coverage on a calibration set.
+5. Perform inference on the observed data.
+6. Compute posterior predictive accuracy by sampling parameters from the posterior, running the simulator, and comparing to the observed responses.
+
+```{r ch16_npe_simulators, eval=run_npe_track}
+# ── Common schedule for all NPE simulations ──────────────────────────────────
+npe_obs_mat  <- as.matrix(common_data_df[, c("height", "position")])
+npe_cat_one  <- common_data_df$category_feedback
+n_trials_npe <- nrow(common_data_df)
+y_observed   <- common_data_df$y_obs
+
+# ── GCM simulator (from Ch. 12) ──────────────────────────────────────────────
+# theta_gcm = (logit_w1, log_c, logit_bias) — 3 parameters
+simulate_gcm_for_npe <- function(theta) {
+  w1   <- plogis(theta[1])
+  w    <- c(w1, 1 - w1)
+  lc   <- theta[2]
+  bias <- plogis(theta[3])
+  sim  <- gcm_simulate(w, lc, bias, npe_obs_mat, npe_cat_one)
+  as.numeric(sim$sim_response)
+}
+
+# ── Kalman prototype simulator (from Ch. 13) ─────────────────────────────────
+# theta_kalman = (log_r) — 1 parameter
+simulate_kalman_for_npe <- function(theta) {
+  r_val <- exp(theta[1])
+  r_mat <- diag(r_val, 2)
+  mu0 <- c(2.5, 2.5); mu1 <- c(2.5, 2.5)
+  sig0 <- diag(10, 2); sig1 <- diag(10, 2)
+  prob_cat1 <- numeric(n_trials_npe)
+
+  for (i in seq_len(n_trials_npe)) {
+    x <- npe_obs_mat[i, ]
+    lp0 <- tryCatch(
+      mvtnorm::dmvnorm(x, mean = mu0, sigma = sig0 + r_mat, log = TRUE),
+      error = function(e) -Inf
+    )
+    lp1 <- tryCatch(
+      mvtnorm::dmvnorm(x, mean = mu1, sigma = sig1 + r_mat, log = TRUE),
+      error = function(e) -Inf
+    )
+    if (all(is.finite(c(lp0, lp1)))) {
+      lse <- log(exp(lp0) + exp(lp1))
+      prob_cat1[i] <- exp(lp1 - lse)
+    } else {
+      prob_cat1[i] <- 0.5
+    }
+    prob_cat1[i] <- pmax(1e-9, pmin(1 - 1e-9, prob_cat1[i]))
+
+    cat_i <- npe_cat_one[i]
+    if (cat_i == 1) {
+      S <- sig1 + r_mat; K <- sig1 %*% solve(S)
+      mu1  <- as.numeric(mu1 + K %*% (x - mu1))
+      IK   <- diag(2) - K
+      sig1 <- (IK %*% sig1 %*% t(IK) + K %*% r_mat %*% t(K))
+      sig1 <- (sig1 + t(sig1)) / 2
+    } else {
+      S <- sig0 + r_mat; K <- sig0 %*% solve(S)
+      mu0  <- as.numeric(mu0 + K %*% (x - mu0))
+      IK   <- diag(2) - K
+      sig0 <- (IK %*% sig0 %*% t(IK) + K %*% r_mat %*% t(K))
+      sig0 <- (sig0 + t(sig0)) / 2
+    }
+  }
+  rbinom(n_trials_npe, 1, prob_cat1)
+}
+
+# ── Rule particle filter simulator (Model A, from Ch. 14) ────────────────────
+# theta_rule = (logit_eps, log_n_particles) — 2 parameters
+# Requires the particle filter functions from Ch. 14 (sourced or inlined).
+# Here we inline a minimal version; in production use a shared source file.
+
+# [Particle filter function definitions from Ch. 14 would be sourced here]
+# For self-containment we re-define the key functions:
+
+.evaluate_rule_npe <- function(rule, stimulus) {
+  tryCatch({
+    eval_cond <- function(d, thresh, op)
+      switch(op, ">" = stimulus[d] > thresh, "<" = stimulus[d] < thresh, FALSE)
+    if (length(rule$dims) == 1) {
+      cond <- eval_cond(rule$dims[1], rule$thresh[1], rule$ops[1])
+    } else {
+      c1 <- eval_cond(rule$dims[1], rule$thresh[1], rule$ops[1])
+      c2 <- eval_cond(rule$dims[2], rule$thresh[2], rule$ops[2])
+      cond <- if (rule$logic == "AND") c1 & c2 else c1 | c2
+    }
+    ifelse(cond, rule$pred, 1L - rule$pred)
+  }, error = function(e) sample(0:1, 1))
+}
+
+.gen_rule_npe <- function(nf = 2, md = MAX_RULE_DIMS) {
+  nd <- sample(seq_len(min(md, nf)), 1)
+  dm <- sort(sample(seq_len(nf), nd, replace = FALSE))
+  tr <- runif(nd, 1, 4)
+  list(dims = dm, thresh = tr, ops = sample(c(">", "<"), nd, replace = TRUE),
+       logic = if (nd > 1) sample(c("AND", "OR"), 1) else "AND",
+       pred  = sample(0:1, 1))
+}
+
+simulate_rule_for_npe <- function(theta) {
+  eps    <- plogis(theta[1])
+  n_part <- max(10L, as.integer(round(exp(theta[2]))))
+  parts  <- lapply(seq_len(n_part), function(i) .gen_rule_npe())
+  wts    <- rep(1 / n_part, n_part)
+  probs  <- numeric(n_trials_npe)
+
+  for (i in seq_len(n_trials_npe)) {
+    x  <- as.numeric(npe_obs_mat[i, ])
+    pd <- vapply(parts, .evaluate_rule_npe, stimulus = x, numeric(1))
+    probs[i] <- pmax(1e-9, pmin(1 - 1e-9,
+      sum(wts * ifelse(pd == 1, 1 - eps, eps))))
+
+    lk  <- vapply(parts, function(p) {
+      pr <- .evaluate_rule_npe(p, x)
+      if (pr == npe_cat_one[i]) 1 - eps else eps
+    }, numeric(1))
+    nw  <- wts * lk; tot <- sum(nw)
+    wts <- if (tot > 1e-9) nw / tot else rep(1 / n_part, n_part)
+
+    ess <- 1 / sum(wts^2)
+    if (!is.nan(ess) && ess < n_part * RESAMPLE_THRESHOLD) {
+      idx   <- sample.int(n_part, n_part, replace = TRUE, prob = wts)
+      parts <- parts[idx]
+      wts   <- rep(1 / n_part, n_part)
+    }
+  }
+  rbinom(n_trials_npe, 1, probs)
+}
+
+cat("All three forward simulators defined.\n")
+```
+
+### Training NPE for All Three Models
+
+```{r ch16_npe_train, eval=run_npe_track}
+library(reticulate)
+sbi   <- import("sbi")
+torch <- import("torch")
+utils <- import("sbi.utils")
+infer <- import("sbi.inference")
+
+n_train <- 20000L  # increase to 50k for production quality
+
+train_npe_model <- function(simulator_fn, prior_low, prior_high, n_params,
+                            model_name, n_sims = n_train) {
+  cache_file <- sprintf("simdata/W16_npe_%s_train.rds", model_name)
+
+  if (regenerate_fits || !file.exists(cache_file)) {
+    cat("Generating", n_sims, "training simulations for", model_name, "...\n")
+    set.seed(2026)
+    thetas <- matrix(runif(n_sims * n_params,
+                           min = prior_low, max = prior_high),
+                     ncol = n_params, byrow = TRUE)
+    responses <- future_map(seq_len(n_sims), function(i) {
+      simulator_fn(thetas[i, ])
+    }, .options = furrr_options(seed = TRUE), .progress = TRUE)
+    y_mat <- do.call(rbind, responses)
+    saveRDS(list(thetas = thetas, responses = y_mat), cache_file)
+  } else {
+    cached <- readRDS(cache_file)
+    thetas <- cached$thetas
+    y_mat  <- cached$responses
+  }
+
+  theta_t <- torch$tensor(thetas, dtype = torch$float32)
+  x_t     <- torch$tensor(y_mat,  dtype = torch$float32)
+
+  sbi_prior <- utils$BoxUniform(
+    low  = torch$tensor(prior_low,  dtype = torch$float32),
+    high = torch$tensor(prior_high, dtype = torch$float32)
+  )
+
+  cat("Training NPE for", model_name, "...\n")
+  inference_obj <- infer$SNPE(
+    prior = sbi_prior,
+    density_estimator = utils$posterior_nn(
+      model = "nsf", hidden_features = 64L, num_transforms = 5L,
+      embedding_net = torch$nn$Sequential(
+        torch$nn$Linear(as.integer(ncol(y_mat)), 128L),
+        torch$nn$ReLU(),
+        torch$nn$Linear(128L, 64L),
+        torch$nn$ReLU(),
+        torch$nn$Linear(64L, 32L)
+      )
+    )
+  )
+  inference_obj$append_simulations(theta_t, x_t)
+  density_est <- inference_obj$train(
+    training_batch_size = 256L, learning_rate = 5e-4,
+    show_train_summary = TRUE
+  )
+  posterior <- inference_obj$build_posterior(density_est)
+  list(posterior = posterior, thetas = thetas, responses = y_mat)
+}
+
+npe_gcm <- train_npe_model(
+  simulate_gcm_for_npe,
+  prior_low  = c(-4, -1, -4),   # logit(w1), log_c, logit(bias)
+  prior_high = c(4,   3,  4),
+  n_params = 3, model_name = "gcm"
+)
+
+npe_kalman <- train_npe_model(
+  simulate_kalman_for_npe,
+  prior_low  = c(-2),  # log_r
+  prior_high = c(3),
+  n_params = 1, model_name = "kalman"
+)
+
+npe_rule <- train_npe_model(
+  simulate_rule_for_npe,
+  prior_low  = c(LOGIT_ERROR_PRIOR_MEAN - 3 * LOGIT_ERROR_PRIOR_SD, log(20)),
+  prior_high = c(LOGIT_ERROR_PRIOR_MEAN + 3 * LOGIT_ERROR_PRIOR_SD, log(300)),
+  n_params = 2, model_name = "rule"
+)
+
+cat("All three NPE networks trained.\n")
+```
+
+### NPE Inference on the Common Dataset
+
+```{r ch16_npe_inference, eval=run_npe_track}
+obs_tensor <- torch$tensor(matrix(as.numeric(y_observed), nrow = 1),
+                            dtype = torch$float32)
+n_post <- 10000L
+
+gcm_npe_samples <- npe_gcm$posterior$sample(c(n_post), x = obs_tensor)$numpy()
+colnames(gcm_npe_samples) <- c("logit_w1", "log_c", "logit_bias")
+cat("GCM NPE posterior: w1 =", round(mean(plogis(gcm_npe_samples[, 1])), 3),
+    ", c =", round(mean(exp(gcm_npe_samples[, 2])), 3),
+    ", bias =", round(mean(plogis(gcm_npe_samples[, 3])), 3), "\n")
+cat("True GCM: w1 = 0.2, c = 2.5, bias = 0.5\n")
+
+kalman_npe_samples <- npe_kalman$posterior$sample(c(n_post), x = obs_tensor)$numpy()
+cat("Kalman NPE posterior: r =", round(mean(exp(kalman_npe_samples[, 1])), 3), "\n")
+
+rule_npe_samples <- npe_rule$posterior$sample(c(n_post), x = obs_tensor)$numpy()
+colnames(rule_npe_samples) <- c("logit_eps", "log_n_part")
+cat("Rule Model A NPE posterior: ε =", round(mean(plogis(rule_npe_samples[, 1])), 3),
+    ", N_particles =", round(mean(exp(rule_npe_samples[, 2])), 0), "\n")
+```
+
+### Posterior Predictive Comparison (Track 2)
+
+```{r ch16_npe_ppc, eval=run_npe_track}
+n_ppc <- 500
+
+compute_ppc_accuracy <- function(posterior_samples, simulator_fn, y_obs,
+                                 n_reps = n_ppc) {
+  idx <- sample.int(nrow(posterior_samples), n_reps, replace = TRUE)
+  vapply(idx, function(i) {
+    y_rep <- simulator_fn(posterior_samples[i, ])
+    mean(y_rep == y_obs)
+  }, numeric(1))
+}
+
+ppc_gcm <- compute_ppc_accuracy(gcm_npe_samples, simulate_gcm_for_npe, y_observed)
+ppc_kal <- compute_ppc_accuracy(kalman_npe_samples, simulate_kalman_for_npe, y_observed)
+ppc_rul <- compute_ppc_accuracy(rule_npe_samples, simulate_rule_for_npe, y_observed)
+
+ppc_df <- bind_rows(
+  tibble(model = "GCM (exemplar)", accuracy = ppc_gcm),
+  tibble(model = "Kalman (prototype)", accuracy = ppc_kal),
+  tibble(model = "Rule Model A (particle filter)", accuracy = ppc_rul)
+)
+
+ggplot(ppc_df, aes(x = accuracy, fill = model)) +
+  geom_histogram(bins = 30, alpha = 0.7, position = "identity") +
+  facet_wrap(~model, ncol = 1) +
+  geom_vline(xintercept = mean(y_observed == common_data_df$category_feedback),
+             linetype = "dashed", color = "red") +
+  scale_fill_viridis_d(option = "plasma") +
+  labs(
+    title    = "Track 2: Posterior Predictive Accuracy Under Cognitive Theories (NPE)",
+    subtitle = "Red dashed: observed accuracy. Distributions: accuracy of posterior predictive replicates.",
+    x = "Proportion of responses matching observed", y = "Count"
+  ) +
+  theme(legend.position = "none")
+
+ppc_summary <- ppc_df |>
+  group_by(model) |>
+  summarise(
+    median_acc = median(accuracy),
+    iqr_lo     = quantile(accuracy, 0.25),
+    iqr_hi     = quantile(accuracy, 0.75),
+    .groups    = "drop"
+  )
+cat("\n--- Track 2: Posterior predictive accuracy (median ± IQR) ---\n")
+print(ppc_summary)
+```
+
+### SBC Spot-Check: GCM NPE Network
+
+We run a 200-iteration Simulation-Based Calibration Checks (SBC) spot-check on the GCM NPE network to confirm the inference network is calibrated. Full 1000-iteration SBC for all three networks is in Chapter 17 where human alien-task data is analysed.
+
+```{r ch16_npe_sbc_spotcheck, eval=run_npe_track}
+n_sbc_check <- 200
+set.seed(42)
+
+sbc_thetas <- matrix(runif(n_sbc_check * 3,
+                            min = c(-4, -1, -4),
+                            max = c(4, 3, 4)),
+                      ncol = 3, byrow = TRUE)
+
+sbc_ranks <- matrix(0L, nrow = n_sbc_check, ncol = 3)
+
+for (i in seq_len(n_sbc_check)) {
+  y_i <- simulate_gcm_for_npe(sbc_thetas[i, ])
+  xi  <- torch$tensor(matrix(as.numeric(y_i), nrow = 1), dtype = torch$float32)
+  post_i <- npe_gcm$posterior$sample(c(1000L), x = xi)$numpy()
+  for (p in 1:3) {
+    sbc_ranks[i, p] <- sum(post_i[, p] < sbc_thetas[i, p])
+  }
+}
+
+sbc_rank_df <- as_tibble(sbc_ranks, .name_repair = "minimal")
+colnames(sbc_rank_df) <- c("logit_w1", "log_c", "logit_bias")
+
+sbc_rank_df |>
+  pivot_longer(everything(), names_to = "parameter", values_to = "rank") |>
+  ggplot(aes(x = rank)) +
+  geom_histogram(bins = 20, fill = "#009E73", alpha = 0.7) +
+  geom_hline(yintercept = n_sbc_check / 20, linetype = "dashed", color = "red") +
+  facet_wrap(~parameter) +
+  labs(
+    title    = "SBC Spot-Check: GCM NPE Network (Track 2)",
+    subtitle = "Should be approximately uniform. 200 iterations (spot-check).",
+    x = "Rank", y = "Count"
+  )
+```
+
+### Comparing Track 1 and Track 2
+
+```{r ch16_track_comparison, eval=run_npe_track}
+if (!is.null(fit_gcm) && exists("ppc_summary")) {
+  track1_ranking <- loo::loo_compare(loo_gcm, loo_kalman, loo_rule)
+  cat("── Track 1 ranking (LOO/LFO-CV, Stan proxies) ──\n")
+  print(track1_ranking)
+
+  cat("\n── Track 2 ranking (NPE, cognitive theories) ──\n")
+  print(ppc_summary |> arrange(desc(median_acc)))
+
+  cat("\n── Interpretation ──\n")
+  cat("If the two tracks agree on the ranking, the proxy-based comparison is\n",
+      "approximately trustworthy for this dataset. If they disagree, the\n",
+      "disagreement localises which proxy's structural bias matters.\n",
+      "On GCM-generated data, the GCM should win both tracks.\n")
+}
+```
+
+### Second Common Dataset: Rule-Generated Data
+
+The GCM-generated common dataset above is designed so that the GCM should win. To see the structural bias in action, we also generate a dataset from Model A (the rule particle filter) and run both tracks on it. On rule-generated data, Track 1 may misrank the models because Model B lacks the learning dynamics that generated the data.
+
+```{r ch16_rule_generated_data, eval=run_npe_track}
+# [Rule particle filter function needed from Ch. 14 — assumes sourced or inlined]
+# Generate data from Model A with known parameters
+y_rule_obs <- simulate_rule_for_npe(c(
+  qlogis(0.1),   # logit(0.1) ≈ -2.2
+  log(N_PARTICLES_FIXED)
+))
+
+cat("Rule-generated dataset: n =", length(y_rule_obs), "trials\n")
+cat("Accuracy:", round(mean(y_rule_obs == npe_cat_one), 3), "\n")
+
+# ── Track 1 on rule-generated data ───────────────────────────────────────────
+fit_rule_gen <- run_fit(mod_rule,
+  modifyList(rule_data_common, list(y = y_rule_obs)), seed = 7)
+fit_gcm_gen  <- run_fit(mod_gcm,
+  modifyList(gcm_data_common, list(y = y_rule_obs)), seed = 7)
+fit_kal_gen  <- run_fit(mod_kalman,
+  modifyList(kalman_data_common, list(y = y_rule_obs)), seed = 7)
+
+loo_gcm_gen  <- loo::loo(fit_gcm_gen$draws("log_lik", format = "matrix"))
+loo_kal_gen  <- loo::loo(fit_kal_gen$draws("log_lik", format = "matrix"))
+loo_rule_gen <- loo::loo(fit_rule_gen$draws("log_lik", format = "matrix"))
+
+cat("\n── Track 1 on RULE-generated data ──\n")
+print(loo::loo_compare(loo_gcm_gen, loo_kal_gen, loo_rule_gen))
+
+# ── Track 2 on rule-generated data ───────────────────────────────────────────
+obs_rule_tensor <- torch$tensor(matrix(as.numeric(y_rule_obs), nrow = 1),
+                                 dtype = torch$float32)
+
+ppc_gcm_r <- compute_ppc_accuracy(
+  npe_gcm$posterior$sample(c(n_post), x = obs_rule_tensor)$numpy(),
+  simulate_gcm_for_npe, y_rule_obs)
+ppc_kal_r <- compute_ppc_accuracy(
+  npe_kalman$posterior$sample(c(n_post), x = obs_rule_tensor)$numpy(),
+  simulate_kalman_for_npe, y_rule_obs)
+ppc_rul_r <- compute_ppc_accuracy(
+  npe_rule$posterior$sample(c(n_post), x = obs_rule_tensor)$numpy(),
+  simulate_rule_for_npe, y_rule_obs)
+
+cat("\n── Track 2 on RULE-generated data (median PPC accuracy) ──\n")
+cat("GCM:    ", round(median(ppc_gcm_r), 3), "\n")
+cat("Kalman: ", round(median(ppc_kal_r), 3), "\n")
+cat("Rule A: ", round(median(ppc_rul_r), 3), "\n")
+```
+
+**Reading this comparison.** On GCM-generated data, the GCM should win both tracks. On rule-generated data, the *cognitive theory* (Model A, fitted via NPE) should win Track 2, but *Model B* (the Stan proxy, fitted via HMC) may or may not win Track 1, depending on whether the particle filter converged to a rule in Model B's candidate set. **The gap between the two tracks' rankings on rule-generated data is the structural bias, made visible.**
+
+---
+
+## Decision Boundary Comparison (Track 1 Only)
+
+Examining the decision boundaries each model imposes on the stimulus space reveals the underlying cognitive geometry. **These boundaries are computed from the Track 1 Stan fits** — the rule boundary is Model B's, not Model A's.
+
+```{r ch16_boundaries, fig.height=5, fig.width=12}
+grid_pts <- expand.grid(
+  height   = seq(0.5, 4.5, length.out = 80),
+  position = seq(0.5, 4.5, length.out = 80)
+)
+
+if (!is.null(fit_gcm)) {
+  gcm_post <- fit_gcm$summary(variables = c("w", "c", "bias"))
+  w_mean  <- gcm_post$mean[startsWith(gcm_post$variable, "w")]
+  c_mean  <- gcm_post$mean[gcm_post$variable == "c"]
+  b_mean  <- gcm_post$mean[gcm_post$variable == "bias"]
+
+  obs_train <- as.matrix(common_data_df[, c("height", "position")])
+  cat_train <- common_data_df$category_feedback
+
+  gcm_grid_prob <- apply(as.matrix(grid_pts), 1, function(x_new) {
+    sims <- vapply(seq_len(nrow(obs_train)), function(e) {
+      d <- sum(w_mean * abs(x_new - obs_train[e, ]))
+      exp(-c_mean * d)
+    }, numeric(1))
+    s1  <- sum(sims[cat_train == 1])
+    s0  <- sum(sims[cat_train == 0])
+    den <- s1 + s0
+    if (den > 1e-9) b_mean * s1 / (b_mean * s1 + (1 - b_mean) * s0) else 0.5
+  })
+
+  r_mean <- fit_kalman$summary(variables = "r_value")$mean
+  r_mat  <- diag(r_mean, 2)
+  mu0    <- c(2.5, 2.5); mu1 <- c(2.5, 2.5)
+  sig0   <- diag(10, 2);  sig1 <- diag(10, 2)
+
+  kalman_update_fn <- function(mu, sigma, obs, r_mat) {
+    S   <- sigma + r_mat; K <- sigma %*% solve(S)
+    mu_new    <- as.numeric(mu + K %*% (obs - mu))
+    IK        <- diag(2) - K
+    sigma_new <- IK %*% sigma %*% t(IK) + K %*% r_mat %*% t(K)
+    list(mu = mu_new, sigma = (sigma_new + t(sigma_new)) / 2)
+  }
+
+  for (i in seq_len(nrow(obs_train))) {
+    x <- obs_train[i, ]
+    if (cat_train[i] == 1) {
+      upd  <- kalman_update_fn(mu1, sig1, x, r_mat); mu1 <- upd$mu; sig1 <- upd$sigma
+    } else {
+      upd  <- kalman_update_fn(mu0, sig0, x, r_mat); mu0 <- upd$mu; sig0 <- upd$sigma
+    }
+  }
+
+  kalman_grid_prob <- apply(as.matrix(grid_pts), 1, function(x_new) {
+    lp0 <- mvtnorm::dmvnorm(x_new, mean = mu0, sigma = sig0 + r_mat, log = TRUE)
+    lp1 <- mvtnorm::dmvnorm(x_new, mean = mu1, sigma = sig1 + r_mat, log = TRUE)
+    if (!all(is.finite(c(lp0, lp1)))) return(0.5)
+    exp(lp1 - log(exp(lp0) + exp(lp1)))
+  })
+
+  eps_mean <- fit_rule$summary(variables = "error_prob")$mean
+  rule_grid_prob <- apply(as.matrix(grid_pts), 1, function(x_new) {
+    h <- x_new[1]; p <- x_new[2]
+    preds <- c(
+      as.integer(h > 2.5),
+      as.integer(p < 2.5),
+      as.integer(h > 2.0 & p > 3.0),
+      as.integer(!(h < 2.0 | p < 2.0)),
+      as.integer(h > 2.5 & p < 3.5)
+    )
+    mean(ifelse(preds == 1, 1 - eps_mean, eps_mean))
+  })
+
+  grid_pred <- grid_pts |>
+    mutate(
+      gcm_prob    = gcm_grid_prob,
+      kalman_prob = kalman_grid_prob,
+      rule_prob   = rule_grid_prob
+    ) |>
+    pivot_longer(
+      cols       = ends_with("_prob"),
+      names_to   = "model",
+      values_to  = "prob_cat1"
+    ) |>
+    mutate(
+      model = factor(model,
+        levels = c("gcm_prob", "kalman_prob", "rule_prob"),
+        labels = c("Exemplar (GCM)", "Prototype (Kalman)", "Rule Model B (Stan proxy)")
+      )
+    )
+
+  ggplot() +
+    geom_tile(data = grid_pred,
+              aes(x = position, y = height, fill = prob_cat1), alpha = 0.85) +
+    stat_contour(data = grid_pred,
+                 aes(x = position, y = height, z = prob_cat1),
+                 breaks = 0.5, color = "black", linewidth = 0.9) +
+    geom_point(data = stimulus_info,
+               aes(x = position, y = height,
+                   color = factor(category_true), shape = factor(category_true)),
+               size = 3) +
+    facet_wrap(~model) +
+    scale_fill_gradient2(low = "#E69F00", mid = "white", high = "#56B4E9",
+                         midpoint = 0.5, name = "P(Cat 1)") +
+    scale_color_manual(values = c("0" = "#0072B2", "1" = "#D55E00"),
+                       name = "True category") +
+    scale_shape_manual(values = c("0" = 16, "1" = 17), name = "True category") +
+    labs(title = "Decision Boundaries: Posterior Mean Parameters",
+         subtitle = "Colour intensity = P(Category 1); black line = 50% boundary",
+         x = "Position Feature", y = "Height Feature") +
+    theme(strip.text = element_text(face = "bold", size = 11))
+}
+```
+
+---
+
+## Performance on Different Category Structures
+
+| Category Structure | Favors | Reason |
+|----|----|----|
+| Single-feature rule | Rule > GCM ≈ Kalman | Rule model concentrates mass on the correct 1D rule rapidly |
+| Conjunction of two features | Rule ≈ GCM > Kalman | GCM and rule model both handle conjunctions; Kalman averages them out |
+| Family resemblance (dense, fuzzy) | GCM > Kalman > Rule | Exemplar storage captures distributed similarity structure |
+| Disjunctive (OR logic) | GCM > Rule > Kalman | Prototype assumes unimodal distribution, which disjunctions violate |
+| Information integration | GCM > Kalman > Rule | Continuous feature weighting captures gradient integration |
+
+The Alien Game (Chapter 15) is structured to span several of these types across its three sessions.
+
+---
+
+## Conclusion: Two Tracks, Two Answers
+
+Rather than viewing exemplar, prototype, and rule-based models as competing alternatives, we can appreciate the complementary insights they provide. This chapter introduced a **two-track comparison framework** that addresses a methodological problem:
+
+**Track 1 (LOO/LFO-CV on Stan proxies)** provides a computationally convenient ranking based on out-of-sample predictive density, with the caveat that the rule model's score reflects the proxy's fit and the GCM/Kalman scores are approximate due to path-dependence. Track 1 is the right tool for quick screening.
+
+**Track 2 (NPE on cognitive theories)** provides a methodologically fair ranking where all three models are fitted as forward simulators with no tractability advantage. Track 2 is the right tool for *cognitive* conclusions.
+
+The two tracks agree on easy cases (the generating model wins in both) and may disagree on hard cases — where the disagreement is itself informative. The gap between the two tracks' rankings on rule-generated data makes the structural-bias cost visible and quantifiable.
+
+The formal comparison in this chapter must be supplemented with:
+
+* LFO-CV for the path-dependent GCM and Kalman models (Chapter 17).
+* Fitting to real human data to test whether the ranking replicates across participants (Chapter 17).
+* Full 1000-iteration Simulation-Based Calibration Checks for all three NPE networks (Chapter 17).
+* Examination of individual differences (Chapter 17).
