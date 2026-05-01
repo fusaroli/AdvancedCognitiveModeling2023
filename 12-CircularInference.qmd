@@ -402,7 +402,7 @@ stan_data_base <- list(
   run_diagnostics = 1L
 )
 
-if (regenerate_fits || !file.exists("simmodels/ch11b_pseudocount_fits.rds")) {
+if (regenerate_fits || !file.exists("simmodels/ch11b_sba_fit.rds")) {
 
   fit_sba <- mod_sba$sample(
     data = c(stan_data_base),
@@ -428,14 +428,14 @@ if (regenerate_fits || !file.exists("simmodels/ch11b_pseudocount_fits.rds")) {
     refresh = 0
   )
 
-  saveRDS(list(sba = fit_sba, pba = fit_pba, wba = fit_wba),
-          "simmodels/ch11b_pseudocount_fits.rds")
+  fit_sba$save_object("simmodels/ch11b_sba_fit.rds")
+  fit_pba$save_object("simmodels/ch11b_pba_fit.rds")
+  fit_wba$save_object("simmodels/ch11b_wba_fit.rds")
 
 } else {
-  pc_fits <- readRDS("simmodels/ch11b_pseudocount_fits.rds")
-  fit_sba <- pc_fits$sba
-  fit_pba <- pc_fits$pba
-  fit_wba <- pc_fits$wba
+  fit_sba <- readRDS("simmodels/ch11b_sba_fit.rds")
+  fit_pba <- readRDS("simmodels/ch11b_pba_fit.rds")
+  fit_wba <- readRDS("simmodels/ch11b_wba_fit.rds")
 }
 ```
 
@@ -957,7 +957,7 @@ stan_data_lo <- list(
   run_diagnostics = 1L
 )
 
-if (regenerate_fits || !file.exists("simmodels/ch11b_lo_fits.rds")) {
+if (regenerate_fits || !file.exists("simmodels/ch11b_sb_lo_fit.rds")) {
 
   sampler <- list(chains = 4, parallel_chains = 4,
                   iter_warmup = 1000, iter_sampling = 1000, refresh = 0)
@@ -967,16 +967,16 @@ if (regenerate_fits || !file.exists("simmodels/ch11b_lo_fits.rds")) {
   fit_ci_lo  <- do.call(mod_ci_lo$sample,  c(list(data = stan_data_lo), sampler))
   fit_cif_lo <- do.call(mod_cif_lo$sample, c(list(data = stan_data_lo), sampler))
 
-  saveRDS(list(sb  = fit_sb_lo,  wb  = fit_wb_lo,
-               ci  = fit_ci_lo,  cif = fit_cif_lo),
-          "simmodels/ch11b_lo_fits.rds")
+  fit_sb_lo$save_object("simmodels/ch11b_sb_lo_fit.rds")
+  fit_wb_lo$save_object("simmodels/ch11b_wb_lo_fit.rds")
+  fit_ci_lo$save_object("simmodels/ch11b_ci_lo_fit.rds")
+  fit_cif_lo$save_object("simmodels/ch11b_cif_lo_fit.rds")
 
 } else {
-  lo_fits    <- readRDS("simmodels/ch11b_lo_fits.rds")
-  fit_sb_lo  <- lo_fits$sb
-  fit_wb_lo  <- lo_fits$wb
-  fit_ci_lo  <- lo_fits$ci
-  fit_cif_lo <- lo_fits$cif
+  fit_sb_lo  <- readRDS("simmodels/ch11b_sb_lo_fit.rds")
+  fit_wb_lo  <- readRDS("simmodels/ch11b_wb_lo_fit.rds")
+  fit_ci_lo  <- readRDS("simmodels/ch11b_ci_lo_fit.rds")
+  fit_cif_lo <- readRDS("simmodels/ch11b_cif_lo_fit.rds")
 }
 ```
 
@@ -1201,7 +1201,7 @@ make_stan_data_lo <- function(grp) {
   )
 }
 
-if (regenerate_fits || !file.exists("simmodels/ch11b_group_fits.rds")) {
+if (regenerate_fits || !file.exists("simmodels/ch11b_ctrl_fit.rds")) {
 
   fit_ctrl <- mod_ci_lo$sample(
     data = make_stan_data_lo("Control"),
@@ -1215,13 +1215,12 @@ if (regenerate_fits || !file.exists("simmodels/ch11b_group_fits.rds")) {
     iter_warmup = 1000, iter_sampling = 1000, refresh = 0
   )
 
-  saveRDS(list(ctrl = fit_ctrl, scz = fit_scz),
-          "simmodels/ch11b_group_fits.rds")
+  fit_ctrl$save_object("simmodels/ch11b_ctrl_fit.rds")
+  fit_scz$save_object("simmodels/ch11b_scz_fit.rds")
 
 } else {
-  g_fits   <- readRDS("simmodels/ch11b_group_fits.rds")
-  fit_ctrl <- g_fits$ctrl
-  fit_scz  <- g_fits$scz
+  fit_ctrl <- readRDS("simmodels/ch11b_ctrl_fit.rds")
+  fit_scz  <- readRDS("simmodels/ch11b_scz_fit.rds")
 }
 ```
 
@@ -1267,7 +1266,7 @@ bind_rows(
   fit_scz$summary(c("w_self", "w_social", "alpha_self", "alpha_social")) |>
     mutate(group = "Schizophrenia")
 ) |>
-  select(group, variable, median, q5, q95) |>
+  dplyr::select(group, variable, median, q5, q95) |>
   arrange(variable, group)
 ```
 

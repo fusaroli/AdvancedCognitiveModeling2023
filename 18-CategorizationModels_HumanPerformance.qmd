@@ -451,7 +451,7 @@ We fit all three Stan models to the real human data. This is the fulfilment of t
 
 **Sequential structure within sessions**: Each session resets the model state (Phase 0 Q2).
 
-**Multilevel vs. single-subject**: The multilevel GCM (Ch. 12, `W11_gcm_ml.stan`) is used for all participants jointly. Kalman and rule models are fitted per-subject (Phase 0 Q3 asymmetry).
+**Multilevel vs. single-subject**: The multilevel GCM (Ch. 13, `ch12_gcm_ml.stan`) is used for all participants jointly. Kalman and rule models are fitted per-subject (Phase 0 Q3 asymmetry).
 
 ```{r ch17_load_models}
 load_or_stop <- function(path) {
@@ -461,9 +461,9 @@ load_or_stop <- function(path) {
   cmdstan_model(path)
 }
 
-mod_gcm_ml <- load_or_stop("stan/W11_gcm_ml.stan")
-mod_kalman <- load_or_stop("stan/W12_prototype_single.stan")
-mod_rule   <- load_or_stop("stan/W13_rule_simplified.stan")
+mod_gcm_ml <- load_or_stop("stan/ch12_gcm_ml.stan")
+mod_kalman <- load_or_stop("stan/ch13_prototype_single.stan")
+mod_rule   <- load_or_stop("stan/ch14_rule_simplified.stan")
 cat("All three Stan models loaded.\n")
 ```
 
@@ -611,13 +611,20 @@ if (regenerate_fits || !file.exists(fits_path)) {
 
       # ── Multilevel GCM ────────────────────────────────────────────────────
       gcm_dat <- build_gcm_ml_data(sess_data, dec)
-      all_fits[[paste0(key, "_gcm")]] <- tryCatch(
+      fit_gcm <- tryCatch(
         run_fit_ml(mod_gcm_ml, gcm_dat,
                    seed = sess * 100 + as.integer(dec == "nutritious")),
         error = function(e) { cat("    GCM fit error:", e$message, "\n"); NULL }
       )
+      # Extract all needed data immediately so saveRDS gets plain R objects
+      all_fits[[paste0(key, "_gcm")]] <- if (!is.null(fit_gcm)) tryCatch(list(
+        log_lik     = fit_gcm$draws("log_lik", format = "matrix"),
+        pop_summary = fit_gcm$summary(c("pop_w", "pop_log_c_mean",
+                                        "pop_log_c_sd", "kappa")),
+        ind_w       = fit_gcm$summary("subj_w")
+      ), error = function(e) NULL)
 
-      # ── Kalman: per-subject fits, store full objects for s1 (individual differences)
+      # ── Kalman: per-subject fits, store extracted summaries for s1
       kalman_ll_list   <- vector("list", length(subjects))
       kalman_full_s1   <- vector("list", length(subjects))
       for (ji in seq_along(subjects)) {
@@ -632,13 +639,15 @@ if (regenerate_fits || !file.exists(fits_path)) {
         )
         if (!is.null(fit_k)) {
           kalman_ll_list[[ji]] <- fit_k$draws("log_lik", format = "matrix")
-          if (sess == 1) kalman_full_s1[[ji]] <- fit_k  # store full for s1
+          if (sess == 1) kalman_full_s1[[ji]] <- tryCatch(
+            fit_k$summary("r_value"), error = function(e) NULL
+          )
         }
       }
       all_fits[[paste0(key, "_kalman_ll")]]   <- kalman_ll_list
       if (sess == 1) all_fits[[paste0(key, "_kalman_full")]] <- kalman_full_s1
 
-      # ── Rule model: per-subject fits, store full objects for s1
+      # ── Rule model: per-subject fits, store extracted summaries for s1
       rule_ll_list   <- vector("list", length(subjects))
       rule_full_s1   <- vector("list", length(subjects))
       for (ji in seq_along(subjects)) {
@@ -653,7 +662,9 @@ if (regenerate_fits || !file.exists(fits_path)) {
         )
         if (!is.null(fit_r)) {
           rule_ll_list[[ji]] <- fit_r$draws("log_lik", format = "matrix")
-          if (sess == 1) rule_full_s1[[ji]] <- fit_r
+          if (sess == 1) rule_full_s1[[ji]] <- tryCatch(
+            fit_r$summary("error_prob"), error = function(e) NULL
+          )
         }
       }
       all_fits[[paste0(key, "_rule_ll")]]   <- rule_ll_list
@@ -688,18 +699,22 @@ for (sess in sessions) {
     key <- paste0("s", sess, "_", dec)
 
     gcm_fit <- all_fits[[paste0(key, "_gcm")]]
-    if (!is.null(gcm_fit)) {
-      ll_gcm <- gcm_fit$draws("log_lik", format = "matrix")
-      loo_results[[paste0(key, "_gcm")]] <- loo::loo(ll_gcm, cores = 4)
-    }
+    if (!is.null(gcm_fit) && !is.null(gcm_fit$log_lik))
+      loo_results[[paste0(key, "_gcm")]] <- tryCatch(
+        loo::loo(gcm_fit$log_lik, cores = 4), error = function(e) NULL
+      )
 
     ll_kal <- concat_subj_ll(all_fits[[paste0(key, "_kalman_ll")]])
     if (!is.null(ll_kal))
-      loo_results[[paste0(key, "_kalman")]] <- loo::loo(ll_kal, cores = 4)
+      loo_results[[paste0(key, "_kalman")]] <- tryCatch(
+        loo::loo(ll_kal, cores = 4), error = function(e) NULL
+      )
 
     ll_rule <- concat_subj_ll(all_fits[[paste0(key, "_rule_ll")]])
     if (!is.null(ll_rule))
-      loo_results[[paste0(key, "_rule")]] <- loo::loo(ll_rule, cores = 4)
+      loo_results[[paste0(key, "_rule")]] <- tryCatch(
+        loo::loo(ll_rule, cores = 4), error = function(e) NULL
+      )
   }
 }
 
@@ -766,7 +781,9 @@ stacking_df <- map_dfr(sessions, function(sess) {
     )
     valid <- Filter(Negate(is.null), l)
     if (length(valid) < 2) return(NULL)
-    w <- loo::loo_model_weights(valid, method = "stacking")
+    w <- tryCatch(loo::loo_model_weights(valid, method = "stacking"),
+                  error = function(e) NULL)
+    if (is.null(w)) return(NULL)
     tibble(
       session  = sess,
       decision = dec,
@@ -776,7 +793,9 @@ stacking_df <- map_dfr(sessions, function(sess) {
   })
 })
 
-ggplot(stacking_df,
+if (is.null(stacking_df) || nrow(stacking_df) == 0) {
+  cat("No stacking weights available (fits may need regenerating with regenerate_fits = TRUE).\n")
+} else ggplot(stacking_df,
        aes(x = weight, y = factor(model,
          levels = c("gcm", "kalman", "rule"),
          labels = c("GCM", "Kalman", "Rule (B)")),
@@ -799,12 +818,12 @@ ggplot(stacking_df,
 
 ### LFO-CV for Path-Dependent Models
 
-Standard LOO is approximate for the GCM and Kalman filter. Chapter 12's `psis_lfo_gcm()` and Chapter 13's `psis_lfo_kalman()` implement the PSIS-based LFO-CV approximation. Here we call those implementations for Session 1 to show the correct LFO-CV estimate alongside the standard LOO estimate for comparison. The discrepancy between LOO and LFO-CV measures the magnitude of the path-dependence bias.
+Standard LOO is approximate for the GCM and Kalman filter. Chapter 13's `psis_lfo_gcm()` and Chapter 14's `psis_lfo_kalman()` implement the PSIS-based LFO-CV approximation. Here we call those implementations for Session 1 to show the correct LFO-CV estimate alongside the standard LOO estimate for comparison. The discrepancy between LOO and LFO-CV measures the magnitude of the path-dependence bias.
 
 ```{r ch17_lfo_cv}
 # ── LFO-CV for GCM (Session 1, dangerous) ────────────────────────────────────
-# Full LFO-CV requires the psis_lfo_gcm() function from Ch. 12.
-# If the function is available in the search path (e.g., sourced from ch12),
+# Full LFO-CV requires the psis_lfo_gcm() function from Ch. 13.
+# If the function is available in the search path (e.g., sourced from ch13),
 # call it here. Otherwise we use PSIS-LOO with moment matching as the next
 # best approximation, which improves accuracy for high-k observations.
 
@@ -859,8 +878,7 @@ gcm_pop_summary <- imap_dfr(
     sess <- as.integer(str_extract(name, "(?<=s)\\d"))
     dec  <- str_extract(name, "dangerous|nutritious")
     tryCatch({
-      fit$summary(variables = c("pop_w", "pop_log_c_mean",
-                                "pop_log_c_sd", "kappa")) |>
+      fit$pop_summary |>
         mutate(session = sess, decision = dec)
     }, error = function(e) NULL)
   }
@@ -884,7 +902,7 @@ gcm_ind_w <- imap_dfr(
     sess <- as.integer(str_extract(name, "(?<=s)\\d"))
     dec  <- str_extract(name, "dangerous|nutritious")
     tryCatch({
-      fit$summary(variables = "subj_w") |>
+      fit$ind_w |>
         mutate(
           session    = sess,
           decision   = dec,
@@ -944,7 +962,7 @@ kalman_r_s1 <- imap_dfr(
       fit_k <- full_fits[[ji]]
       if (is.null(fit_k)) return(NULL)
       tryCatch({
-        fit_k$summary("r_value") |>
+        fit_k |>
           mutate(
             subject  = subjects[ji],
             session  = 1L,
@@ -982,7 +1000,7 @@ rule_eps_s1 <- imap_dfr(
       fit_r <- full_fits[[ji]]
       if (is.null(fit_r)) return(NULL)
       tryCatch({
-        fit_r$summary("error_prob") |>
+        fit_r |>
           mutate(
             subject  = subjects[ji],
             session  = 1L,
@@ -1015,7 +1033,7 @@ if (nrow(rule_eps_s1) > 0) {
 gcm_fit_s1d <- all_fits[["s1_dangerous_gcm"]]
 
 if (!is.null(gcm_fit_s1d)) {
-  ll_mat <- gcm_fit_s1d$draws("log_lik", format = "matrix")
+  ll_mat <- gcm_fit_s1d$log_lik
   loo_gcm_s1d <- loo::loo(ll_mat, cores = 4)
   plot(loo_gcm_s1d, label_points = TRUE,
        main = "GCM Pareto-k: Session 1, Dangerous")

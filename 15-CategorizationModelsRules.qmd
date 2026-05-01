@@ -6,6 +6,8 @@ format:
     code-tools: true
 ---
 
+# Rule-Based Models of Categorization
+
 ```{r ch14_setup, include=FALSE}
 knitr::opts_chunk$set(
   echo      = TRUE,
@@ -47,8 +49,8 @@ pacman::p_load(
 theme_set(theme_classic())
 
 # ── Prior hyperparameter for logit(error_prob) ────────────────────────────────
-# Normal(0, 1.5) is approximately uniform on the probability scale (persona
-# Phase 0 Q4 default). Prior median ε ≈ 0.50; 95% mass on (0.05, 0.95).
+# Normal(0, 1.5) is approximately uniform on the probability scale.
+# Prior median ε ≈ 0.50; 95% mass on (0.05, 0.95).
 # This is deliberately wider than the Normal(-2, 1) used in earlier drafts,
 # which concentrated mass below ε = 0.27 and cut off the posterior for
 # near-chance subjects. priorsense::powerscale_sensitivity() should be
@@ -69,7 +71,7 @@ LOGIT_MU_PRIOR_SD   <- 1.5
 
 # ── Structural commitments for the particle filter (Model A) ─────────────────
 # These are NOT inferred from data — they are cognitive choices the modeller
-# makes. Phase 0, question 4 surfaces them.
+# makes. Sensitivity to each is exercised in dedicated subsections.
 N_PARTICLES_FIXED  <- 100    # working-memory bound on hypothesis count
 MAX_RULE_DIMS      <- 2      # maximum number of conditions in a rule
 RULE_OPERATORS     <- c(">", "<")
@@ -207,86 +209,39 @@ plan(multisession, workers = max(1, availableCores() - 1))
 > gap between their posteriors as the chapter's main empirical finding: the
 > magnitude of the structural bias you accept when you replace an intractable
 > cognitive theory with a tractable proxy.
->
-> Standard PSIS-LOO is **technically valid for Model B** (it is conditionally
-> exchangeable — leaving out trial $t$ does not affect the likelihood of any
-> other trial), so the LFO-CV machinery introduced in Chapters 11 and 12 is
-> not needed here. We say this once, in §"LFO-CV does not apply here," and
-> reference Chapter 11's `psis_lfo_gcm()` and Chapter 12's `psis_lfo_kalman()`
-> for completeness.
-
-## Rule-Based Models of Categorization
-
-> **📋 Validation battery roadmap for this chapter**
->
-> Two columns because two models. Validation of Model B does not transfer to
-> Model A.
->
-> | Persona phase | Model A (particle filter) | Model B (Stan mixture proxy) |
-> |---|---|---|
-> | 0. Conceptual interrogation | §"Phase 0: Two Models, Not One" | §"Phase 0: Two Models, Not One" |
-> | 1. Forward simulator | `rule_particle_filter()` | none — no separate simulator needed |
-> | 2. Implementation | R only — no closed-form likelihood | §"Stan Model: Marginalised Mixture" |
-> | 3.0 MCMC diagnostics | n/a (no MCMC) | §"Mandatory MCMC Diagnostic Battery" |
-> | 3.2 Prior predictive | §"Prior Predictive Check (Model A)" — and the cross-model warning that goes with it | uses Model A's simulator → cross-model warning applies |
-> | 3.3 Posterior predictive | via NPE posterior | §"Posterior Predictive Check (Model B)" |
-> | 3.4 Prior–posterior update | §"NPE: Prior–Posterior Update for $\varepsilon$" | §"Prior–Posterior Update Plot (Model B)" |
-> | 3.5 Prior sensitivity | embedding network learns summaries; prior-width sweep | `priorsense::powerscale_sensitivity()` |
-> | 4.5 LOO-PIT (randomised, binary) | n/a | §"Randomised LOO-PIT (Model B)" |
-> | 4.6 LFO-CV | n/a (Model A is fitted via NPE, not likelihood) | §"LFO-CV Does Not Apply Here" — Model B is exchangeable |
-> | 6a. Parameter recovery | §"NPE: Parameter Recovery via SBC + Expected Coverage" | §"Parameter Recovery (Model B)" |
-> | 6b. SBC | §"NPE: SBC + Expected Coverage + TARP" | §"Real SBC for the Stan Mixture (Model B)" |
-> | 6b.cross. Cross-model calibration check | §"Cross-Model Calibration Check" — generates from Model A, fits Model B; **labelled** as a robustness check, not SBC |
-> | 6c. Posterior SBC | n/a | §"Posterior SBC for Model B" — local calibration at the fitted posterior |
-> | Identifiability check | §"Phase 0", Q3 ($\varepsilon$ vs rule set) | §"Phase 0", Q3 |
 
 ## Theoretical Foundations
 
-In the previous chapters, we explored models based on similarity. Exemplar models compute similarity to stored instances, while prototype models compute similarity to category averages. However, humans sometimes categorize using explicit criteria or rules. Think about definitions like "a square is a shape with four equal sides and four right angles" or simple diagnostic rules like "if the animal has feathers, it's a bird."
-
-Rule-based models propose that categorization often involves learning and applying such explicit rules that define category membership by partitioning the feature space.
+The previous chapters built two families of similarity-based models: exemplar models that compute similarity to stored instances, and prototype models that compute similarity to a running mean. Both families answer the question "how much does this stimulus resemble what I already know about each category?" Rule-based models ask a different question: "does this stimulus satisfy the defining conditions for category membership?" Think of "a square has four equal sides and four right angles," or the diagnostic shortcut "if it has feathers, it is a bird."
 
 ### Core Assumptions of Rule-Based Models
 
-1. **Explicit Rules**: Categories are represented by rules specifying conditions for membership (e.g., "Height > 2.5 AND Position < 3.0").
+1. **Explicit decision criteria**: Categories are represented as logical conditions on feature values (e.g., "height > 2.5 AND position < 3.0"), not as collections of stored traces or running statistics.
 
-2. **Rule Testing**: Learning involves generating, testing, weighting and refining candidate rules based on feedback.
+2. **Hypothesis search and weighting**: Learning involves maintaining, testing, and revising candidate rules trial by trial, rather than accumulating evidence incrementally in a fixed representation.
 
-3. **Selective Attention**: Rules typically focus attention on specific, relevant features mentioned in the rule, ignoring irrelevant ones.
+3. **Structurally encoded attention**: A rule makes irrelevant dimensions invisible by construction — a threshold on height simply does not reference position. This differs from the *parametric* attention of GCM ($w_d$ weights) and the prototype model ($w_k$ weights), where all dimensions enter the computation but can be up- or down-weighted.
 
-4. **Deterministic Boundaries**: Simple rules often create sharp, axis-aligned boundaries in the feature space.
+4. **Sharp, axis-aligned boundaries**: A conjunctive threshold rule partitions the feature space into a rectangle; generalisation drops to zero as soon as the boundary is crossed, unlike the graded gradients of distance-based models.
 
-5. **Verbal Representation**: Rules are often easily verbalizable (e.g., "If height > 2.5, then Category A"), and might actually become easier to learn and represent through verbalization.
-
-### Rules vs. Similarity-Based Approaches
-
-The distinction between rule-based and similarity-based approaches lies not just in the computational details, but in fundamental assumptions about how the mind represents categories:
-
-| Aspect | Rule-Based Models | Similarity-Based Models |
-|--------|------------------|------------------------|
-| **Representation** | Explicit decision criteria | Stored examples or prototypes |
-| **Decision Process** | Rule application | Similarity computation |
-| **Feature Use** | Selective (focus on rule-relevant features) | Holistic (all features might contribute) |
-| **Category Boundaries** | Sharp and often axis-aligned | Fuzzy and sensitive to overall similarity |
-| **Individual Differences** | Different rules | Different attention weights |
-| **Generalization Pattern** | Rectangle-like regions | Similarity-gradient regions |
+5. **Verbalizability**: Rules are often directly articulable, which connects this framework to verbal protocol data and dual-process theories of categorization.
 
 ### Rule-Based Categorization in the Six-Step Pipeline
 
-Chapters 11 and 12 used a six-stage framework to locate GCM and the Kalman filter prototype in the space of possible categorization models. The rule-based model occupies a distinct position at almost every stage:
+Chapters 11 and 12 used a six-stage framework to locate the GCM and the Kalman-filter prototype in the space of possible categorization models. The rule-based particle filter occupies a distinct position at stages 2, 3, and 6:
 
 | Stage | GCM (Ch. 11) | Kalman prototype (Ch. 12) | Rule particle filter (Ch. 13) |
 |---|---|---|---|
 | **1. Input representation** | Raw feature vector | Raw feature vector | Raw feature vector |
-| **2. Attention** | Continuous weights $w_d$ across all features | None (equal implicit weight) | Selective — only rule-relevant dimensions attend; irrelevant dimensions are structurally ignored |
+| **2. Attention** | Learned continuous weights $w_d$; any $w_d = 0$ drops a dimension | Optional learned weights $w_k$ (§Selective Attention); base model weights equally | Structural — irrelevant dimensions absent from the rule by definition |
 | **3. Intermediate representation** | Per-category similarity sums | Per-category Gaussian running mean + covariance | Weighted distribution over discrete rule hypotheses $\{r_1, \ldots, r_N\}$ |
 | **4. Evidential mechanism** | Luce-ratio over similarities | Ratio of Gaussian likelihoods | Weighted vote over rule predictions, softened by $\varepsilon$ |
 | **5. Decision rule** | Softmax threshold | Softmax threshold | Same |
-| **6. Learning** | Exemplar accumulation (decay at rate $\lambda$) | Kalman update (process noise $q$) | Sequential Monte Carlo: weight update → resample → (mutate at rate $\mu$) |
+| **6. Learning** | Exemplar accumulation (decay at rate $\lambda$) | Kalman update (process noise $q$) | Sequential Monte Carlo: weight update → resample → mutate at rate $\mu$ |
 
-The key contrasts are at stages 2, 3, and 6. At stage 2, the rule model is the only one that uses *structural* selective attention — the rule itself encodes which dimensions are relevant, rather than learned continuous weights. At stage 3, the model maintains a *hypothesis distribution* over discrete logical objects, not a similarity sum or a running mean. At stage 6, learning is a particle filter rather than a closed-form update, which is why the likelihood is intractable and NPE is required to fit Model A.
+The sharpest contrasts are at stages 2, 3, and 6. At stage 2, the GCM and prototype models achieve selective attention *parametrically* — by learning weights that can suppress any dimension to zero — whereas the rule model achieves it *structurally*, because the rule itself never mentions the irrelevant dimensions. At stage 3, the model maintains a hypothesis distribution over discrete logical objects rather than a similarity sum or a running mean. At stage 6, the stochastic resample-and-mutate step breaks differentiability, which is why the likelihood is intractable and NPE is required to fit Model A.
 
-::: {.callout-note title="Why the six-step pipeline does not produce a single clean Stan model here"}
+::: {.callout-note title="Why can't we have a single clean Stan model here?"}
 In Chapters 11 and 12, each stage of the pipeline mapped onto a differentiable Stan operation: gradient-based sampling could reach every parameter. In Chapter 14, stage 3 (the discrete hypothesis distribution) and stage 6 (the stochastic resample step) break differentiability. The particle filter is a valid Bayesian cognitive model, but it is not a Stan model. This is why the chapter introduces two models: Model A is the cognitive theory, fitted via NPE; Model B is a tractable differentiable proxy, fitted via HMC.
 :::
 
@@ -425,62 +380,9 @@ cat("Nested Rule Prediction:", evaluate_rule(rule_example_nested, test_stimulus)
 ---
 
 
-## Phase 0: Two Models, Not One
-
-The persona's Phase 0 interrogation is unusually consequential for this chapter, because rule-based categorisation has the property that the *cognitive theory we want to test* (the particle filter) and the *model we can fit with HMC* (a marginalised mixture over fixed rules) are not the same model — and pretending otherwise has cost real research conclusions in the past. We surface the structural commitments before any code is written.
-
-> **Q1 — What is the cognitive theory?**
->
-> The cognitive theory is **Model A**: a sequential agent that maintains a finite working set of $N_{\text{particles}}$ candidate rules drawn from a structured grammar, updates the weights on those rules via Bayes's rule given new feedback, resamples when effective sample size drops below threshold, and chooses categories by weighted vote. The agent's parameters are:
->
-> * $\varepsilon$ — error rate (probability that the agent applies its rule incorrectly on any trial)
-> * $N_{\text{particles}}$ — the number of hypotheses the agent maintains simultaneously, interpretable as a working-memory bound
-> * $\text{max\_dims}$ — the maximum number of feature conditions in a rule
-> * The rule grammar — which features, operators, and logical connectives are allowed
-> * The resampling threshold — when the agent reorganises its hypothesis set
->
-> The cognitive theory is the *whole* particle filter, including these structural choices. None of them is a nuisance.
-
-> **Q2 — Can the cognitive theory be fitted with HMC? No. Why not?**
->
-> Three reasons stack:
->
-> 1. **The rule space is discrete and combinatorial.** Stan needs gradients with respect to a continuous parameter space. There is no natural notion of a derivative with respect to "which logical operator appears in condition 1" or "which feature dimension this rule uses."
-> 2. **The resampling step is non-differentiable.** Even if we could embed individual rules in a continuous space, the resample operation is a stochastic discrete jump that no HMC sampler can integrate over.
-> 3. **The latent particle trajectories cannot be marginalised analytically.** In Chapter 8 we marginalised mixture components by summing over them; here the "latent variable" is a high-dimensional trajectory of weighted rule sets, and the corresponding sum has no closed form for any reasonable rule grammar.
->
-> The principled response is **simulator-based inference**. Neural Posterior Estimation (NPE) — a modern neural-network-based approach to simulation-based inference (SBI) — is the right tool for this exact situation: the simulator $M(\theta, V) \mapsto y$ exists (it is the `rule_particle_filter` R function), the parameters $\theta$ are well-defined, but the likelihood $p(y \mid \theta)$ has no tractable form. NPE trains a neural network (a normalising flow) on simulated $(\theta, y)$ pairs to learn the mapping from data to posterior distribution. Once trained, inference on any new dataset takes milliseconds — the upfront training cost is **amortized** across all subsequent fits (Radev et al. 2023, Deistler et al. 2025). This amortization is what makes the Chapter 15 comparison across all three cognitive theories executable: train one NPE network per model, then fit every subject in the dataset in seconds. Earlier drafts of this chapter used rejection ABC, which has three disadvantages that NPE resolves: (i) rejection ABC requires hand-crafted summary statistics and the posterior is biased by their insufficiency, (ii) the simulation budget scales linearly per subject with no reuse, and (iii) the accepted sample size is tiny (~100 draws from 10,000 simulations). NPE with a learned embedding network sidesteps all three. We implement NPE in §"Neural Posterior Estimation for Model A" via the `sbi` Python package, accessed from R through `reticulate`.
-
-> **Q3 — What is Model B and how does it relate to Model A?**
->
-> **Model B is *not* the same as Model A with a clever marginalisation trick.** It is a completely different generative model: a static, conditionally exchangeable mixture over a small fixed set of hand-picked candidate rules, with one continuous parameter $\varepsilon$ and uniform weights over $R$ rules. Its likelihood is closed-form Bernoulli, marginalised analytically with `log_sum_exp`. It has no learning dynamics, no resampling, no working-memory bound, no rule discovery, and the candidate rules are fixed by the modeller (us) by inspecting the stimulus layout.
->
-> Model B fits cleanly in Stan and admits the full HMC validation pipeline. **But what it validates is Model B, not Model A.** A flat ECDF in an SBC plot for Model B means "Stan correctly inverts the marginalised mixture." It does *not* mean "Stan correctly inverts the particle filter," and it never could.
->
-> What Model B *can* answer, when fitted to data generated from Model A: "given this particular candidate rule set, what value of $\varepsilon$ best explains the observed responses?" If the particle filter's converged rule happens to be in the candidate set, Model B's $\varepsilon$ posterior will track Model A's $\varepsilon$ closely. If the converged rule is *not* in the candidate set, Model B compensates by inflating $\varepsilon$ to absorb the systematic misclassifications. The $\varepsilon$ posterior is then a *biased* estimate of the cognitive parameter, biased in a direction the modeller cannot easily correct.
->
-> **What we commit to here:** We treat Model B as a tractable proxy whose validation tests the proxy, not the cognitive theory. We use NPE to fit Model A. We compare the two posteriors as the chapter's main empirical result.
-
-> **Q4 — Are there parameters being silently fixed in Model A?**
->
-> Three structural choices that earlier drafts of this chapter buried in code:
->
-> 1. **$N_{\text{particles}}$.** Earlier versions used 50, 100, 150, or 200 in different sub-sections without justification. We commit here to a single defended default: $N_{\text{particles}} = 100$, interpretable as a working-memory bound on the number of hypotheses an agent can maintain simultaneously. This is the value used everywhere in the chapter unless explicitly varied (in §"Sensitivity to $N_{\text{particles}}$" and in the NPE subsection where it can become a free parameter).
-> 2. **$\text{max\_dims} = 2$.** The rule grammar allows up to two-condition rules (1D or 2D). We test sensitivity to this in §"Rule Grammar: Formal Specification" by also fitting under $\text{max\_dims} = 1$ and $\text{max\_dims} = 3$.
-> 3. **Operator and logic sets.** $\{>, <\}$ and $\{\text{AND}, \text{OR}\}$. No negation, no equality. We support flat two-condition rules (1D or 2D) and nested three-condition rules of the form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$; see §"Rule Grammar: Formal Specification." No deeper nesting. These are commitments to a specific rule language and they bias the inferential conclusions just as much as the prior on $\varepsilon$ does. The prior-sensitivity machinery (`priorsense::powerscale_sensitivity`) cannot detect bias from these choices because the bias is in the structural prior, not the parametric prior over $\varepsilon$.
-> 4. **Resampling threshold = 0.5.** The particle filter resamples when $\text{ESS} < N_{\text{particles}} \times 0.5$. This controls how aggressively the agent reorganises its hypothesis set. We test sensitivity to this in §"Sensitivity to Resampling Threshold."
-
-> **Q5 — Are the candidate rules in Model B truly prior to the data?**
->
-> No, and this is the part of the chapter that earlier drafts admitted in a single bracketed remark and then ignored. **The seven candidate rules in Model B are picked by looking at the stimulus layout.** Strictly speaking, then, $p(\text{rule} = r) = 1/R$ is not a prior — it is an empirical approximation to the *posterior* over rules, conditional on having inspected the data-generating structure. The honest framings are either (i) treat the candidate set as a sensitivity analysis ("we test what fit a hand-picked rule set provides; results are conditional on this set"), or (ii) generate the candidate rules blind by running the particle filter on a *separately simulated* dataset and using its converged top rules. Both options are exercised in §"Discharging the Post-Hoc Rule Selection."
-
-**Summary of Phase 0 commitments.** Two models, not one. Model A is the cognitive theory, has no Stan-tractable likelihood, and is fitted via Neural Posterior Estimation (NPE). Model B is a tractable proxy with a hand-picked rule set; it admits the full HMC validation pipeline but the validation tests the proxy, not the theory. $N_{\text{particles}}$ is fixed at 100 with an explicit cognitive interpretation; the resampling threshold is fixed at 0.5 with a sensitivity sweep. The rule grammar is documented formally below. The Stan candidate rule set is treated as a sensitivity-analysis condition, not as a prior. The chapter's main empirical contribution is the **gap between the NPE posterior on $\varepsilon$ under Model A and the Stan posterior on $\varepsilon$ under Model B** — that gap is the structural bias you accept when you replace the cognitive theory with a tractable proxy.
-
----
-
 ## Rule Grammar: Formal Specification
 
-Earlier drafts of this chapter left the rule grammar inside the body of `generate_random_rule()` and let the reader infer it from the code. The persona's Phase 0 says: name the structural priors. Here is the formal grammar.
+Let's build a formal grammar for rule specification.
 
 A rule $r$ in our grammar is a tuple
 
@@ -507,7 +409,7 @@ The number of distinct rules in this grammar is finite (although large). For $\t
 * No negation operator. A rule cannot say "NOT (Height > 2)." Negation can be partially recovered by flipping $c$ and choosing the complementary inequality, but compound negations cannot be expressed.
 * No equality operator. Strict inequalities only.
 * Maximum two conditions per flat rule, or three conditions in a nested rule. A reader who believes humans use deeper rule trees will need to extend the grammar further.
-* Continuous thresholds. This defeats analytical marginalisation in Stan (see §"Phase 0: Two Models, Not One").
+* Continuous thresholds. This defeats analytical marginalisation in Stan (see §"Why Model A's Likelihood is Intractable for HMC").
 * Nested rules use a fixed two-level tree: one outer condition and one inner clause of two conditions. Deeper trees (e.g., A AND (B AND (C OR D))) are not implemented.
 
 We will test sensitivity to `max_dims` in the dedicated subsection, and the operator/logic-set commitments are flagged in §"Limitations."
@@ -541,7 +443,11 @@ The core idea:
 
 3. **Update Weights**: When a new stimulus and its correct category are observed, we update the weights. Rules that correctly predict the category get their weights increased; rules that predict incorrectly get their weights decreased. The amount of change depends on how likely the observation was under that rule.
 
-4. **Resample**: Over time, many particles accumulate near-zero weight ("particle degeneracy"). To focus computational effort, we periodically resample: draw $N$ new particles with probability proportional to their weights. High-weight particles are likely to be selected multiple times; low-weight particles are likely to be dropped. After resampling, weights are reset to $1/N$.
+4. **Resample**: Over time, many particles accumulate near-zero weight ("particle degeneracy"). To focus computational effort, we periodically resample when the Effective Sample Size drops below a threshold: draw $N$ new particles with probability proportional to their weights. High-weight particles are likely to be selected multiple times; low-weight particles are likely to be dropped. After resampling, weights are reset to $1/N$.
+
+5. **Mutate**: Resampling *selects* from the current hypothesis set — it cannot invent rules that were never in the initial set. A mutation step gives each particle an independent probability $\mu$ of being replaced by a freshly sampled rule from the grammar. This injects hypothesis turnover, prevents the hypothesis space from collapsing to a few survivors, and allows the filter to track categories that change over time. $\mu = 0$ recovers a pure selection filter; $\mu > 0$ is the analogue of process noise $q$ in the Kalman prototype and the forgetting rate $\lambda$ in the decay GCM.
+
+The trial-level loop therefore runs: **predict → receive feedback → update weights → resample if ESS low → mutate**. Mutation comes last because it operates on the post-resample particle set: rules that survived selection are diversified before the next trial begins, ensuring fresh hypotheses enter with uniform weight and are evaluated fairly on the next observation.
 
 ### Why Model A's Likelihood is Intractable for HMC
 
@@ -662,18 +568,13 @@ cat("Weights AFTER: ", round(updated_w, 3), "\n")
 
 If we only update weights, eventually most weights become near zero and only a few particles dominate — **particle degeneracy**. Resampling revitalizes the particle set by drawing $N$ new particles with probability proportional to weights, then resetting all weights to $1/N$.
 
-A common heuristic is to resample when the **Effective Sample Size** (ESS) drops below a threshold (e.g., $N/2$). ESS is estimated as $1 / \sum_i w_i^2$. Low ESS indicates high degeneracy.
+**Why not resample when any individual weight falls below a threshold?** A single low weight is not a reliable signal: in a healthy filter, a few particles always receive less support than the rest. A per-particle threshold triggers resampling whenever one particle becomes unlikely — which can happen after every informative trial even when the overall set is perfectly adequate. The result is constant, unnecessary resampling that destroys diversity without solving any real problem. The relevant question is not "is any single weight small?" but "how much of the population is effectively pulling its weight?"
 
-> **A note on ESS here vs. ESS in MCMC diagnostics.** ESS appears in two distinct
-> contexts in this module. In Chapters 4–10 it measures how many effectively
-> independent posterior draws an MCMC chain produces. Here it measures how many
-> particles are effectively contributing to the filter's approximation, given
-> their weights. Both are measures of statistical efficiency under a sampling
-> procedure; the underlying intuition is the same but the contexts are
-> different. The persona's diagnostic battery in Phase 3.0 is about the first
-> kind (MCMC ESS); the resampling threshold here is about the second kind
-> (particle ESS). Both names are correct and they refer to genuinely different
-> things.
+**Why not resample on every trial?** Resampling discards particles: particles that lose a draw at one step may have been the correct hypothesis a few trials later, after an unexpected observation. Resampling every trial collapses diversity prematurely and makes the filter brittle to any short streak of misleading feedback. It also breaks the sequential importance-sampling interpretation of the filter — the weights are supposed to accumulate evidence across trials before being acted on.
+
+**The ESS-based threshold balances both concerns.** The **Effective Sample Size** $\text{ESS} = 1 / \sum_i w_i^2$ is a single number that summarises the whole weight distribution: it equals $N$ when all weights are uniform (maximum diversity) and approaches 1 when one particle has all the weight (complete degeneracy). Using the rule "resample when $\text{ESS} < N \times \tau$" (with $\tau = 0.5$ as the default threshold) means resampling fires only when the collective distribution of weights has become concentrated — not because any particular particle is small, and not on a fixed schedule. This allows weights to accumulate evidence across trials when the current hypothesis set is still informative, and intervenes only when the approximation quality has genuinely degraded.
+
+> **A note on ESS here vs. ESS in MCMC diagnostics.** ESS appears in two distinct contexts in this book. In Chapters 4–10 it measures how many effectively independent posterior draws an MCMC chain produces, diagnosing autocorrelation. Here it measures how many particles are effectively contributing to the filter's approximation, given their weights. Both are measures of statistical efficiency under a sampling procedure — the underlying intuition (fewer effective units = less reliable estimate) is the same — but the contexts are different. The MCMC ESS is about temporal autocorrelation; the particle ESS is about weight concentration. Both names are correct and they refer to genuinely different things.
 
 ```{r ch14_resample_particles}
 resample_particles <- function(particles, weights) {
@@ -692,7 +593,39 @@ rs <- resample_particles(initial_system$particles, skewed_w)
 cat("Weights AFTER resampling: ", rs$weights, "\n")
 ```
 
-### Step 4: Making Predictions
+### Step 4: Mutating Particles
+
+Resampling solves particle degeneracy but creates a subtler problem: the effective hypothesis space shrinks monotonically. Every particle that loses the resampling lottery is gone forever, and no new rules are ever introduced. A filter running long enough on any task will collapse to a handful of particles — possibly the right ones, but with no ability to recover if the task changes or if the true rule was simply unlucky at initialisation.
+
+The mutation step is the direct fix: after resampling on each trial, each particle independently regenerates with probability $\mu$, replaced by a fresh rule drawn from the grammar. The parameter $\mu$ is the third free parameter of Model A (alongside $\varepsilon$ and the structural commitments). It plays the same conceptual role as process noise $q$ in the Kalman prototype and forgetting rate $\lambda$ in the decay GCM:
+
+| Chapter | Model | Non-stationarity parameter | Mechanism |
+|---|---|---|---|
+| Ch. 11 (decay GCM) | Exemplar store | $\lambda$ (forgetting rate) | Exponentially downweight old exemplars |
+| Ch. 12 (Kalman prototype) | Running mean + covariance | $q$ (process noise) | Re-inflate uncertainty each trial |
+| Ch. 13 (rule filter) | Particle distribution over rules | $\mu$ (mutation rate) | Randomly regenerate a fraction of particles each trial |
+
+Setting $\mu = 0$ recovers a pure selection filter. On a stationary task, small $\mu$ barely affects inference — the filter mostly selects and the occasional regenerated particle is usually wrong, so it is quickly downweighted. On a task where the correct rule changes, $\mu > 0$ is essential: without it, all the rules that would fit the new regime have been eliminated and the filter cannot recover.
+
+```{r ch14_rule_mutation}
+# At each trial, each particle independently has probability mutation_prob
+# of being replaced by a freshly drawn rule from the grammar.
+# mutation_prob = 0 is a no-op (pure selection filter).
+mutate_particles <- function(particles, mutation_prob, n_features,
+                             max_dims, feature_range) {
+  if (mutation_prob <= 0) return(particles)
+  n <- length(particles)
+  to_mutate <- which(runif(n) < mutation_prob)
+  for (i in to_mutate) {
+    particles[[i]] <- generate_random_rule(n_features, max_dims, feature_range)
+  }
+  particles
+}
+```
+
+This is the **prior-sampling** mutation kernel: replacement rules are drawn uniformly from the grammar, with no relationship to the rule they replace. §"Targeted Mutation: Revision Rather Than Replacement" develops cognitively motivated alternatives where the learner *revises* rather than discards — keeping useful features and adjusting only what failed.
+
+### Step 5: Making Predictions
 
 The particle filter makes a categorization decision for a new stimulus $\vec{x}$ via a weighted vote across all particles:
 
@@ -706,9 +639,10 @@ where $P(\text{Cat 1} \mid \vec{x}, \text{rule}_i) = 1 - \varepsilon$ if rule $i
 # Full particle filter agent — this is Model A.
 # Returns a tibble of prob_cat1 and sim_response for each trial.
 # Note: n_particles defaults to N_PARTICLES_FIXED (= 100), the structural
-# commitment from Phase 0 Q4.
+# structural commitment documented in §"Rule Grammar: Formal Specification".
 rule_particle_filter <- function(n_particles               = N_PARTICLES_FIXED,
                                  error_prob,
+                                 mutation_prob             = 0.0,
                                  obs,
                                  cat_one,
                                  max_dims                  = MAX_RULE_DIMS,
@@ -718,7 +652,7 @@ rule_particle_filter <- function(n_particles               = N_PARTICLES_FIXED,
   n_features <- ncol(obs)
   fr         <- list(range(obs[, 1]), range(obs[, 2]))
 
-  ps       <- initialize_particles(n_particles, n_features, max_dims, fr)
+  ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
   particles <- ps$particles
   weights   <- ps$weights
 
@@ -745,6 +679,12 @@ rule_particle_filter <- function(n_particles               = N_PARTICLES_FIXED,
       particles <- rs$particles
       weights   <- rs$weights
     }
+
+    # ── Mutation ──────────────────────────────────────────────────────────────
+    # After resampling, each particle independently regenerates with probability
+    # mutation_prob. mutation_prob = 0 is a no-op (pure selection filter).
+    particles <- mutate_particles(particles, mutation_prob, n_features,
+                                  max_dims, fr)
   }
 
   tibble(prob_cat1 = response_probs,
@@ -765,7 +705,8 @@ Let's simulate how Model A performs on the Kruschke (1993) task. Each agent rece
 ```{r ch14_simulate_rule_responses}
 # Wrapper: generates per-agent schedule then calls rule_particle_filter.
 simulate_rule_agent <- function(agent_id, n_particles, max_dims, error_prob,
-                                stimulus_info, n_blocks, subject_seed) {
+                                stimulus_info, n_blocks, subject_seed,
+                                mutation_prob = 0.0) {
   schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
   obs      <- as.matrix(schedule[, c("height", "position")])
   cat_one  <- schedule$category_feedback
@@ -773,6 +714,7 @@ simulate_rule_agent <- function(agent_id, n_particles, max_dims, error_prob,
   result <- rule_particle_filter(
     n_particles               = n_particles,
     error_prob                = error_prob,
+    mutation_prob             = mutation_prob,
     obs                       = obs,
     cat_one                   = cat_one,
     max_dims                  = max_dims,
@@ -782,15 +724,16 @@ simulate_rule_agent <- function(agent_id, n_particles, max_dims, error_prob,
 
   schedule |>
     mutate(
-      agent_id    = agent_id,
-      n_particles = n_particles,
-      max_dims    = max_dims,
-      error_prob  = error_prob,
-      prob_cat1   = result$prob_cat1,
-      sim_response = result$sim_response,
-      correct     = as.integer(category_feedback == sim_response)
+      agent_id      = agent_id,
+      n_particles   = n_particles,
+      max_dims      = max_dims,
+      error_prob    = error_prob,
+      mutation_prob = mutation_prob,
+      prob_cat1     = result$prob_cat1,
+      sim_response  = result$sim_response,
+      correct       = as.integer(category_feedback == sim_response)
     ) |>
-    group_by(agent_id, n_particles, max_dims, error_prob) |>
+    group_by(agent_id, n_particles, max_dims, error_prob, mutation_prob) |>
     mutate(performance = cumsum(correct) / row_number()) |>
     ungroup()
 }
@@ -863,6 +806,7 @@ A key feature of Model A is that the hypotheses are explicit. We can track which
 
 ```{r ch14_track_rule_learning}
 track_rule_learning <- function(n_particles, error_prob, obs, cat_one,
+                                mutation_prob             = 0.0,
                                 max_dims                  = MAX_RULE_DIMS,
                                 top_k                     = 1,
                                 resample_threshold_factor = RESAMPLE_THRESHOLD) {
@@ -894,20 +838,24 @@ track_rule_learning <- function(n_particles, error_prob, obs, cat_one,
 
   history <- vector("list", n_trials)
   for (i in seq_len(n_trials)) {
-    stim <- as.numeric(obs[i, ])
+    stim    <- as.numeric(obs[i, ])
+    weights <- update_weights(particles, weights, stim, cat_one[i], error_prob)
+
     top_idx <- order(weights, decreasing = TRUE)[seq_len(min(top_k, n_particles))]
     history[[i]] <- map_dfr(top_idx, ~{
       tibble(trial = i, rank = which(top_idx == .x),
              weight = weights[.x], !!!format_rule_info(particles[[.x]]))
     })
 
-    weights <- update_weights(particles, weights, stim, cat_one[i], error_prob)
-    ess     <- 1 / sum(weights^2)
+    ess <- 1 / sum(weights^2)
     if (ess < n_particles * resample_threshold_factor) {
       rs        <- resample_particles(particles, weights)
       particles <- rs$particles
       weights   <- rs$weights
     }
+
+    particles <- mutate_particles(particles, mutation_prob, n_features,
+                                  max_dims, fr)
   }
   bind_rows(history)
 }
@@ -916,12 +864,13 @@ track_rule_learning <- function(n_particles, error_prob, obs, cat_one,
 track_schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = 1)
 
 rule_tracking_data <- track_rule_learning(
-  n_particles = N_PARTICLES_FIXED,
-  error_prob  = 0.1,
-  obs         = as.matrix(track_schedule[, c("height", "position")]),
-  cat_one     = track_schedule$category_feedback,
-  max_dims    = MAX_RULE_DIMS,
-  top_k       = 1
+  n_particles   = N_PARTICLES_FIXED,
+  error_prob    = 0.1,
+  mutation_prob = plogis(LOGIT_MU_PRIOR_MEAN),   # prior median ≈ 0.047
+  obs           = as.matrix(track_schedule[, c("height", "position")]),
+  cat_one       = track_schedule$category_feedback,
+  max_dims      = MAX_RULE_DIMS,
+  top_k         = 1
 )
 
 # Format rule text for plotting
@@ -947,15 +896,23 @@ rule_tracking_plot_data <- rule_tracking_data |>
   ungroup() |>
   mutate(rule_block = consecutive_id(rule_text))
 
+# Label only rules that persist ≥ 2 trials; place label at each block's peak weight
+rule_labels <- rule_tracking_plot_data |>
+  group_by(rule_block, rule_text) |>
+  filter(n() >= 2) |>
+  slice_max(weight, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(rule_text = str_wrap(rule_text, width = 35))
+
 ggplot(rule_tracking_plot_data, aes(x = trial, y = weight)) +
   geom_line(aes(group = 1), color = "#0072B2") +
   geom_point(color = "#0072B2", size = 1.5) +
   geom_text(
-    data = rule_tracking_plot_data |> distinct(rule_block, .keep_all = TRUE),
+    data = rule_labels,
     aes(label = rule_text),
-    hjust = 0, vjust = -0.5, size = 3, check_overlap = TRUE
+    hjust = 0, vjust = -0.3, size = 2.8, lineheight = 0.9
   ) +
-  scale_y_continuous(limits = c(0, 1), name = "Weight (Probability) of Top Rule") +
+  scale_y_continuous(limits = c(0, NA), name = "Weight (Probability) of Top Rule") +
   scale_x_continuous(limits = c(0, total_trials + 5)) +
   labs(
     title    = "Evolution of the Top Rule Hypothesis Over Time (Model A)",
@@ -1080,7 +1037,7 @@ We now switch models. Everything in this section implements **Model B** — the 
 
 ### Why a separate proxy model?
 
-Model A cannot be fitted with HMC for the reasons in §"Why Model A's Likelihood is Intractable for HMC." But the persona's six-phase battery is designed around HMC and a tractable likelihood, and the model comparison framework in Chapter 15 needs ELPD scores that come from a proper Bayesian fit. Two responses:
+Model A cannot be fitted with HMC for the reasons in §"Why Model A's Likelihood is Intractable for HMC." The validation pipeline used throughout this book is designed around HMC and a tractable likelihood, and the model comparison framework in Chapter 15 needs ELPD scores that come from a proper Bayesian fit. Two responses:
 
 1. **Build a tractable proxy in Stan and validate it under the standard pipeline.** This is what Model B does. The proxy is honest about being a proxy: it is not the cognitive theory, and its validation does not transfer.
 
@@ -1101,7 +1058,7 @@ We parameterise $\varepsilon$ on the logit scale — $\text{logit}(\varepsilon) 
 **Critical structural facts about Model B that distinguish it from Model A:**
 
 * **No learning dynamics.** Model B treats all trials as conditionally exchangeable given $\varepsilon$. There is no trial-by-trial weight update, no resampling, no rule discovery. The agent's behaviour is determined entirely by which rule it follows (drawn once from the candidate set) and the noise rate $\varepsilon$.
-* **Fixed candidate rule set.** The $R = 7$ rules are picked by inspecting the Kruschke stimulus layout (5 flat rules + 2 nested rules of the form $A \text{ op } (B \text{ inner } C)$). Phase 0 Q5 surfaced this as a post-hoc choice; §"Discharging the Post-Hoc Rule Selection" tests sensitivity.
+* **Fixed candidate rule set.** The $R = 7$ rules are picked by inspecting the Kruschke stimulus layout (5 flat rules + 2 nested rules of the form $A \text{ op } (B \text{ inner } C)$). This is a post-hoc choice; §"Discharging the Post-Hoc Rule Selection" tests sensitivity.
 * **Closed-form Bernoulli likelihood.** Marginalised analytically with `log_sum_exp`. HMC handles it cleanly.
 * **No path-dependence.** Standard PSIS-LOO is technically valid (see §"LFO-CV Does Not Apply Here").
 
@@ -1335,7 +1292,7 @@ if (!is.null(fit_rule_stan)) {
 
 ### Mandatory MCMC Diagnostic Battery
 
-The persona's Phase 3.0 says: curate the diagnostics, even when they are nearly trivial. Use the same `diagnostic_summary_table()` helper as Chapters 11 and 12.
+We need to curate the diagnostics, even when they are nearly trivial (see @sec-model-quality-checks). Use the same `diagnostic_summary_table()` helper as Chapters 11 and 12.
 
 ```{r ch14_diag_battery_model_B}
 if (!is.null(fit_rule_stan)) {
@@ -1345,7 +1302,7 @@ if (!is.null(fit_rule_stan)) {
   )
   print(diag_tbl)
 
-  cat("\nThreshold reference (persona Phase 3.0):\n",
+  cat("\nThreshold reference (see @sec-model-quality-checks):\n",
       "  divergences        = 0\n",
       "  rank-normalized Rhat < 1.01\n",
       "  bulk ESS           > 400\n",
@@ -1737,7 +1694,7 @@ ggplot(rule_recovery_results,
 
 ## Discharging the Post-Hoc Rule Selection
 
-Phase 0 Q5 surfaced the fact that Model B's candidate rules are picked by inspecting the stimulus layout, which makes them empirical, not prior. We discharge this in two complementary ways.
+Model B's candidate rules are picked by inspecting the stimulus layout, which makes them empirical rather than prior. We discharge this in two complementary ways.
 
 ### Option 1: Sensitivity to the Candidate Rule Set
 
@@ -1948,7 +1905,7 @@ if (exists("max_dims_results")) {
 
 ### Sensitivity to Resampling Threshold
 
-Phase 0 Q4 committed to `RESAMPLE_THRESHOLD = 0.5`. This controls how aggressively the particle filter reorganises its hypothesis set: lower values allow more particle degeneracy before resampling; higher values trigger resampling earlier. The cognitive interpretation is something like "how quickly the learner abandons low-performing hypotheses."
+The chapter fixes `RESAMPLE_THRESHOLD = 0.5`. This controls how aggressively the particle filter reorganises its hypothesis set: lower values allow more particle degeneracy before resampling; higher values trigger resampling earlier. The cognitive interpretation is something like "how quickly the learner abandons low-performing hypotheses."
 
 ```{r ch14_resample_threshold_sensitivity}
 resample_sensitivity_file <- here("simdata", "ch14_resample_threshold_sensitivity.rds")
@@ -2143,7 +2100,7 @@ plot_rank_hist(real_sbc_results) +
 
 ### Posterior SBC for Model B (Phase 6c)
 
-The persona's Phase 6c calls for **Posterior SBC (PSBC)**: instead of drawing true parameters from the prior, draw them from the *fitted posterior*. This tests calibration in the specific high-probability region the actual data force us into. A sampler can be globally unbiased (prior SBC passes) yet struggle locally (PSBC fails) or vice versa.
+We need to perform **Posterior SBC (PSBC)** (see @sec-model-quality-checks): instead of drawing true parameters from the prior, draw them from the *fitted posterior*. This tests calibration in the specific high-probability region the actual data force us into. A sampler can be globally unbiased (prior SBC passes) yet struggle locally (PSBC fails) or vice versa.
 
 ```{r ch14_psbc_model_B}
 n_psbc_iters <- 500  # use >= 1000 for production
@@ -2227,19 +2184,58 @@ if (!is.null(fit_rule_stan)) {
 
 ## Neural Posterior Estimation for Model A
 
-This is the section that does what earlier drafts of this material avoided with a weak tool: it fits the actual cognitive theory rather than a tractable proxy. Neural Posterior Estimation (NPE) — a modern simulation-based inference method — trains a conditional normalising flow to approximate the posterior $p(\theta \mid y)$ from simulated $(\theta, y)$ pairs, without requiring a tractable likelihood or hand-crafted summary statistics. The Deistler et al. (2025) tutorial and the BayesFlow paper (Radev et al. 2023) provide the methodological background; we give a working implementation here.
+Model A — the particle filter — has an **intractable likelihood**: there is no closed-form expression for $p(y \mid \theta)$. The resampling step introduces a sum over all possible particle trajectories that cannot be evaluated analytically, and the discrete rule space rules out the differentiable marginalisation tricks that Stan exploits. This is not unusual: many of the most cognitively realistic models in the literature share this property. Agent-based models, reinforcement-learning models with discrete latent states, and sequential Monte Carlo approximations all produce data through simulation but resist likelihood evaluation.
 
-**Why NPE instead of rejection ABC?** Earlier drafts used rejection ABC with three hand-crafted summary statistics. That approach had three problems:
+**Neural Posterior Estimation (NPE)** is the modern solution to this problem. The core idea is simple: instead of computing $p(y \mid \theta)$ directly, we train a neural network to approximate the posterior $p(\theta \mid y)$ from a large dataset of simulated $(\theta, y)$ pairs. The network never sees a likelihood — it only sees inputs (data $y$) and targets (parameters $\theta$) and learns the mapping from data to posterior by example. Once trained, the network acts as an **amortised** inference engine: given any new observation $y_\text{obs}$, it returns an approximate posterior in milliseconds, without running any additional simulations.
 
-1. **Schedule mismatch bug.** Each ABC simulation drew a *new* random schedule, injecting trial-order noise on top of parameter signal. The particle filter is path-dependent, so the learning slope and per-stimulus accuracy are functions of *which stimuli appeared when*. The correct conditional simulator holds the schedule fixed at the observed schedule and re-randomises only the particle initialisation and Bernoulli draws.
+### How NPE Works: the Four Steps
 
-2. **Summary statistic insufficiency.** The three summaries (block-1 vs block-final accuracy, per-stimulus accuracy vector, lag-1 autocorrelation) were reasonable guesses, but guesses. NPE with a learned embedding network discovers the relevant features of the response sequence end-to-end from the training loss, eliminating the need to defend "why these three and not others?"
+The method proceeds in four conceptual steps. Each step maps directly onto a code block below.
 
-3. **No amortization.** Rejection ABC pays the full simulation budget per subject. NPE pays it once during training. After training, inference on any new subject takes milliseconds. This is what makes the Chapter 15 comparison across all three cognitive theories executable.
+**Step 1 — Define a prior $p(\theta)$.** This plays the same role as in any Bayesian analysis: it encodes your beliefs about the parameters before seeing the data, and it defines the range of parameter values the network will be trained to handle. For Model A we have three parameters: $\varepsilon$ (error probability), $N_\text{particles}$ (working-memory capacity), and $\mu$ (mutation rate). We place weakly informative priors on each, described in detail in the simulator subsection below.
+
+**Step 2 — Simulate a training dataset.** Draw a large number of parameter vectors $\theta^{(i)} \sim p(\theta)$, and for each one run the simulator to produce a synthetic response sequence $y^{(i)} \sim p(y \mid \theta^{(i)})$. The result is a dataset $\{(\theta^{(i)}, y^{(i)})\}_{i=1}^{N}$ of input-output pairs. This step is the main computational cost of NPE — it requires many forward simulations — but it is embarrassingly parallel and needs to be done only once.
+
+**Step 3 — Train a conditional density estimator $q_\phi(\theta \mid y)$.** This is the neural network. Its job is to take a response sequence $y$ and output a probability distribution over $\theta$ — not just a point estimate, but a full distribution. The training objective is to maximise the average log-probability of the true parameter under the estimated posterior:
+$$\mathcal{L}(\phi) = \frac{1}{N} \sum_{i=1}^{N} \log q_\phi\!\left(\theta^{(i)} \mid y^{(i)}\right).$$
+Maximising this is equivalent to minimising the KL divergence between $q_\phi(\theta \mid y)$ and the true posterior $p(\theta \mid y)$, averaged over the prior predictive $p(y)$. In other words, the network is pushed to assign high probability to the parameter that actually generated each simulated dataset. After seeing enough $(\theta, y)$ pairs, the network learns to read off the correct posterior from any observation.
+
+**Step 4 — Perform inference on the observed data.** Plug $y_\text{obs}$ into the trained network and sample $\theta \sim q_\phi(\theta \mid y_\text{obs})$. These samples are the approximate posterior — no additional simulation, no MCMC warm-up, no gradient computation.
+
+### The Two Neural Components
+
+NPE requires two neural building blocks that work together.
+
+**The embedding network** compresses the high-dimensional observation $y$ into a fixed-size summary vector. Here, $y$ is a sequence of $T$ binary responses, each accompanied by stimulus features (height, position) and feedback. Naively concatenated, this is a $T \times 4$ matrix — too high-dimensional to feed directly into a density estimator without overfitting. A small **multi-layer perceptron (MLP)** processes the per-trial features and learns, through training, which aspects of the response sequence are most informative about $\theta$. Crucially, this is learned end-to-end from the training loss — no hand-crafted summary statistics are needed. The embedding network outputs a compact summary vector $\hat{s}(y)$ that the density estimator then conditions on.
+
+**The normalising flow** is the density estimator itself. A normalising flow is a sequence of invertible, differentiable transformations that maps a simple base distribution (a standard Gaussian) to a flexible target distribution. Because each transformation is invertible, you can both sample from the flow and evaluate its density exactly. The **neural spline flow (NSF)** used here parameterises each transformation with piecewise rational-quadratic splines, making it more expressive than earlier affine coupling layers. The flow's parameters are functions of the conditioning input $\hat{s}(y)$, so the distribution it represents changes for each observation: it is a *conditional* normalising flow, $q_\phi(\theta \mid y)$.
+
+Together: the embedding network compresses $y$ into $\hat{s}(y)$; the flow uses $\hat{s}(y)$ to define a distribution over $\theta$; training adjusts both sets of weights jointly to make that distribution match the true posterior.
+
+::: {.callout-note}
+## Comparison with other simulation-based inference methods
+
+NPE belongs to a broader family of **simulation-based** (or likelihood-free) inference methods. The oldest and most transparent member is **rejection ABC**: draw $\theta \sim p(\theta)$, simulate $y_\text{sim} \sim p(y \mid \theta)$, compute a distance $d\!\left(s(y_\text{sim}),\, s(y_\text{obs})\right)$ between hand-crafted summary statistics, and accept $\theta$ if the distance is below a tolerance $\epsilon$. In the limit $\epsilon \to 0$ and with sufficient statistics, this converges to the exact posterior.
+
+Rejection ABC is easy to understand and implement, but it has practical limitations for a model like Model A:
+
+* **Summary statistic choice**: the summaries $s(\cdot)$ must be chosen manually, and their sufficiency is rarely guaranteed. Using block accuracy, per-stimulus accuracy, and lag-1 autocorrelation is reasonable but arbitrary — a different analyst might choose differently, and the posterior depends on the choice. NPE removes this decision by learning the relevant features from data.
+* **Acceptance rate**: rejection ABC discards the vast majority of simulations when the prior and posterior are very different (low acceptance rate). Sequential variants (SMC-ABC) improve efficiency but add algorithmic complexity.
+* **No amortisation**: rejection ABC pays the full simulation budget for each new subject. NPE pays it once at training time; subsequent inference on any new subject costs milliseconds.
+* **Schedule fixing**: because the particle filter is path-dependent, simulations must hold the trial order fixed at the observed schedule and re-randomise only the filter's internal stochasticity. An implementation that re-draws the schedule on each simulation injects spurious trial-order variance and makes posterior recovery harder. This is straightforward to enforce in NPE's fixed-simulator design.
+
+Other neural approaches include **Neural Likelihood Estimation (NLE)**, which learns $p(y \mid \theta)$ rather than the posterior directly and then runs MCMC on the learned likelihood, and **BayesFlow** [@radev2023bayesflow], which uses a different amortised architecture based on coupling flows applied to summary networks. Each has trade-offs; NPE via `sbi` [@tejero-cantero2020sbi; @boelts2024sbi] is our choice because its amortisation is directly useful for the multi-subject analysis later in this chapter.
+:::
 
 ### Setting Up the Python Environment
 
-We use the `sbi` package (Tejero-Cantero et al. 2020; Boelts et al. 2024) via `reticulate`. The key components are: a prior, a simulator wrapper, and an inference network (a normalising flow with a learned embedding network).
+NPE is computationally intensive enough that it is implemented in Python via the `sbi` package, called from R using `reticulate`. The `sbi` package wraps PyTorch and provides a high-level API for all four steps above: prior definition, simulation management, network training, and posterior sampling.
+
+Before running the code below, you need Python with `sbi`, `torch`, and `numpy` installed. The simplest way is:
+```bash
+pip install sbi torch numpy
+```
+The `reticulate::use_virtualenv` call below tells R which Python environment to use.
 
 ```{r ch14_npe_setup}
 # ── Python environment ────────────────────────────────────────────────────────
@@ -2265,21 +2261,23 @@ if (run_intensive_checks) {
 }
 ```
 
-### The Simulator Wrapper
+### Step 1 + 2: The Prior and the Simulator
 
-The simulator must take a parameter vector $\theta$ and return the observed data $y$. **Critically, the schedule is held fixed** — we condition on the observed trial order and only re-randomise the particle filter's internal stochasticity (particle initialisation and Bernoulli response noise). This fixes the schedule-mismatch bug from earlier drafts.
+**Fixing the schedule.** The particle filter is path-dependent: the same parameter values $(\varepsilon, N, \mu)$ produce systematically different response sequences depending on which stimulus appeared on which trial. If the simulator drew a new random trial order for every simulated dataset, two sources of variation would be mixed together in the training data — parameter variation and trial-order variation. The network would then need to disentangle them, which is harder and leads to noisier posteriors. The correct approach is to hold the trial schedule fixed at the observed participant's schedule and re-randomise only the particle filter's internal stochasticity: particle initialisation and Bernoulli response noise. This is what the `npe_schedule` object below does — it is the same schedule used to collect the observed data, and every training simulation uses it.
 
-We infer three parameters jointly:
+**The three inferred parameters.** We jointly infer:
 
-* $\varepsilon$ — error probability, on the logit scale for unconstrained inference
-* $\log(N_{\text{particles}})$ — working-memory bound, on the log scale
-* $\mu$ — mutation rate, on the logit scale for unconstrained inference
+* $\varepsilon$ — the error probability, parameterised on the logit scale ($\text{logit}(\varepsilon) \in \mathbb{R}$) so the sampler operates in an unconstrained space. On the logit scale, $\text{logit}(0.1) \approx -2.2$, so a prior of Normal$(0, 1.5)$ on the logit scale places most mass on $\varepsilon \in (0.05, 0.75)$ — covering everything from a near-perfect rule-applier to a near-chance responder.
 
-Adding $\mu$ to the NPE prior is the natural completion of the model. $\varepsilon$ governs how noisily the agent applies its current rule; $\mu$ governs how readily it abandons that rule and draws a fresh hypothesis. They play orthogonal roles: a high-$\varepsilon$ agent responds noisily even when its rule is good; a high-$\mu$ agent responds accurately trial-by-trial but replaces hypotheses frequently. On static data we expect $\mu$ to be poorly identified — matching $q$ in Chapter 13 and $\lambda$ in Chapter 12 on their own static scenarios. On non-stationary data the learning-curve signature (sawtooth depth, recovery speed) depends specifically on $\mu$ in a way that $\varepsilon$ cannot mimic.
+* $\log(N_\text{particles})$ — the working-memory capacity, parameterised on the log scale so it is positive and well-behaved under sampling. We use a log-uniform prior over $[20, 300]$: each order of magnitude in $N$ is treated as equally likely a priori.
 
-Note that $\mu$ has **no counterpart in Model B**. Model B is a static mixture with no dynamics; the concept of mutation rate is structurally absent. The NPE-vs-Stan posterior comparison therefore involves $\varepsilon$ only — Model B simply has nothing to say about $\mu$.
+* $\mu$ — the mutation rate, also on the logit scale. The prior Normal$(-3, 1.5)$ on $\text{logit}(\mu)$ has median $\mu \approx 0.047$ and 95% mass on $(0.003, 0.37)$, reflecting the cognitive expectation that most learners replace hypotheses rarely on any given trial.
 
-The data representation for NPE is the full per-trial response vector $y \in \{0, 1\}^T$, concatenated with the per-trial stimulus features and feedback. The embedding network learns what to attend to.
+These three parameters play orthogonal roles. $\varepsilon$ governs how noisily the agent applies its current best rule — high $\varepsilon$ produces near-random responses even when the rule is correct. $\mu$ governs how readily the agent discards that rule — high $\mu$ produces rapid hypothesis turnover, which is beneficial on non-stationary tasks but wasteful on static ones. $N_\text{particles}$ governs the fidelity of the hypothesis distribution — more particles allow finer discrimination between competing rules but are cognitively more costly. On a static task, $\mu$ and $N_\text{particles}$ are expected to be weakly identified; on a task with abrupt category shifts, $\mu$ produces a distinctive sawtooth signature in the learning curve that $\varepsilon$ cannot mimic.
+
+Note that $\mu$ has **no counterpart in Model B**. Model B is a static mixture with no trial-to-trial dynamics; the concept of a mutation rate is structurally absent. The NPE-vs-Stan posterior comparison therefore concerns $\varepsilon$ only — Model B has nothing to say about $\mu$ or $N$.
+
+**The data representation.** Each simulated dataset is a sequence of $T$ binary responses. But the embedding network needs to know more than just the responses — it also needs the stimulus context (height, position) and the feedback on each trial, because the informativeness of any response depends on what stimulus caused it. We therefore concatenate per trial: $[y_t, \text{height}_t, \text{position}_t, \text{feedback}_t]$, giving a $T \times 4$ matrix that is flattened to a vector before being passed to the embedding network. This context is constant across simulations (it is part of the fixed schedule) and is precomputed once.
 
 ```{r ch14_npe_simulator, eval=run_intensive_checks}
 # The observed schedule — used for ALL simulations (schedule-fix)
@@ -2294,23 +2292,22 @@ context_per_trial <- cbind(npe_obs_mat, npe_cat_one)  # (n_trials, 3)
 
 # R-side simulator: theta → response vector
 # theta[1] = logit(eps), theta[2] = log(N_particles), theta[3] = logit(mu)
+# Uses rule_particle_filter directly (defined earlier in the chapter) so this
+# function can be called as soon as it is defined, without waiting for the
+# scenario-aware wrapper defined later.
 simulate_model_a <- function(theta_vec) {
   eps    <- plogis(theta_vec[1])
   n_part <- max(10L, as.integer(round(exp(theta_vec[2]))))
   mu     <- plogis(theta_vec[3])
 
-  # Use the scenario-aware filter so mutation_prob is respected.
-  # We run the static scenario here (schedule is fixed); for non-stationary
-  # validation swap to "contingent_shift" or "drift" as needed.
-  sim <- rule_particle_filter_scenario(
-    schedule                  = npe_schedule,
+  sim <- rule_particle_filter(
+    n_particles               = n_part,
     error_prob                = eps,
     mutation_prob             = mu,
-    mutation_type             = "prior",
-    n_particles               = n_part,
+    obs                       = npe_obs_mat,
+    cat_one                   = npe_cat_one,
     max_dims                  = MAX_RULE_DIMS,
     resample_threshold_factor = RESAMPLE_THRESHOLD,
-    scenario                  = "static",
     quiet                     = TRUE
   )
   as.numeric(sim$sim_response)
@@ -2325,9 +2322,19 @@ cat("Test simulation: eps =", round(plogis(test_theta[1]), 3),
     ", mean response =", round(mean(test_y), 3), "\n")
 ```
 
-### Generating the Training Dataset
+### Step 2: Generating the Training Dataset
 
-NPE training requires a dataset of $(\theta, x)$ pairs where $x$ includes both the response vector and the stimulus context. We generate this dataset in R (leveraging `furrr` parallelism) and pass it to Python as tensors.
+The training dataset is the empirical approximation to the joint distribution $p(\theta) \cdot p(y \mid \theta)$. We draw $N = 20{,}000$ parameter vectors from the prior, simulate one response sequence per parameter vector (using the fixed schedule), and store the $(\theta, y)$ pairs. The network will later be trained to invert this mapping.
+
+A few practical choices matter here:
+
+* **How many simulations?** More is better, but with diminishing returns. For a three-parameter model with a response sequence of length $T \approx 65$, 10–20k simulations are typically sufficient to get reliable posteriors. Increasing to 50k or 100k reduces posterior variance, especially in the tails.
+
+* **Parallel generation.** Each simulation is independent — $\theta^{(i)}$ and $\theta^{(j)}$ do not interact — so we use `furrr::future_map` to parallelise across CPU cores. On a four-core laptop, 20k simulations of a 65-trial particle filter with $N = 100$ particles take roughly 5–10 minutes.
+
+* **Caching.** The training data is saved to disk so subsequent renders do not repeat the simulation budget. Set `regenerate_simulations = TRUE` in the setup chunk to force regeneration (e.g., if the simulator changes).
+
+The training data is generated in R and passed to Python as NumPy arrays. The `context_per_trial` matrix — height, position, and feedback per trial — is constant across simulations and is concatenated with each simulated response vector to form the full observation $x^{(i)}$.
 
 ```{r ch14_npe_training_data, eval=run_intensive_checks}
 n_train_sims   <- 20000   # 20k sims; increase to 50k for production
@@ -2368,9 +2375,21 @@ if (regenerate_simulations || !file.exists(npe_cache_file)) {
 }
 ```
 
-### Training the NPE Inference Network
+### Step 3: Training the NPE Inference Network
 
-We use SNPE with a neural spline flow. The embedding network is a small MLP that processes the concatenation of `[response, height, position, feedback]` per trial into a learned summary vector.
+This is where the neural network learns the mapping from observations to posteriors. The `sbi` package handles the training loop; we need to provide three things: (1) a prior object in sbi's format, (2) the training tensors, and (3) the network architecture.
+
+**The prior in sbi.** The `sbi` library needs an explicit prior object to define the support of $\theta$ — the range of values the network will be expected to handle. We use a `BoxUniform` prior (a box uniform distribution over a hyperrectangle), with bounds set at $\pm 3$ standard deviations for the Normal priors and at the exact log-scale endpoints for the log-uniform $N$ prior. The network will not be reliable outside these bounds, so they should be wide enough to contain all plausible parameter values.
+
+**The network architecture.** `sbi`'s `SNPE` class builds both the embedding network and the normalising flow automatically. We specify `density_estimator = "nsf"` (neural spline flow). Internally, `sbi` constructs:
+- An **embedding network**: a small MLP that takes the flattened $[y, \text{context}]$ vector (length $T \times 4$) and outputs a 64-dimensional summary vector.
+- A **neural spline flow**: a sequence of coupling layers where each bijection uses rational-quadratic splines parameterised by small neural networks that condition on the embedding.
+
+**Training.** The `inference_obj$train()` call runs mini-batch gradient descent on the loss $-\frac{1}{N}\sum_i \log q_\phi(\theta^{(i)} \mid y^{(i)})$ using the Adam optimiser. Each batch of 256 $(\theta, y)$ pairs contributes a gradient update to both the embedding network and the flow. Training typically converges within a few hundred epochs (each epoch passes through the full 20k dataset once). On a CPU this takes 5–15 minutes; on a GPU it is much faster.
+
+**What does convergence look like?** The `show_train_summary = TRUE` flag prints the training and validation loss at each epoch. A well-trained network shows the validation loss decreasing and levelling off without diverging from the training loss. If the two diverge (overfitting), reduce the network size or increase the training data. If neither loss decreases, the learning rate may be too low.
+
+**Saving the trained model.** We save only the `state_dict` — the learned weights — rather than the full Python object, because Python objects are not safely serialisable across sessions. Loading requires rebuilding the same network architecture and loading the weights back in; the `sbi` documentation covers the exact steps.
 
 ```{r ch14_npe_train, eval=run_intensive_checks}
 if (run_intensive_checks) {
@@ -2441,9 +2460,15 @@ if (run_intensive_checks) {
 }
 ```
 
-### Performing Inference on the Observed Data
+### Step 4: Performing Inference on the Observed Data
 
-After training, inference is instantaneous: evaluate the trained network at the observed data $x_{\text{obs}}$.
+After training, inference for any new participant is a single forward pass through the network — no MCMC, no additional simulation. This is the **amortisation** payoff: the entire computational cost was paid at training time, and inference now costs milliseconds per subject.
+
+The observed data $y_\text{obs}$ must be formatted identically to the training data: a flattened vector of $[y_t, \text{height}_t, \text{position}_t, \text{feedback}_t]$ for all $T$ trials. The `npe_posterior$sample()` call passes this vector through the trained embedding network, obtains the 64-dimensional summary $\hat{s}(y_\text{obs})$, conditions the normalising flow on it, and draws samples from the resulting distribution over $\theta$.
+
+The returned samples are on the unconstrained (logit / log) scales on which the network was trained. We back-transform with `plogis()` and `exp()` to recover $\varepsilon$, $\mu$, and $N_\text{particles}$ on their natural scales. These 10,000 posterior samples can be treated exactly like MCMC draws: compute means, credible intervals, posterior predictive distributions, or LOO weights from them.
+
+**What to look for.** A well-calibrated NPE posterior for $\varepsilon$ should be centred near the true generating value (0.1 in our simulated example). If the posterior is much wider than the prior, the data are uninformative and the model is not identified for this dataset — expected for short sequences. If it is sharply narrower than the prior, the response sequence contains strong information about the error rate. The posterior for $\mu$ is expected to be wider on static data because a static task cannot distinguish a low-mutation learner from a zero-mutation learner — both will stop replacing hypotheses once the correct rule is found.
 
 ```{r ch14_npe_inference, eval=run_intensive_checks}
 # Build the observed data tensor (same format as training)
@@ -2454,8 +2479,8 @@ obs_x_tensor  <- torch$tensor(matrix(obs_x_vec, nrow = 1), dtype = torch$float32
 # Sample from the NPE posterior
 n_npe_samples <- 10000L
 npe_samples   <- npe_posterior$sample(
-  shape = c(n_npe_samples),
-  x     = obs_x_tensor
+  sample_shape = reticulate::tuple(n_npe_samples),
+  x            = obs_x_tensor
 )
 npe_draws <- as.matrix(npe_samples$numpy())
 colnames(npe_draws) <- c("logit_eps", "log_n_particles", "logit_mu")
@@ -2512,7 +2537,7 @@ print(p_eps / p_npart / p_mu)
 
 ### NPE Validation: SBC + Expected Coverage (Phase 6)
 
-The persona's Phase 6 requires calibration checks. For NPE, the standard diagnostics are marginal SBC (Talts et al. 2018) and expected coverage (Hermans et al. 2022). Because NPE is amortized, running 1000 calibration checks takes seconds — each requires only a forward pass through the trained network.
+We need to perform calibration checks (see @sec-model-quality-checks). For NPE, the standard diagnostics are marginal SBC (Talts et al. 2018) and expected coverage (Hermans et al. 2022). Because NPE is amortized, running 1000 calibration checks takes seconds — each requires only a forward pass through the trained network.
 
 ```{r ch14_npe_validation, eval=run_intensive_checks}
 n_cal <- 1000L
@@ -2556,8 +2581,8 @@ colnames(sbc_ranks) <- c("logit_eps", "log_n_particles", "logit_mu")
 
 for (i in seq_len(n_cal)) {
   post_samples <- npe_posterior$sample(
-    shape = c(n_post_samples),
-    x     = cal_x_tensor[i - 1L]$unsqueeze(0L)
+    sample_shape = reticulate::tuple(n_post_samples),
+    x            = cal_x_tensor[i - 1L]$unsqueeze(0L)
   )$numpy()
 
   for (j in 1:3) {
@@ -2581,8 +2606,8 @@ coverage_levels <- seq(0.05, 0.95, by = 0.05)
 empirical_coverage <- vapply(coverage_levels, function(alpha) {
   covered <- vapply(seq_len(n_cal), function(i) {
     post_samples <- npe_posterior$sample(
-      shape = c(n_post_samples),
-      x     = cal_x_tensor[i - 1L]$unsqueeze(0L)
+      sample_shape = reticulate::tuple(n_post_samples),
+      x            = cal_x_tensor[i - 1L]$unsqueeze(0L)
     )$numpy()
     q_lo <- quantile(post_samples[, 1], (1 - alpha) / 2)
     q_hi <- quantile(post_samples[, 1], 1 - (1 - alpha) / 2)
@@ -2726,39 +2751,7 @@ This is the methodological payoff of using NPE instead of ABC: the Chapter 15 co
 
 ---
 
-## Extending the Particle Filter with Rule Mutation
-
-The particle filter as defined so far has no mechanism for entertaining a rule that was not in the initial candidate set. Resampling purges low-weight particles but cannot *create* new rule variants, so the filter's effective hypothesis space shrinks monotonically across trials. On a stationary task like Kruschke (1993) this is fine — the filter converges on whichever small subset of initial particles happens to match the data. But on a task where the "correct" rule changes over time, the filter has no way to recover: all the rules that would fit the new regime were likely eliminated in the first ten or twenty trials.
-
-The fix is a **rule-mutation step**: at each trial, each particle independently regenerates with probability $\mu$, redrawn from the rule grammar. This is the particle filter analogue of the process noise $q$ in the Kalman prototype (Ch. 12) and the recency weight $\lambda$ in the decay GCM (Ch. 11) — a single parameter that injects hypothesis turnover.
-
-The three chapters now share a common shape:
-
-| Chapter | Model | Non-stationarity parameter | Mechanism |
-|---|---|---|---|
-| Ch. 11 (decay GCM) | Exemplar store | $\lambda$ (forgetting rate) | Exponentially downweight old exemplars |
-| Ch. 12 (Kalman prototype) | Running mean + covariance | $q$ (process noise) | Re-inflate uncertainty each trial |
-| Ch. 13 (rule filter, below) | Particle distribution over rules | $\mu$ (mutation rate) | Randomly regenerate a fraction of particles each trial |
-
-### Mutation Mechanism
-
-```{r ch14_rule_mutation}
-# At each trial, each particle independently has probability mutation_prob
-# of being replaced by a freshly drawn rule. This keeps the hypothesis space
-# from collapsing and allows the filter to track changes in the correct rule.
-mutate_particles <- function(particles, mutation_prob, n_features,
-                             max_dims, feature_range) {
-  if (mutation_prob <= 0) return(particles)
-  n <- length(particles)
-  to_mutate <- which(runif(n) < mutation_prob)
-  for (i in to_mutate) {
-    particles[[i]] <- generate_random_rule(n_features, max_dims, feature_range)
-  }
-  particles
-}
-```
-
-### Targeted Mutation: Revision Rather Than Replacement
+## Targeted Mutation: Revision Rather Than Replacement
 
 The `mutate_particles` function above draws each replacement rule entirely at random from the grammar — the mutated particle has no relationship to the rule it replaced. This is the simplest possible assumption: when a rule fails, discard it and start over.
 
@@ -2772,7 +2765,9 @@ Three levels of targeted mutation are natural, in order of increasing conservati
 
 **Level 3 — Weight features by their prevalence in high-weight particles.** Rather than replacing a particle blindly, count how often each feature appears across the top-weighted particles. Sample new rules with feature probabilities proportional to those counts. This is the most sophisticated form: the mutation kernel is informed by what the current particle population collectively "believes" is relevant.
 
-The three levels represent different cognitive theories:
+**Level 4 — Weight rule complexity by its prevalence in high-weight particles.** A separate bias operates on the *number* of conditions rather than on which features are used. Count how many conditions (1, 2, or 3) the top-weighted particles have. Sample the dimensionality of replacement rules from that empirical distribution. If the high-weight particles are mostly 1D (e.g., "height > 2.5"), the filter generates mostly 1D replacements rather than exploring 2D conjunctions that the evidence has not yet favoured. Conversely, if 2D rules dominate, the filter concentrates its search in that part of grammar space. This is complementary to Level 3: Level 3 says *which features* to emphasise; Level 4 says *how many conditions* to use.
+
+The four levels represent different cognitive theories:
 
 | Level | Cognitive claim | Parameter introduced |
 |---|---|---|
@@ -2780,8 +2775,9 @@ The three levels represent different cognitive theories:
 | Threshold perturbation | Learner adjusts the *boundary*, not the *dimension* | Perturbation width $\sigma_\text{perturb}$ |
 | Structure revision | Learner keeps useful dimensions, revises conditions | None beyond structure |
 | Feature-weighted | Learner biases search toward currently diagnostic features | None (weights are data-driven) |
+| Dimensionality-weighted | Learner biases search toward the current dominant rule complexity | None (weights are data-driven) |
 
-Each level adds a structural commitment. Levels 1 and 3 introduce new parameters or data-dependent quantities that themselves need prior justification. Whether targeted mutation fits human data better than prior-sampling mutation is an open empirical question, but implementing all variants allows forward simulation of qualitatively different learner types.
+Each level adds a structural commitment. Levels 1–4 all require the current particle population to be inspected, and Levels 3 and 4 are most useful with a moderately large particle set where the empirical feature and dimensionality distributions are reliable estimates of what the filter collectively believes. Whether targeted mutation fits human data better than prior-sampling mutation is an open empirical question, but implementing all variants allows forward simulation of qualitatively different learner types.
 
 ```{r ch14_targeted_mutation}
 # ── Level 1: Threshold perturbation ──────────────────────────────────────────
@@ -2900,17 +2896,73 @@ generate_rule_with_feature_probs <- function(n_features, max_dims,
   }
 }
 
+# ── Level 4: Dimensionality-weighted mutation ─────────────────────────────────
+#
+# Count how many conditions (1, 2, or 3) the top-weighted particles use.
+# Sample the number of conditions in the replacement rule from that empirical
+# distribution. Features within the chosen dimensionality are still drawn
+# uniformly from the grammar.
+#
+# This is orthogonal to Level 3: Level 3 biases *which features* appear;
+# Level 4 biases *how many conditions* the replacement rule has.
+
+dim_weights_from_particles <- function(particles, weights,
+                                        max_dims, top_frac = 0.25) {
+  n       <- length(particles)
+  top_n   <- max(1L, round(n * top_frac))
+  top_idx <- order(weights, decreasing = TRUE)[seq_len(top_n)]
+
+  ndims  <- sapply(particles[top_idx], function(r) length(r$dimensions))
+  counts <- tabulate(ndims, nbins = max_dims)
+  (counts + 0.5) / sum(counts + 0.5)   # Laplace floor: no dimensionality excluded
+}
+
+generate_rule_with_dim_probs <- function(n_features, max_dims,
+                                          feature_range, dim_probs) {
+  num_dims   <- sample(seq_len(min(max_dims, n_features)), 1, prob = dim_probs)
+  use_nested <- (num_dims == 3 && n_features >= 2)
+
+  sample_thresh <- function(di) runif(1, feature_range[[di]][1],
+                                         feature_range[[di]][2])
+
+  if (use_nested) {
+    dims_used  <- sample.int(n_features, 3, replace = TRUE)
+    thresholds <- mapply(sample_thresh, dims_used)
+    operations <- sample(c(">", "<"), 3, replace = TRUE)
+    list(
+      dimensions         = dims_used,
+      thresholds         = thresholds,
+      operations         = operations,
+      outer_logic        = sample(c("AND", "OR"), 1),
+      inner_logic        = sample(c("AND", "OR"), 1),
+      prediction_if_true = sample(0:1, 1)
+    )
+  } else {
+    dims_used  <- sort(sample.int(n_features, num_dims, replace = TRUE))
+    thresholds <- mapply(sample_thresh, dims_used)
+    operations <- sample(c(">", "<"), num_dims, replace = TRUE)
+    list(
+      dimensions         = dims_used,
+      thresholds         = thresholds,
+      operations         = operations,
+      logic              = if (num_dims == 2) sample(c("AND", "OR"), 1) else NA,
+      prediction_if_true = sample(0:1, 1)
+    )
+  }
+}
+
 # ── Unified targeted mutation driver ─────────────────────────────────────────
 #
 # Replaces mutate_particles() for forward simulation of targeted learners.
 # mutation_type controls which cognitive theory is applied:
-#   "prior"       — original prior-sampling mutation (no revision)
-#   "threshold"   — Level 1: perturb thresholds, keep structure
-#   "component"   — Level 2: replace one condition, keep the rest
+#   "prior"            — original prior-sampling mutation (no revision)
+#   "threshold"        — Level 1: perturb thresholds, keep structure
+#   "component"        — Level 2: replace one condition, keep the rest
 #   "feature_weighted" — Level 3: resample with feature-prevalence bias
+#   "dim_weighted"     — Level 4: resample with dimensionality-prevalence bias
 #
 # All types share the same mutation_prob parameter: probability per particle
-# per trial of being mutated at all. The three targeted types differ only in
+# per trial of being mutated at all. The targeted types differ only in
 # *how* the replacement rule is generated.
 
 mutate_particles_targeted <- function(particles, weights,
@@ -2919,7 +2971,8 @@ mutate_particles_targeted <- function(particles, weights,
                                        mutation_type   = c("prior",
                                                            "threshold",
                                                            "component",
-                                                           "feature_weighted"),
+                                                           "feature_weighted",
+                                                           "dim_weighted"),
                                        sigma_perturb   = 0.5,
                                        top_frac        = 0.25) {
   mutation_type <- match.arg(mutation_type)
@@ -2929,11 +2982,13 @@ mutate_particles_targeted <- function(particles, weights,
   to_mutate  <- which(runif(n) < mutation_prob)
   if (length(to_mutate) == 0) return(particles)
 
-  # For feature-weighted, compute the feature distribution once per call
-  # from the current high-weight particles — not from the particles being
-  # replaced (which may be low-weight ones).
+  # Compute population-level statistics once per call from high-weight particles.
   feat_probs <- if (mutation_type == "feature_weighted")
     feature_weights_from_particles(particles, weights, n_features, top_frac)
+  else NULL
+
+  dim_probs <- if (mutation_type == "dim_weighted")
+    dim_weights_from_particles(particles, weights, max_dims, top_frac)
   else NULL
 
   for (i in to_mutate) {
@@ -2946,6 +3001,10 @@ mutate_particles_targeted <- function(particles, weights,
 
       feature_weighted = generate_rule_with_feature_probs(
         n_features, max_dims, feature_range, feat_probs
+      ),
+
+      dim_weighted = generate_rule_with_dim_probs(
+        n_features, max_dims, feature_range, dim_probs
       )
     )
   }
@@ -2957,8 +3016,8 @@ mutate_particles_targeted <- function(particles, weights,
 
 * `mutate_particles_targeted` is a drop-in replacement for `mutate_particles` in any particle filter that wants to explore targeted revision. It takes the same `mutation_prob` argument and adds `mutation_type`, so existing code that passes `mutation_type = "prior"` is identical to the original.
 * The perturbation width `sigma_perturb` in Level 1 is a new structural commitment. Small values (< 0.2) produce almost-local search; large values (> 2.0) approach prior-sampling. It is not estimated from data in Model A — it would need to be either fixed by cognitive argument or added to the NPE prior.
-* Level 3 (`feature_weighted`) is the most cognitively interesting but also the most dependent on $N_\text{particles}$: with very few particles the feature counts are noisy and the bias is unreliable. A floor of 0.5 per feature prevents any dimension from being completely excluded from the mutation distribution.
-* All three targeted variants are more conservative than prior-sampling: they keep more of the current rule intact, which means they explore less of the rule space per unit time. On a task where the true rule is very different from anything currently in the particle set, targeted mutation may be slower to recover than prior-sampling.
+* Levels 3 and 4 (`feature_weighted`, `dim_weighted`) both depend on the empirical distribution of the top-weighted particles and are most reliable with a moderately large particle set. A Laplace floor of 0.5 prevents any feature or dimensionality from being completely excluded. The two can in principle be combined — biasing both *which features* and *how many conditions* simultaneously — by composing `feature_weights_from_particles` and `dim_weights_from_particles` inside a single generator.
+* All four targeted variants are more conservative than prior-sampling: they keep more of the current rule intact, which means they explore less of the rule space per unit time. On a task where the true rule is very different from anything currently in the particle set, targeted mutation may be slower to recover than prior-sampling.
 
 ### Scenario-Aware Particle Filter
 
@@ -3015,16 +3074,6 @@ rule_particle_filter_scenario <- function(schedule,
   for (i in seq_len(n_trials)) {
     stim <- as.numeric(obs[i, ])
 
-    # ── Mutation step ─────────────────────────────────────────────────
-    # mutation_type controls whether replacement rules are drawn from the
-    # prior ("prior") or generated via one of the targeted revision
-    # strategies ("threshold", "component", "feature_weighted").
-    particles <- mutate_particles_targeted(particles, weights,
-                                           mutation_prob, n_features,
-                                           max_dims, fr,
-                                           mutation_type = mutation_type,
-                                           sigma_perturb = sigma_perturb)
-
     # ── Prediction ────────────────────────────────────────────────────
     preds        <- sapply(particles, evaluate_rule, stimulus = stim)
     p_cat1_rules <- ifelse(preds == 1, 1 - error_prob, error_prob)
@@ -3061,6 +3110,16 @@ rule_particle_filter_scenario <- function(schedule,
       particles <- rs$particles
       weights   <- rs$weights
     }
+
+    # ── Mutation (after resampling) ───────────────────────────────────
+    # mutation_type controls whether replacement rules are drawn from the
+    # prior ("prior") or generated via one of the targeted revision
+    # strategies ("threshold", "component", "feature_weighted", "dim_weighted").
+    particles <- mutate_particles_targeted(particles, weights,
+                                           mutation_prob, n_features,
+                                           max_dims, fr,
+                                           mutation_type = mutation_type,
+                                           sigma_perturb = sigma_perturb)
   }
 
   schedule |>
@@ -3250,8 +3309,8 @@ Rule-based models, particularly Model A (the particle filter), offer several cog
 * **Complex boundaries**: requires very complex rules or many simple rules to approximate non-axis-aligned or curved boundaries.
 * **Graded typicality**: doesn't easily explain why some category members seem more typical than others.
 * **Feature learning**: standard models assume predefined features; they don't typically learn which features are relevant from raw input.
-* **Rule grammar is a structural prior** (Phase 0 Q4): the chapter commits to $\{>, <\}$ operators, $\{\text{AND}, \text{OR}\}$ logical connectives, flat rules up to $\text{max\_dims} = 2$ conditions, nested three-condition rules of the form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$, and continuous thresholds. Different grammars would give different posteriors. Sensitivity to `max_dims` is exercised in §"Sensitivity to `max_dims`"; sensitivity to operators and connectives (including deeper nesting) is left as an exercise.
-* **Model B is structurally biased relative to Model A** (Phase 0 Q3, Q5): the Stan proxy is a different model from the cognitive theory. Validation of Model B (LOO, prior sensitivity, real SBC, PSBC) tests the proxy. The NPE vs Stan comparison in §"The Main Empirical Result" and the gap demonstration make the bias visible. Chapter 15 should report both posteriors when comparing rule-based models against GCM and prototype.
+* **Rule grammar is a structural prior**: the chapter commits to $\{>, <\}$ operators, $\{\text{AND}, \text{OR}\}$ logical connectives, flat rules up to $\text{max\_dims} = 2$ conditions, nested three-condition rules of the form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$, and continuous thresholds. Different grammars would give different posteriors. Sensitivity to `max_dims` is exercised in §"Sensitivity to `max_dims`"; sensitivity to operators and connectives (including deeper nesting) is left as an exercise.
+* **Model B is structurally biased relative to Model A**: the Stan proxy is a different model from the cognitive theory. Validation of Model B (LOO, prior sensitivity, real SBC, PSBC) tests the proxy. The NPE vs Stan comparison in §"The Main Empirical Result" and the gap demonstration make the bias visible. Chapter 15 should report both posteriors when comparing rule-based models against GCM and prototype.
 * **NPE has its own approximation error**: the NPE posterior is the output of a learned normalising flow, which is an approximation to the true posterior. We validate it via SBC + expected coverage (§"NPE Validation"); if both pass, the approximation error is small enough to trust. Unlike rejection ABC, NPE does not depend on hand-crafted summary statistics — the embedding network learns the relevant features end-to-end — and it does not depend on a tolerance parameter.
 * **Cross-language step**: NPE requires Python (`sbi` + `torch`) accessed via `reticulate`. This adds a dependency but is well-documented and the interface is stable. The alternative — reimplementing normalising flows in R — is not advisable.
 * **No multilevel extension yet**: this chapter, like Chapter 13, stops at single-subject inference. The multilevel rule model (with population-level priors on $\varepsilon$ and per-subject offsets) is straightforward to add to Model B but non-trivial for the NPE pipeline; Chapter 15 takes up the multilevel comparison across all three model classes. For NPE, the standard approach is to train the network at the single-subject level and then build the hierarchical model on top of the individual posteriors (Radev et al. 2023, §"Hierarchical models").

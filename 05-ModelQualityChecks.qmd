@@ -2136,34 +2136,42 @@ cat("Load in Ch. 7 and Ch. 8 with: readRDS(here('simdata', 'ch07_reversal_data.r
 Finally, we run Simulation-Based Calibration Checks. We use the SBC package to guarantee that our logit(memory) parameterization doesn't introduce hidden biases in the sampler's rank statistics.
 
 ```{r ch06_memory_sbc}
-# 1. Define the Generator using our simulate_function
-sbc_memory_generator_fn <- function() {
-  # Draw true params from priors
-  t_bias <- rnorm(1, 0, 0.5)
-  t_beta <- rnorm(1, 0, 1.0)
+sbc_mem_results_file <- here::here("simmodels", "ch06_memory_sbc_results.rds")
+
+if (regenerate_simulations || !file.exists(sbc_mem_results_file)) {
+  # 1. Define the Generator using our simulate_function
+  sbc_memory_generator_fn <- function() {
+    # Draw true params from priors
+    t_bias <- rnorm(1, 0, 0.5)
+    t_beta <- rnorm(1, 0, 1.0)
   
-  # Use fixed opponent choices for simplicity in this check
-  opp_choices <- rbinom(120, 1, 0.8)
+    # Use fixed opponent choices for simplicity in this check
+    opp_choices <- rbinom(120, 1, 0.8)
   
-  sim <- simulate_memory(bias = t_bias, beta = t_beta, opponent_choices = opp_choices)
+    sim <- simulate_memory(bias = t_bias, beta = t_beta, opponent_choices = opp_choices)
   
-  list(
-    variables = list(bias = t_bias, beta = t_beta),
-    generated = list(N_trials = 120, y = sim$choice, other = opp_choices,
-                     prior_bias_mu = 0, prior_bias_sigma = 0.5,
-                     prior_beta_mu = 0, prior_beta_sigma = 1.0,
-                     run_diagnostics = 0L)
-  )
+    list(
+      variables = list(bias = t_bias, beta = t_beta),
+      generated = list(N_trials = 120, y = sim$choice, other = opp_choices,
+                       prior_bias_mu = 0, prior_bias_sigma = 0.5,
+                       prior_beta_mu = 0, prior_beta_sigma = 1.0,
+                       run_diagnostics = 0L)
+    )
+  }
+  
+  # 2. Execute SBC (1000 simulations)
+  sbc_mem_obj <- SBC::SBC_generator_function(sbc_memory_generator_fn)
+  sbc_mem_backend <- SBC::SBC_backend_cmdstan_sample(mod_mem_gq, chains = 1, refresh = 0)
+  
+  # Run parallel fits
+  future::plan(future::multisession, workers = max(1, parallel::detectCores() - 1))
+  sbc_mem_results <- SBC::compute_SBC(SBC::generate_datasets(sbc_mem_obj, n_sims = 200), sbc_mem_backend)
+  future::plan(future::sequential)
+  
+  saveRDS(sbc_mem_results, sbc_mem_results_file)
+} else {
+  sbc_mem_results <- readRDS(sbc_mem_results_file)
 }
-
-# 2. Execute SBC (1000 simulations)
-sbc_mem_obj <- SBC::SBC_generator_function(sbc_memory_generator_fn)
-sbc_mem_backend <- SBC::SBC_backend_cmdstan_sample(mod_mem_gq, chains = 1, refresh = 0)
-
-# Run parallel fits
-future::plan(future::sequential)
-sbc_mem_results <- SBC::compute_SBC(SBC::generate_datasets(sbc_mem_obj, n_sims = 200), sbc_mem_backend)
-future::plan(future::sequential)
 
 # 3. Visualize calibration
 p_mem_sbc <- SBC::plot_rank_hist(sbc_mem_results) + theme_classic()

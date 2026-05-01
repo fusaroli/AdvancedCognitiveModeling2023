@@ -3253,6 +3253,41 @@ p_sbc_indiv_proto <- ggplot(recovery_df_indiv_proto,
   ) +
   theme_bw()
 print(p_sbc_indiv_proto)
+
+# ── Divergence diagnostics — static multilevel SBC ───────────────────────────
+ml_diags_static     <- sbc_results_ml_proto$backend_diagnostics
+ml_fail_rate_static <- mean(ml_diags_static$n_divergent > 0) * 100
+
+cat(sprintf(
+  "Static multilevel SBC: %.0f%% of universes produced at least one divergence.\n",
+  ml_fail_rate_static
+))
+
+ml_div_profile_static <- sbc_results_ml_proto$stats |>
+  dplyr::filter(variable %in% c("pop_log_r_sd", "pop_log_q_sd")) |>
+  dplyr::select(sim_id, variable, simulated_value) |>
+  tidyr::pivot_wider(names_from = variable, values_from = simulated_value) |>
+  dplyr::left_join(
+    dplyr::select(ml_diags_static, sim_id, n_divergent),
+    by = "sim_id"
+  ) |>
+  dplyr::mutate(had_divergence = n_divergent > 0)
+
+ggplot(ml_div_profile_static,
+       aes(x = pop_log_r_sd, y = pop_log_q_sd, color = had_divergence)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(
+    name   = "Sampler",
+    values = c("FALSE" = "steelblue", "TRUE" = "darkred"),
+    labels = c("FALSE" = "Clean", "TRUE" = "Divergent")
+  ) +
+  labs(
+    title    = "Divergence Profile — Static Multilevel SBC",
+    subtitle = "Divergences concentrate where population SDs are small (funnel geometry)",
+    x        = expression("True " * sigma[log~r]),
+    y        = expression("True " * sigma[log~q])
+  ) +
+  theme_bw()
 ```
 
 **How to read the multilevel prototype SBC.** The prototype model now has two per-subject parameters ($\log r$ and $\log q$), giving six ECDF-difference curves.
@@ -3260,6 +3295,8 @@ print(p_sbc_indiv_proto)
 * **ECDF-difference plot and rank histograms.** All six curves (`pop_log_r_mean`, `pop_log_r_sd`, `subj_log_r[1]`, `pop_log_q_mean`, `pop_log_q_sd`, `subj_log_q[1]`) should remain inside the simultaneous grey confidence band. A U-shaped rank histogram for `pop_log_r_sd` or `pop_log_q_sd` is the canonical NCP failure mode. For `pop_log_q_sd` especially, the posterior may be wide (q is partially confounded with r under the static paradigm), so coverage rather than width is the key diagnostic. If rank histograms show systematic failures, the standard remedy is to switch from NCP to centred parameterisation for the affected parameter.
 
 * **Scatter plots (population and individual recovery).** Points along the red dashed identity line confirm that the posterior means are unbiased estimators of the generating values. Systematic curvature (points arching away from the line at the extremes) would indicate either prior-boundary effects or insufficient data per subject.
+
+* **Divergence profile.** The scatter of divergences against the true `pop_log_r_sd` and `pop_log_q_sd` reveals whether failures concentrate in the small-SD region — the characteristic signature of the Neal's funnel geometry. The non-centred parameterisation handles moderate funnels well; if divergences are frequent even at larger SD values, increase `adapt_delta` or switch the SD hyperparameter to a half-Normal prior with a tighter scale.
 
 * **Comparison with single-subject SBC (§"Simulation-Based Calibration Checks" above).** The single-subject SBC used $S = 500$ iterations of one agent each; the multilevel SBC uses $S = 200$ iterations of 10 agents each. The multilevel SBC is the authoritative check for multi-subject inference: it verifies that partial pooling does not distort individual-level posteriors and that population hyperparameters are jointly calibrated with per-subject parameters.
 
@@ -3330,7 +3367,7 @@ if (regenerate_simulations || !file.exists(sbc_ml_drift_filepath)) {
           subj_start                = bounds$subj_start,
           subj_end                  = bounds$subj_end,
           y                         = as.integer(sorted$sim_response),
-          cat_one                   = as.integer(sorted$category_feedback),
+          cat_one                   = as.integer(sorted$observed_feedback),
           obs                       = as.matrix(sorted[, c("height", "position")]),
           initial_mu_cat0           = c(2.5, 2.5),
           initial_mu_cat1           = c(2.5, 2.5),
@@ -3378,9 +3415,86 @@ plot_ecdf_diff(sbc_results_ml_drift) +
   ggtitle("Multilevel SBC: smooth drift scenario")
 plot_rank_hist(sbc_results_ml_drift) +
   ggtitle("Rank histograms — multilevel drift")
+
+# ── Parameter recovery — drift multilevel SBC ────────────────────────────────
+recovery_df_pop_drift <- sbc_results_ml_drift$stats |>
+  dplyr::filter(variable %in% c("pop_log_r_mean", "pop_log_r_sd",
+                                  "pop_log_q_mean", "pop_log_q_sd"))
+
+p_sbc_pop_drift <- ggplot(recovery_df_pop_drift,
+                           aes(x = simulated_value, y = mean)) +
+  geom_point(alpha = 0.5, color = "#009E73") +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  facet_wrap(~variable, scales = "free") +
+  labs(
+    title    = "Population Parameter Recovery — Drift Multilevel SBC",
+    subtitle = "Posterior mean vs. true generated value",
+    x = "True Value", y = "Estimated Value (Posterior Mean)"
+  ) +
+  theme_bw()
+print(p_sbc_pop_drift)
+
+recovery_df_indiv_drift <- sbc_results_ml_drift$stats |>
+  dplyr::filter(variable %in% c("subj_log_r[1]", "subj_log_q[1]"))
+
+p_sbc_indiv_drift <- ggplot(recovery_df_indiv_drift,
+                             aes(x = simulated_value, y = mean)) +
+  geom_point(alpha = 0.5, color = "#D55E00") +
+  geom_abline(intercept = 0, slope = 1,
+              color = "grey30", linetype = "dashed") +
+  facet_wrap(~variable, scales = "free") +
+  labs(
+    title    = "Individual Parameter Recovery (Subject 1) — Drift Multilevel SBC",
+    subtitle = "Posterior mean vs. true generated value",
+    x = "True value [Subject 1]",
+    y = "Estimated value (Posterior Mean)"
+  ) +
+  theme_bw()
+print(p_sbc_indiv_drift)
+
+# ── Divergence diagnostics — drift multilevel SBC ────────────────────────────
+ml_diags_drift     <- sbc_results_ml_drift$backend_diagnostics
+ml_fail_rate_drift <- mean(ml_diags_drift$n_divergent > 0) * 100
+
+cat(sprintf(
+  "Drift multilevel SBC: %.0f%% of universes produced at least one divergence.\n",
+  ml_fail_rate_drift
+))
+
+ml_div_profile_drift <- sbc_results_ml_drift$stats |>
+  dplyr::filter(variable %in% c("pop_log_r_sd", "pop_log_q_sd")) |>
+  dplyr::select(sim_id, variable, simulated_value) |>
+  tidyr::pivot_wider(names_from = variable, values_from = simulated_value) |>
+  dplyr::left_join(
+    dplyr::select(ml_diags_drift, sim_id, n_divergent),
+    by = "sim_id"
+  ) |>
+  dplyr::mutate(had_divergence = n_divergent > 0)
+
+ggplot(ml_div_profile_drift,
+       aes(x = pop_log_r_sd, y = pop_log_q_sd, color = had_divergence)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_color_manual(
+    name   = "Sampler",
+    values = c("FALSE" = "steelblue", "TRUE" = "darkred"),
+    labels = c("FALSE" = "Clean", "TRUE" = "Divergent")
+  ) +
+  labs(
+    title    = "Divergence Profile — Drift Multilevel SBC",
+    subtitle = "Divergences concentrate where population SDs are small (funnel geometry)",
+    x        = expression("True " * sigma[log~r]),
+    y        = expression("True " * sigma[log~q])
+  ) +
+  theme_bw()
 ```
 
-**Reading the drift multilevel SBC.** Under the assumption-matched scenario all six curves should remain inside the simultaneous band and rank histograms should be approximately uniform. Contrast with the static multilevel SBC above: `pop_log_q_mean` and `subj_log_q[1]` should shift from calibration failure (static) to calibration success (drift). `pop_log_q_sd` is the most demanding curve — even on drift data, estimating the *spread* of individual $\log q$ values requires enough between-subject variability to be visible above the within-subject noise. The two multilevel SBC panels together — static as failure case, drift as success case — provide the population-level analogue of the single-subject SBC trilogy from §"Non-Stationary Environments".
+**Reading the drift multilevel SBC.** Under the assumption-matched scenario all six curves should remain inside the simultaneous band and rank histograms should be approximately uniform. Contrast with the static multilevel SBC above: `pop_log_q_mean` and `subj_log_q[1]` should shift from calibration failure (static) to calibration success (drift). `pop_log_q_sd` is the most demanding curve — even on drift data, estimating the *spread* of individual $\log q$ values requires enough between-subject variability to be visible above the within-subject noise.
+
+The recovery scatter plots give an orthogonal read: points for `pop_log_q_mean` and `subj_log_q[1]` that were diffuse on static data should tighten around the identity line here, while `pop_log_r_mean` and `subj_log_r[1]` should remain well-recovered across both scenarios. Curvature in `pop_log_r_sd` or `pop_log_q_sd` at the low end would indicate that the prior on the SD hyperparameter is pulling estimates away from near-zero true values — a common partial-pooling artefact when between-subject variability is genuinely small.
+
+The divergence profile under drift data should be compared directly to the static profile. Any residual divergences are expected to concentrate at small `pop_log_r_sd` and `pop_log_q_sd` (the Neal's funnel region), not in the interior of parameter space. If the drift scenario produces *more* divergences than the static scenario, the larger effective posterior curvature introduced by the drift updates may be straining the NCP geometry; increasing `adapt_delta` to 0.99 or adding a heavier-tailed prior on the SD hyperparameters are the appropriate remedies.
+
+The two multilevel SBC panels together — static as failure case, drift as success case — provide the population-level analogue of the single-subject SBC trilogy from §"Non-Stationary Environments".
 
 ---
 
@@ -3573,7 +3687,7 @@ if (regenerate_simulations || !file.exists(attn_sim_file)) {
     .options = furrr_options(seed = TRUE)
   ) |>
     left_join(
-      attn_param_df |> select(agent_id, condition, w1, w2),
+      attn_param_df |> dplyr::select(agent_id, condition, w1, w2),
       by = c("agent_id", "w1_true" = "w1", "w2_true" = "w2")
     )
   write_csv(attention_responses, attn_sim_file)
@@ -3927,11 +4041,3 @@ As a Stan model it has a particularly clean shape: with two parameters and a ful
 
 The next chapter introduces a third perspective — rule-based models — which makes categorization decisions through explicit hypothesis testing rather than continuous similarity to either stored examples or running averages.
 
-::: {.callout-warning title="Prepare for a structural shift in Chapter 13"}
-Chapter 14 differs from Chapters 11 and 12 in one load-bearing way: **the cognitive theory (a Bayesian particle filter over discrete rule hypotheses) has no Stan-tractable likelihood**. The resampling step is non-differentiable and the latent particle trajectories cannot be marginalised analytically. The chapter therefore introduces two distinct models — Model A, the cognitive theory fitted via Neural Posterior Estimation (NPE); and Model B, a tractable Stan proxy (a marginalised mixture over a fixed candidate rule set). The validation battery applies separately to each. A flat SBC rank histogram for Model B does *not* validate Model A. The gap between the two posteriors on $\varepsilon$ is the chapter's main empirical finding: the structural bias you accept when you replace an intractable cognitive theory with a tractable proxy.
-
-Coming from this chapter, the key conceptual shift is: the Kalman filter gave us a clean two-parameter Stan model where process noise $q$ was both interpretable (drift speed) and identifiable from non-stationary data. The rule particle filter has an analogous mutation parameter $\mu$, but it enters as a general-purpose rejuvenation mechanism rather than as a literal model of how the environment changes — which means identifiability patterns differ, and the assumption-match story is less tight. Chapter 13's scenario analysis (§"Assumption Match Across Scenarios") spells this out.
-
-:::
-
-Chapter 14 also confronts the NPE pipeline that replaces the ABC-based approach of earlier drafts: schedule-fixed simulations, a learned embedding network, and SBC + expected coverage for validation. The cross-architecture comparison in Chapter 15 inherits these NPE networks — each model gets one trained inference network, and the full multi-subject comparison runs in seconds thanks to amortized inference.
