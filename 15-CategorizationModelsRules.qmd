@@ -6,7 +6,7 @@ format:
     code-tools: true
 ---
 
-# Rule-Based Models of Categorization
+# Categorization models: Rules
 
 ```{r ch14_setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -22,12 +22,12 @@ knitr::opts_chunk$set(
 
 # Set to TRUE to rerun simulations and Stan fits.
 # FALSE loads pre-computed results from 'simdata/'.
-regenerate_simulations <- FALSE
+regenerate_simulations <- TRUE
 
 # Set to TRUE to run the long-running validation chunks
 # (rule-set sensitivity, real SBC for the Stan proxy, NPE pipeline,
 # coverage validation, NPE-vs-Stan comparison).
-run_intensive_checks   <- FALSE
+run_intensive_checks   <- TRUE
 
 library(here)
 pacman::p_load(
@@ -47,6 +47,16 @@ pacman::p_load(
 )
 
 theme_set(theme_classic())
+
+# ── Python availability for NPE ──────────────────────────────────────────────
+python_available <- tryCatch({
+  # Use virtualenv if it exists, otherwise check default python
+  if (reticulate::virtualenv_exists("r-reticulate")) {
+    reticulate::use_virtualenv("r-reticulate", required = TRUE)
+  }
+  reticulate::py_available(initialize = TRUE) && reticulate::py_module_available("sbi")
+}, error = function(e) FALSE)
+
 
 # ── Prior hyperparameter for logit(error_prob) ────────────────────────────────
 # Normal(0, 1.5) is approximately uniform on the probability scale.
@@ -73,7 +83,12 @@ LOGIT_MU_PRIOR_SD   <- 1.5
 # These are NOT inferred from data — they are cognitive choices the modeller
 # makes. Sensitivity to each is exercised in dedicated subsections.
 N_PARTICLES_FIXED  <- 100    # working-memory bound on hypothesis count
-MAX_RULE_DIMS      <- 2      # maximum number of conditions in a rule
+MAX_RULE_DIMS      <- 2      # default for the Kruschke task ONLY. Used as a
+                              # function-argument default throughout this chapter;
+                              # downstream chapters MUST pass max_dims explicitly
+                              # rather than relying on this constant. Chapter 16
+                              # (Alien Game) defines its own default of 3 because
+                              # Sessions 2–3 contain rules over 3+ features.
 RULE_OPERATORS     <- c(">", "<")
 RULE_LOGIC         <- c("AND", "OR")
 RESAMPLE_THRESHOLD <- 0.5    # resample when ESS < N_particles * this factor
@@ -411,8 +426,22 @@ The number of distinct rules in this grammar is finite (although large). For $\t
 * Maximum two conditions per flat rule, or three conditions in a nested rule. A reader who believes humans use deeper rule trees will need to extend the grammar further.
 * Continuous thresholds. This defeats analytical marginalisation in Stan (see §"Why Model A's Likelihood is Intractable for HMC").
 * Nested rules use a fixed two-level tree: one outer condition and one inner clause of two conditions. Deeper trees (e.g., A AND (B AND (C OR D))) are not implemented.
+* Counting rules are inexpressible. A rule like "at least 2 of $\{f_1, f_2, f_3\}$ are present" cannot be represented as any single conjunct or disjunct in this grammar. The particle filter approximates such rules via an *ensemble* of 2D conjunction particles that collectively cover the relevant stimulus set, but no individual particle equals the ground-truth rule. This becomes relevant in the Alien Game (Chapter 16, Session 2 Nutritious).
 
 We will test sensitivity to `max_dims` in the dedicated subsection, and the operator/logic-set commitments are flagged in §"Limitations."
+
+### What Changes When Features Are Binary and 5-Dimensional
+
+Chapter 16 applies the same particle filter to the Alien Game (5 binary features per stimulus) instead of the 2 continuous Kruschke features. The cognitive content of the model — particles, weights, ESS resampling, mutation, weighted vote — is unchanged. Four concrete substitutions are needed:
+
+1. **`n_features`: $2 \to 5$.** The simulator reads `obs` as a $T \times n_{\text{features}}$ matrix; nothing in the trial loop assumes a particular width as long as `feature_range` is built from `seq_len(n_features)` rather than hard-coded as `[, 1]` and `[, 2]`.
+2. **`feature_range`: per-feature continuous extent $\to$ `c(0, 1)` per feature.** The threshold sampler `runif(1, lo, hi)` still works, but operationally the only informative threshold on a unit interval is the midpoint.
+3. **Threshold representation: continuous $\to$ fixed at 0.5.** Because features are binary, every condition reduces to "feature $d$ equals 0" (operator `<` 0.5) or "feature $d$ equals 1" (operator `>` 0.5). Chapter 16 hard-codes `thresholds[k] = 0.5` for clarity rather than sampling continuously over a degenerate interval.
+4. **`max_dims`: $2 \to 3$.** Several alien rules require three feature checks (e.g., "Spotty AND (Tall OR Tail)"). The nested form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$ introduced here is **retained** in Chapter 16, because the alien-game grammar `A AND (B OR C)` is exactly this nested shape. The 2-feature Kruschke task can express interesting nested rules over the same two dimensions (different thresholds); the 5-feature alien task expresses interesting nested rules over three different dimensions. The grammar object is the same in both cases — only `n_features`, `feature_range`, threshold sampling, and `max_dims` change.
+
+The four NPE validations introduced later in this chapter (prior predictive, marginal SBC, expected coverage, posterior predictive) all transfer directly: the only changes are in the data tensor shape — $T \times (1 + n_{\text{features}} + 1)$ rather than $T \times 4$ — and in the simulator's `feature_range` argument. The trained network architecture (embedding MLP + neural spline flow) does not need redesign; it is a function from a flat input vector of any fixed length to a posterior over $\theta$.
+
+> **Forward note for Chapter 16.** Chapter 16 inherits this grammar with the four substitutions above, retains the nested `A L_outer (B L_inner C)` form so the alien grammar's `A AND (B OR C)` is directly representable, and raises `max_dims` to 3. Chapter 16 Phase 0 Q5 names this relaxation explicitly and gives its cognitive interpretation.
 
 ---
 
@@ -448,6 +477,99 @@ The core idea:
 5. **Mutate**: Resampling *selects* from the current hypothesis set — it cannot invent rules that were never in the initial set. A mutation step gives each particle an independent probability $\mu$ of being replaced by a freshly sampled rule from the grammar. This injects hypothesis turnover, prevents the hypothesis space from collapsing to a few survivors, and allows the filter to track categories that change over time. $\mu = 0$ recovers a pure selection filter; $\mu > 0$ is the analogue of process noise $q$ in the Kalman prototype and the forgetting rate $\lambda$ in the decay GCM.
 
 The trial-level loop therefore runs: **predict → receive feedback → update weights → resample if ESS low → mutate**. Mutation comes last because it operates on the post-resample particle set: rules that survived selection are diversified before the next trial begins, ensuring fresh hypotheses enter with uniform weight and are evaluated fairly on the next observation.
+
+```{tikz ch15_model_a_dag, echo=FALSE, fig.cap="Generative structure of Model A (Bayesian Particle Filter). Left: standard plate notation. Right: Kruschke-style notation. Filled nodes are observed; open nodes are latent. The particle set $\\{r_n\\}$ evolves across trials via resampling and mutation, so the sequential dependency is captured by the trial plate with a self-loop on the particle weights. The two continuous parameters inferred by NPE are $\\varepsilon$ (error probability) and $\\mu$ (mutation probability); $N$ and the rule grammar are fixed structural choices, not estimated.", fig.ext='png', fig.width=12, cache=TRUE}
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta, fit, backgrounds, calc}
+
+\tikzset{
+    stochastic/.style={->, >={Latex[length=3mm]}, thick},
+    deterministic/.style={->, >={Latex[length=3mm]}, thick, dashed, draw=gray!70},
+    plate/.style={draw=black, thick, rounded corners, inner sep=10pt},
+    continuous/.style={circle, draw=black, thick, minimum size=1.2cm, inner sep=0pt},
+    discrete/.style={rectangle, draw=black, thick, minimum size=1.2cm},
+    observed/.style={fill=gray!30},
+    latent/.style={fill=white},
+    pics/norm_dist/.style={code={
+        \draw[thin, gray] (-1.2,0) -- (1.2,0);
+        \draw[thick, blue] plot[domain=-1.2:1.2, samples=50] (\x, {0.8*exp(-3*\x*\x)});
+        \node[font=\footnotesize, below] at (0,0) {Normal};
+    }},
+    pics/bern_dist/.style={code={
+        \draw[thin, gray] (-1,0) -- (1,0);
+        \draw[blue, line width=4pt] (-0.4, 0) -- (-0.4, 0.3);
+        \draw[blue, line width=4pt] (0.4, 0) -- (0.4, 0.8);
+        \node[font=\footnotesize, below] at (0,0) {Bernoulli};
+    }},
+    pics/grammar_dist/.style={code={
+        \draw[thin, gray] (-1.1,0) -- (1.1,0);
+        \foreach \x in {-0.8,-0.4,0,0.4,0.8} {
+            \draw[blue, line width=2.5pt] (\x, 0) -- (\x, 0.45);
+        }
+        \node[font=\footnotesize, below] at (0,0) {Grammar};
+    }}
+}
+
+\begin{tikzpicture}
+%% LEFT: STANDARD PLATE NOTATION
+\node[font=\large\bfseries] at (0, 3.5) {Standard Plate Notation};
+
+% Hyperparameters / priors (fixed structural choices at top)
+\node[continuous, latent] (eps)  at (-2,  1.8) {$\varepsilon$};
+\node[continuous, latent] (mu)   at ( 2,  1.8) {$\mu$};
+
+% Particle plate
+\node[continuous, latent] (r_n) at (0, -0.5) {$r_n$};
+\node[plate, fit=(r_n), label={[anchor=south east, font=\small\bfseries]below right:$n=1\dots N$}] (pN) {};
+
+% Trial plate
+\node[continuous, observed] (x_t) at (-2, -3.5) {$x_t$};
+\node[discrete,   observed] (y_t) at ( 2, -3.5) {$y_t$};
+\node[plate, inner sep=14pt, fit=(x_t)(y_t)(pN), label={[anchor=south east, font=\small\bfseries]below right:$t=1\dots T$}] (pT) {};
+
+% Arrows
+\draw[stochastic]    (eps)  -- (y_t);
+\draw[deterministic] (mu)   -- (r_n);
+\draw[deterministic] (r_n)  -- (y_t);
+\draw[deterministic] (x_t)  -- (y_t);
+% Self-loop indicating sequential update of particles across trials
+\draw[stochastic, bend right=60] (y_t.south) to node[right, font=\small]{update} (r_n.south);
+
+%% RIGHT: KRUSCHKE-STYLE NOTATION
+\node[font=\large\bfseries] at (11, 3.5) {Kruschke-Style Notation};
+
+% Priors
+\coordinate (k_eps) at (8,  1.8); \draw (k_eps) pic {norm_dist};
+\node[above=0.7cm of k_eps, font=\bfseries] {$\varepsilon$};
+
+\coordinate (k_mu) at (14, 1.8); \draw (k_mu) pic {norm_dist};
+\node[above=0.7cm of k_mu, font=\bfseries] {$\mu$};
+
+% Particle set (grammar prior)
+\coordinate (k_r) at (11, -0.5); \draw (k_r) pic {grammar_dist};
+\node[above=0.7cm of k_r, font=\bfseries, align=center] {Rules $\{r_n, w_n\}$};
+
+% Observed stimulus (fixed/given)
+\node[discrete, observed, minimum size=0.9cm] (k_x) at (8, -3.5) {$x_t$};
+\node[above=0.5cm of k_x, font=\bfseries] {Stimulus};
+
+% Response
+\coordinate (k_y) at (14, -3.5); \draw (k_y) pic {bern_dist};
+\node[above=0.9cm of k_y, font=\bfseries] {Response ($y_t$)};
+
+% Plates
+\draw[plate, dashed] (7.0, -2.0) rectangle (15.0,  0.9) node[below left, font=\small\bfseries] {$n=1\dots N$};
+\draw[plate, dotted] (7.0, -5.0) rectangle (15.0, -2.5) node[below left, font=\small\bfseries] {$t=1\dots T$};
+
+% Arrows
+\draw[stochastic] (k_eps) -- (k_y);
+\draw[stochastic] (k_mu)  -- (k_r)  node[midway, right, font=\large]{$\sim$};
+\draw[deterministic] (k_r) -- (k_y);
+\draw[deterministic] (k_x) -- (13.3, -3.5);
+% Sequential update arrow
+\draw[stochastic, bend right=50] (14, -4.5) to node[right, font=\small]{update $w_n$} (11, -1.5);
+
+\end{tikzpicture}
+```
 
 ### Why Model A's Likelihood is Intractable for HMC
 
@@ -650,7 +772,9 @@ rule_particle_filter <- function(n_particles               = N_PARTICLES_FIXED,
                                  quiet                     = TRUE) {
   n_trials   <- nrow(obs)
   n_features <- ncol(obs)
-  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+  # feature_range is built generically across n_features so the same simulator
+  # handles 2D continuous (Kruschke) and 5D binary (Ch. 16 Alien Game) inputs.
+  fr         <- lapply(seq_len(n_features), function(d) range(obs[, d]))
 
   ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
   particles <- ps$particles
@@ -695,6 +819,19 @@ cat("Particle filter agent function defined.\n")
 ```
 
 This implementation captures the core cognitive processes hypothesized by rule-based models: hypothesis generation, testing against evidence, belief updating, and adaptive focusing of the hypothesis set. **It is also the simulator that NPE will use in §"Neural Posterior Estimation for Model A."**
+
+::: {.callout-tip title="Generalization checklist for downstream chapters"}
+The `rule_particle_filter` above is written so that the same function body runs unchanged on Chapter 16's 5-feature binary alien stimuli. A downstream chapter inherits the simulator by changing only the four items below — none of which touch the trial loop, the weight update, the resampling step, or the mutation step.
+
+| Item | Kruschke (Ch. 15) | Alien Game (Ch. 16) |
+|---|---|---|
+| `n_features` | $2$ (height, position) | $5$ (binary feature vector) |
+| `feature_range` | per-feature `range(obs[, d])` | `c(0, 1)` per feature |
+| Threshold sampling | `runif(1, lo, hi)` | hard-coded at $0.5$ |
+| `max_dims` default | $2$ | $3$ |
+
+The grammar object (`dimensions`, `thresholds`, `operations`, `logic` / `outer_logic` / `inner_logic`, `prediction_if_true`) is identical in both chapters; the nested form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$ is preserved so the alien-game grammar `A AND (B OR C)` is directly representable.
+:::
 
 ---
 
@@ -812,7 +949,7 @@ track_rule_learning <- function(n_particles, error_prob, obs, cat_one,
                                 resample_threshold_factor = RESAMPLE_THRESHOLD) {
   n_trials  <- nrow(obs)
   n_features <- ncol(obs)
-  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+  fr         <- lapply(seq_len(n_features), function(d) range(obs[, d]))
 
   ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
   particles <- ps$particles
@@ -933,7 +1070,7 @@ get_final_rule_predictions <- function(n_particles, error_prob,
                                        grid_points, max_dims = MAX_RULE_DIMS,
                                        resample_threshold_factor = RESAMPLE_THRESHOLD) {
   n_features <- ncol(obs_train)
-  fr         <- list(range(obs_train[, 1]), range(obs_train[, 2]))
+  fr         <- lapply(seq_len(n_features), function(d) range(obs_train[, d]))
 
   ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
   particles <- ps$particles
@@ -1062,6 +1199,90 @@ We parameterise $\varepsilon$ on the logit scale — $\text{logit}(\varepsilon) 
 * **Closed-form Bernoulli likelihood.** Marginalised analytically with `log_sum_exp`. HMC handles it cleanly.
 * **No path-dependence.** Standard PSIS-LOO is technically valid (see §"LFO-CV Does Not Apply Here").
 
+```{tikz ch15_model_b_dag, echo=FALSE, fig.cap="Generative structure of Model B (Stan proxy). Left: standard plate notation. Right: Kruschke-style notation. The sole continuous parameter is $\\varepsilon$ (error probability), inferred with HMC. The discrete latent variable $r$ (which candidate rule the agent follows) is summed out analytically via \\texttt{log\\_sum\\_exp} before Stan sees the likelihood — hence the dashed node. There is no trial-to-trial dependency: all observations are conditionally i.i.d. given $\\varepsilon$.", fig.ext='png', fig.width=12, cache=TRUE}
+\usetikzlibrary{positioning, shapes.geometric, arrows.meta, fit, backgrounds, calc}
+
+\tikzset{
+    stochastic/.style={->, >={Latex[length=3mm]}, thick},
+    deterministic/.style={->, >={Latex[length=3mm]}, thick, dashed, draw=gray!70},
+    plate/.style={draw=black, thick, rounded corners, inner sep=10pt},
+    continuous/.style={circle, draw=black, thick, minimum size=1.2cm, inner sep=0pt},
+    discrete/.style={rectangle, draw=black, thick, minimum size=1.2cm},
+    observed/.style={fill=gray!30},
+    latent/.style={fill=white},
+    marginalized/.style={rectangle, draw=black, thick, minimum size=1.2cm, dashed},
+    pics/norm_dist/.style={code={
+        \draw[thin, gray] (-1.2,0) -- (1.2,0);
+        \draw[thick, blue] plot[domain=-1.2:1.2, samples=50] (\x, {0.8*exp(-3*\x*\x)});
+        \node[font=\footnotesize, below] at (0,0) {Normal};
+    }},
+    pics/uniform_dist/.style={code={
+        \draw[thin, gray] (-1.2,0) -- (1.2,0);
+        \draw[thick, blue] (-0.9,0.6) -- (0.9,0.6) -- (0.9,0) (-0.9,0) -- (-0.9,0.6);
+        \node[font=\footnotesize, below] at (0,0) {Uniform};
+    }},
+    pics/bern_dist/.style={code={
+        \draw[thin, gray] (-1,0) -- (1,0);
+        \draw[blue, line width=4pt] (-0.4, 0) -- (-0.4, 0.3);
+        \draw[blue, line width=4pt] (0.4, 0) -- (0.4, 0.8);
+        \node[font=\footnotesize, below] at (0,0) {Bernoulli};
+    }}
+}
+
+\begin{tikzpicture}
+%% LEFT: STANDARD PLATE NOTATION
+\node[font=\large\bfseries] at (0, 2.2) {Standard Plate Notation};
+
+% Top-level parameters
+\node[continuous, latent] (eps) at (0, 0) {$\varepsilon$};
+
+% Rule — dashed rectangle = marginalized discrete latent
+\node[marginalized, latent] (r)   at (0, -2.5) {$r$};
+\node[font=\small, below=0.05cm of r] {\textit{marginalized}};
+
+% Observed
+\node[continuous, observed] (x_t) at (-2, -5.5) {$x_t$};
+\node[discrete,   observed] (y_t) at ( 2, -5.5) {$y_t$};
+\node[plate, fit=(x_t)(y_t), label={[anchor=south east, font=\small\bfseries]below right:$i=1\dots T$}] (pT) {};
+
+% Arrows
+\draw[stochastic]    (eps) -- (r);
+\draw[stochastic]    (eps) -- (y_t);
+\draw[deterministic] (r)   -- (y_t);
+\draw[deterministic] (x_t) -- (y_t);
+
+%% RIGHT: KRUSCHKE-STYLE NOTATION
+\node[font=\large\bfseries] at (11, 2.2) {Kruschke-Style Notation};
+
+% Prior on epsilon
+\coordinate (k_eps) at (11, 0); \draw (k_eps) pic {norm_dist};
+\node[above=0.7cm of k_eps, font=\bfseries] {$\varepsilon$ (logit scale)};
+
+% Rule prior (uniform, marginalized)
+\coordinate (k_r) at (11, -2.5); \draw (k_r) pic {uniform_dist};
+\node[above=0.7cm of k_r, font=\bfseries, align=center] {Rule $r \in \{1\dots R\}$};
+\node[font=\small, below=1.0cm of k_r, align=center, text=gray] {\textit{summed out analytically}};
+
+% Observed stimulus
+\node[discrete, observed, minimum size=0.9cm] (k_x) at (8, -5.5) {$x_i$};
+\node[above=0.5cm of k_x, font=\bfseries] {Stimulus};
+
+% Response
+\coordinate (k_y) at (14, -5.5); \draw (k_y) pic {bern_dist};
+\node[above=0.9cm of k_y, font=\bfseries] {Response ($y_i$)};
+
+% Trial plate
+\draw[plate, dotted] (7.0, -7.0) rectangle (15.0, -4.5) node[below left, font=\small\bfseries] {$i=1\dots T$};
+
+% Arrows
+\draw[stochastic]    (k_eps) -- (k_y) node[midway, right, font=\large]{$\sim$};
+\draw[stochastic]    (k_eps) -- (k_r);
+\draw[deterministic] (k_r)   -- (k_y);
+\draw[deterministic] (k_x)   -- (13.3, -5.5);
+
+\end{tikzpicture}
+```
+
 ### A First Caveat: The Prior Predictive Check Uses Model A's Simulator
 
 Before fitting Model B we want to verify that the prior on `logit_error_prob` generates only scientifically plausible categorisation curves. There is a subtle issue: **the Stan model does not have a forward simulator with learning dynamics.** Model B is conditionally i.i.d. in $\varepsilon$, so its forward simulation is just "draw $\varepsilon$, draw a rule, generate Bernoulli responses." This produces flat learning curves at level $1 - \varepsilon$, which is empirically nothing like what the data look like.
@@ -1076,22 +1297,30 @@ ppc_logit_eps <- rnorm(n_ppc_samples, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_
 ppc_eps       <- plogis(ppc_logit_eps)
 ppc_sched     <- make_subject_schedule(stimulus_info, n_blocks, seed = 999)
 
-prior_pred_curves <- map_dfr(seq_len(n_ppc_samples), function(s) {
-  sim <- rule_particle_filter(
-    n_particles = N_PARTICLES_FIXED,
-    error_prob  = ppc_eps[s],
-    obs         = as.matrix(ppc_sched[, c("height", "position")]),
-    cat_one     = ppc_sched$category_feedback,
-    max_dims    = MAX_RULE_DIMS,
-    quiet       = TRUE
-  )
-  tibble(
-    sample_id = s,
-    trial     = seq_len(nrow(ppc_sched)),
-    correct   = as.integer(sim$sim_response == ppc_sched$category_feedback)
-  ) |>
-    mutate(cum_acc = cumsum(correct) / row_number())
-})
+ppc_file <- here("simdata", "ch14_prior_pred_curves.csv")
+
+if (regenerate_simulations || !file.exists(ppc_file)) {
+  cat("Running prior predictive simulations...\n")
+  prior_pred_curves <- future_map_dfr(seq_len(n_ppc_samples), function(s) {
+    sim <- rule_particle_filter(
+      n_particles = N_PARTICLES_FIXED,
+      error_prob  = ppc_eps[s],
+      obs         = as.matrix(ppc_sched[, c("height", "position")]),
+      cat_one     = ppc_sched$category_feedback,
+      max_dims    = MAX_RULE_DIMS,
+      quiet       = TRUE
+    )
+    tibble(
+      sample_id = s,
+      trial     = seq_len(nrow(ppc_sched)),
+      correct   = as.integer(sim$sim_response == ppc_sched$category_feedback)
+    ) |>
+      mutate(cum_acc = cumsum(correct) / row_number())
+  }, .options = furrr_options(seed = TRUE))
+  write_csv(prior_pred_curves, ppc_file)
+} else {
+  prior_pred_curves <- read_csv(ppc_file, show_col_types = FALSE)
+}
 
 ppc_summary <- prior_pred_curves |>
   group_by(trial) |>
@@ -1215,7 +1444,7 @@ generated quantities {
 stan_file_rule <- here("stan", "ch14_rule_simplified.stan")
 write_stan_file(rule_simplified_stan, dir = "stan/",
                 basename = "ch14_rule_simplified.stan")
-mod_rule_stan <- cmdstan_model(stan_file_rule, force_recompile = TRUE)
+mod_rule_stan <- cmdstan_model(stan_file_rule)
 cat("Model B (Stan rule mixture) compiled successfully.\n")
 ```
 
@@ -1963,62 +2192,65 @@ We split the misnamed block into two correctly-labelled checks: (1) a **Cross-Mo
 **Why we run it anyway.** Because it answers a useful practical question: "when I fit Model B to data that came from a richer generative process (Model A), are the resulting credible intervals approximately well-calibrated for the *cognitive* parameter $\varepsilon$?" The answer to that question is informative even though it is not what SBC is technically supposed to answer.
 
 ```{r ch14_cross_model_check}
-n_cross_iters <- 500   # use >= 1000 for production
+if (run_intensive_checks) {
+  n_cross_iters <- 500   # use >= 1000 for production
 
-cross_generator <- SBC_generator_function(
-  function() {
-    logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
-    eps_true       <- plogis(logit_eps_true)
+  cross_generator <- SBC_generator_function(
+    function() {
+      logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+      eps_true       <- plogis(logit_eps_true)
 
-    sched <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
-    # NOTE: data drawn from Model A (the particle filter)
-    sim <- rule_particle_filter(
-      n_particles = N_PARTICLES_FIXED,
-      error_prob  = eps_true,
-      obs         = as.matrix(sched[, c("height", "position")]),
-      cat_one     = sched$category_feedback,
-      max_dims    = MAX_RULE_DIMS,
-      quiet       = TRUE
-    )
-
-    list(
-      variables = list(logit_error_prob = logit_eps_true),
-      generated = list(
-        ntrials                = nrow(sched),
-        nfeatures              = 2L,
-        y                      = as.integer(sim$sim_response),
-        obs                    = as.matrix(sched[, c("height", "position")]),
-        prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
-        prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+      sched <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
+      # NOTE: data drawn from Model A (the particle filter)
+      sim <- rule_particle_filter(
+        n_particles = N_PARTICLES_FIXED,
+        error_prob  = eps_true,
+        obs         = as.matrix(sched[, c("height", "position")]),
+        cat_one     = sched$category_feedback,
+        max_dims    = MAX_RULE_DIMS,
+        quiet       = TRUE
       )
-    )
-  }
-)
 
-cross_backend <- SBC_backend_cmdstan_sample(
-  mod_rule_stan,
-  iter_warmup = 1000, iter_sampling = 1000,
-  chains = 2, adapt_delta = 0.9, refresh = 0
-)
+      list(
+        variables = list(logit_error_prob = logit_eps_true),
+        generated = list(
+          ntrials                = nrow(sched),
+          nfeatures              = 2L,
+          y                      = as.integer(sim$sim_response),
+          obs                    = as.matrix(sched[, c("height", "position")]),
+          prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+          prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+        )
+      )
+    }
+  )
 
-cross_datasets <- generate_datasets(
-  cross_generator,
-  n_sims = n_cross_iters
-)
+  cross_backend <- SBC_backend_cmdstan_sample(
+    mod_rule_stan,
+    iter_warmup = 1000, iter_sampling = 1000,
+    chains = 2, adapt_delta = 0.9, refresh = 0
+  )
 
-cross_results <- compute_SBC(
-  cross_datasets, cross_backend,
-  cache_mode     = "results",
-  cache_location = here("simdata", "ch14_cross_model_check_cache"),
-  keep_fits      = FALSE
-)
+  cross_datasets <- generate_datasets(
+    cross_generator,
+    n_sims = n_cross_iters
+  )
 
-# Plotted as rank ECDF, but with explicit re-labelling in the title
-plot_ecdf_diff(cross_results) +
-  ggtitle("CROSS-MODEL CALIBRATION CHECK (not SBC)",
-          subtitle = "Data: Model A. Fit: Model B. Flat ≠ calibrated, only marginally well-covered.")
-plot_rank_hist(cross_results) +
-  ggtitle("Cross-model rank histogram (not SBC)")
+  cross_results <- compute_SBC(
+    cross_datasets, cross_backend,
+    cache_mode     = "results",
+    cache_location = here("simdata", "ch14_cross_model_check_cache"),
+    keep_fits      = FALSE
+  )
+
+  # Plotted as rank ECDF, but with explicit re-labelling in the title
+  p1 <- plot_ecdf_diff(cross_results) +
+    ggtitle("CROSS-MODEL CALIBRATION CHECK (not SBC)",
+            subtitle = "Data: Model A. Fit: Model B. Flat ≠ calibrated, only marginally well-covered.")
+  p2 <- plot_rank_hist(cross_results) +
+    ggtitle("Cross-model rank histogram (not SBC)")
+  print(p1 / p2)
+}
 ```
 
 **Reading this plot.** A flat curve here means Model B's $\varepsilon$ posterior covers Model A's true generating $\varepsilon$ at approximately the right marginal rate. This is *useful* — it tells you Model B is at least not catastrophically wrong as a tool for estimating cognitive error rates. But it does not say Model B's inference engine is calibrated in the Talts–Vehtari sense, because the data-generating distribution is not the inference model's joint distribution.
@@ -2028,102 +2260,22 @@ plot_rank_hist(cross_results) +
 For a proper Talts–Vehtari SBC of Model B, the generator must use Model B itself: draw $\varepsilon$ from the prior, draw a rule index from $\{1, \ldots, 5\}$ uniformly (mirroring Model B's mixture prior), and generate Bernoulli responses accordingly. Then fit Model B and check the rank distribution.
 
 ```{r ch14_real_sbc_model_B}
-n_real_sbc_iters <- 500   # use >= 1000 for production
+if (run_intensive_checks) {
+  n_real_sbc_iters <- 500   # use >= 1000 for production
 
-real_sbc_generator <- SBC_generator_function(
-  function() {
-    logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
-    eps_true       <- plogis(logit_eps_true)
-
-    # Use the SAME generator as Model B's mixture: draw a rule, generate Bernoulli responses
-    rule_idx <- sample.int(7L, 1)
-    sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
-    obs_mat  <- as.matrix(sched[, c("height", "position")])
-    n_trials <- nrow(obs_mat)
-
-    rule_pred_for_trial <- function(i) {
-      h <- obs_mat[i, 1]; p <- obs_mat[i, 2]
-      switch(rule_idx,
-             as.integer(h > 2.5),
-             as.integer(p < 2.5),
-             as.integer(h > 2.0 && p > 3.0),
-             as.integer(!(h < 2.0 || p < 2.0)),
-             as.integer(h > 2.5 && p < 3.5),
-             as.integer(h > 3.5 || (h > 1.5 && p < 1.5)),
-             as.integer(h > 1.5 && (p < 2.5 || h > 3.5)))
-    }
-    preds  <- vapply(seq_len(n_trials), rule_pred_for_trial, integer(1))
-    p_cat1 <- ifelse(preds == 1, 1 - eps_true, eps_true)
-    y      <- rbinom(n_trials, 1, p_cat1)
-
-    list(
-      variables = list(logit_error_prob = logit_eps_true),
-      generated = list(
-        ntrials                = n_trials,
-        nfeatures              = 2L,
-        y                      = as.integer(y),
-        obs                    = obs_mat,
-        prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
-        prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
-      )
-    )
-  }
-)
-
-real_sbc_backend <- SBC_backend_cmdstan_sample(
-  mod_rule_stan,
-  iter_warmup = 1000, iter_sampling = 1000,
-  chains = 2, adapt_delta = 0.9, refresh = 0
-)
-
-real_sbc_datasets <- generate_datasets(
-  real_sbc_generator,
-  n_sims = n_real_sbc_iters
-)
-
-real_sbc_results <- compute_SBC(
-  real_sbc_datasets, real_sbc_backend,
-  cache_mode     = "results",
-  cache_location = here("simdata", "ch14_real_sbc_cache"),
-  keep_fits      = FALSE
-)
-
-plot_ecdf_diff(real_sbc_results) +
-  ggtitle("REAL SBC for Model B (Talts–Vehtari)",
-          subtitle = "Data: Model B's own mixture generator. Fit: Model B.")
-plot_rank_hist(real_sbc_results) +
-  ggtitle("Real SBC rank histogram for Model B")
-```
-
-**Reading this plot.** This is the actual calibration check. A flat ECDF here means Stan correctly inverts Model B (Model B's inference engine is calibrated in the Talts–Vehtari sense). Systematic deviations would indicate a miscalibration in the Stan implementation itself — a sign error, an off-by-one in the marginalisation, or a prior-on-`logit_error_prob` mismatch. **This is the only diagnostic in the chapter that tests the Stan engine on its own terms.** The cross-model check above tests something else — it tests how Model B behaves when applied to data from a richer process — and that something else is informative but it is not SBC.
-
-
-### Posterior SBC for Model B (Phase 6c)
-
-We need to perform **Posterior SBC (PSBC)** (see @sec-model-quality-checks): instead of drawing true parameters from the prior, draw them from the *fitted posterior*. This tests calibration in the specific high-probability region the actual data force us into. A sampler can be globally unbiased (prior SBC passes) yet struggle locally (PSBC fails) or vice versa.
-
-```{r ch14_psbc_model_B}
-n_psbc_iters <- 500  # use >= 1000 for production
-
-if (!is.null(fit_rule_stan)) {
-  # Draw true parameters from the fitted posterior, not the prior
-  fitted_draws <- as_draws_df(fit_rule_stan$draws("logit_error_prob"))
-  fitted_logit_eps <- fitted_draws$logit_error_prob
-
-  psbc_generator <- SBC_generator_function(
+  real_sbc_generator <- SBC_generator_function(
     function() {
-      # Draw from the POSTERIOR, not the prior
-      logit_eps_true <- sample(fitted_logit_eps, 1)
+      logit_eps_true <- rnorm(1, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
       eps_true       <- plogis(logit_eps_true)
 
-      # Generate from Model B's own mixture (same as real SBC; 7 rules)
+      # Use the SAME generator as Model B's mixture: draw a rule, generate Bernoulli responses
       rule_idx <- sample.int(7L, 1)
       sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
       obs_mat  <- as.matrix(sched[, c("height", "position")])
       n_trials <- nrow(obs_mat)
 
-      rule_pred_for_trial <- function(j) {
-        h <- obs_mat[j, 1]; p <- obs_mat[j, 2]
+      rule_pred_for_trial <- function(i) {
+        h <- obs_mat[i, 1]; p <- obs_mat[i, 2]
         switch(rule_idx,
                as.integer(h > 2.5),
                as.integer(p < 2.5),
@@ -2151,29 +2303,115 @@ if (!is.null(fit_rule_stan)) {
     }
   )
 
-  psbc_backend <- SBC_backend_cmdstan_sample(
+  real_sbc_backend <- SBC_backend_cmdstan_sample(
     mod_rule_stan,
     iter_warmup = 1000, iter_sampling = 1000,
     chains = 2, adapt_delta = 0.9, refresh = 0
   )
 
-  psbc_datasets <- generate_datasets(
-    psbc_generator,
-    n_sims = n_psbc_iters
+  real_sbc_datasets <- generate_datasets(
+    real_sbc_generator,
+    n_sims = n_real_sbc_iters
   )
 
-  psbc_results <- compute_SBC(
-    psbc_datasets, psbc_backend,
+  real_sbc_results <- compute_SBC(
+    real_sbc_datasets, real_sbc_backend,
     cache_mode     = "results",
-    cache_location = here("simdata", "ch14_psbc_cache"),
+    cache_location = here("simdata", "ch14_real_sbc_cache"),
     keep_fits      = FALSE
   )
 
-  plot_ecdf_diff(psbc_results) +
-    ggtitle("POSTERIOR SBC for Model B (Phase 6c)",
-            subtitle = "True ε drawn from FITTED posterior, not the prior.\nTests local calibration in the high-probability region.")
-  plot_rank_hist(psbc_results) +
-    ggtitle("Posterior SBC rank histogram for Model B")
+  p1 <- plot_ecdf_diff(real_sbc_results) +
+    ggtitle("REAL SBC for Model B (Talts–Vehtari)",
+            subtitle = "Data: Model B's own mixture generator. Fit: Model B.")
+  p2 <- plot_rank_hist(real_sbc_results) +
+    ggtitle("Real SBC rank histogram for Model B")
+  print(p1 / p2)
+}
+```
+
+**Reading this plot.** This is the actual calibration check. A flat ECDF here means Stan correctly inverts Model B (Model B's inference engine is calibrated in the Talts–Vehtari sense). Systematic deviations would indicate a miscalibration in the Stan implementation itself — a sign error, an off-by-one in the marginalisation, or a prior-on-`logit_error_prob` mismatch. **This is the only diagnostic in the chapter that tests the Stan engine on its own terms.** The cross-model check above tests something else — it tests how Model B behaves when applied to data from a richer process — and that something else is informative but it is not SBC.
+
+
+### Posterior SBC for Model B (Phase 6c)
+
+We need to perform **Posterior SBC (PSBC)** (see @sec-model-quality-checks): instead of drawing true parameters from the prior, draw them from the *fitted posterior*. This tests calibration in the specific high-probability region the actual data force us into. A sampler can be globally unbiased (prior SBC passes) yet struggle locally (PSBC fails) or vice versa.
+
+```{r ch14_psbc_model_B}
+if (run_intensive_checks) {
+  n_psbc_iters <- 500  # use >= 1000 for production
+
+  if (!is.null(fit_rule_stan)) {
+    # Draw true parameters from the fitted posterior, not the prior
+    fitted_draws <- as_draws_df(fit_rule_stan$draws("logit_error_prob"))
+    fitted_logit_eps <- fitted_draws$logit_error_prob
+
+    psbc_generator <- SBC_generator_function(
+      function() {
+        # Draw from the POSTERIOR, not the prior
+        logit_eps_true <- sample(fitted_logit_eps, 1)
+        eps_true       <- plogis(logit_eps_true)
+
+        # Generate from Model B's own mixture (same as real SBC; 7 rules)
+        rule_idx <- sample.int(7L, 1)
+        sched    <- make_subject_schedule(stimulus_info, n_blocks, seed = sample.int(1e8, 1))
+        obs_mat  <- as.matrix(sched[, c("height", "position")])
+        n_trials <- nrow(obs_mat)
+
+        rule_pred_for_trial <- function(j) {
+          h <- obs_mat[j, 1]; p <- obs_mat[j, 2]
+          switch(rule_idx,
+                 as.integer(h > 2.5),
+                 as.integer(p < 2.5),
+                 as.integer(h > 2.0 && p > 3.0),
+                 as.integer(!(h < 2.0 || p < 2.0)),
+                 as.integer(h > 2.5 && p < 3.5),
+                 as.integer(h > 3.5 || (h > 1.5 && p < 1.5)),
+                 as.integer(h > 1.5 && (p < 2.5 || h > 3.5)))
+        }
+        preds  <- vapply(seq_len(n_trials), rule_pred_for_trial, integer(1))
+        p_cat1 <- ifelse(preds == 1, 1 - eps_true, eps_true)
+        y      <- rbinom(n_trials, 1, p_cat1)
+
+        list(
+          variables = list(logit_error_prob = logit_eps_true),
+          generated = list(
+            ntrials                = n_trials,
+            nfeatures              = 2L,
+            y                      = as.integer(y),
+            obs                    = obs_mat,
+            prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+            prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+          )
+        )
+      }
+    )
+
+    psbc_backend <- SBC_backend_cmdstan_sample(
+      mod_rule_stan,
+      iter_warmup = 1000, iter_sampling = 1000,
+      chains = 2, adapt_delta = 0.9, refresh = 0
+    )
+
+    psbc_datasets <- generate_datasets(
+      psbc_generator,
+      n_sims = n_psbc_iters
+    )
+
+    psbc_results <- compute_SBC(
+      psbc_datasets, psbc_backend,
+      cache_mode     = "results",
+      cache_location = here("simdata", "ch14_psbc_cache"),
+      keep_fits      = FALSE
+    )
+
+    p1 <- plot_ecdf_diff(psbc_results) +
+      ggtitle("POSTERIOR SBC for Model B (Phase 6c)",
+              subtitle = "True ε drawn from FITTED posterior, not the prior.\nTests local calibration in the high-probability region.")
+    p2 <- plot_rank_hist(psbc_results) +
+      ggtitle("Posterior SBC rank histogram for Model B")
+    print(p1 / p2)
+  }
 }
 ```
 
@@ -2201,6 +2439,12 @@ $$\mathcal{L}(\phi) = \frac{1}{N} \sum_{i=1}^{N} \log q_\phi\!\left(\theta^{(i)}
 Maximising this is equivalent to minimising the KL divergence between $q_\phi(\theta \mid y)$ and the true posterior $p(\theta \mid y)$, averaged over the prior predictive $p(y)$. In other words, the network is pushed to assign high probability to the parameter that actually generated each simulated dataset. After seeing enough $(\theta, y)$ pairs, the network learns to read off the correct posterior from any observation.
 
 **Step 4 — Perform inference on the observed data.** Plug $y_\text{obs}$ into the trained network and sample $\theta \sim q_\phi(\theta \mid y_\text{obs})$. These samples are the approximate posterior — no additional simulation, no MCMC warm-up, no gradient computation.
+
+::: {.callout-important title="Schedule-fix: a hidden but load-bearing design choice"}
+The particle filter is **path-dependent**: the same parameter $\theta$ produces systematically different response sequences depending on which stimulus appears on which trial. If Step 2 redrew the trial order on every simulation, the training dataset would conflate two sources of variation — parameter variation and trial-order variation — and the network would have to disentangle them, leading to wider, noisier posteriors.
+
+The fix is to hold the trial schedule **fixed at the observed participant's schedule** for every training simulation, and re-randomise only the filter's internal stochasticity (particle initialisation, response noise, mutation draws). Inference on a different participant requires either a separately trained network for their schedule, or a network whose embedding network is given the schedule as part of the input. This chapter takes the first route; the second is a straightforward extension that the Alien Game application in Chapter 16 will adopt.
+:::
 
 ### The Two Neural Components
 
@@ -2237,29 +2481,6 @@ pip install sbi torch numpy
 ```
 The `reticulate::use_virtualenv` call below tells R which Python environment to use.
 
-```{r ch14_npe_setup}
-# ── Python environment ────────────────────────────────────────────────────────
-# Requires: pip install sbi torch numpy
-if (run_intensive_checks) {
-  library(reticulate)
-  reticulate::use_virtualenv("r-reticulate", required = TRUE)
-
-  if (!py_available(initialize = TRUE)) {
-    stop("Python not available. Install Python and: pip install sbi torch numpy")
-  }
-
-  sbi   <- import("sbi")
-  torch <- import("torch")
-  np    <- import("numpy")
-  utils <- import("sbi.utils")
-  infer <- import("sbi.inference")
-
-  cat("sbi version:", sbi$`__version__`, "\n")
-  cat("torch version:", torch$`__version__`, "\n")
-} else {
-  cat("Skipping NPE setup (run_intensive_checks is FALSE).\n")
-}
-```
 
 ### Step 1 + 2: The Prior and the Simulator
 
@@ -2279,7 +2500,7 @@ Note that $\mu$ has **no counterpart in Model B**. Model B is a static mixture w
 
 **The data representation.** Each simulated dataset is a sequence of $T$ binary responses. But the embedding network needs to know more than just the responses — it also needs the stimulus context (height, position) and the feedback on each trial, because the informativeness of any response depends on what stimulus caused it. We therefore concatenate per trial: $[y_t, \text{height}_t, \text{position}_t, \text{feedback}_t]$, giving a $T \times 4$ matrix that is flattened to a vector before being passed to the embedding network. This context is constant across simulations (it is part of the fixed schedule) and is precomputed once.
 
-```{r ch14_npe_simulator, eval=run_intensive_checks}
+```{r ch14_npe_simulator, eval=python_available}
 # The observed schedule — used for ALL simulations (schedule-fix)
 npe_schedule <- fit_schedule
 npe_obs_mat  <- as.matrix(npe_schedule[, c("height", "position")])
@@ -2336,42 +2557,149 @@ A few practical choices matter here:
 
 The training data is generated in R and passed to Python as NumPy arrays. The `context_per_trial` matrix — height, position, and feedback per trial — is constant across simulations and is concatenated with each simulated response vector to form the full observation $x^{(i)}$.
 
-```{r ch14_npe_training_data, eval=run_intensive_checks}
+```{r ch14_npe_training_data}
 n_train_sims   <- 20000   # 20k sims; increase to 50k for production
 npe_cache_file <- here("simdata", "ch14_npe_training_data.rds")
 
 if (regenerate_simulations || !file.exists(npe_cache_file)) {
-  cat("Generating NPE training dataset (", n_train_sims, " simulations)...\n")
-  set.seed(2026)
-
-  # Draw three parameters from their priors.
-  # logit(eps) ~ Normal(LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
-  # log(N)     ~ Uniform(log(20), log(300))     — log-uniform over [20, 300]
-  # logit(mu)  ~ Normal(LOGIT_MU_PRIOR_MEAN, LOGIT_MU_PRIOR_SD)
-  train_logit_eps <- rnorm(n_train_sims, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
-  train_log_npart <- runif(n_train_sims, log(20), log(300))
-  train_logit_mu  <- rnorm(n_train_sims, LOGIT_MU_PRIOR_MEAN,  LOGIT_MU_PRIOR_SD)
-  train_thetas    <- cbind(train_logit_eps, train_log_npart, train_logit_mu)
-
-  # Simulate in parallel — schedule is FIXED (the bug fix)
-  train_responses <- future_map(
-    seq_len(n_train_sims),
-    function(i) simulate_model_a(train_thetas[i, ]),
-    .options = furrr_options(seed = TRUE),
-    .progress = TRUE
-  )
-
-  train_y_mat <- do.call(rbind, train_responses)
-
-  saveRDS(list(thetas = train_thetas, responses = train_y_mat),
-          npe_cache_file)
-  cat("Training data saved:", n_train_sims, "simulations.\n")
+  if (run_intensive_checks) {
+    cat("Generating NPE training dataset (", n_train_sims, " simulations) in batches...\n")
+    set.seed(2026)
+  
+    train_logit_eps <- rnorm(n_train_sims, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+    train_log_npart <- runif(n_train_sims, log(20), log(300))
+    train_logit_mu  <- rnorm(n_train_sims, LOGIT_MU_PRIOR_MEAN,  LOGIT_MU_PRIOR_SD)
+    train_thetas    <- cbind(train_logit_eps, train_log_npart, train_logit_mu)
+  
+    # To prevent crashes, we process in batches and limit workers
+    batch_size <- 5000
+    n_batches  <- ceiling(n_train_sims / batch_size)
+    all_responses <- vector("list", n_batches)
+    
+    # Temporarily set plan to multisession with a safe number of workers (max 4)
+    old_plan <- plan(multisession, workers = min(parallelly::availableCores() - 1, 4))
+    
+    for (b in 1:n_batches) {
+      cat("  Processing batch", b, "of", n_batches, "...\n")
+      start_idx <- (b - 1) * batch_size + 1
+      end_idx   <- min(b * batch_size, n_train_sims)
+      indices   <- start_idx:end_idx
+      
+      all_responses[[b]] <- future_map(
+        indices,
+        function(i) simulate_model_a(train_thetas[i, ]),
+        .options = furrr_options(seed = TRUE)
+      )
+      gc() # Force garbage collection
+    }
+    
+    # Restore original plan
+    plan(old_plan)
+  
+    train_y_mat <- do.call(rbind, unlist(all_responses, recursive = FALSE))
+  
+    saveRDS(list(thetas = train_thetas, responses = train_y_mat),
+            npe_cache_file)
+    cat("Training data saved:", n_train_sims, "simulations.\n")
+  } else {
+    stop("Training data not found. Set run_intensive_checks = TRUE to generate it.")
+  }
 } else {
   cached_train <- readRDS(npe_cache_file)
   train_thetas <- cached_train$thetas
   train_y_mat  <- cached_train$responses
   n_train_sims <- nrow(train_thetas)
   cat("Loaded", n_train_sims, "cached training simulations.\n")
+}
+```
+
+### NPE Prior Predictive Check
+
+Before training the network, we check that the NPE prior — the joint Box-Uniform on $(\text{logit}\,\varepsilon,\ \log N_\text{particles},\ \text{logit}\,\mu)$ — produces a range of cumulative-accuracy curves that covers the cognitively plausible behaviour space. This is the *NPE-side* prior predictive: parameters drawn from the actual three-parameter prior used by the inference network, pushed through the actual simulator on the actual fixed schedule. It is distinct from the cross-model PPC we showed earlier (which used Model B's $\varepsilon$ prior alone with $\mu = 0$).
+
+Three things to look for:
+
+1. **Coverage.** The 5–95% ribbon should contain everything from chance-level (flat at 0.5) to near-perfect learners. If it does not, the prior is too tight.
+2. **No degenerate concentrations.** Mass should not pile up at any one accuracy value; that would signal the simulator is ignoring some parameter.
+3. **Well-behaved tails.** A small fraction of curves at chance is expected (high-$\varepsilon$, high-$\mu$ learners); a large fraction is a red flag.
+
+Because the training dataset of size $N$ already realises this prior predictive, we can read it directly off `train_y_mat` rather than rerunning simulations.
+
+```{r ch14_npe_prior_predictive}
+n_ppc_show <- min(500, n_train_sims)
+ppc_idx    <- sample.int(n_train_sims, n_ppc_show)
+
+ppc_curves <- map_dfr(ppc_idx, function(i) {
+  resp    <- train_y_mat[i, ]
+  fb      <- npe_cat_one
+  correct <- as.integer(resp == fb)
+  tibble(
+    sample_id = i,
+    trial     = seq_along(resp),
+    cum_acc   = cumsum(correct) / seq_along(resp)
+  )
+})
+
+ppc_summary <- ppc_curves |>
+  group_by(trial) |>
+  summarise(
+    q05 = quantile(cum_acc, 0.05), q25 = quantile(cum_acc, 0.25),
+    q50 = median(cum_acc),
+    q75 = quantile(cum_acc, 0.75), q95 = quantile(cum_acc, 0.95),
+    .groups = "drop"
+  )
+
+ggplot(ppc_summary, aes(x = trial)) +
+  geom_ribbon(aes(ymin = q05, ymax = q95), fill = "#56B4E9", alpha = 0.20) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#56B4E9", alpha = 0.40) +
+  geom_line(aes(y = q50), color = "#0072B2", linewidth = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title    = "NPE Prior Predictive: Cumulative Accuracy Across Training Simulations",
+    subtitle = paste0("Median + 50%/90% intervals across ", n_ppc_show,
+                      " parameter draws from the NPE prior."),
+    x = "Trial", y = "Cumulative accuracy"
+  )
+```
+
+The training dataset doubles as the prior predictive sample. If the ribbon above looks acceptable, the prior is doing its job; if it does not, fix the prior before spending compute on training.
+
+### Setting Up the Python Environment
+
+```{r ch14_npe_setup}
+# ── Python environment ────────────────────────────────────────────────────────
+library(reticulate)
+
+# Force-clear parallel plan before touching Python
+if (requireNamespace("future", quietly = TRUE)) {
+  future::plan(future::sequential)
+}
+gc()
+
+# macOS Safety Valves - Extreme Edition
+Sys.setenv(KMP_DUPLICATE_LIB_OK = "TRUE")
+Sys.setenv(OMP_DUPLICATE_LIB_OK = "TRUE")
+Sys.setenv(OMP_NUM_THREADS = "1")
+Sys.setenv(MKL_NUM_THREADS = "1")
+
+if (python_available) {
+  torch <- import("torch", delay_load = FALSE)
+  
+  # Force single-threading in all libraries
+  torch$set_num_threads(1L)
+  
+  sbi   <- import("sbi")
+  np    <- import("numpy")
+  utils <- import("sbi.utils")
+  infer <- import("sbi.inference")
+  
+  cat("sbi version:", sbi$`__version__`, "\n")
+  cat("torch version:", torch$`__version__`, "\n")
+  cat("Threads (Torch):", as.integer(torch$get_num_threads()), "\n")
+  cat("Threads (OMP):  ", Sys.getenv("OMP_NUM_THREADS"), "\n")
+} else {
+  warning("Python/sbi environment not found. NPE chunks will fail.")
 }
 ```
 
@@ -2391,11 +2719,25 @@ This is where the neural network learns the mapping from observations to posteri
 
 **Saving the trained model.** We save only the `state_dict` — the learned weights — rather than the full Python object, because Python objects are not safely serialisable across sessions. Loading requires rebuilding the same network architecture and loading the weights back in; the `sbi` documentation covers the exact steps.
 
-```{r ch14_npe_train, eval=run_intensive_checks}
-if (run_intensive_checks) {
-  npe_model_file <- here("simdata", "ch14_npe_trained_posterior.pkl")
-  
-  if (regenerate_simulations || !file.exists(npe_model_file)) {
+```{r ch14_npe_train, eval=python_available}
+npe_model_file <- here("simdata", "ch14_npe_trained_posterior.pkl")
+
+# We need the prior and inference object setup regardless of training or loading
+# theta = [logit(eps), log(N_particles), logit(mu)]
+prior_low  <- torch$tensor(
+  c(LOGIT_ERROR_PRIOR_MEAN - 3 * LOGIT_ERROR_PRIOR_SD, log(20), LOGIT_MU_PRIOR_MEAN - 3 * LOGIT_MU_PRIOR_SD),
+  dtype = torch$float32
+)
+prior_high <- torch$tensor(
+  c(LOGIT_ERROR_PRIOR_MEAN + 3 * LOGIT_ERROR_PRIOR_SD, log(300), LOGIT_MU_PRIOR_MEAN + 3 * LOGIT_MU_PRIOR_SD),
+  dtype = torch$float32
+)
+sbi_prior <- utils$BoxUniform(low = prior_low, high = prior_high)
+
+inference_obj <- infer$SNPE(prior = sbi_prior, density_estimator = "nsf")
+
+if (regenerate_simulations || !file.exists(npe_model_file)) {
+  if (run_intensive_checks) {
     # Convert to PyTorch tensors
     theta_tensor <- torch$tensor(train_thetas, dtype = torch$float32)
   
@@ -2408,55 +2750,44 @@ if (run_intensive_checks) {
     x_mat    <- do.call(rbind, x_list)
     x_tensor <- torch$tensor(x_mat, dtype = torch$float32)
   
-    cat("theta shape:", paste(theta_tensor$shape, collapse = " x "), "\n")
-    cat("x shape:    ", paste(x_tensor$shape, collapse = " x "), "\n")
-  
-    # Define prior bounds for sbi.
-    # We use a BoxUniform over the joint support of all three parameters.
-    # The bounds are set at ±3 SD for the normal priors and the exact
-    # range for the log-uniform N_particles prior.
-    # theta = [logit(eps), log(N_particles), logit(mu)]
-    prior_low  <- torch$tensor(
-      c(LOGIT_ERROR_PRIOR_MEAN - 3 * LOGIT_ERROR_PRIOR_SD,
-        log(20),
-        LOGIT_MU_PRIOR_MEAN    - 3 * LOGIT_MU_PRIOR_SD),
-      dtype = torch$float32
-    )
-    prior_high <- torch$tensor(
-      c(LOGIT_ERROR_PRIOR_MEAN + 3 * LOGIT_ERROR_PRIOR_SD,
-        log(300),
-        LOGIT_MU_PRIOR_MEAN    + 3 * LOGIT_MU_PRIOR_SD),
-      dtype = torch$float32
-    )
-    sbi_prior <- utils$BoxUniform(low = prior_low, high = prior_high)
-  
-    # Build and train the NPE
-    inference_obj <- infer$SNPE(
-      prior             = sbi_prior,
-      density_estimator = "nsf"   # neural spline flow
-    )
     inference_obj$append_simulations(theta_tensor, x_tensor)
   
-    cat("Training NPE (this takes a few minutes on CPU)...\n")
+    cat("Training NPE...\n")
     density_estimator <- inference_obj$train(
       training_batch_size = 256L,
       learning_rate       = 5e-4,
       show_train_summary  = TRUE
     )
   
-    # Build the posterior object
-    npe_posterior <- inference_obj$build_posterior(density_estimator)
+    # Build the posterior object using vectorized MCMC (slice) for speed/stability
+    npe_posterior <- inference_obj$build_posterior(
+      density_estimator,
+      sample_with = "mcmc",
+      mcmc_method = "slice_np_vectorized",
+      mcmc_parameters = list(warmup_steps = 100L)
+    )
     cat("NPE training complete.\n")
   
     # Save the trained model state
     torch$save(density_estimator$state_dict(), npe_model_file)
     cat("Trained NPE saved to", npe_model_file, "\n")
   } else {
-    cat("Pre-trained NPE found at", npe_model_file, "\n")
-    cat("To use it, rebuild the sbi inference object and load the state dict:\n")
-    cat("  inference_obj$build_posterior() -> npe_posterior\n")
-    cat("  (see sbi docs for state_dict loading; requires same network architecture)\n")
+    stop("Trained model not found. Set run_intensive_checks = TRUE to train it.")
   }
+} else {
+  # Load the pre-trained state dict
+  density_estimator <- inference_obj$train(max_num_epochs = 0L, show_train_summary = FALSE)
+  state_dict <- torch$load(npe_model_file)
+  density_estimator$load_state_dict(state_dict)
+  
+  # Build the posterior object using vectorized MCMC (slice) for speed/stability
+  npe_posterior <- inference_obj$build_posterior(
+    density_estimator,
+    sample_with = "mcmc",
+    mcmc_method = "slice_np_vectorized",
+    mcmc_parameters = list(warmup_steps = 100L)
+  )
+  cat("Loaded pre-trained NPE model.\n")
 }
 ```
 
@@ -2470,17 +2801,19 @@ The returned samples are on the unconstrained (logit / log) scales on which the 
 
 **What to look for.** A well-calibrated NPE posterior for $\varepsilon$ should be centred near the true generating value (0.1 in our simulated example). If the posterior is much wider than the prior, the data are uninformative and the model is not identified for this dataset — expected for short sequences. If it is sharply narrower than the prior, the response sequence contains strong information about the error rate. The posterior for $\mu$ is expected to be wider on static data because a static task cannot distinguish a low-mutation learner from a zero-mutation learner — both will stop replacing hypotheses once the correct rule is found.
 
-```{r ch14_npe_inference, eval=run_intensive_checks}
+```{r ch14_npe_inference, eval=python_available}
 # Build the observed data tensor (same format as training)
 obs_responses <- as.integer(fit_sim$sim_response)
 obs_x_vec     <- as.numeric(t(cbind(obs_responses, context_per_trial)))
-obs_x_tensor  <- torch$tensor(matrix(obs_x_vec, nrow = 1), dtype = torch$float32)
+obs_x_mat     <- matrix(obs_x_vec, nrow = 1)
+obs_x_tensor  <- torch$tensor(obs_x_mat, dtype = torch$float32)
 
 # Sample from the NPE posterior
-n_npe_samples <- 10000L
+n_npe_samples <- 2000L
 npe_samples   <- npe_posterior$sample(
-  sample_shape = reticulate::tuple(n_npe_samples),
-  x            = obs_x_tensor
+  sample_shape       = reticulate::tuple(n_npe_samples),
+  x                  = obs_x_tensor,
+  show_progress_bars = TRUE
 )
 npe_draws <- as.matrix(npe_samples$numpy())
 colnames(npe_draws) <- c("logit_eps", "log_n_particles", "logit_mu")
@@ -2535,6 +2868,57 @@ print(p_eps / p_npart / p_mu)
 
 **Reading the NPE posterior.** Three things to check: (1) the posteriors for $\varepsilon$ and $N_{\text{particles}}$ should contain the true generating values; (2) $N_{\text{particles}}$ should show a meaningful posterior — if it is prior-like, the data are uninformative about working-memory capacity for this task length; (3) the posterior for $\mu$ is **expected to be largely prior-like on static data** — the Kruschke task provides no signal about mutation rate because the correct rule does not change. This is the right result, not a failure. The prior overlay in the $\mu$ panel makes the information gain (or lack thereof) visible. A narrow $\mu$ posterior on non-stationary data would be the substantive finding.
 
+### NPE Posterior Predictive Check
+
+Having drawn samples from $q_\phi(\theta \mid y_\text{obs})$, we check that the posterior actually predicts the observed data. We push posterior $\theta$ draws back through the simulator and compare the resulting cumulative-accuracy curves against the observed agent's curve. Two failure modes to watch for: (i) the observed curve falls outside the posterior predictive ribbon — sign of model misspecification or NPE under-coverage; (ii) the ribbon is much wider than the observed variability — sign that the network has not extracted enough information from the data.
+
+```{r ch14_npe_posterior_predictive, eval=python_available}
+n_ppc_post <- 200
+ppc_idx_post <- sample.int(nrow(npe_draws), n_ppc_post)
+
+ppc_post_curves <- map_dfr(ppc_idx_post, function(i) {
+  theta_i <- npe_draws[i, ]
+  resp    <- simulate_model_a(theta_i)
+  correct <- as.integer(resp == npe_cat_one)
+  tibble(
+    sample_id = i,
+    trial     = seq_along(resp),
+    cum_acc   = cumsum(correct) / seq_along(resp)
+  )
+})
+
+ppc_post_summary <- ppc_post_curves |>
+  group_by(trial) |>
+  summarise(
+    q05 = quantile(cum_acc, 0.05), q25 = quantile(cum_acc, 0.25),
+    q50 = median(cum_acc),
+    q75 = quantile(cum_acc, 0.75), q95 = quantile(cum_acc, 0.95),
+    .groups = "drop"
+  )
+
+obs_curve <- tibble(
+  trial   = seq_along(obs_responses),
+  cum_acc = cumsum(as.integer(obs_responses == npe_cat_one)) /
+            seq_along(obs_responses)
+)
+
+ggplot(ppc_post_summary, aes(x = trial)) +
+  geom_ribbon(aes(ymin = q05, ymax = q95), fill = "#009E73", alpha = 0.20) +
+  geom_ribbon(aes(ymin = q25, ymax = q75), fill = "#009E73", alpha = 0.40) +
+  geom_line(aes(y = q50), color = "#006D4E", linewidth = 1) +
+  geom_line(data = obs_curve, aes(x = trial, y = cum_acc),
+            color = "red", linewidth = 1.1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title    = "NPE Posterior Predictive Check (Model A)",
+    subtitle = "Red = observed cumulative accuracy. Green ribbons = 50% / 90% posterior predictive.",
+    x = "Trial", y = "Cumulative accuracy"
+  )
+```
+
+The observed curve should lie inside the 90% ribbon for almost all trials; isolated escapes are tolerable, sustained departures are not. Unlike the cross-model PPC we showed for Model B (which used Model A's simulator with Model B's prior), this check uses the actual NPE posterior on the actual NPE simulator — it is the within-model PPC the Model B section could not produce.
+
 ### NPE Validation: SBC + Expected Coverage (Phase 6)
 
 We need to perform calibration checks (see @sec-model-quality-checks). For NPE, the standard diagnostics are marginal SBC (Talts et al. 2018) and expected coverage (Hermans et al. 2022). Because NPE is amortized, running 1000 calibration checks takes seconds — each requires only a forward pass through the trained network.
@@ -2542,56 +2926,76 @@ We need to perform calibration checks (see @sec-model-quality-checks). For NPE, 
 ```{r ch14_npe_validation, eval=run_intensive_checks}
 n_cal <- 1000L
 
-cat("Running NPE calibration diagnostics (", as.integer(n_cal), " checks)...\n")
+npe_val_file <- here("simdata", "ch14_npe_validation_results.rds")
 
-# Generate calibration set: draw theta from prior, simulate x.
-# Three parameters: logit(eps), log(N_particles), logit(mu).
-set.seed(7777)
-cal_logit_eps <- rnorm(n_cal, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
-cal_log_npart <- runif(n_cal, log(20), log(300))
-cal_logit_mu  <- rnorm(n_cal, LOGIT_MU_PRIOR_MEAN,  LOGIT_MU_PRIOR_SD)
-cal_thetas    <- cbind(cal_logit_eps, cal_log_npart, cal_logit_mu)
+if (regenerate_simulations || !file.exists(npe_val_file)) {
+  cat("Running NPE calibration diagnostics (", as.integer(n_cal), " checks)...\n")
 
-cal_responses <- future_map(
-  seq_len(n_cal),
-  function(i) simulate_model_a(cal_thetas[i, ]),
-  .options = furrr_options(seed = TRUE),
-  .progress = TRUE
-)
-cal_y_mat <- do.call(rbind, cal_responses)
+  # Generate calibration set: draw theta from prior, simulate x.
+  # Three parameters: logit(eps), log(N_particles), logit(mu).
+  set.seed(7777)
+  cal_logit_eps <- rnorm(n_cal, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+  cal_log_npart <- runif(n_cal, log(20), log(300))
+  cal_logit_mu  <- rnorm(n_cal, LOGIT_MU_PRIOR_MEAN,  LOGIT_MU_PRIOR_SD)
+  cal_thetas    <- cbind(cal_logit_eps, cal_log_npart, cal_logit_mu)
 
-# Build calibration data tensors
-cal_x_list <- lapply(seq_len(n_cal), function(i) {
-  resp <- cal_y_mat[i, ]
-  as.numeric(t(cbind(resp, context_per_trial)))
-})
-cal_x_mat    <- do.call(rbind, cal_x_list)
-cal_x_tensor <- torch$tensor(cal_x_mat, dtype = torch$float32)
+  # Generate 1000 calibration sets sequentially to avoid crashes
+  cal_responses <- lapply(
+    seq_len(n_cal),
+    function(i) simulate_model_a(cal_thetas[i, ])
+  )
+  cal_y_mat <- do.call(rbind, cal_responses)
 
-# ── Marginal SBC ──────────────────────────────────────────────────────────────
-# Three parameters: logit(eps), log(N_particles), logit(mu).
-# We expect logit(eps) and log(N_particles) to show uniform rank histograms
-# on static data. logit(mu) is expected to be poorly identified on static
-# data — its rank histogram may be flat (uniformly uncertain) or slightly
-# humped (posterior matches prior shape). This is the correct behaviour and
-# does not indicate miscalibration; it indicates non-identifiability.
-n_post_samples <- 1000L
-sbc_ranks <- matrix(0L, nrow = n_cal, ncol = 3)
-colnames(sbc_ranks) <- c("logit_eps", "log_n_particles", "logit_mu")
+  # Build calibration data tensors
+  cal_x_list <- lapply(seq_len(n_cal), function(i) {
+    resp <- cal_y_mat[i, ]
+    as.numeric(t(cbind(resp, context_per_trial)))
+  })
+  cal_x_mat    <- do.call(rbind, cal_x_list)
+  cal_x_tensor <- torch$tensor(cal_x_mat, dtype = torch$float32)
 
-for (i in seq_len(n_cal)) {
-  post_samples <- npe_posterior$sample(
-    sample_shape = reticulate::tuple(n_post_samples),
-    x            = cal_x_tensor[i - 1L]$unsqueeze(0L)
-  )$numpy()
+  # ── Marginal SBC ──────────────────────────────────────────────────────────────
+  n_post_samples <- 1000L
+  sbc_ranks <- matrix(0L, nrow = n_cal, ncol = 3)
+  colnames(sbc_ranks) <- c("logit_eps", "log_n_particles", "logit_mu")
 
-  for (j in 1:3) {
-    sbc_ranks[i, j] <- sum(post_samples[, j] < cal_thetas[i, j])
+  for (i in seq_len(n_cal)) {
+    post_samples <- npe_posterior$sample(
+      sample_shape = reticulate::tuple(n_post_samples),
+      x            = cal_x_tensor[i - 1L]$unsqueeze(0L)
+    )$numpy()
+
+    for (j in 1:3) {
+      sbc_ranks[i, j] <- sum(post_samples[, j] < cal_thetas[i, j])
+    }
   }
-}
 
-sbc_df <- as_tibble(sbc_ranks) |>
-  pivot_longer(everything(), names_to = "parameter", values_to = "rank")
+  sbc_df <- as_tibble(sbc_ranks) |>
+    pivot_longer(everything(), names_to = "parameter", values_to = "rank")
+
+  # ── Expected Coverage ─────────────────────────────────────────────────────────
+  coverage_levels <- seq(0.05, 0.95, by = 0.05)
+  empirical_coverage <- vapply(coverage_levels, function(alpha) {
+    covered <- vapply(seq_len(n_cal), function(i) {
+      post_samples <- npe_posterior$sample(
+        sample_shape = reticulate::tuple(n_post_samples),
+        x            = cal_x_tensor[i - 1L]$unsqueeze(0L)
+      )$numpy()
+      q_lo <- quantile(post_samples[, 1], (1 - alpha) / 2)
+      q_hi <- quantile(post_samples[, 1], 1 - (1 - alpha) / 2)
+      cal_thetas[i, 1] >= q_lo & cal_thetas[i, 1] <= q_hi
+    }, logical(1))
+    mean(covered)
+  }, numeric(1))
+
+  coverage_df <- tibble(nominal = coverage_levels, empirical = empirical_coverage)
+  
+  saveRDS(list(sbc_df = sbc_df, coverage_df = coverage_df), npe_val_file)
+} else {
+  npe_val_res <- readRDS(npe_val_file)
+  sbc_df <- npe_val_res$sbc_df
+  coverage_df <- npe_val_res$coverage_df
+}
 
 p_sbc <- ggplot(sbc_df, aes(x = rank)) +
   geom_histogram(aes(y = after_stat(density)), bins = 20,
@@ -2600,23 +3004,6 @@ p_sbc <- ggplot(sbc_df, aes(x = rank)) +
   labs(title = "Marginal SBC Rank Histograms (NPE, Model A)",
        subtitle = "Uniform = calibrated. U-shape = overconfident. Hump = underconfident.",
        x = "Rank", y = "Count")
-
-# ── Expected Coverage ─────────────────────────────────────────────────────────
-coverage_levels <- seq(0.05, 0.95, by = 0.05)
-empirical_coverage <- vapply(coverage_levels, function(alpha) {
-  covered <- vapply(seq_len(n_cal), function(i) {
-    post_samples <- npe_posterior$sample(
-      sample_shape = reticulate::tuple(n_post_samples),
-      x            = cal_x_tensor[i - 1L]$unsqueeze(0L)
-    )$numpy()
-    q_lo <- quantile(post_samples[, 1], (1 - alpha) / 2)
-    q_hi <- quantile(post_samples[, 1], 1 - (1 - alpha) / 2)
-    cal_thetas[i, 1] >= q_lo & cal_thetas[i, 1] <= q_hi
-  }, logical(1))
-  mean(covered)
-}, numeric(1))
-
-coverage_df <- tibble(nominal = coverage_levels, empirical = empirical_coverage)
 
 p_coverage <- ggplot(coverage_df, aes(x = nominal, y = empirical)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
@@ -2640,6 +3027,82 @@ cat("95% nominal coverage: empirical =",
 ```
 
 **Reading the validation.** The SBC rank histograms for `logit_eps` and `log_n_particles` should be uniform within sampling noise. The histogram for `logit_mu` requires more care: on static Kruschke data, $\mu$ is expected to be weakly identified, so the posterior is nearly prior-like and the rank histogram should also be approximately uniform — but for a different reason. A uniform SBC histogram for $\mu$ on static data means "the posterior is as uncertain as the prior, which is exactly right given that the data contain no mutation signal." A humped histogram would mean the network is reporting false confidence; a U-shaped histogram would mean it is suppressing genuine variation. The coverage plot should track the diagonal within the grey 2-SE band for all three parameters. If the SBC histogram is U-shaped for any parameter, the posterior is overconfident — increase training data or use a more expressive flow. Both checks benefit enormously from amortization: each of the 1000 calibration checks requires only a forward pass.
+
+### Posterior Contraction
+
+SBC and coverage tell us the posterior is *calibrated*; they do not tell us how much the data have *informed* it. Posterior contraction quantifies this directly: for each calibration draw, compare the posterior SD to the prior SD on the unconstrained scale. A contraction near 0 means the posterior is as wide as the prior (no information gain); near 1 means the posterior has collapsed (full information).
+
+```{r ch14_npe_contraction, eval=run_intensive_checks}
+contr_file <- here("simdata", "ch14_npe_contraction.rds")
+
+if (regenerate_simulations || !file.exists(contr_file)) {
+  cat("Computing posterior contraction across calibration draws...\n")
+  prior_sd_unconstrained <- c(LOGIT_ERROR_PRIOR_SD,
+                              (log(300) - log(20)) / sqrt(12),  # uniform SD
+                              LOGIT_MU_PRIOR_SD)
+
+  # Generate a fresh, self-contained calibration set so this chunk does not
+  # depend on intermediate objects from the SBC chunk above (which only exist
+  # when that chunk regenerates rather than loads from cache).
+  n_contr <- 200L
+  set.seed(7778)
+  contr_logit_eps <- rnorm(n_contr, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+  contr_log_npart <- runif(n_contr, log(20), log(300))
+  contr_logit_mu  <- rnorm(n_contr, LOGIT_MU_PRIOR_MEAN,  LOGIT_MU_PRIOR_SD)
+  contr_thetas    <- cbind(contr_logit_eps, contr_log_npart, contr_logit_mu)
+
+  contr_responses <- lapply(
+    seq_len(n_contr),
+    function(i) simulate_model_a(contr_thetas[i, ])
+  )
+  contr_y_mat <- do.call(rbind, contr_responses)
+
+  contr_x_list <- lapply(seq_len(n_contr), function(i) {
+    as.numeric(t(cbind(contr_y_mat[i, ], context_per_trial)))
+  })
+  contr_x_tensor <- torch$tensor(do.call(rbind, contr_x_list),
+                                  dtype = torch$float32)
+
+  contraction_rows <- vector("list", n_contr)
+  for (i in seq_len(n_contr)) {
+    post_samples <- npe_posterior$sample(
+      sample_shape = reticulate::tuple(500L),
+      x            = contr_x_tensor[i - 1L]$unsqueeze(0L)
+    )$numpy()
+    post_sd <- apply(post_samples, 2, sd)
+    contraction_rows[[i]] <- tibble(
+      draw       = i,
+      parameter  = c("logit_eps", "log_n_particles", "logit_mu"),
+      prior_sd   = prior_sd_unconstrained,
+      post_sd    = post_sd,
+      contraction = 1 - (post_sd / prior_sd_unconstrained)^2
+    )
+  }
+  contraction_df <- bind_rows(contraction_rows)
+  saveRDS(contraction_df, contr_file)
+} else {
+  contraction_df <- readRDS(contr_file)
+}
+
+ggplot(contraction_df, aes(x = parameter, y = contraction)) +
+  geom_violin(fill = "#CC79A7", alpha = 0.6) +
+  geom_jitter(alpha = 0.15, size = 0.5, width = 0.1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(limits = c(-0.5, 1)) +
+  labs(
+    title    = "Posterior Contraction by Parameter (NPE, Model A)",
+    subtitle = "1 = full information gain; 0 = posterior as wide as prior; <0 = something is wrong.",
+    x = NULL, y = expression(1 - (sigma[post] / sigma[prior])^2)
+  )
+
+contraction_df |>
+  group_by(parameter) |>
+  summarise(median_contraction = round(median(contraction), 3),
+            .groups = "drop") |>
+  print()
+```
+
+**Reading contraction.** $\varepsilon$ should contract noticeably (median > 0.3 on a typical Kruschke run); $N_{\text{particles}}$ contracts less (the response sequence is short and only loosely informative about working-memory capacity); $\mu$ contracts very little on static data — by design. This is the quantitative version of the prior-overlay plot in Step 4: the data-information story for each parameter, measured rather than asserted.
 
 ### The Main Empirical Result: NPE vs Stan Posteriors
 
@@ -2682,46 +3145,88 @@ if (exists("npe_eps") && !is.null(fit_rule_stan)) {
 
 The headline claim — "the gap is structural bias, not inference noise" — requires an experiment. We generate datasets from multiple seeds and compare the NPE-vs-Stan gap. The gap should be small when Model A converges to a rule that is in Model B's candidate set, and large when it does not.
 
-```{r ch14_gap_demonstration, eval=run_intensive_checks}
-if (exists("npe_posterior") && !is.null(mod_rule_stan)) {
-  gap_seeds <- c(42, 123, 7, 99, 55)
-  gap_results <- map_dfr(gap_seeds, function(s) {
-    sched_g <- make_subject_schedule(stimulus_info, n_blocks, seed = s)
-    sim_g   <- rule_particle_filter(
-      n_particles = N_PARTICLES_FIXED, error_prob = 0.1,
-      obs = as.matrix(sched_g[, c("height", "position")]),
-      cat_one = sched_g$category_feedback, max_dims = MAX_RULE_DIMS, quiet = TRUE
-    )
+```{r ch14_gap_demonstration}
+gap_res_file <- here("simdata", "ch14_gap_demonstration_results.rds")
 
-    # NPE inference (amortized — instant)
-    obs_g_vec <- as.numeric(t(cbind(as.integer(sim_g$sim_response),
-                                     as.matrix(sched_g[, c("height", "position")]),
-                                     sched_g$category_feedback)))
-    obs_g_tensor <- torch$tensor(matrix(obs_g_vec, nrow = 1), dtype = torch$float32)
-    npe_g_samples <- npe_posterior$sample(c(5000L), x = obs_g_tensor)$numpy()
-    npe_g_eps <- plogis(npe_g_samples[, 1])
+# 1. Handle Data Loading
+if (regenerate_simulations || !file.exists(gap_res_file)) {
+  if (run_intensive_checks && exists("npe_posterior") && !is.null(mod_rule_stan)) {
+    cat("Generating gap demonstration data (requires Stan and NPE)...\n")
+    gap_seeds <- c(42, 123, 7, 99, 55)
+    
+    # We use a loop and list to be much more stable on macOS than map_dfr
+    gap_list <- vector("list", length(gap_seeds))
+    
+    for (i in seq_along(gap_seeds)) {
+      s <- gap_seeds[i]
+      cat("  Processing seed", s, "(", i, "of", length(gap_seeds), ")...\n")
+      
+      sched_g <- make_subject_schedule(stimulus_info, n_blocks, seed = s)
+      sim_g   <- rule_particle_filter(
+        n_particles = N_PARTICLES_FIXED, error_prob = 0.1,
+        obs = as.matrix(sched_g[, c("height", "position")]),
+        cat_one = sched_g$category_feedback, max_dims = MAX_RULE_DIMS, quiet = TRUE
+      )
 
-    # Stan inference
-    stan_dat_g <- list(
-      ntrials = nrow(sched_g), nfeatures = 2L,
-      y = as.integer(sim_g$sim_response),
-      obs = as.matrix(sched_g[, c("height", "position")]),
-      prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
-      prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
-    )
-    fit_g <- mod_rule_stan$sample(
-      data = stan_dat_g, seed = s, chains = 2, parallel_chains = 2,
-      iter_warmup = 800, iter_sampling = 1000, refresh = 0, adapt_delta = 0.9
-    )
-    stan_g_eps <- as_draws_df(fit_g$draws("error_prob"))$error_prob
+      # NPE inference (explicit types and shape debugging)
+      obs_g_vec <- as.numeric(t(cbind(as.integer(sim_g$sim_response),
+                                       as.matrix(sched_g[, c("height", "position")]),
+                                       sched_g$category_feedback)))
+      
+      # Ensure matrix shape is (1, N_features)
+      obs_g_mat <- matrix(obs_g_vec, nrow = 1)
+      obs_g_tensor <- torch$tensor(obs_g_mat, dtype = torch$float32)
+      
+      # Debug print shapes once for the first seed to verify
+      if (i == 1) {
+        cat("  DEBUG: obs_g_tensor shape:", paste(obs_g_tensor$shape, collapse=" x "), "\n")
+      }
+      
+      # Sample from the NPE posterior (reduced count for speed)
+      n_gap_samples <- 1000L
+      npe_g_samples <- npe_posterior$sample(
+        sample_shape = reticulate::tuple(n_gap_samples), 
+        x            = obs_g_tensor,
+        show_progress_bars = FALSE
+      )$numpy()
+      
+      npe_g_eps <- plogis(npe_g_samples[, 1])
 
-    tibble(seed = s,
-           npe_mean = mean(npe_g_eps), stan_mean = mean(stan_g_eps),
-           gap = abs(mean(npe_g_eps) - mean(stan_g_eps)),
-           npe_covers_truth  = (0.1 >= quantile(npe_g_eps, 0.025)) & (0.1 <= quantile(npe_g_eps, 0.975)),
-           stan_covers_truth = (0.1 >= quantile(stan_g_eps, 0.025)) & (0.1 <= quantile(stan_g_eps, 0.975)))
-  })
+      # Stan inference
+      stan_dat_g <- list(
+        ntrials = nrow(sched_g), nfeatures = 2L,
+        y = as.integer(sim_g$sim_response),
+        obs = as.matrix(sched_g[, c("height", "position")]),
+        prior_logit_error_mean = LOGIT_ERROR_PRIOR_MEAN,
+        prior_logit_error_sd   = LOGIT_ERROR_PRIOR_SD
+      )
+      
+      fit_g <- mod_rule_stan$sample(
+        data = stan_dat_g, seed = s, chains = 2, parallel_chains = 2,
+        iter_warmup = 800, iter_sampling = 1000, refresh = 0, adapt_delta = 0.9
+      )
+      
+      stan_g_eps <- as_draws_df(fit_g$draws("error_prob"))$error_prob
 
+      gap_list[[i]] <- tibble(
+        seed = s,
+        npe_mean = mean(npe_g_eps), stan_mean = mean(stan_g_eps),
+        gap = abs(mean(npe_g_eps) - mean(stan_g_eps)),
+        npe_covers_truth  = (0.1 >= quantile(npe_g_eps, 0.025)) & (0.1 <= quantile(npe_g_eps, 0.975)),
+        stan_covers_truth = (0.1 >= quantile(stan_g_eps, 0.025)) & (0.1 <= quantile(stan_g_eps, 0.975))
+      )
+    }
+    gap_results <- bind_rows(gap_list)
+    saveRDS(gap_results, gap_res_file)
+  } else {
+    gap_results <- NULL
+  }
+} else {
+  gap_results <- readRDS(gap_res_file)
+}
+
+# 2. Handle Plotting
+if (!is.null(gap_results)) {
   print(gap_results)
 
   ggplot(gap_results, aes(x = factor(seed), y = gap)) +
@@ -2729,6 +3234,8 @@ if (exists("npe_posterior") && !is.null(mod_rule_stan)) {
     labs(title = "NPE-vs-Stan Gap Across Different Datasets",
          subtitle = "Large gap = converged rule NOT in Model B's set. Small gap = converged rule IS in set.",
          x = "Schedule seed", y = "|NPE mean ε − Stan mean ε|")
+} else {
+  cat("Gap results data not available. Set run_intensive_checks = TRUE to generate it.\n")
 }
 ```
 
@@ -2751,7 +3258,11 @@ This is the methodological payoff of using NPE instead of ABC: the Chapter 15 co
 
 ---
 
-## Targeted Mutation: Revision Rather Than Replacement
+## Extensions to the Particle Filter
+
+The basic filter from §"The Bayesian Particle Filter" is sufficient for the headline NPE result above. The two extensions below are optional but cognitively motivated: targeted mutation replaces the prior-sampling mutation kernel with kernels that *revise* rather than discard rules, and the scenario-aware filter exercises $\mu$'s identifiability under non-stationary feedback. Both are included here because they enable the §"NPE Parameter Recovery on Non-Stationary Data" demonstration that closes the validation chain.
+
+### Targeted Mutation: Revision Rather Than Replacement
 
 The `mutate_particles` function above draws each replacement rule entirely at random from the grammar — the mutated particle has no relationship to the rule it replaced. This is the simplest possible assumption: when a rule fails, discard it and start over.
 
@@ -3057,7 +3568,7 @@ rule_particle_filter_scenario <- function(schedule,
   obs        <- as.matrix(schedule[, c("height", "position")])
   base_lab   <- schedule$category_feedback
   n_features <- ncol(obs)
-  fr         <- list(range(obs[, 1]), range(obs[, 2]))
+  fr         <- lapply(seq_len(n_features), function(d) range(obs[, d]))
 
   ps        <- initialize_particles(n_particles, n_features, max_dims, fr)
   particles <- ps$particles
@@ -3268,11 +3779,103 @@ The Stan mixture (Model B) is built on a fixed candidate rule set enumerated bef
 
 Concretely: if we take the contingent-shift simulated data from the plot above and fit Model B to it, Model B's posterior predictive learning curve will be stuck at the pre-shift accuracy plateau — it has no way to produce the sawtooth. The same fit under NPE (with $\varepsilon$ and $\mu$ both inferred) can match the data because Model A *is* the generative process. **The gap between Model A and Model B on non-stationary data is therefore not a subtle bias — it is a structural ceiling.** This is the sharpened version of the argument in §"The Main Empirical Result": the cost of replacing an intractable cognitive theory with a tractable proxy is bounded when the task is stationary, and unbounded when it is not.
 
-### Implication for the NPE Pipeline
+### NPE Parameter Recovery on Non-Stationary Data
 
-The NPE setup in §"Neural Posterior Estimation for Model A" infers $(\varepsilon, N_{\text{particles}})$. Extending to $(\varepsilon, N_{\text{particles}}, \mu)$ is a one-line change to the prior and a one-argument change to `simulate_model_a`. Validation (SBC + expected coverage) and the pair-plot inspection transfer directly. On static data we would expect $\mu$ to be poorly identified — matching Ch. 12's $q$ and Ch. 11's $\lambda$ under their own static scenarios. On contingent-shift and drift data $\mu$ should become identifiable, because the signature in the learning curve (sawtooth depth, plateau height, post-flip recovery speed) depends specifically on $\mu$ in a way the other parameters cannot mimic. Production implementations of this chapter for the Chapter 15 cross-architecture comparison should include $\mu$ in the NPE prior and run one validation sweep per scenario.
+The NPE network in §"Neural Posterior Estimation for Model A" was trained with a fixed schedule and a static feedback sequence. The forward simulations above showed that $\mu$ produces a distinctive sawtooth signature on contingent-shift data and a steady-tracking signature on drift data — signatures that are absent on static data. The substantive prediction is therefore: **the same trained NPE network should return a $\mu$ posterior that is prior-like on static data, and sharply contracted on the two non-stationary scenarios.**
 
-### Trilogy Synthesis
+We test that prediction directly. We simulate one observed dataset per scenario at a moderate true mutation rate ($\mu = 0.1$, $\varepsilon = 0.1$, $N = 100$), feed each through the trained network, and overlay the three resulting $\mu$ posteriors against the prior.
+
+```{r ch14_npe_param_recovery_nonstationary, eval=python_available}
+recovery_file <- here("simdata", "ch14_npe_param_recovery_nonstationary.rds")
+
+if (regenerate_simulations || !file.exists(recovery_file)) {
+  if (run_intensive_checks) {
+    set.seed(2027)
+    rec_scenarios <- c("static", "contingent_shift", "drift")
+    rec_eps   <- 0.1
+    rec_mu    <- 0.1
+    rec_N     <- 100L
+
+    rec_list <- vector("list", length(rec_scenarios))
+    for (s in seq_along(rec_scenarios)) {
+      sc        <- rec_scenarios[s]
+      drift_tr  <- if (sc == "drift")
+        make_drift_trajectory(nrow(npe_schedule), drift_sigma = 0.05, seed = 2027)
+      else NULL
+
+      sim_s <- rule_particle_filter_scenario(
+        schedule                  = npe_schedule,
+        error_prob                = rec_eps,
+        mutation_prob             = rec_mu,
+        n_particles               = rec_N,
+        max_dims                  = MAX_RULE_DIMS,
+        scenario                  = sc,
+        drift_traj                = drift_tr
+      )
+
+      x_vec <- as.numeric(t(cbind(as.integer(sim_s$sim_response),
+                                   npe_obs_mat,
+                                   sim_s$observed_feedback)))
+      x_tens <- torch$tensor(matrix(x_vec, nrow = 1), dtype = torch$float32)
+
+      post_s <- npe_posterior$sample(
+        sample_shape       = reticulate::tuple(2000L),
+        x                  = x_tens,
+        show_progress_bars = FALSE
+      )$numpy()
+
+      rec_list[[s]] <- tibble(
+        scenario = sc,
+        eps      = plogis(post_s[, 1]),
+        n_part   = exp(post_s[, 2]),
+        mu       = plogis(post_s[, 3])
+      )
+    }
+    recovery_df <- bind_rows(rec_list)
+    saveRDS(recovery_df, recovery_file)
+  } else {
+    recovery_df <- NULL
+  }
+} else {
+  recovery_df <- readRDS(recovery_file)
+}
+
+if (!is.null(recovery_df)) {
+  prior_mu_grid <- plogis(rnorm(2000, LOGIT_MU_PRIOR_MEAN, LOGIT_MU_PRIOR_SD))
+
+  ggplot(recovery_df, aes(x = mu, fill = scenario, color = scenario)) +
+    geom_density(alpha = 0.4, linewidth = 0.7) +
+    geom_density(data = tibble(mu = prior_mu_grid),
+                 aes(x = mu),
+                 inherit.aes = FALSE,
+                 linewidth = 0.5, linetype = "dashed", color = "grey30") +
+    geom_vline(xintercept = 0.1, color = "red", linetype = "dashed") +
+    scale_fill_viridis_d(option = "plasma") +
+    scale_color_viridis_d(option = "plasma") +
+    labs(
+      title    = "NPE μ Posterior Across Scenarios (Same Trained Network)",
+      subtitle = "Dashed grey = prior. Red dashed = true generating μ = 0.1.\nμ should contract on contingent_shift and drift; remain prior-like on static.",
+      x = "μ", y = "Density"
+    )
+
+  recovery_df |>
+    group_by(scenario) |>
+    summarise(
+      mu_mean   = round(mean(mu), 3),
+      mu_q025   = round(quantile(mu, 0.025), 3),
+      mu_q975   = round(quantile(mu, 0.975), 3),
+      mu_sd     = round(sd(mu), 3),
+      .groups   = "drop"
+    ) |>
+    print()
+}
+```
+
+**Reading the demonstration.** The static panel should reproduce the Step 4 result: a $\mu$ posterior nearly identical to the dashed prior, because the data carry no information about mutation rate. The contingent-shift and drift panels should both show contracted, off-prior $\mu$ posteriors centred on (or near) the true 0.1 — the sawtooth and tracking signatures are exactly the regularities that render $\mu$ identifiable. This is the parameter-recovery counterpart of the SBC + expected-coverage block above: SBC tells us the network is calibrated; this experiment tells us *when* the data are informative enough for that calibration to translate into useful contraction.
+
+The same trained network handles all three scenarios because the embedding is conditioned on the per-trial feedback sequence — a contingent-shift dataset and a static dataset are simply different points in the input space. Retraining is unnecessary as long as the schedule is preserved.
+
+## Trilogy Synthesis
 
 Chapters 11, 12, and 13 now each contain a parallel analysis: a one-parameter extension to the base cognitive model that turns the model from a stationary learner into a non-stationary one, validated across three scenarios that load the new parameter differently. The parameters are superficially different — a recency weight, a process-noise variance, a mutation probability — but the validation story is the same in each case: identifiability is a joint property of the model and the task, the non-stationarity parameter is weakly identified when the task is stationary, and SBC under a stationary task catches this failure mode while SBC under a matched non-stationary task passes. This is the shape the reader should recognise when extending any path-dependent cognitive model: one parameter for non-stationarity, one matched scenario to identify it, and a validation battery that sorts assumption-matched, mis-specified, and information-starved cases in the order the theory predicts.
 
@@ -3331,3 +3934,11 @@ Pure rule-based models may not account for all aspects of human categorization (
 * Once under NPE, with Model A (the particle filter), the GCM, and the Kalman prototype all fitted as simulator-based models on a common footing — each with its own trained inference network, validated with SBC + expected coverage, and compared via posterior predictive ELPD. This is the comparison the cognitive theories deserve.
 
 The expected outcome is that the two comparisons agree on the easy cases and disagree on the hard ones, and that the disagreement is informative about which empirical conclusions in the categorisation literature have been over-claimed because they were based on tractable proxies of intractable cognitive theories. That is the methodological payoff of taking simulator-based inference seriously.
+
+::: {.callout-note title="What carries to Chapter 16"}
+The next chapter applies the same particle filter to the Alien Game (5 binary features, three sessions of increasing rule complexity). Four things transfer essentially unchanged, and three things require explicit substitution.
+
+**Transfers unchanged:** the simulator function (`rule_particle_filter`) — the trial loop, weight update, ESS-based resampling, and mutation kernel are all generic in `n_features`; the NPE pipeline (prior on $\text{logit}\,\varepsilon$, $\log N$, $\text{logit}\,\mu$; box-uniform sbi prior; embedding MLP + neural spline flow; SBC + expected coverage + posterior contraction); the schedule-fix discipline; the Model A vs Model B distinction (although Chapter 16 does not build a Stan proxy).
+
+**Substitutions required:** `n_features` (2 → 5); `feature_range` (continuous extents → `c(0, 1)` per feature); threshold representation (continuous sample → fixed at 0.5); `max_dims` (2 → 3). The nested rule form $A\ L_{\text{outer}}\ (B\ L_{\text{inner}}\ C)$ is **kept**, because the Alien Game grammar `A AND (B OR C)` is exactly that shape. See §"What Changes When Features Are Binary and 5-Dimensional" and the generalization checklist callout for the line-by-line correspondence.
+:::

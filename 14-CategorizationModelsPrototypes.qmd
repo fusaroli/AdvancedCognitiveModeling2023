@@ -1,4 +1,5 @@
-# Prototype Models: Learning Category Averages
+
+# Categorization Models: Prototypes
 
 ```{r ch13_setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -36,7 +37,10 @@ pacman::p_load(
   furrr,        # parallel functional programming
   ellipse,      # uncertainty ellipses
   matrixStats,  # logSumExp for the LFO-CV implementation
-  MASS          # ginv (pseudo-inverse fallback)
+  MASS,          # ginv (pseudo-inverse fallback)
+  gridExtra,
+  hexbin,
+  magick
 )
 
 theme_set(theme_classic())
@@ -211,15 +215,17 @@ Through the 1980s and early 1990s, the prototype-versus-exemplar debate generate
 
 #### From Static Averaging to Bayesian Updating
 
-The decisive conceptual move was to ask not *what is stored* but *how the representation is updated*. A static average treats all observed exemplars symmetrarily regardless of when they were encountered. This is inconsistent with the well-documented finding that recent experiences carry more weight than remote ones [@gluck1988conditioning; @estes1994classification]. It is also inconsistent with the ability to track categories that drift over time — the clothing you learn is "fashionable" today may not be fashionable in five years.
+We do not take a stance here on the prototype-versus-exemplar debate. The previous chapter implemented exemplar models in some detail; this chapter sticks with prototype representations precisely so we can understand them on their own terms: what changes when the summary representation is allowed to update incrementally, how its parameters are recovered, and how it behaves under different learning environments. 
 
-The Kalman filter [@kalman1960new], developed originally for aerospace navigation, provided an off-the-shelf solution. It is the **minimum-variance unbiased estimator** for a linear-Gaussian dynamical system: at each step it computes exactly how much weight to place on the new observation versus the accumulated prior, using the relative magnitudes of measurement noise $R$ and process noise $Q$. When $Q = 0$ the prototype is assumed static and learning rate decays monotonically — recovering the classical static average as a special case. When $Q > 0$ the prototype can drift and the steady-state Kalman gain remains positive, allowing perpetual sensitivity to new observations.
+Within that scope, the focus shifts from *what is stored* to *how the stored summary is updated*. A static average treats all observed members the same regardless of when they were encountered, and provides no mechanism for tracking categories that drift over time: the clothing you learn is "fashionable" today may not be fashionable in five years. Several incremental prototype schemes have been proposed in response. The simplest is a **delta rule**: $\mu_{t} = \mu_{t-1} + \alpha\,(x_t - \mu_{t-1})$, with a fixed learning rate $\alpha$ that yields exponentially weighted recency [@gluck1988conditioning; @estes1994classification]. @anderson1991adaptive's rational model takes a fully Bayesian route, but over a Dirichlet-process partition rather than a parametric prototype. Each captures part of the picture: the delta rule is principled in form but its $\alpha$ is a free knob disconnected from the learner's uncertainty; Anderson's model is Bayesian but solves a different problem (discovering the partition) and is harder to fit at the trial level.
 
-Applications of Kalman-style updating to human learning appear across multiple domains: classical conditioning [@dayan2000learning], interval timing, and reward prediction. The prototype-learning context is a natural fit because the Kalman filter formalises the very trade-off prototype theory requires: balance between the accumulated representation (prior) and the informational content of the newest instance (likelihood). The two-parameter family $(r, q)$ instantiates the entire spectrum from pure exemplar-like responsiveness ($r$ small, steep gain) to heavily smoothed prototype abstraction ($r$ large, shallow gain, slow forgetting).
+The Kalman filter [@kalman1960new], developed originally for aerospace navigation, sits [I think, nobody else has used it for this!] in a useful intermediate position for prototype modelling. It is the **minimum-variance unbiased estimator** for a linear-Gaussian dynamical system: at each step it computes exactly how much weight to place on the new observation versus the accumulated prior, using the relative magnitudes of measurement noise $R$ and process noise $Q$. The learning rate (the Kalman gain) is not a free parameter but is *derived* at each trial from current uncertainty — recovering a delta-rule-like update whose effective $\alpha$ shrinks as evidence accumulates and grows again when the world is assumed to drift. When $Q = 0$ the prototype is assumed static and the gain decays monotonically — recovering the classical static average as a special case. When $Q > 0$ the prototype can drift and the steady-state gain remains positive, allowing perpetual sensitivity to new observations.
 
-#### The Bayesian Identity
+Applications of Kalman-style updating to human learning appear across multiple domains: classical conditioning [@dayan2000learning], interval timing, and reward prediction. The two-parameter family $(r, q)$ instantiates a spectrum from steep, responsive updating ($r$ small, gain high) to heavily smoothed abstraction ($r$ large, gain low, slow forgetting), with $q$ controlling whether the steady-state gain decays to zero or saturates above it.
 
-The Kalman filter is not merely an engineering heuristic applied to psychology: it is the exact Bayesian posterior for a Gaussian state-space model. The prototype at trial $t$ is the posterior mean $\mathbb{E}[\mu_t \mid x_{1:t}]$; the covariance $\Sigma_t$ is the posterior variance. Recognising this identity connects the prototype model to the broader programme of **rational analysis** [@anderson1991adaptive] and **Bayesian models of cognition** [@tenenbaum2011grow]: the learner is performing optimal inference about a latent category structure given noisy, sequentially arriving evidence. The parameters $r$ and $q$ then carry clear psychological interpretations — observation noise (how variable are category members around the prototype?) and process noise (how rapidly does the category itself change?) — rather than being purely phenomenological fitting coefficients.
+#### The Bayesian Connection
+
+Importantly for us [well, let's be honest, for me, but I'll take you along for the ride], the Kalman filter is a conceptually Bayesian method: it is the exact Bayesian posterior for a Gaussian state-space model. The prototype at trial $t$ is the posterior mean $\mathbb{E}[\mu_t \mid x_{1:t}]$; the covariance $\Sigma_t$ is the posterior variance. Recognising this identity connects the prototype model to the broader programme of **rational analysis** [@anderson1991adaptive] and **Bayesian models of cognition** [@tenenbaum2011grow]: the learner is performing optimal inference about a latent category structure given noisy, sequentially arriving evidence. The parameters $r$ and $q$ then carry clear psychological interpretations — observation noise (how variable are category members around the prototype?) and process noise (how rapidly does the category itself change?) — rather than being purely phenomenological fitting coefficients.
 
 This framing also clarifies the key difference from the GCM: where the GCM stores the full history and retrieves it at decision time, the Kalman prototype model **compresses** the history into sufficient statistics (mean and covariance) that are updated recursively. The compression is lossless when the generative model is Gaussian and linear — which is why recovery and SBC are cleaner here than in most cognitive models of comparable scope.
 
@@ -294,18 +300,11 @@ Our stimuli have two features (height and position). We need a multivariate vers
 * **The Logic Stays the Same, the Math Uses Matrices:**
     * **Kalman Gain ($K$):** A *matrix*: $K = \Sigma_{prev} (\Sigma_{prev} + R)^{-1}$
     * **Updating Your Guess ($\vec{\mu}$):** $\vec{\mu}_{new} = \vec{\mu}_{prev} + K (\vec{x} - \vec{\mu}_{prev})$
-    * **Updating Your Confidence ($\Sigma$):** We use the numerically stable Joseph form: $\Sigma_{new} = (I - K)\Sigma_{prev}(I - K)^T + KRK^T$. While it looks complex, the intuition is the same as the scalar case: uncertainty decreases after each update. The Joseph form is preferred because it guarantees the result remains symmetric and positive semi-definite even in the presence of floating-point rounding errors.
+    * **Updating Your Confidence ($\Sigma$):** The intuition is the same as the scalar case — uncertainty shrinks after each observation — but now in matrix form. The textbook update is $\Sigma_{new} = (I - K)\Sigma_{prev}$, which can be read as: "keep the share of the prior uncertainty that the new observation did *not* explain away." In code, however, we use the algebraically equivalent Joseph form, $\Sigma_{new} = (I - K)\Sigma_{prev}(I - K)^T + KRK^T$. This longer expression makes the two sources of remaining uncertainty explicit: the leftover prior uncertainty (first term) plus the measurement noise that leaks in through the Kalman gain (second term). The reason for using it in practice is purely numerical: a covariance matrix must be symmetric and have non-negative variances, and the Joseph form preserves both properties even when small rounding errors accumulate over many trials, whereas the shorter form can drift into invalid (asymmetric or negative-variance) territory.
 
 ### In a Nutshell
 
-The Kalman filter is a recursive algorithm that provides the mathematically optimal way to estimate the state of a system (like the features of a prototype) given a series of noisy measurements. It works by:
-
-1. Maintaining an estimate ($\vec{\mu}$) and uncertainty ($\Sigma$).
-2. Calculating a Kalman Gain $K$ that balances trust in the current estimate against trust in the new measurement.
-3. Updating the estimate by moving it towards the new measurement, weighted by $K$.
-4. Updating (reducing) the uncertainty based on the information gained.
-
-The multivariate version simply uses vectors and matrices to do this for multiple, potentially correlated variables simultaneously.
+The Kalman filter tracks a prototype as a running estimate $\vec{\mu}$ and a covariance $\Sigma$ that quantifies how confident the learner is. Each trial has two phases: a *predict* step that inflates $\Sigma$ by $Q$ to allow the prototype to drift between observations, and an *update* step that pulls $\vec{\mu}$ toward the new exemplar by an amount set by the Kalman gain $K$ — high when the learner is uncertain or measurements are precise, low when the learner is already confident or measurements are noisy. The gain also determines how much $\Sigma$ shrinks. At steady state, drift ($Q$) and shrinkage balance, so uncertainty stops collapsing to zero and the model keeps learning indefinitely.
 
 ### Implementing the Multivariate Update in R
 
@@ -355,6 +354,42 @@ This function performs a single update for one category's prototype when it obse
 ---
 
 We are fitting a *two-parameter* model: $r$ controls both Kalman gain and decisional precision; $q$ controls prototype drift speed and steady-state uncertainty. Both are inferred from data on the log scale. There is no category bias, fixed initial means, fixed initial covariances, and diagonal noise structures for both $R$ and $Q$. The Stan implementation in §"The Prototype Model in Stan" implements exactly this.
+
+```{tikz prototype-single-dag, fig.cap = "DAG for the single-subject prototype (Kalman) model. Hyperparameters (dots) feed into the two latent parameters (circles): $\\log r$ (observation noise) and $\\log q$ (process noise). Inside the trial plate, the stimulus $\\mathbf{x}_i$ and feedback $c_i$ combine with the carried-forward state $(\\boldsymbol{\\mu}_i, \\Sigma_i)$ — which is updated across trials via the Kalman predict/update steps — to yield the deterministic choice probability $p_i$ (double circle), from which the response $y_i$ is drawn. The self-loop on the state node represents the sequential prototype update.", fig.align = "center", out.width = "70%"}
+\usetikzlibrary{bayesnet}
+\begin{tikzpicture}
+  % ── Hyperparameters (const) ─────────────────────────────
+  \node[const] (hyp_r) at (0, 0) {$\mu_r,\,\sigma_r$};
+  \node[const] (hyp_q) at (6, 0) {$\mu_q,\,\sigma_q$};
+
+  % ── Latent parameters ───────────────────────────────────
+  \node[latent] (logr) at (0, -2) {$\log r$};
+  \node[latent] (logq) at (6, -2) {$\log q$};
+
+  % ── Trial-level nodes (inside plate) ────────────────────
+  \node[obs] (xi)    at (1.5, -4.5) {$\mathbf{x}_i$};
+  \node[obs] (ci)    at (3.5, -4.5) {$c_i$};
+  \node[det] (state) at (5.5, -4.5) {$\boldsymbol{\mu}_i,\Sigma_i$};
+  \node[det] (pi)    at (3.5, -6.0) {$p_i$};
+  \node[obs] (yi)    at (3.5, -7.5) {$y_i$};
+
+  % ── Edges ───────────────────────────────────────────────
+  \edge {hyp_r} {logr};
+  \edge {hyp_q} {logq};
+  \edge {logq}  {state};
+  \edge {ci}    {state};
+  \edge {state} {pi};
+  \edge {xi}    {pi};
+  \edge {logr}  {pi};
+  \edge {pi}    {yi};
+
+  % ── Self-loop on state (sequential update) ─────────────
+  \draw[->, >=latex] (state.north east) .. controls +(1.2,0.6) and +(1.2,-0.6) .. (state.south east);
+
+  % ── Plate ───────────────────────────────────────────────
+  \plate {trial} {(xi)(ci)(state)(pi)(yi)} {$N$ trials};
+\end{tikzpicture}
+```
 
 ---
 
@@ -596,7 +631,7 @@ ggplot(prototype_responses,
   ylim(0.3, 1.0)
 ```
 
-**Interpretation**: The panel structure separates the effects of $r$ (colors) and $q$ (columns). Along a row (fixed $q$), higher $r$ slows learning and lowers asymptotic accuracy. Down a column (fixed $r$), higher $q$ introduces persistent uncertainty — the model cannot converge to a stable prototype, so accuracy may plateau below ceiling or even oscillate slightly. When $q = 0$ the model reduces to the static-target filter from previous drafts of this chapter. The key pedagogical point: $q$ and $r$ are not redundant — they affect different phases of the learning curve and, in non-stationary environments, become separately identifiable.
+**Interpretation**: The panel structure separates the effects of $r$ (colors) and $q$ (columns). Horizontally (fixed $q$), higher $r$ slows learning and lowers asymptotic accuracy. Vertically (fixed $r$), higher $q$ introduces persistent uncertainty — the model cannot converge to a stable prototype, so accuracy may plateau below ceiling or even oscillate slightly. When $q = 0$ the model reduces to a static-target kalman filter (assumptions of categories as static). The key pedagogical point: $q$ and $r$ are not redundant — they affect different phases of the learning curve and, in non-stationary environments, should become separately identifiable. But we should have learned a lesson from the previous chapter and not assume: let's see if they are identifiable in practice.
 
 
 ### Visualizing Prototype Evolution
@@ -785,7 +820,7 @@ ggplot(ppc_summary, aes(x = trial)) +
   )
 ```
 
-The prior predictive envelope spans chance performance (uninformative $r$ draws) through near-ceiling accuracy (informative $r$ draws), without implying impossible behavior such as sustained below-chance performance. This is the plausibility standard we require before proceeding to inference.
+The prior predictive envelope spans chance performance (uninformative $r$ draws) through near-ceiling accuracy (informative $r$ draws), without implying impossible behavior such as sustained below-chance performance. Not a hard bar to pass, but a good start.
 
 ---
 
@@ -798,9 +833,9 @@ Simulations help us understand the model, but we want to fit it to experimental 
 
 The prototype model has two parameters — `log_r` and `log_q`. Given both and the observed data (stimuli and feedback), the *entire* Kalman filter state is deterministic: prototype means, prototype covariances, and the per-trial choice probability $p_i$ all follow algebraically from `log_r` and the trial sequence. Whenever a quantity depends on a parameter but is otherwise deterministic, it belongs in `transformed parameters` (evaluated once per leapfrog step) rather than `transformed data` (which is for parameter-free preprocessing) or `model{}` (which would force a recomputation in `generated quantities`). We follow that rule here, and `log_lik[i]` in `generated quantities` becomes a one-line lookup of `p[i]`.
 
-> **A note on architectural symmetry with Chapter 12.** The Chapter 12 GCM's choice probabilities are *also* deterministic given the parameters and the data, and they *also* belong in `transformed parameters` for the same reason. We do the same here: `prob_cat1[i]` is a transformed parameter, the model block reduces to a single vectorised `bernoulli_lpmf(y | prob_cat1)`, and `log_lik[i]` is a one-line lookup. 
+> **A note on architectural symmetry with the chapter on exemplars.** The previous chapter GCM's choice probabilities were deterministic given the parameters and the data, and therefore belonged in `transformed parameters`. The same is true for the kalman filter model: `prob_cat1[i]` is a transformed parameter, the model block reduces to a single vectorised `bernoulli_lpmf(y | prob_cat1)`, and `log_lik[i]` is a one-line lookup. 
 
-The same path-dependence concern from Ch. 11 still applies: trial $t$'s choice probability depends on all previous stimuli through the Kalman state, so standard PSIS-LOO is invalid. Unlike previous drafts, we no longer treat that as a caveat to repeat — the LFO-CV machinery from Chapter 12 is generalised to the Kalman case in §"Leave-Future-Out Cross-Validation" below, and the comparison against exact one-step-ahead refits is reported in this chapter rather than deferred to a hypothetical future supplement.
+The same path-dependence concern of the previous chapter applies: trial $t$'s choice probability depends on all previous stimuli through the Kalman state, so standard PSIS-LOO is invalid. Unlike previous drafts, we no longer treat that as a caveat to repeat — the LFO-CV machinery from the previous chapter is generalised to the Kalman case in §"Leave-Future-Out Cross-Validation" below.
 
 > **`reduce_sum` and parallelization**: As with the GCM, the Kalman prototype model cannot use `reduce_sum` because successive Kalman steps are causally chained — trial $t$'s contribution to the likelihood depends on the filter state from trials $1, \ldots, t-1$. The entire filter must be computed sequentially. With two parameters (`log_r`, `log_q`) the posterior geometry is 2D, and Pathfinder initialization is still reliable because both parameters are unconstrained scalars with prior-dominated tails.
 

@@ -1,4 +1,4 @@
-# The Generalized Context Model {#sec-categorization-exemplars}
+# Categorization models: Exemplars {#sec-categorization-exemplars}
 
 ```{r ch12_setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -681,9 +681,7 @@ ggplot(prior_pred_summary, aes(x = trial)) +
 
 ### Implementing the GCM in Stan for Parameter Estimation
 
-#### Architectural choice: `prob_cat1[i]` in `transformed parameters`
-
-Because the GCM's per-trial choice probability $p_i$ is a deterministic function of the parameters $(w, c, \beta)$ and the data sequence, it belongs in `transformed parameters` as a single source of truth. The `model{}` block then becomes a one-line vectorised Bernoulli likelihood, and `generated quantities{}` becomes a lookup against the already-computed `prob_cat1` vector.
+The DAG formalizes the four-stage structure from §Mathematical Formulation above: priors on $(w, \log c, \beta)$ feed into attention-weighted city-block distances, which yield per-category mean similarities, which enter the Luce choice rule to produce $p_i$; the response $y_i$ is then a Bernoulli draw.
 
 ```{tikz gcm-single-dag, fig.cap = "DAG for the Single-Subject GCM. Hyperparameters (dots) feed into latent parameters (circles): attention weights $\\mathbf{w}$, log sensitivity $\\log c$, and response bias $\\beta$. Inside the plate, the stimulus $\\mathbf{x}_i$ and accumulated exemplar memory $z_{<i}$ (past category feedback) combine with the parameters to yield the deterministic choice probability $p_i$ (double circle), from which the response $y_i$ is drawn.", fig.align = "center", out.width = "70%"}
 \usetikzlibrary{bayesnet}
@@ -716,8 +714,6 @@ Because the GCM's per-trial choice probability $p_i$ is a deterministic function
   \plate {trial} {(xi)(zi)(pi)(yi)} {$N$ trials};
 \end{tikzpicture}
 ```
-
-The DAG formalizes the four-stage structure from §Mathematical Formulation above: priors on $(w, \log c, \beta)$ feed into attention-weighted city-block distances, which yield per-category mean similarities, which enter the Luce choice rule to produce $p_i$; the response $y_i$ is then a Bernoulli draw.
 
 ```{r ch12_gcm_stan_model}
 gcm_single_stan <- "
@@ -834,9 +830,9 @@ mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 
 * **`transformed data`**: Builds the `abs_diff[i, j, f]` tensor. Evaluated exactly once per chain.
 * **`parameters`**: `simplex[N_features] w`, unconstrained `real log_c`, and `real<lower=0, upper=1> bias`.
-* **`transformed parameters`**: Brings back the constraints on the parameters, and caches `prob_cat1[i]` in a single forward pass over trials.
-* **`model`**: Priors followed by a vectorised one-line likelihood.
-* **`generated quantities`**: `log_lik[i]` as a per-trial lookup, and `lprior` for `priorsense`.
+* **`transformed parameters`**: Brings back the constraints on the parameters, and caches `prob_cat1[i]` in a single forward pass over trials. Because the GCM's per-trial choice probability $p_i$ is a deterministic function of the parameters $(w, c, \beta)$ and the data sequence, it belongs here as a single source of truth.
+* **`model`**: Priors followed by a vectorised one-line likelihood. By pre-calculating the probabilities in `transformed parameters`, the `model{}` block becomes a simple one-line Bernoulli call.
+* **`generated quantities`**: `log_lik[i]` as a per-trial lookup, and `lprior` for `priorsense`. This block also benefits from the lookup against the already-computed `prob_cat1` vector.
 
 > A note on reduce_sum and parallelization: The GCM's inner loop cannot be parallelized
 > with reduce_sum because trial $t$'s contribution to target depends on the memory state
@@ -1046,7 +1042,7 @@ The parameters look nicely uncorrelated.
 
 #### LOO with Pareto-$\hat{k}$ Diagnostics
 
-Standard PSIS-LOO is computed for completeness and for comparison against LFO-CV below. We do not interpret it as a valid measure of out-of-sample predictive accuracy for a sequential model — see the next subsection for why — but the Pareto-$\hat{k}$ diagnostic still localises trials where the path-dependence concern bites hardest.
+While standard PSIS-LOO doesn't capture the path dependency of the model, it can still highlight issues with influential datapoints, so we calculate it.
 
 ```{r ch12_loo_single}
 if (!is.null(fit_gcm_single)) {
@@ -1061,15 +1057,10 @@ if (!is.null(fit_gcm_single)) {
 
 #### Leave-Future-Out Cross-Validation
 
-**Why standard LOO is invalid here.** Standard PSIS-LOO assumes observations are conditionally exchangeable given the parameters. In the GCM, this assumption is violated: leaving out observation $t$ also conceptually removes the memory trace that observation $t$ contributed to trials $t+1, \ldots, T$.
-
-**What LFO-CV does instead.** LFO-CV (Bürkner, Gabry, & Vehtari, 2020) estimates the *one-step-ahead* predictive density. The PSIS approximation refits only when the importance sampling deteriorates ($\hat{k} > k_\text{thresh}$) and uses importance reweighting otherwise.
+LFO-CV (Bürkner, Gabry, & Vehtari, 2020) estimates the *one-step-ahead* predictive density, to preserve the path-dependency of our model's behavior. The PSIS approximation refits only when the importance sampling deteriorates ($\hat{k} > k_\text{thresh}$) and uses importance reweighting otherwise.
 
 ```{r ch12_lfo_cv_implementation}
-# ─────────────────────────────────────────────────────────────────────────────
-# psis_lfo_gcm: PSIS-approximated leave-future-out CV for the GCM.
-# Follows Bürkner, Gabry, & Vehtari (2020), Algorithm 1.
-# ─────────────────────────────────────────────────────────────────────────────
+
 psis_lfo_gcm <- function(stan_model,
                          full_data,
                          L = 16,
@@ -1451,7 +1442,14 @@ When the true log(c) is above 0 the model computes similarity using exponential 
 
 However, calibration and parameter recovery look otherwise good.
 
-**Practical constraint from SBC.** We treat c ≈ 12 as a hard ceiling: a sensitivity this extreme makes stimuli that differ by any measurable amount effectively identical, which is psychologically implausible for the feature ranges used here. We therefore require that the prior places negligible mass above c = 12, i.e., that the 99.85th percentile (mean + 3 SD on the log scale) stays below log(12) ≈ 2.49. For the single-subject model this is satisfied with `Normal(log(2), 1.0)`, whose +3 SD upper bound is exp(0.69 + 3.0) ≈ 20 — already at the boundary of acceptability. We carry this constraint forward explicitly into the multilevel parameterisation.
+**Practical constraint from SBC.** We treat c ≈ 10 as a hard ceiling: a sensitivity this extreme makes stimuli that differ by any measurable amount effectively identical, which is psychologically implausible for the feature ranges used here. We therefore require that the prior places negligible mass above c = 10, i.e., that the 99.85th percentile (mean + 3 SD on the log scale) stays below log(10) ≈ 2.30.
+
+```{r update_log_c_prior}
+# Tighten the sensitivity prior for the rest of the chapter based on SBC results
+LOG_C_PRIOR_SD <- 0.5
+```
+
+For the single-subject model this is satisfied with `Normal(log(2), 0.5)`, whose +3 SD upper bound is exp(0.69 + 1.5) ≈ 8.9 — well within the boundary of acceptability. 
 
 ---
 
@@ -1490,51 +1488,37 @@ $$\eta_{ie} = e^{-\lambda (i - t_e)} \cdot e^{-c\, d_{ie}}, \qquad m_{k,i} = \fr
 
 The parameter $\lambda$ governs the Temporal Decay term: $e^{-\lambda (i - t_e)}$.
 
-1. The "Memory Window": Think of $\lambda$ as controlling the size of the agent's moving window of attention. 
+### Theoretical Properties of Memory Decay
 
-  * If $\lambda = 0$: The term $e^{0} = 1$. The age of the memory has no effect. Every exemplar ever seen is weighted equally, representing a "perfect," infinite memory.
-       
-  * If $\lambda$ is large: The term $e^{-\lambda \cdot age}$ drops to near-zero very quickly as age increases. The agent only "remembers" or cares about the last few trials.
+**The "Memory Window".** Think of $\lambda$ as controlling the size of the agent's moving window of attention. 
 
-  * The Half-Life: You can calculate the "half-life" of a memory (the number of trials it takes for its influence to drop by half) as $t_{1/2} = \frac{\ln(2)}{\lambda} \approx \frac{0.69}{\lambda}$. For example, if $\lambda = 0.1$, a memory's influence is halved every ~7 trials.
+* **If $\lambda = 0$**: The term $e^{0} = 1$. The age of the memory has no effect. Every exemplar ever seen is weighted equally, representing a "perfect," infinite memory.
+* **If $\lambda$ is large**: The term $e^{-\lambda \cdot \text{age}}$ drops to near-zero very quickly as age increases. The agent only "remembers" or cares about the last few trials.
+* **The Half-Life**: You can calculate the "half-life" of a memory (the number of trials it takes for its influence to drop by half) as $t_{1/2} = \frac{\ln(2)}{\lambda} \approx \frac{0.69}{\lambda}$. For example, if $\lambda = 0.1$, a memory's influence is halved every ~7 trials.
 
-2. Effective Sample Size: The denominator in the $m_{k,i}$ formula, $\sum_{e \in C_k} e^{-\lambda(i - t_e)}$, is the decay-weighted effective sample size. 
+**Effective Sample Size.** The denominator in the $m_{k,i}$ formula, $\sum_{e \in C_k} e^{-\lambda(i - t_e)}$, is the decay-weighted effective sample size. Instead of just counting how many items are in Category $k$ (which would be the raw count $|C_k|$), the model counts how many "fresh" items are in Category $k$. If a category has 100 exemplars but they were all seen 500 trials ago, and $\lambda$ is high, the "effective count" for that category will be near zero. This prevents old, potentially obsolete evidence from dominating the decision.
 
-  * Instead of just counting how many items are in Category $k$ (which would be the raw count $|C_k|$), the model counts how many "fresh" items are in Category $k$. 
-       
-  * If a category has 100 exemplars but they were all seen 500 trials ago, and $\lambda$ is high, the "effective count" for that category will be near zero. This prevents old, potentially obsolete evidence from dominating the decision.
+**Why use it?** $\lambda$ is essential for non-stationary environments. If the rules of the task change (e.g., the category boundary shifts), an agent with $\lambda=0$ will be stuck trying to reconcile new evidence with a massive mountain of old, contradictory evidence. An agent with a well-tuned $\lambda$ can "forget" the old rules and adapt to the new ones by letting the old evidence fade away.
 
-3. Why use it? $\lambda$ is essential for non-stationary environments. If the rules of the task change (e.g., the category boundary shifts), an agent with $\lambda=0$ will be stuck trying to reconcile new evidence with a massive mountain of old, contradictory evidence. An agent with a well-tuned $\lambda$  can "forget" the old rules and adapt to the new ones by letting the old evidence fade away.
-
-::: {.callout-note title="Canonical scenario framework (Chapters 11–13)"}
-All three categorization chapters test their non-stationarity extension against the same three environmental scenarios, presented in the same order. The ordering reflects **increasing assumption match** between the scenario's data-generating process and the model's structural commitments. The scenarios are defined here once; Chapters 12 and 13 adopt the same definitions and ordering.
-
-| Scenario | What changes in the world | Structural role |
-|---|---|---|
-| **Static Kruschke** | Nothing — labels are fixed | Baseline: no signal for the non-stationarity parameter |
-| **Performance-contingent abrupt shifts** | Labels flip after a streak of $k$ correct responses | Misspecified: abrupt reversals that no smooth-decay / Gaussian-drift / stochastic-mutation mechanism can exactly represent |
-| **Smooth drift** | Category centres follow a bivariate Gaussian random walk | Assumption-matched (to varying degrees per model): gradually stale evidence is what all three mechanisms are built to handle |
-
-Comparing the three scenarios across chapters reveals how structural differences between model families show up in their sensitivity to non-stationarity. The synthesis is in the Trilogy Synthesis section at the end of Chapter 14.
+::: {.callout-note title="Aside: Canonical scenario framework"}
+All three categorization chapters (13–15) test their non-stationarity extensions against the same three scenarios: **Static**, **Abrupt Shifts**, and **Smooth Drift**. The ordering reflects an increasing assumption match between the environment and the models. This consistency allows us to compare how different architectures (exemplars, prototypes, rules) respond to the same challenges. The final synthesis is at the end of Chapter 17.
 :::
 
-We will test this extended model against the three scenarios:
+We will test the decay-extended GCM against these scenarios, which provide varying degrees of parameter identifiability:
 
-1. **Static Kruschke (baseline).** Fixed category labels, as in the canonical GCM analysis above. A low-$\lambda$ model is correct for this data; we expect the posterior to be pulled toward the left tail of the $\log\lambda$ prior and for the $c$/$\lambda$ pair to be partially non-identified (both can make the similarity average narrower).
+1. **Static Kruschke (Baseline).** Fixed labels. Since $\lambda=0$ is correct, $\lambda$ is weakly identified and often trades off with $c$ (both can narrow the similarity kernel).
+2. **Performance-contingent abrupt shifts (Misspecified).** Labels flip after a success streak. Although the GCM lacks an abrupt-reversal mechanism, the post-flip recovery provides the strongest $\lambda$ signal: high-$\lambda$ agents "unlearn" the old mapping fastest.
+3. **Smooth drift (Assumption-matched).** Category centers drift via random walk. This is the closest match for the decay GCM; moderate $\lambda$ allows the agent to track the migrating boundary without discarding valid recent evidence.
 
-2. **Performance-contingent abrupt shifts.** After the agent reaches a streak of $k$ consecutive correct responses, all category labels flip. The agent must unlearn the old mapping and relearn the new one. A high-$\lambda$ model recovers fastest: it forgets the now-contradicted exemplars before they can anchor decisions. Note that these shifts are *endogenous* to the agent's own behaviour — a noisier agent triggers shifts less often and accumulates less information about $\lambda$. Although this scenario is structurally misspecified (the decay GCM has no explicit abrupt-reversal mechanism), the post-flip recovery dynamics impose a strong constraint on $\lambda$ that produces the clearest identifiability signal of the three scenarios.
+### Summary of Assumption Match
 
-3. **Smooth drift.** Category centres in feature space drift as an independent random walk. Labels are assigned trial-by-trial by proximity to the current (drifted) centres, so the category boundary migrates smoothly through the stimulus set. This is the **assumption-matched** scenario for the decay GCM: exponentially downweighting past exemplars is a defensible approximation to "evidence collected under a different category mean is stale." Moderate $\lambda$ is appropriate here — agents that forget too slowly lag behind the moving boundary; agents that forget too fast discard still-valid recent evidence.
-
-### Assumption Match Across Scenarios
-
-| Scenario | What drifts in the world | What decay GCM assumes | Match |
+| Scenario | World Dynamics | GCM Match | Identifiability |
 |---|---|---|---|
-| Static | Nothing | Exponential forgetting (correct at $\lambda \to 0$) | **Information-starved**: $\lambda$ weakly identified |
-| Contingent shift | Abrupt label reversals | Smooth exponential forgetting | **Misspecified**: no abrupt mechanism, but post-flip recovery provides strong $\lambda$ signal |
-| Smooth drift | Gaussian centre drift | Smooth exponential downweighting of stale exemplars | **Graceful degradation**: approximate but reasonable match |
+| Static | None | Perfect at $\lambda=0$ | **Low**: Non-identified with $c$ |
+| Abrupt Shift | Reversals | **Misspecified** | **High**: Signal from recovery speed |
+| Smooth Drift | Gaussian | **Matched** | **Moderate**: Signal from boundary tracking |
 
-An important subtlety emerges from this table: *assumption match and parameter identifiability do not always align*. The contingent-shift scenario is more misspecified than smooth drift, yet it produces the cleanest $\lambda$ recovery — because abrupt reversals impose strong temporal constraints that only $\lambda$ can explain. The drift scenario recovers $\lambda$ at the correct calibration rate (SBC passes) but without the "bonus" identifiability that misspecification accidentally provides. We will see both signatures in the validation results below.
+An important subtlety emerges: **assumption match and parameter identifiability do not always align**. The contingent-shift scenario is more misspecified than smooth drift, yet it produces a cleaner $\lambda$ recovery because abrupt reversals impose sharp temporal constraints that only $\lambda$ can explain. The drift scenario recovers $\lambda$ at the correct calibration rate but without the "bonus" identifiability that misspecification accidentally provides.
 
 ### Prior on the Decay Parameter
 
@@ -1768,9 +1752,11 @@ ggplot(viz_sim |>
   theme(legend.position = "bottom")
 ```
 
-**Reading the scenario panels.** In the static panel, accuracy climbs monotonically to near-ceiling for all $\lambda$, with the lowest $\lambda$ reaching the highest asymptote—unsurprising, because any decay discards still-valid evidence. In the drift panel, the curves plateau below ceiling; the plateau is higher for agents with a $\lambda$ tuned to the drift rate, allowing them to track the moving boundary without being "anchored" by obsolete history.
+**Reading the scenario panels.**
 
-In the contingent-shift panel, we would see a characteristic sawtooth pattern if we were plotting individuals, but this is somewhat muted by the averaging. High-$\lambda$ agents rebound faster after a flip, which means they reach the criterion earlier and flip more often. Because these flips happen at different trial numbers for different agents, averaging across them smooths out the sharp drops and recoveries into a noisy plateau.
+* In the **Static Kruschke** panel, accuracy climbs monotonically to near-ceiling for all $\lambda$. The lowest $\lambda$ (0.02) reaches the highest asymptote—unsurprising, because any decay discards still-valid evidence in a fixed world.
+* In the **Performance-contingent flips** panel, we see a noisy plateau. High-$\lambda$ agents (0.6) rebound faster after a flip, reaching the success criterion earlier and triggering flips more often. Because these flips happen at different trial numbers for different agents, averaging them smooths out the sharp "sawtooth" recoveries into a flat, lower-accuracy line.
+* In the **Smooth drift** panel, accuracy plateaus below ceiling. Here, the lowest decay ($\lambda = 0.02$) performs best. Because the boundary drifts relatively slowly ($0.05$ units per trial), most of the agent's recent history is still informative; higher decay values (0.2 and 0.6) discard useful evidence too aggressively, leading to lower overall performance.
 
 **The Alignment Critique.** To see the true effect of $\lambda$ on cognitive flexibility, we must align the data to the moment of the shift. In non-stationary environments, averaging across absolute trial numbers often masks the very process we are interested in—the speed of adaptation.
 
@@ -2040,7 +2026,7 @@ walk(names(decay_fits), function(scen) {
 })
 ```
 
-**What to watch for in the pair plot.** A `log_c`/`log_lambda` ridge is expected on static data — both narrow the effective similarity average, so the data under-constrain their difference. On contingent-shift data, post-flip reversal dynamics inject strong temporal evidence that tensions the two parameters against each other, and the ridge should shrink markedly. On drift data, the ridge also narrows (boundary tracking exercises $\lambda$) but typically less sharply, consistent with the weaker identifiability signal that assumption-matched tasks provide.
+**What to watch for in the pair plot.** Theoretically, we might expect a `log_c`/`log_lambda` ridge on static data—since both parameters narrow the effective similarity kernel, they could under-constrain each other. However, we do not observe such a ridge in the plots below. The posterior for $\lambda$ is strongly pulled toward the left tail (effectively zero decay), while $c$ is identified by the spatial structure of the Kruschke task, keeping the two parameters distinct. On contingent-shift and drift data, the temporal signal further separates them: $\lambda$ is forced to account for the rate of environment change, while $c$ remains anchored to the perceptual discriminability of the stimuli.
 
 ### Prior-Posterior Update Plots Across Scenarios
 
@@ -2088,9 +2074,11 @@ ggplot(bind_rows(prior_ref, decay_pp_df |>
   )
 ```
 
+The prior-posterior update reveals a striking asymmetry: bias, log_c, and w[1] are well-identified — posteriors narrow sharply around the true generating value (red dashed line) across all three scenarios. log_lambda, the decay parameter, is the exception. Across all scenarios, the posterior barely updates from the prior, remaining flat and diffuse even as the other parameters recover cleanly. This is not a model failure but an identifiability constraint: a single agent's trial sequence carries limited information about how quickly old exemplars lose influence, especially relative to how strongly the current exemplar is weighted (log_c) and which features matter (w[1]). This motivates the multilevel extension in the next section — partial pooling across participants might allow the group-level distribution to regularize individual decay estimates that the data alone cannot pin down.
+
 ### One-Shot Parameter Recovery Across Scenarios
 
-We sweep a 3 × 3 grid of $(c, \lambda)$ truths, with 5 independent simulated datasets per cell per scenario (135 fits total), and report recovery scatters.
+We sweep a 3 × 3 grid of $(c, \lambda)$ truths, with 5 independent simulated datasets per cell per scenario (135 fits total), and report recovery scatters. We want to understand the issues at stake a bit better before running a full sbc.
 
 ```{r ch12_decay_recovery_sweep}
 decay_recovery_file <- here("simdata", "ch12_decay_recovery_results.rds")
@@ -2206,7 +2194,11 @@ ggplot(decay_recovery_long, aes(x = truth, y = estimated, color = had_divergence
   theme(legend.position = "bottom")
 ```
 
-**Interpretation.** The `log_c` row is near-diagonal across all three scenarios — the sensitivity parameter is well-identified regardless of task structure. The `log_lambda` row is the diagnostic: scatter under static data (the decay parameter is weakly identified, so posterior means regress toward the prior mean), tighter under contingent-shift (post-flip recovery dynamics directly constrain $\lambda$), and well-recovered but more diffuse under smooth drift (the assumption-matched scenario recovers $\lambda$ at the nominal calibration rate, but without the "bonus" constraint the abrupt reversals provide). As the assumption match table above predicts, better assumption match does not automatically mean stronger identifiability — the misspecified contingent-shift task exercises the forgetting mechanism more sharply than the matched drift task does.
+* log_c recovers well across all three scenarios — points track the identity line with moderate scatter and no systematic bias, as expected from a well-identified parameter.
+
+* log_lambda tells a more nuanced story. In the static environment, estimates cluster near a single value (~−2) regardless of the true generating value, producing a flat horizontal band rather than a diagonal: the decay parameter  is essentially unidentifiable. This is not surprising in retrospect — if  category boundaries never shift, there is no information in the data about how quickly old exemplars should be discounted. All decay rates produce equally good predictions, so the posterior simply returns to the prior. Recovery seems a bit better in the contingent_shift and drift conditions: the lowest parameter values for lambda are also estimated as the lowest. When the environment changes, exemplar age starts to matter for prediction, and the data become informative about λ.
+
+The key lesson here goes beyond "lambda is hard to estimate": identifiability is not a fixed property of a parameter but a joint property of the parameter  and the task structure. Fitting a decay model to data from a static environment will yield unreliable λ estimates no matter how many trials you collect — the right response is either to use a richer experimental design or to acknowledge the limitation explicitly when interpreting fitted decay rates
 
 ### Simulation-Based Calibration Checks Across Scenarios
 
@@ -2330,45 +2322,33 @@ decay_sbc_stats |>
 
 ### Discussion: Task Structure Governs Identifiability
 
-Under static data, the `log_lambda` parameter cannot really be identified — the posterior does not contain the truth at the nominal rate because the data carry almost no information about forgetting. The `log_c` curve is well-behaved on the same data: the sensitivity parameter is identified regardless. Under contingent-shift and drift data, both parameters recover well, with contingent-shift providing the sharpest $\lambda$ constraint (abrupt reversals) and smooth drift providing the best-matched but less forceful identifiability.
+Under static data, the `log_lambda` parameter cannot really be identified — the posterior does not contain the truth at the nominal rate because the data carry almost no information about forgetting. The `log_c` curve is well-behaved on the same data: the sensitivity parameter is identified regardless. Under contingent-shift and drift data, we start seeing some more recoverability (still not enough I'd say), with contingent-shift providing the sharpest $\lambda$ constraint (abrupt reversals) and smooth drift providing the best-matched but less forceful identifiability.
 
-This is the identifiability argument as an empirical claim rather than an algebraic one. The decay GCM's *parameter* is always the same. Its *identifiability* is a joint property of the model and the task: when the task exercises forgetting — whether through a drifting boundary or through performance-contingent reversals — the model recovers $\lambda$ cleanly; when it does not, $\lambda$ is indistinguishable from a slightly wider similarity kernel.
+The decay GCM's *parameter* is always the same. Its *identifiability* is a joint property of the model and the task: when the task exercises forgetting — whether through a drifting boundary or through performance-contingent reversals — the model recovers $\lambda$ cleanly; when it does not, $\lambda$ is indistinguishable from a slightly wider similarity kernel.
 
 A secondary observation emerges when we look closer at the calibration checks: while parameter recovery (the scatter plot) looks excellent for `log_c` across all scenarios, the SBC rank histograms reveal a subtle "worry" for `log_c` specifically in the drift scenario. This highlights a fundamental distinction in Bayesian validation:
 
 *   **Point Recovery (The "What"):** This asks if the posterior *mean* is close to the truth. If your recovery plot is diagonal, your model is right "on average."
+
 *   **Coverage Calibration (The "How Sure"):** This asks if the posterior *width* (the uncertainty) is honest. If the model is 90% confident, is it actually right 90% of the time?
 
-SBC is designed to catch the latter. In the drift scenario, the model is right about the value of `log_c` (good point recovery), but it is slightly overconfident—it underestimates its own uncertainty. One might wonder: **since the model has $\lambda$, why doesn't the decay parameter just "map" the drift and leave $c$ alone?**
+SBC is designed to catch the latter. In the drift scenario, the model is right about the value of `log_c` (good point recovery), but it is slightly overconfident: it underestimates its own uncertainty. One might wonder: **since the model has $\lambda$, why doesn't the decay parameter just "map" the drift and leave $c$ alone?**
 
 The answer lies in the **Smeared Memory** problem. Even with an optimal $\lambda$, the agent doesn't categorise based on only the single last trial; they need a "window" of recent exemplars to be effective. Because the boundary is drifting *during* that window, the exemplars in memory become spatially "smeared" — a location that was Category 0 five trials ago might be Category 1 now.
 
 While $\lambda$ can tell the model to trust recent trials more, it is a blunt temporal instrument. It cannot resolve the spatial conflict that arises when two different category labels occupy the same coordinates in the recent memory window. The model's likelihood, having no parameter for "environmental volatility," is forced to explain this residual friction using spatial sensitivity ($c$). It performs a form of **attribution error**, interpreting this temporal volatility as spatial overlap and settling on an overly precise estimate of $c$. Because the model is using the wrong "tool" to explain the noise, it converges on a narrow posterior that doesn't cover the true value as often as it should. If we only looked at the recovery plot, we would miss this overconfidence entirely. This is why SBC is the "gold standard" check: it ensures the model isn't just accurate, but also appropriately humble about what it knows.
 
-**How the three scenarios match the model's assumptions.** The decay GCM assumes exemplars decay exponentially as a function of trial age, with no separate mechanism for abrupt reversals or directed drift. The *static* scenario violates nothing but offers no signal for $\lambda$. The *contingent-shift* scenario is a genuine misspecification — the true data-generating process has abrupt reversals that no smooth decay can exactly reproduce — yet it provides the sharpest $\lambda$ signal because post-flip recovery speed depends specifically on how fast old, now-wrong exemplars are discounted. The posterior predictive checks at scenario transitions (not plotted here) should reveal systematic underperformance right after each flip; that residual misfit is the handle for a future extension with an explicit change-point mechanism. The *smooth-drift* scenario is the assumption-matched case: exponentially downweighting past exemplars is a defensible approximation to "evidence collected under a different category mean is stale." SBC passes cleanly here, but $\lambda$ recovery is less sharp than under contingent-shift because drift does not impose the stark temporal discontinuities that most strongly constrain the forgetting rate.
+**How the three scenarios match the model's assumptions.** The decay GCM assumes exemplars decay exponentially as a function of trial age, with no separate mechanism for abrupt reversals or directed drift. The *static* scenario violates nothing but offers no signal for $\lambda$. The *contingent-shift* scenario is a genuine misspecification — the true data-generating process has abrupt reversals that no smooth decay can exactly reproduce — yet it provides the sharpest $\lambda$ signal because post-flip recovery speed depends specifically on how fast old, now-wrong exemplars are discounted. The posterior predictive checks at scenario transitions, however, should reveal systematic underperformance right after each flip (not plotted here). The *smooth-drift* scenario is the assumption-matched case: exponentially downweighting past exemplars is a defensible approximation to "evidence collected under a different category mean is stale." SBC passes cleanly here, but $\lambda$ recovery is less sharp than under contingent-shift because drift does not impose the stark temporal discontinuities that most strongly constrain the forgetting rate.
 
-### The $c$/$\lambda$ Joint Posterior: Ridge Geometry and Task Resolution
+### The $c$/$\lambda$ Joint Posterior: Orthogonal Dimensions and the Kalman Contrast
 
-The pair plots from the single-agent scenario fits revealed a `log_c`/`log_lambda` ridge on static data. Understanding the geometry of this ridge — and why task structure resolves it — is worth making explicit, because Chapter 13 faces a structurally similar problem ($q$/$r$ in the Kalman filter) and resolves it differently.
-
-**Why does the ridge form?** Both $c$ and $\lambda$ narrow the effective contribution of any given exemplar to the category mean:
-
-* A high $c$ shrinks contributions from spatially distant exemplars (similarity decays faster with distance).
-* A high $\lambda$ shrinks contributions from temporally distant exemplars (similarity decays faster with trial age).
-
-Under a stationary task with balanced categories, distance and age are nearly uncorrelated — older exemplars are not systematically farther from the current stimulus. This means that increasing $c$ and decreasing $\lambda$ (or vice versa) can produce nearly the same observed choice probabilities, creating the elongated posterior ridge you see in the pair plots.
-
-**Why is the GCM ridge less severe than the Kalman filter's $q$/$r$ ridge?** The two parameters operate on orthogonal dimensions: $c$ operates on the spatial axis (feature distances), $\lambda$ on the temporal axis (trial age). Even under static data, choice probabilities have some leverage on each independently — $c$ is constrained by how performance differs across stimuli at varying spatial distances, while $\lambda$ is partially constrained by the early-learning transient (the model must form initial memories before it can categorize, and the learning rate is $\lambda$-dependent). In the Kalman filter, $q$ and $r$ both scale the *same* likelihood at decision time (the multivariate normal variance at trial $t$ is a function of both), so their directions are more nearly collinear and the ridge is typically more severe. Chapter 13 introduces an explicit reparameterization (the SNR parameter $\rho = q/r$) to address this; the GCM does not need it here.
-
-**Task structure as the primary handle.** The SBC results above confirm that the contingent-shift scenario cleanly resolves $\lambda$ without any reparameterization. The reversal dynamics create a temporal structure that spatial sensitivity cannot account for: the *time* at which performance drops is determined by $\lambda$ (how fast old, now-wrong exemplars are forgotten) in a way that is independent of $c$ (which only governs how much nearby vs. distant exemplars are weighted). This is the key empirical signature of a parameter that is theoretically identifiable but under-constrained by a particular task design: swap in a task that exercises the mechanism, and identifiability follows.
-
-**When would reparameterization be needed for the GCM?** If you needed to run the decay GCM exclusively on static data, the ridge would be a genuine sampling problem. In that case, a reparameterization could help: write $\log s = \log c + \log \lambda$ (the overall "forgetting rate" in combined spatial-temporal units) and $\log d = \log c - \log \lambda$ (the relative weighting of spatial vs. temporal decay). The joint posterior of $(\log s, \log d)$ would have a narrower marginal in the $\log s$ direction (identified by overall accuracy) and a wider marginal in the $\log d$ direction (the degenerate direction).
+The pair plots show no ridge between `log_c` and `log_lambda`, which is itself informative. Because $c$ operates on spatial distances and $\lambda$ on trial age, the two parameters have partially independent handles on the data even under static conditions — $c$ is constrained by performance differences across stimuli at varying spatial distances, while $\lambda$ is constrained by the early-learning transient. The joint posterior is approximately elliptical rather than elongated, suggesting the GCM parameterisation is sufficiently separable that explicit reparameterization is unnecessary. This contrasts with the Kalman filter's $q$/$r$ ridge (Chapter 13), where both parameters scale the same decision-time variance and their directions are more nearly collinear — motivating the SNR reparameterization introduced there.
 
 ---
 
 ## The Multilevel Decay GCM: Scaling to populations and changing environments
 
-Having demonstrated that memory decay is essential for non-stationary environments and that its parameters are identifiable given the right task structure, we now combine these mechanisms into a full hierarchical model. The **Multilevel Decay GCM** allows us to estimate individual cognitive differences while sharing information across the population to constrain our estimates. This is our "Final Boss" model: population-aware, psychologically realistic, and robust to environmental change.
+The single-agent analyses above showed that $c$ recovers reliably but that $\lambda$ is poorly identified from individual data, particularly in static environments where the decay mechanism is never exercised. A natural question is whether hierarchical pooling can rescue $\lambda$ estimation: if individuals share a common population distribution over decay rates, partial pooling may regularize estimates that single-agent data cannot pin down. The **Multilevel Decay GCM** tests this directly — it places population-level distributions over all parameters and estimates individual cognitive differences by sharing information across participants.
 
 ### Mathematical Formulation: The Hierarchical Architecture
 
@@ -2870,7 +2850,11 @@ print(ml_decay_diag |>
         dplyr::select(scenario, metric, value, threshold, pass))
 ```
 
-If the model is healthy you will see no divergences, R̂ < 1.01 across all population parameters, and ESS comfortably above 400 for the population means. Subject-level scalars typically have somewhat lower ESS, especially for `log_lambda` under the static scenario — the data carry little information about forgetting when the boundary never moves, so the posterior is partly pinned by the prior and the partial pooling toward the population mean.
+The diagnostics tell a scenario-stratified story. **Drift converges cleanly**: zero divergences, R̂ at 1.00, bulk and tail ESS comfortably above 400, MCSE well within tolerance. **Static and contingent_shift fail in a structured way**: zero divergences and good E-BFMI (so HMC is exploring the energy distribution adequately), but R̂ ≈ 2.9 and ESS in the single digits — the chains are settling in genuinely different regions of parameter space rather than converging on a common posterior.
+
+This pattern is itself diagnostic. The combination *no divergences + good E-BFMI + catastrophic R̂* points away from local pathological geometry and toward a global identifiability problem: the chains are exploring a posterior in which some parameter direction is essentially flat, and different chains commit to different positions along that direction. Below we will see that the offending direction is the population mean of `log_lambda`, and that the failure pattern maps cleanly onto how much information each task carries about decay.
+
+**A note on what we report.** Because R̂ for the static and contingent_shift fits is far above any acceptable threshold, the posterior summaries from those runs should not be read as valid inference about the true population. We present them anyway because the *failure pattern* — visible in the recovery plots below — is part of the lesson: hierarchical pooling propagates identifiability problems from the individual level upward rather than fixing them. So there's that for lazy attempts to fix a problem :-)
 
 ### Population-Level Recovery
 
@@ -2969,16 +2953,22 @@ ggplot(subj_recovery, aes(x = truth, y = est_mean, color = scenario)) +
   theme(legend.position = "none")
 ```
 
-The `log_c` row should be tight along the identity across scenarios. The `log_lambda` row is the diagnostic: scattered and pulled toward the population mean under static (visible shrinkage when an individual's data is uninformative), tighter along the diagonal under drift, and tightest under contingent-shift — consistent with the single-subject recovery results from earlier in the chapter.
+**Reading the population-level plot.** `pop_log_c_mean`, `pop_logit_bias_mean`, and `pop_logit_w_mean` recover cleanly across all three scenarios: posteriors are concentrated near the simulation truth and well-separated from the prior. `pop_log_lambda_mean` is where the scenarios diverge. **Drift** produces a tight posterior centred near the truth — the recovery one would hope for. **Static** pulls strongly toward the left tail, with mass piled around values much smaller than truth: with no boundary changes, every subject's data is consistent with near-zero decay, and the population mean is dragged in that direction. **Contingent shift** is worse than drift but better than static: the posterior is broad and lumpy, sometimes bimodal, spreading across most of the prior range without concentrating on the truth. That ragged, multi-peaked shape is not a kernel-density artefact — it is the visible signature of the R̂ ≈ 2.9 failure. Different chains end up in different parts of the (mean, SD) population-parameter space, and overlaying their draws produces several local peaks rather than a single mode. With proper convergence we would expect a smooth unimodal density; what we see instead is the geometry of an under-identified hyperparameter.
+
+**Reading the subject-level plot.** The `log_c` row tells a uniformly successful story: posterior means track the identity line in all three scenarios, with reasonable uncertainty. Partial pooling for $c$ works as intended.
+
+The `log_lambda` row is the diagnostic. Under **static**, every subject's posterior collapses to roughly the same value (~−2.7) regardless of their true $\lambda$ — true values span more than three log-units but estimates do not. This is shrinkage without signal: when individual data carry no information about decay, partial pooling drags every subject to a single (mis-estimated) population mean, erasing genuine individual differences. **Drift** behaves as a hierarchical model is supposed to: posterior means follow the diagonal with sensible uncertainty intervals. **Contingent shift** sits between the two — there is a positive correlation between truth and estimate, but estimates are heavily compressed toward a central value and the credible intervals are wide. Some signal exists; it is not enough to anchor either the individual estimates or the population hyperparameters.
+
+**The lesson.** Compare these three columns and the message is hard to miss: hierarchical pooling helps when the population distribution is itself identified, which requires that *some* individuals contribute information about the parameter in question. Drift satisfies that condition for $\lambda$; contingent shift satisfies it weakly; static does not satisfy it at all. The multilevel model does not solve the $\lambda$ identifiability problem — it makes the problem visible at both levels of the hierarchy simultaneously, and it shows what happens when you ask partial pooling to do a job the data cannot support.
 
 ### Multilevel Simulation-Based Calibration (SBC)
 
 Multilevel SBC is the most rigorous way to check that the hierarchical priors and the non-centered parameterisation are working as intended. Because fitting a multilevel model hundreds of times is computationally intensive, we provide the code here as a template for students wishing to perform an exhaustive validation of their own hierarchical extensions.
 
-```{r ch12_ml_decay_sbc, eval=FALSE}
-# 1. Generator: Draws population parameters from priors, then subject 
+```{r ch12_ml_decay_sbc}
+# 1. Generator: Draws population parameters from priors, then subject
 #    parameters from those hierarchies, and finally simulates trial data.
-make_ml_decay_sbc_generator <- function(scenario, n_subjects = 5) {
+make_ml_decay_sbc_generator <- function(scenario, n_subjects = 20) {
   SBC_generator_function(
     function() {
       # Draw population hyperparameters from the priors
@@ -3022,76 +3012,95 @@ make_ml_decay_sbc_generator <- function(scenario, n_subjects = 5) {
   )
 }
 
-# 2. Backend: Uses the compiled multilevel Stan model
+# 2. Backend: Uses the compiled multilevel Stan model.
 ml_decay_sbc_backend <- SBC_backend_cmdstan_sample(
   mod_gcm_ml_decay,
-  iter_warmup = 800, iter_sampling = 800, chains = 2
+  iter_warmup   = 800,
+  iter_sampling = 800,
+  chains        = 2
 )
 
-# 3. Compute SBC (Uncomment to run)
-# ml_sbc_results <- compute_SBC(
-#   make_ml_decay_sbc_generator("drift", n_subjects = 5),
-#   ml_decay_sbc_backend,
-#   n_sims = 50,
-#   cache_location = here("simdata", "ch12_ml_decay_sbc_cache")
-# )
-
-# 4. Visualize Results
+# 3. Compute SBC. We run on the drift scenario, where the single-subject and
+#    multilevel fits both showed clean recovery — so any miscalibration that
+#    surfaces here is attributable to the hierarchical machinery itself
+#    (priors, non-centered parameterisation) rather than to a task-level
+#    identifiability problem already diagnosed above.
+# n_sbc_iterations_ml <- 100
+# ml_sbc_filepath     <- here("simdata", "ch12_ml_decay_sbc_results.rds")
+# 
+# if (regenerate_simulations || !file.exists(ml_sbc_filepath)) {
+#   ml_decay_sbc_generator <- make_ml_decay_sbc_generator(
+#     scenario   = "drift",
+#     n_subjects = 20
+#   )
+# 
+#   ml_decay_datasets <- generate_datasets(
+#     ml_decay_sbc_generator,
+#     n_sims = n_sbc_iterations_ml
+#   )
+# 
+#   ml_sbc_results <- compute_SBC(
+#     ml_decay_datasets,
+#     ml_decay_sbc_backend,
+#     cache_mode     = "results",
+#     cache_location = here("simdata", "ch12_ml_decay_sbc_cache"),
+#     keep_fits      = FALSE
+#   )
+#   saveRDS(ml_sbc_results, ml_sbc_filepath)
+#   cat("Multilevel SBC results computed and saved.\n")
+# } else {
+#   ml_sbc_results <- readRDS(ml_sbc_filepath)
+#   cat("Loaded existing multilevel SBC results.\n")
+# }
+# 
+# # 4. Visualise calibration. The rank histogram and ECDF-difference plot
+# #    diagnose calibration of the population-level means. A flat rank
+# #    histogram and an ECDF difference contained within the simultaneous
+# #    bands indicate that the hierarchical priors and the non-centered
+# #    parameterisation are jointly well-calibrated for this task structure.
 # plot_rank_hist(ml_sbc_results)
 # plot_ecdf_diff(ml_sbc_results)
+#
+# # 5. Parameter recovery across SBC simulations. Each point is one simulated
+# #    dataset: x is the true population mean drawn from the prior, y is the
+# #    posterior mean from the corresponding fit, with a 90% CI. Points
+# #    clustering along the identity line confirm that the model recovers
+# #    the population-level hyperparameters across the full prior range —
+# #    a stronger statement than the single-truth recovery shown earlier,
+# #    because the truths here span the entire prior rather than one fixed
+# #    value. Systematic deviations (bias, slope ≠ 1, or asymmetric spread
+# #    in particular regions of the prior) localise where the hierarchical
+# #    inference breaks down.
+# ml_sbc_recovery_df <- ml_sbc_results$stats
+#
+# p_ml_sbc_recovery <- ggplot(ml_sbc_recovery_df,
+#                             aes(x = simulated_value, y = mean)) +
+#   geom_pointrange(aes(ymin = q5, ymax = q95),
+#                   alpha = 0.4, color = "#0072B2") +
+#   geom_abline(intercept = 0, slope = 1,
+#               color = "red", linetype = "dashed") +
+#   facet_wrap(~variable, scales = "free") +
+#   labs(
+#     title    = "Population-Level Parameter Recovery Across SBC Simulations",
+#     subtitle = "Posterior mean ± 90% CI vs prior-drawn truth (drift scenario)",
+#     x = "True value (drawn from prior)",
+#     y = "Posterior mean"
+#   ) +
+#   theme_bw()
+#
+# print(p_ml_sbc_recovery)
 ```
 
-### What changes when you scale up
+### Lessons for analysing real categorization data
 
-Three things to keep in mind when adapting this model to real data:
+The simulations in this chapter are deliberately controlled, but several of the patterns we observed translate directly into guidance for fitting the decay GCM to empirical data.
 
-1. **Sample size enters twice.** With more subjects, the population SDs become better identified, which shrinks subject-level estimates more aggressively toward the population mean — desirable when individual-level data is noisy, but worth checking visually.
-2. **Sequential-trial costs scale linearly.** Doubling trials per subject doubles per-leapfrog cost; doubling subjects doubles it again. Going from this 10×64 toy to a 100×200 dataset is a ~30× increase in wall time, not 30 different fits to manage.
-3. **Static-scenario behaviour is the canary.** If `pop_log_lambda_mean` and `pop_log_lambda_sd` start to diverge or drag at `max_treedepth` on real data, your task is probably structurally closer to "static" than you think — there is not enough non-stationarity for $\lambda$ to be identified at the population level. Reduce the model or accept that $\lambda$ is pinned by the prior and report it as such.
+1. **Identifiability is parameter- and task-specific.** $c$, $w$, and $\beta$ recovered cleanly across all three scenarios at both the individual and population levels. $\lambda$ recovered only when the task itself contained the non-stationarity that decay is supposed to explain. Before fitting, ask whether your design exercises the mechanism each parameter governs — if not, expect that parameter to be pinned by the prior and report it that way.
 
+2. **Hierarchical pooling is a magnifier, not a fix.** When individual data inform a parameter, the multilevel model sharpens both individual and population estimates (drift). When they do not, partial pooling collapses every subject to a single, poorly-estimated population mean and the chains stop converging (static, contingent shift). If `pop_log_lambda_mean` shows lumpy or multi-modal posteriors, R̂ ≫ 1.01, or single-digit ESS on real data, the diagnosis is almost always that the task is closer to "static" than the analyst assumed — not that the sampler needs more iterations.
 
+3. **Computational cost scales with subjects × trials.** Each leapfrog step touches every trial of every subject, so wall time grows linearly in both. A 10×64 toy and a 100×200 study differ by ~30× in cost — manageable, but worth budgeting before launching a full hierarchical fit, especially when running diagnostics like SBC that require hundreds of refits.
 
-### GCM in Context: Strengths and Limitations
-
-#### Strengths
-
-* **Empirical support**: The GCM has successfully fit human categorization data across numerous experiments.
-* **Psychological plausibility**: The model's parameters correspond to psychologically meaningful constructs (attention, sensitivity/generalization, bias, and now forgetting).
-* **Flexibility**: It can account for a wide range of category structures and learning phenomena, including non-stationary environments.
-* **Individual differences**: The multilevel framework allows principled modeling of variations across people.
-
-#### Limitations
-
-* **Memory requirements**: Storing all exemplars becomes computationally demanding for large numbers of stimuli. How memory is bounded over long timescales is not fully specified.
-* **Conflation of generalisation and decisional precision**: The standard GCM has no separate softmax temperature; sensitivity $c$ doubles as a generalisation parameter and as a decisional precision parameter.
-* **Complex categories**: The standard GCM struggles with categories defined by abstract rules, relations, or logical combinations of features.
-* **Sequential structure and LOO**: Because the GCM is path-dependent, standard LOO-CV is technically invalid — but this chapter implements LFO-CV (Bürkner et al., 2020) as the canonical sequential-model cross-validation.
-
-In the next two chapters we explore alternative approaches — prototype models (Ch. 12) and rule-based models (Ch. 13) — that address some of these limitations while introducing their own strengths and challenges.
-
-### Looking Ahead to Chapter 13: The Six-Step Pipeline in the Prototype Model
-
-Chapter 13 applies the same six-step pipeline to a prototype-based model. Before moving on, it is worth tracing explicitly how each stage maps from the GCM to the Kalman filter prototype model — because the chapters are designed as a matched pair, and the contrasts at each stage are the core theoretical content.
-
-| Pipeline Stage | GCM (this chapter) | Kalman Filter Prototype (Ch. 12) |
-| :--- | :--- | :--- |
-| **1. Input representation** | Stimuli as points in continuous feature space (height, position). | Same feature space; stimuli used as Kalman observations. |
-| **2. Attention** | Explicit attention weights $w_f$ summing to 1; estimated from data. | No explicit attention weights; covariance structure implicitly weights dimensions. |
-| **3. Intermediate representation** | **All** past exemplars stored verbatim; memory grows trial by trial. | One prototype $\vec{\mu}_k$ per category, updated by each observation; memory is constant-size. |
-| **4. Evidential mechanism** | Similarity to each stored exemplar, exponentially decaying with distance and (in the extended model) trial age. | Mahalanobis-like distance from the current stimulus to each prototype, scaled by the running covariance $\Sigma_k$. |
-| **5. Decision rule** | Luce choice axiom: $p(\text{cat}_1) = \frac{\beta \cdot \bar{\eta}_1}{\beta \cdot \bar{\eta}_1 + (1-\beta) \cdot \bar{\eta}_0}$. | Same Luce choice axiom; the per-trial probability is computed from the Kalman-filter likelihood ratio. |
-| **6. Learning** | Accumulate: each trial's exemplar enters permanent (but decaying) memory. No structural update. | Update: the Kalman gain $K$ shifts $\vec{\mu}_k$ toward the new observation and reduces $\Sigma_k$; the prediction step (process noise $Q$) can re-inflate $\Sigma_k$ between trials. |
-
-The key tension is at **Stage 3 and Stage 6**. The GCM treats every trial as permanently informative (modulo forgetting); the prototype model treats each trial as an observation that refines a running summary. As a result:
-
-* The GCM is maximally sensitive to specific exemplars and their spatial arrangement. The prototype model is sensitive only to the category centroid and spread.
-* The GCM's non-stationarity mechanism (decay $\lambda$) operates *retrospectively* — old exemplars become less influential as time passes. The Kalman filter's mechanism (process noise $q$) operates *prospectively* — future observations are expected to diverge from the current prototype.
-* Both mechanisms are phenomenologically similar under smooth drift. They diverge most sharply under abrupt shifts: the GCM gradually forgets old contradicting exemplars, while the Kalman filter re-inflates uncertainty after surprising observations and quickly reacquires the new prototype.
-
-::: {.callout-note title="What to watch for when reading Chapter 12"}
-1. **The $q$/$r$ identifiability problem.** The Kalman filter's two parameters ($r$ = observation noise, $q$ = process noise) are more tightly confounded under static data than the GCM's $c$/$\lambda$ pair — they both scale the *same* decision-time likelihood rather than operating on orthogonal axes (see §"The $c$/$\lambda$ Joint Posterior" above). Ch. 12 introduces an explicit reparameterization (the SNR parameter $\rho = q/r$) to diagnose and partially resolve this.
-2. **The scenario order is deliberately reversed.** Ch. 12 arranges scenarios as static → contingent shift → drift (increasing assumption match for the Kalman filter), while this chapter used static → drift → contingent shift (increasing $\lambda$ preference). The three scenarios are identical; only the ordering logic differs.
-3. **No attention weights.** Removing $w$ and $\beta$ from the parameter set makes the prototype model simpler to diagnose — SBC rank histograms have two curves instead of four, and pair plots have one panel instead of six. That simplicity is *why* Ch. 12 is the right place to introduce LFO-CV in detail: the algorithm is most legible when the model is lean.
-:::
+The next two chapters apply the same pipeline to prototype models (Ch. 14) and rule-based models (Ch. 15), which make different commitments about how categories are represented and updated. The contrasts at each pipeline stage — particularly representation and learning — are the central theoretical content of those chapters.
 
 ---
