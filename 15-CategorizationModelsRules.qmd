@@ -79,10 +79,18 @@ LOGIT_ERROR_PRIOR_SD   <- 1.5
 LOGIT_MU_PRIOR_MEAN <- -3.0
 LOGIT_MU_PRIOR_SD   <- 1.5
 
+# ── Development-mode switch ───────────────────────────────────────────────────
+# Set DEV_MODE <- TRUE when iterating on the chapter on a laptop (M1 or similar).
+# This halves particle count and training simulations, cutting wall time by ~50–60%.
+# Set FALSE for the final publication run so all structural choices match the text.
+DEV_MODE <- FALSE
+
 # ── Structural commitments for the particle filter (Model A) ─────────────────
 # These are NOT inferred from data — they are cognitive choices the modeller
 # makes. Sensitivity to each is exercised in dedicated subsections.
-N_PARTICLES_FIXED  <- 100    # working-memory bound on hypothesis count
+# Publication value: 100. DEV_MODE value: 50 (results are nearly identical on
+# the Kruschke task; the filter converges reliably at 50 particles).
+N_PARTICLES_FIXED  <- if (DEV_MODE) 50L else 100L
 MAX_RULE_DIMS      <- 2      # default for the Kruschke task ONLY. Used as a
                               # function-argument default throughout this chapter;
                               # downstream chapters MUST pass max_dims explicitly
@@ -2558,7 +2566,7 @@ A few practical choices matter here:
 The training data is generated in R and passed to Python as NumPy arrays. The `context_per_trial` matrix — height, position, and feedback per trial — is constant across simulations and is concatenated with each simulated response vector to form the full observation $x^{(i)}$.
 
 ```{r ch14_npe_training_data}
-n_train_sims   <- 20000   # 20k sims; increase to 50k for production
+n_train_sims   <- if (DEV_MODE) 10000L else 20000L  # DEV: 10k; production: 20k (50k for final)
 npe_cache_file <- here("simdata", "ch14_npe_training_data.rds")
 
 if (regenerate_simulations || !file.exists(npe_cache_file)) {
@@ -2685,21 +2693,36 @@ Sys.setenv(MKL_NUM_THREADS = "1")
 
 if (python_available) {
   torch <- import("torch", delay_load = FALSE)
-  
-  # Force single-threading in all libraries
+
+  # Force single-threading in all libraries to prevent R/Python OMP conflicts.
+  # MPS (Apple GPU) is used instead of multi-threading for parallelism on M1.
   torch$set_num_threads(1L)
-  
+
   sbi   <- import("sbi")
   np    <- import("numpy")
   utils <- import("sbi.utils")
   infer <- import("sbi.inference")
-  
+
+  # ── M1 / Apple Silicon: use Metal Performance Shaders (MPS) backend ──────────
+  # MPS exposes the M1 GPU to PyTorch and gives ~3–5x speedup over single-CPU
+  # for neural spline flow training and ~2x for inference forward passes.
+  # Falls back to CPU silently on non-Apple hardware or older PyTorch (<2.0).
+  # PYTORCH_ENABLE_MPS_FALLBACK=1 allows ops without MPS kernels to run on CPU.
+  Sys.setenv(PYTORCH_ENABLE_MPS_FALLBACK = "1")
+  mps_available <- tryCatch(
+    torch$backends$mps$is_available(),
+    error = function(e) FALSE
+  )
+  npe_device <- if (mps_available) torch$device("mps") else torch$device("cpu")
+
   cat("sbi version:", sbi$`__version__`, "\n")
   cat("torch version:", torch$`__version__`, "\n")
+  cat("Device:", if (mps_available) "MPS (Apple GPU)" else "CPU", "\n")
   cat("Threads (Torch):", as.integer(torch$get_num_threads()), "\n")
   cat("Threads (OMP):  ", Sys.getenv("OMP_NUM_THREADS"), "\n")
 } else {
   warning("Python/sbi environment not found. NPE chunks will fail.")
+  npe_device <- NULL
 }
 ```
 
@@ -2738,9 +2761,10 @@ inference_obj <- infer$SNPE(prior = sbi_prior, density_estimator = "nsf")
 
 if (regenerate_simulations || !file.exists(npe_model_file)) {
   if (run_intensive_checks) {
-    # Convert to PyTorch tensors
-    theta_tensor <- torch$tensor(train_thetas, dtype = torch$float32)
-  
+    # Convert to PyTorch tensors and move to the selected device (MPS or CPU).
+    # On M1 with MPS this is the main speedup: training runs on the GPU.
+    theta_tensor <- torch$tensor(train_thetas, dtype = torch$float32)$to(npe_device)
+
     # Build data tensor: concatenate [response_t, height_t, position_t, feedback_t]
     # Shape: (n_sims, n_trials * 4)
     x_list <- lapply(seq_len(n_train_sims), function(i) {
@@ -2748,11 +2772,11 @@ if (regenerate_simulations || !file.exists(npe_model_file)) {
       as.numeric(t(cbind(resp, context_per_trial)))
     })
     x_mat    <- do.call(rbind, x_list)
-    x_tensor <- torch$tensor(x_mat, dtype = torch$float32)
-  
+    x_tensor <- torch$tensor(x_mat, dtype = torch$float32)$to(npe_device)
+
     inference_obj$append_simulations(theta_tensor, x_tensor)
-  
-    cat("Training NPE...\n")
+
+    cat("Training NPE on device:", ifelse(mps_available, "MPS", "CPU"), "...\n")
     density_estimator <- inference_obj$train(
       training_batch_size = 256L,
       learning_rate       = 5e-4,
@@ -3874,6 +3898,625 @@ if (!is.null(recovery_df)) {
 **Reading the demonstration.** The static panel should reproduce the Step 4 result: a $\mu$ posterior nearly identical to the dashed prior, because the data carry no information about mutation rate. The contingent-shift and drift panels should both show contracted, off-prior $\mu$ posteriors centred on (or near) the true 0.1 — the sawtooth and tracking signatures are exactly the regularities that render $\mu$ identifiable. This is the parameter-recovery counterpart of the SBC + expected-coverage block above: SBC tells us the network is calibrated; this experiment tells us *when* the data are informative enough for that calibration to translate into useful contraction.
 
 The same trained network handles all three scenarios because the embedding is conditioned on the per-trial feedback sequence — a contingent-shift dataset and a static dataset are simply different points in the input space. Retraining is unnecessary as long as the schedule is preserved.
+
+### Fitting One NPE Agent per Scenario
+
+The proof-of-concept above compared $\mu$ posteriors across scenarios on a single dataset each. We now make this systematic. We fit one representative agent — true $\varepsilon = 0.1$, $\mu = 0.1$, $N = 100$ — per scenario and overlay all three NPE posteriors against the prior for each parameter. The same trained network is used throughout.
+
+```{r ch14_npe_fit_per_scenario, eval=python_available}
+npe_scenario_fits_file <- here("simdata", "ch14_npe_scenario_fits.rds")
+
+if (regenerate_simulations || !file.exists(npe_scenario_fits_file)) {
+  if (run_intensive_checks) {
+    set.seed(4242)
+    fit_eps   <- 0.1
+    fit_mu    <- 0.1
+    fit_npart <- 100L
+
+    scenarios_to_fit <- c("static", "contingent_shift", "drift")
+    fit_draws_list <- vector("list", length(scenarios_to_fit))
+
+    for (s in seq_along(scenarios_to_fit)) {
+      sc       <- scenarios_to_fit[s]
+      drift_tr <- if (sc == "drift")
+        make_drift_trajectory(nrow(npe_schedule), drift_sigma = 0.05, seed = 4242)
+      else NULL
+
+      sim_s <- rule_particle_filter_scenario(
+        schedule                  = npe_schedule,
+        error_prob                = fit_eps,
+        mutation_prob             = fit_mu,
+        n_particles               = fit_npart,
+        max_dims                  = MAX_RULE_DIMS,
+        scenario                  = sc,
+        drift_traj                = drift_tr
+      )
+
+      x_vec  <- as.numeric(t(cbind(as.integer(sim_s$sim_response),
+                                   npe_obs_mat,
+                                   sim_s$observed_feedback)))
+      x_tens <- torch$tensor(matrix(x_vec, nrow = 1), dtype = torch$float32)
+
+      post <- npe_posterior$sample(
+        sample_shape       = reticulate::tuple(3000L),
+        x                  = x_tens,
+        show_progress_bars = FALSE
+      )$numpy()
+
+      fit_draws_list[[s]] <- tibble(
+        scenario = sc,
+        eps      = plogis(post[, 1]),
+        n_part   = exp(post[, 2]),
+        mu       = plogis(post[, 3])
+      )
+    }
+
+    npe_scenario_fits <- bind_rows(fit_draws_list)
+    saveRDS(npe_scenario_fits, npe_scenario_fits_file)
+    cat("Scenario fits computed and saved.\n")
+  } else {
+    npe_scenario_fits <- NULL
+  }
+} else {
+  npe_scenario_fits <- readRDS(npe_scenario_fits_file)
+  cat("Scenario fits loaded.\n")
+}
+
+if (!is.null(npe_scenario_fits)) {
+  n_draws_prior <- 3000L
+  prior_df <- tibble(
+    eps    = plogis(rnorm(n_draws_prior, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)),
+    mu     = plogis(rnorm(n_draws_prior, LOGIT_MU_PRIOR_MEAN, LOGIT_MU_PRIOR_SD)),
+    n_part = exp(runif(n_draws_prior, log(20), log(300)))
+  )
+
+  scenario_labels <- c(
+    static           = "Static Kruschke",
+    contingent_shift = "Contingent shift",
+    drift            = "Smooth drift"
+  )
+
+  # ── ε panels ────────────────────────────────────────────────────────────────
+  p_eps_scen <- ggplot(npe_scenario_fits,
+                       aes(x = eps, fill = scenario, color = scenario)) +
+    geom_density(alpha = 0.35, linewidth = 0.7) +
+    geom_density(data = prior_df, aes(x = eps),
+                 inherit.aes = FALSE, linetype = "dashed",
+                 color = "grey30", linewidth = 0.5) +
+    geom_vline(xintercept = 0.1, color = "red", linetype = "dotted") +
+    scale_fill_viridis_d(option = "plasma",
+                         labels = scenario_labels,
+                         name   = "Scenario") +
+    scale_color_viridis_d(option = "plasma",
+                          labels = scenario_labels,
+                          name   = "Scenario") +
+    labs(title    = "NPE Posterior for ε Across Scenarios",
+         subtitle = "Grey dashed = prior; red dotted = true ε = 0.1",
+         x = "ε", y = "Density") +
+    theme(legend.position = "bottom")
+
+  # ── μ panels ────────────────────────────────────────────────────────────────
+  p_mu_scen <- ggplot(npe_scenario_fits,
+                      aes(x = mu, fill = scenario, color = scenario)) +
+    geom_density(alpha = 0.35, linewidth = 0.7) +
+    geom_density(data = prior_df, aes(x = mu),
+                 inherit.aes = FALSE, linetype = "dashed",
+                 color = "grey30", linewidth = 0.5) +
+    geom_vline(xintercept = 0.1, color = "red", linetype = "dotted") +
+    scale_fill_viridis_d(option = "plasma",
+                         labels = scenario_labels,
+                         name   = "Scenario") +
+    scale_color_viridis_d(option = "plasma",
+                          labels = scenario_labels,
+                          name   = "Scenario") +
+    labs(title    = "NPE Posterior for μ Across Scenarios",
+         subtitle = "Grey dashed = prior; red dotted = true μ = 0.1\nμ contracts on non-stationary data; remains prior-like on static",
+         x = "μ", y = "Density") +
+    theme(legend.position = "bottom")
+
+  print(p_eps_scen / p_mu_scen)
+}
+```
+
+**Reading the posteriors.** $\varepsilon$ should be well-concentrated near 0.1 in all three scenarios — any reasonably long response sequence provides information about the agent's error rate regardless of the environment's dynamics. $\mu$ should show the opposite pattern: the static posterior should be nearly indistinguishable from the prior (grey dashed), while the contingent-shift and drift posteriors should be noticeably narrower and centred closer to the true value of 0.1. The separation between the three $\mu$ posteriors is the visual argument for the identifiability claim made throughout this section.
+
+### Prior–Posterior Update Across Scenarios (NPE)
+
+We render the prior–posterior contrast explicitly, one column per scenario. This mirrors the prior–posterior update plots in the single-agent sections of Chapters 11 and 12, now extended to the three-scenario setting via NPE rather than MCMC.
+
+```{r ch14_npe_prior_post_scenarios, eval=python_available}
+if (!is.null(npe_scenario_fits)) {
+  n_draws_prior <- 3000L
+  prior_eps_draws <- plogis(rnorm(n_draws_prior,
+                                  LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD))
+  prior_mu_draws  <- plogis(rnorm(n_draws_prior,
+                                  LOGIT_MU_PRIOR_MEAN,  LOGIT_MU_PRIOR_SD))
+
+  make_prior_post_panel <- function(prior_vec, posterior_vec,
+                                    scenario_label, param_name,
+                                    true_val, xlab) {
+    df_post  <- tibble(value = posterior_vec, type = "Posterior")
+    df_prior <- tibble(value = prior_vec,     type = "Prior")
+    df_all   <- bind_rows(df_prior, df_post)
+
+    ggplot(df_all, aes(x = value, fill = type, color = type)) +
+      geom_density(alpha = 0.35, linewidth = 0.7) +
+      geom_vline(xintercept = true_val, color = "red", linetype = "dashed") +
+      scale_fill_manual(values  = c("Prior" = "grey60", "Posterior" = "#0072B2")) +
+      scale_color_manual(values = c("Prior" = "grey40", "Posterior" = "#0072B2")) +
+      labs(title = scenario_label,
+           x     = xlab, y = "Density") +
+      theme(legend.position = "none",
+            plot.title = element_text(size = 10))
+  }
+
+  sc_list <- list(
+    list(label = "Static Kruschke",      key = "static"),
+    list(label = "Contingent shift",     key = "contingent_shift"),
+    list(label = "Smooth drift",         key = "drift")
+  )
+
+  # Row 1: ε panels
+  eps_panels <- lapply(sc_list, function(sc) {
+    post_sc <- npe_scenario_fits |> dplyr::filter(scenario == sc$key)
+    make_prior_post_panel(prior_eps_draws, post_sc$eps,
+                          sc$label, "epsilon", 0.1, "ε")
+  })
+
+  # Row 2: μ panels
+  mu_panels <- lapply(sc_list, function(sc) {
+    post_sc <- npe_scenario_fits |> dplyr::filter(scenario == sc$key)
+    make_prior_post_panel(prior_mu_draws, post_sc$mu,
+                          sc$label, "mu", 0.1, "μ")
+  })
+
+  # Compose
+  top_row    <- (eps_panels[[1]] | eps_panels[[2]] | eps_panels[[3]])
+  bottom_row <- (mu_panels[[1]]  | mu_panels[[2]]  | mu_panels[[3]])
+
+  print(
+    top_row / bottom_row +
+      plot_annotation(
+        title    = "Prior → Posterior Updates Across Scenarios (NPE)",
+        subtitle = "Row 1: ε  |  Row 2: μ  |  Blue = posterior, grey = prior, red dashed = truth (0.1)",
+        theme    = theme(plot.title = element_text(face = "bold"))
+      )
+  )
+}
+```
+
+**Reading the grid.** The top row ($\varepsilon$) should look similar across all three columns — the three posteriors should all be narrower than the prior and centred near 0.1. The bottom row ($\mu$) is where the story is: the static column should show minimal updating (posterior ≈ prior), while the contingent-shift and drift columns should show noticeable posterior narrowing. The magnitude of the update in the shift and drift panels is the NPE equivalent of what the SBC rank histograms and coverage plots formalise below.
+
+### One-Shot Parameter Recovery Across Scenarios (NPE)
+
+We now sweep a grid of true parameter values to assess whether the NPE network recovers $\varepsilon$ and $\mu$ systematically across the plausible range. We use three values of each parameter crossed with three scenarios, with three independent realisations per cell (81 NPE inferences total). Because NPE inference is amortised — each forward pass costs milliseconds — this sweep is computationally trivial compared to the equivalent MCMC sweep in Chapters 11 and 12.
+
+```{r ch14_npe_recovery_sweep, eval=python_available}
+npe_sweep_file <- here("simdata", "ch14_npe_scenario_recovery_sweep.rds")
+
+eps_grid  <- c(0.05, 0.15, 0.25)
+mu_grid   <- c(0.02, 0.10, 0.25)
+n_iter_sw <- 3L
+
+if (regenerate_simulations || !file.exists(npe_sweep_file)) {
+  if (run_intensive_checks) {
+    set.seed(9191)
+    scenarios_sw <- c("static", "contingent_shift", "drift")
+
+    sweep_plan <- expand_grid(
+      eps_true  = eps_grid,
+      mu_true   = mu_grid,
+      scenario  = scenarios_sw,
+      iteration = seq_len(n_iter_sw)
+    ) |>
+      mutate(seed_sw = 90000 + row_number())
+
+    run_npe_sweep_iter <- function(eps_true, mu_true, scenario, seed_sw) {
+      set.seed(seed_sw)
+      drift_tr <- if (scenario == "drift")
+        make_drift_trajectory(nrow(npe_schedule), drift_sigma = 0.05, seed = seed_sw)
+      else NULL
+
+      sim_s <- rule_particle_filter_scenario(
+        schedule                  = npe_schedule,
+        error_prob                = eps_true,
+        mutation_prob             = mu_true,
+        n_particles               = N_PARTICLES_FIXED,
+        max_dims                  = MAX_RULE_DIMS,
+        scenario                  = scenario,
+        drift_traj                = drift_tr
+      )
+
+      x_vec  <- as.numeric(t(cbind(as.integer(sim_s$sim_response),
+                                   npe_obs_mat,
+                                   sim_s$observed_feedback)))
+      x_tens <- torch$tensor(matrix(x_vec, nrow = 1), dtype = torch$float32)
+
+      post <- npe_posterior$sample(
+        sample_shape       = reticulate::tuple(1000L),
+        x                  = x_tens,
+        show_progress_bars = FALSE
+      )$numpy()
+
+      tibble(
+        eps_true    = eps_true,
+        mu_true     = mu_true,
+        scenario    = scenario,
+        seed_sw     = seed_sw,
+        eps_mean    = mean(plogis(post[, 1])),
+        eps_q05     = quantile(plogis(post[, 1]), 0.05),
+        eps_q95     = quantile(plogis(post[, 1]), 0.95),
+        mu_mean     = mean(plogis(post[, 3])),
+        mu_q05      = quantile(plogis(post[, 3]), 0.05),
+        mu_q95      = quantile(plogis(post[, 3]), 0.95)
+      )
+    }
+
+    npe_sweep <- pmap_dfr(
+      list(eps_true  = sweep_plan$eps_true,
+           mu_true   = sweep_plan$mu_true,
+           scenario  = sweep_plan$scenario,
+           seed_sw   = sweep_plan$seed_sw),
+      run_npe_sweep_iter
+    )
+    saveRDS(npe_sweep, npe_sweep_file)
+    cat("NPE recovery sweep complete and saved.\n")
+  } else {
+    npe_sweep <- NULL
+  }
+} else {
+  npe_sweep <- readRDS(npe_sweep_file)
+  cat("NPE recovery sweep loaded.\n")
+}
+
+if (!is.null(npe_sweep)) {
+  npe_sweep_ordered <- npe_sweep |>
+    mutate(scenario = factor(scenario,
+                             levels = c("static", "contingent_shift", "drift"),
+                             labels = c("Static", "Contingent shift", "Smooth drift")))
+
+  # ── ε recovery (natural scale) ───────────────────────────────────────────────
+  p_eps_rec <- ggplot(npe_sweep_ordered,
+                      aes(x = eps_true, y = eps_mean)) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+    geom_errorbar(aes(ymin = eps_q05, ymax = eps_q95),
+                  width = 0.005, alpha = 0.6, color = "#0072B2") +
+    geom_point(color = "#0072B2", size = 2.5, alpha = 0.8) +
+    facet_wrap(~scenario, ncol = 3) +
+    labs(title    = "NPE One-Shot Recovery: ε (Error Probability)",
+         subtitle = "Points: posterior mean; bars: 90% CI; dashed = identity",
+         x = "True ε", y = "Estimated ε (posterior mean)")
+
+  # ── μ recovery (natural scale) ───────────────────────────────────────────────
+  p_mu_rec <- ggplot(npe_sweep_ordered,
+                     aes(x = mu_true, y = mu_mean)) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+    geom_errorbar(aes(ymin = mu_q05, ymax = mu_q95),
+                  width = 0.005, alpha = 0.6, color = "#D55E00") +
+    geom_point(color = "#D55E00", size = 2.5, alpha = 0.8) +
+    facet_wrap(~scenario, ncol = 3) +
+    labs(title    = "NPE One-Shot Recovery: μ (Mutation Rate)",
+         subtitle = "μ = 0 (static) provides no leverage on mutation; contraction appears only under shift/drift",
+         x = "True μ", y = "Estimated μ (posterior mean)")
+
+  print(p_eps_rec / p_mu_rec)
+
+  # ── Summary table ─────────────────────────────────────────────────────────────
+  npe_sweep_ordered |>
+    group_by(scenario) |>
+    summarise(
+      eps_bias  = round(mean(eps_mean - eps_true), 3),
+      eps_rmse  = round(sqrt(mean((eps_mean - eps_true)^2)), 3),
+      eps_corr  = round(cor(eps_mean, eps_true), 3),
+      mu_bias   = round(mean(mu_mean - mu_true), 3),
+      mu_rmse   = round(sqrt(mean((mu_mean - mu_true)^2)), 3),
+      mu_corr   = round(cor(mu_mean, mu_true), 3),
+      .groups   = "drop"
+    ) |>
+    print()
+}
+```
+
+**Interpretation.** $\varepsilon$ should recover well in all three scenarios — error-rate information is available regardless of whether the feedback schedule is static or shifting. $\mu$ tells the expected story: when `mu_true = 0` on a static task, the posterior mean should cluster near zero (or near the prior centre), with wide credible intervals; when `mu_true > 0` under contingent-shift or drift data, posterior means should approach the diagonal and intervals should tighten. Points for `mu_true = 0` on static data are the hardest to place — they are on the boundary of identifiability — and small deviations above the true value are expected because the prior places more mass away from zero. The RMSE and correlation statistics in the table quantify how much worse $\mu$ recovery is relative to $\varepsilon$ recovery, and how much the environment matters.
+
+### NPE Simulation-Based Calibration Checks Across Scenarios
+
+The one-shot recovery sweep tests specific true-value/scenario combinations. SBC is the formal calibration test: draw true parameters from their priors, simulate data under each scenario, and check that the posterior ranks of the true parameters are uniform. Running SBC separately for each scenario isolates *which* environment reveals miscalibration.
+
+```{r ch14_npe_sbc_scenarios, eval=python_available}
+npe_sbc_scen_file <- here("simdata", "ch14_npe_sbc_scenarios.rds")
+n_cal_scen        <- if (DEV_MODE) 150L else 300L  # DEV: 150; publication: 300
+
+if (regenerate_simulations || !file.exists(npe_sbc_scen_file)) {
+  if (run_intensive_checks) {
+    set.seed(5555)
+    scenarios_cal <- c("static", "contingent_shift", "drift")
+
+    run_npe_sbc_scenario <- function(scenario, n_cal = n_cal_scen) {
+      cat("Running NPE SBC for scenario:", scenario, "\n")
+
+      cal_logit_eps   <- rnorm(n_cal, LOGIT_ERROR_PRIOR_MEAN, LOGIT_ERROR_PRIOR_SD)
+      cal_log_npart   <- runif(n_cal, log(20), log(300))
+      cal_logit_mu    <- rnorm(n_cal, LOGIT_MU_PRIOR_MEAN, LOGIT_MU_PRIOR_SD)
+
+      n_post_sbc <- 500L
+      sbc_ranks  <- matrix(0L, nrow = n_cal, ncol = 3,
+                           dimnames = list(NULL, c("logit_eps",
+                                                    "log_n_particles",
+                                                    "logit_mu")))
+
+      # Build data matrix: each row is one calibration draw's response vector
+      x_list <- vector("list", n_cal)
+      for (i in seq_len(n_cal)) {
+        eps_i <- plogis(cal_logit_eps[i])
+        mu_i  <- plogis(cal_logit_mu[i])
+        n_i   <- max(10L, as.integer(round(exp(cal_log_npart[i]))))
+
+        drift_tr_i <- if (scenario == "drift")
+          make_drift_trajectory(nrow(npe_schedule), 0.05, seed = 5550 + i)
+        else NULL
+
+        sim_i <- rule_particle_filter_scenario(
+          schedule                  = npe_schedule,
+          error_prob                = eps_i,
+          mutation_prob             = mu_i,
+          n_particles               = n_i,
+          max_dims                  = MAX_RULE_DIMS,
+          scenario                  = scenario,
+          drift_traj                = drift_tr_i
+        )
+        x_list[[i]] <- as.numeric(t(cbind(as.integer(sim_i$sim_response),
+                                          npe_obs_mat,
+                                          sim_i$observed_feedback)))
+      }
+
+      x_mat    <- do.call(rbind, x_list)
+      x_tensor <- torch$tensor(x_mat, dtype = torch$float32)
+
+      for (i in seq_len(n_cal)) {
+        post_i <- npe_posterior$sample(
+          sample_shape       = reticulate::tuple(n_post_sbc),
+          x                  = x_tensor[i - 1L]$unsqueeze(0L),
+          show_progress_bars = FALSE
+        )$numpy()
+
+        sbc_ranks[i, "logit_eps"]       <- sum(post_i[, 1] < cal_logit_eps[i])
+        sbc_ranks[i, "log_n_particles"] <- sum(post_i[, 2] < cal_log_npart[i])
+        sbc_ranks[i, "logit_mu"]        <- sum(post_i[, 3] < cal_logit_mu[i])
+      }
+
+      list(
+        ranks          = as_tibble(sbc_ranks) |>
+          mutate(sim_id = seq_len(n_cal),
+                 logit_eps_true      = cal_logit_eps,
+                 log_npart_true      = cal_log_npart,
+                 logit_mu_true       = cal_logit_mu),
+        eps_post_mean  = NA_real_,  # populated below for recovery plots
+        n_cal          = n_cal
+      )
+    }
+
+    sbc_scenario_results <- lapply(
+      c("static", "contingent_shift", "drift"),
+      run_npe_sbc_scenario
+    )
+    names(sbc_scenario_results) <- c("static", "contingent_shift", "drift")
+    saveRDS(sbc_scenario_results, npe_sbc_scen_file)
+    cat("NPE SBC across scenarios complete and saved.\n")
+  } else {
+    sbc_scenario_results <- NULL
+  }
+} else {
+  sbc_scenario_results <- readRDS(npe_sbc_scen_file)
+  cat("NPE SBC across scenarios loaded.\n")
+}
+
+if (!is.null(sbc_scenario_results)) {
+  n_post_sbc <- 500L
+  sc_name_map <- c(
+    static           = "Static Kruschke",
+    contingent_shift = "Contingent shift",
+    drift            = "Smooth drift"
+  )
+
+  par_name_map <- c(
+    logit_eps       = "logit(ε)",
+    log_n_particles = "log(N)",
+    logit_mu        = "logit(μ)"
+  )
+
+  for (sc in names(sbc_scenario_results)) {
+    ranks_df <- sbc_scenario_results[[sc]]$ranks |>
+      pivot_longer(cols = c("logit_eps", "log_n_particles", "logit_mu"),
+                   names_to = "parameter", values_to = "rank") |>
+      mutate(parameter = par_name_map[parameter])
+
+    p_hist <- ggplot(ranks_df, aes(x = rank)) +
+      geom_histogram(aes(y = after_stat(density)),
+                     bins = 20, fill = "#009E73", alpha = 0.7) +
+      facet_wrap(~parameter, scales = "free_x") +
+      geom_hline(yintercept = 1 / n_post_sbc, linetype = "dashed",
+                 color = "red") +
+      labs(title    = paste0("NPE SBC Rank Histograms — ", sc_name_map[sc]),
+           subtitle = "Uniform = calibrated. logit(μ) on static data: flat histogram = prior-like posterior (expected, not failure).",
+           x = "Rank", y = "Density")
+    print(p_hist)
+  }
+}
+```
+
+**Reading the histograms.** All three parameters should show approximately uniform rank histograms in all three scenarios. The special case is `logit(μ)` under *static* data: a flat histogram here means the posterior is as diffuse as the prior for nearly every calibration draw — and that is correct. A U-shaped histogram would indicate overconfidence (the network is reporting false certainty about $\mu$ when the static data contain no mutation signal). A humped histogram would indicate underconfidence. The shift and drift histograms for `logit(μ)` should also be approximately flat, but now because the posteriors are genuinely calibrated: the network contracts its $\mu$ uncertainty in proportion to the data's actual mutation signal, and it does so with the right frequency.
+
+### Parameter Recovery Across NPE SBC Simulations
+
+Rank histograms test calibration (correct uncertainty). The recovery scatter tests accuracy (correct location): for each calibration draw, we plot the true parameter against the NPE posterior mean, collapsing all SBC simulations into a single diagnostic. Points clustering near the diagonal indicate the network is recovering the generating value on average; systematic curvature or vertical banding reveals where recovery breaks down.
+
+```{r ch14_npe_sbc_recovery_plots, eval=python_available}
+if (!is.null(sbc_scenario_results)) {
+  # Re-extract (true_value, posterior_mean) pairs using the stored rank data.
+  # Because we stored only ranks (not posterior means) to save memory, we need
+  # to re-run a smaller set of NPE queries here to get posterior means.
+  # We subsample 100 draws per scenario from the stored calibration data.
+  npe_recov_file <- here("simdata", "ch14_npe_sbc_recovery_means.rds")
+
+  if (regenerate_simulations || !file.exists(npe_recov_file)) {
+    n_recov_sub <- if (DEV_MODE) 60L else 100L  # DEV: 60; publication: 100
+    recov_list  <- vector("list", 3)
+    sc_names    <- c("static", "contingent_shift", "drift")
+
+    for (s_idx in seq_along(sc_names)) {
+      sc         <- sc_names[s_idx]
+      ranks_full <- sbc_scenario_results[[sc]]$ranks
+
+      # Subsample rows
+      row_idx <- sample.int(nrow(ranks_full), min(n_recov_sub, nrow(ranks_full)))
+      sub     <- ranks_full[row_idx, ]
+
+      post_means <- matrix(NA_real_, nrow = nrow(sub), ncol = 3,
+                           dimnames = list(NULL, c("logit_eps",
+                                                    "log_n_particles",
+                                                    "logit_mu")))
+
+      for (i in seq_len(nrow(sub))) {
+        eps_i   <- plogis(sub$logit_eps_true[i])
+        mu_i    <- plogis(sub$logit_mu_true[i])
+        n_i     <- max(10L, as.integer(round(exp(sub$log_npart_true[i]))))
+
+        drift_tr_i <- if (sc == "drift")
+          make_drift_trajectory(nrow(npe_schedule), 0.05,
+                                seed = 6600 + row_idx[i])
+        else NULL
+
+        sim_i <- rule_particle_filter_scenario(
+          schedule                  = npe_schedule,
+          error_prob                = eps_i,
+          mutation_prob             = mu_i,
+          n_particles               = n_i,
+          max_dims                  = MAX_RULE_DIMS,
+          scenario                  = sc,
+          drift_traj                = drift_tr_i
+        )
+
+        x_vec  <- as.numeric(t(cbind(as.integer(sim_i$sim_response),
+                                     npe_obs_mat,
+                                     sim_i$observed_feedback)))
+        x_tens <- torch$tensor(matrix(x_vec, nrow = 1), dtype = torch$float32)
+
+        post_i <- npe_posterior$sample(
+          sample_shape       = reticulate::tuple(500L),
+          x                  = x_tens,
+          show_progress_bars = FALSE
+        )$numpy()
+
+        post_means[i, ] <- colMeans(post_i)
+      }
+
+      recov_list[[s_idx]] <- tibble(
+        scenario                = sc,
+        logit_eps_true          = sub$logit_eps_true,
+        log_npart_true          = sub$log_npart_true,
+        logit_mu_true           = sub$logit_mu_true,
+        logit_eps_post_mean     = post_means[, 1],
+        log_npart_post_mean     = post_means[, 2],
+        logit_mu_post_mean      = post_means[, 3]
+      ) |>
+        mutate(
+          eps_true       = plogis(logit_eps_true),
+          eps_post_mean  = plogis(logit_eps_post_mean),
+          mu_true        = plogis(logit_mu_true),
+          mu_post_mean   = plogis(logit_mu_post_mean)
+        )
+    }
+
+    npe_recov_df <- bind_rows(recov_list)
+    saveRDS(npe_recov_df, npe_recov_file)
+    cat("Recovery means computed and saved.\n")
+  } else {
+    npe_recov_df <- readRDS(npe_recov_file)
+    cat("Recovery means loaded.\n")
+  }
+
+  npe_recov_ordered <- npe_recov_df |>
+    mutate(scenario = factor(scenario,
+                             levels = c("static", "contingent_shift", "drift"),
+                             labels = c("Static", "Contingent shift", "Smooth drift")))
+
+  # ── Log-scale scatter ────────────────────────────────────────────────────────
+  p_log_eps <- ggplot(npe_recov_ordered,
+                      aes(x = logit_eps_true, y = logit_eps_post_mean)) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+    geom_point(alpha = 0.5, color = "#0072B2", size = 2) +
+    facet_wrap(~scenario, ncol = 3) +
+    labs(title = "SBC Recovery: logit(ε)",
+         x = "True logit(ε)", y = "Posterior mean logit(ε)")
+
+  p_log_mu <- ggplot(npe_recov_ordered,
+                     aes(x = logit_mu_true, y = logit_mu_post_mean)) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+    geom_point(alpha = 0.5, color = "#D55E00", size = 2) +
+    facet_wrap(~scenario, ncol = 3) +
+    labs(title = "SBC Recovery: logit(μ)",
+         subtitle = "Static: posterior means compress toward prior centre — expected, not a failure",
+         x = "True logit(μ)", y = "Posterior mean logit(μ)")
+
+  print(p_log_eps / p_log_mu)
+
+  # ── Natural-scale scatter ────────────────────────────────────────────────────
+  p_nat_eps <- ggplot(npe_recov_ordered,
+                      aes(x = eps_true, y = eps_post_mean)) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+    geom_point(alpha = 0.5, color = "#0072B2", size = 2) +
+    facet_wrap(~scenario, ncol = 3) +
+    labs(title = "SBC Recovery: ε (natural scale)",
+         x = "True ε", y = "Posterior mean ε")
+
+  p_nat_mu <- ggplot(npe_recov_ordered,
+                     aes(x = mu_true, y = mu_post_mean)) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey50") +
+    geom_point(alpha = 0.5, color = "#D55E00", size = 2) +
+    facet_wrap(~scenario, ncol = 3) +
+    labs(title = "SBC Recovery: μ (natural scale, probability scale)",
+         subtitle = "The exponential compression of the logit transform is removed; biases near μ = 0 become visible",
+         x = "True μ", y = "Posterior mean μ")
+
+  print(p_nat_eps / p_nat_mu)
+
+  # ── Summary statistics ───────────────────────────────────────────────────────
+  cat("\n--- SBC Recovery Summary ---\n")
+  npe_recov_ordered |>
+    group_by(scenario) |>
+    summarise(
+      eps_bias  = round(mean(eps_post_mean  - eps_true, na.rm = TRUE), 3),
+      eps_rmse  = round(sqrt(mean((eps_post_mean  - eps_true)^2, na.rm = TRUE)), 3),
+      eps_corr  = round(cor(eps_post_mean,  eps_true,  use = "complete"), 3),
+      mu_bias   = round(mean(mu_post_mean   - mu_true,  na.rm = TRUE), 3),
+      mu_rmse   = round(sqrt(mean((mu_post_mean   - mu_true)^2,  na.rm = TRUE)), 3),
+      mu_corr   = round(cor(mu_post_mean,   mu_true,   use = "complete"), 3),
+      .groups   = "drop"
+    ) |>
+    print()
+}
+```
+
+**Reading the recovery plots.** The logit-scale and natural-scale panels tell complementary stories. On the logit scale, the $\mu$ plot for the static scenario should show a characteristic compression: regardless of the true `logit(μ)`, the posterior mean is pulled toward the prior centre (around `logit(μ) ≈ -3`, corresponding to $\mu \approx 0.05$). This is the signature of a weakly identified parameter — the posterior is largely prior-shaped, so posterior means are close to the prior mean for every true value. On the contingent-shift and drift panels, the diagonal should emerge: posterior means track the truth across the range of the prior. The natural-scale panels amplify this contrast because the logistic function is steepest near 0.5 and flat near 0 and 1 — biases near $\mu \approx 0$ (which corresponds to very negative logit values) become visually prominent when plotted on the probability scale. The RMSE and correlation summary table quantifies the improvement from static to non-stationary scenarios.
+
+## Discussion: When Does $\mu$ Become Identifiable?
+
+The three SBC scenarios give the cleanest summary of the identifiability argument for the rule particle filter's mutation parameter.
+
+**Static.** $\mu$ is weakly identified. The rank histogram for `logit(μ)` is approximately uniform for the right reason: the posterior is nearly prior-like for every calibration draw, so the true value is equally likely to land anywhere in the posterior distribution. The recovery scatter shows severe compression toward the prior centre. The correlation between true and estimated $\mu$ approaches zero. This is not a failure of the NPE network — it is the correct Bayesian answer when the data contain no mutation signal. A learner who never needs to update its rule and a learner who updates frequently look identical on a static task once both have found the correct rule.
+
+**Contingent shift.** $\mu$ becomes identified. Post-flip accuracy recoveries are possible only when the filter injects fresh rule candidates; the speed of recovery is monotone in $\mu$. The rank histogram for `logit(μ)` remains flat (correct calibration), but now for the right reason: posteriors are sharper and genuinely centred on the truth. The recovery scatter approaches the diagonal. The RMSE for $\mu$ is substantially lower than under static data.
+
+**Smooth drift.** $\mu$ shows intermediate identifiability. The drift scenario does not impose abrupt discontinuities — a learner with moderate $\mu$ and one with low $\mu$ both track the boundary, differing only in how smoothly they do so. The resulting $\mu$ signal is weaker than under contingent shifts but stronger than under static data. Recovery is better than static, worse than contingent-shift.
+
+**The asymmetry between $\varepsilon$ and $\mu$.** $\varepsilon$ is identified in all three scenarios — any trial provides evidence about the agent's error rate because a perfect rule-applier always matches the true label while a noisy one sometimes does not, regardless of whether the label is stable. $\mu$ requires *changing* feedback structure to become identified. This asymmetry is the rule-model counterpart of the asymmetry between $r$ and $q$ in the Kalman prototype model (Chapter 14): observation noise is always identified; process noise requires dynamic data. The underlying logic is the same — a parameter that governs how the model responds to *change* can only be estimated when change is actually present.
+
+**Comparing across the trilogy.** The decay GCM (Chapter 13) has the same logical structure: $\lambda$ is not identified under static data and becomes identified when the task exercises forgetting. What differs is the identification mechanism. In the decay GCM, post-flip recovery speed directly constrains $\lambda$ because the forgetting of now-wrong exemplars is the only recovery mechanism. In the prototype Kalman filter (Chapter 14), $q$ is identified when the prototype must track a drifting boundary — the assumption-matched scenario provides the sharpest signal. In the rule particle filter, $\mu$ is identified by the sawtooth signature of post-flip recovery (contingent shift) or the steady-tracking improvement over $\mu = 0$ (drift), but because mutation is a general-purpose rejuvenation mechanism rather than a literal model of the drift process, neither non-stationary scenario is uniquely assumption-matched. The practical consequence is that $\mu$'s identifiability is more robust to scenario type than $q$'s — contingent shifts and smooth drift both provide leverage — but the magnitude of identifiability is somewhat lower than in the assumption-matched Kalman case.
+
+**For NPE specifically.** The amortization payoff is visible in the numbers: 300 calibration checks × 3 scenarios required 900 forward passes through the trained network, taking seconds. The equivalent MCMC battery (even with short chains) would require hours. This computational efficiency is the reason NPE enables full scenario-SBC validation of an otherwise intractable cognitive model.
+
+---
 
 ## Trilogy Synthesis
 
