@@ -42,6 +42,8 @@ pacman::p_load(
   priorsense,   # prior sensitivity
   future,       # parallel processing
   furrr,        # parallel functional programming
+  slider,       # rolling window summaries
+  ggrepel       # non-overlapping text labels
   matrixStats,  # logSumExp for PSIS calculations
   reticulate    # Python interop for sbi / BayesFlow
 )
@@ -879,7 +881,7 @@ simulate_rule_agent <- function(agent_id, n_particles, max_dims, error_prob,
       correct       = as.integer(category_feedback == sim_response)
     ) |>
     group_by(agent_id, n_particles, max_dims, error_prob, mutation_prob) |>
-    mutate(performance = cumsum(correct) / row_number()) |>
+    mutate(performance = slider::slide_dbl(correct, mean, .before = 4, .complete = TRUE)) |>
     ungroup()
 }
 
@@ -933,7 +935,7 @@ ggplot(rule_responses,
   labs(
     title    = "Rule-Based Model Learning Performance (Model A)",
     subtitle = "Facets show effect of max rule dimensions and error probability",
-    x = "Trial", y = "Cumulative Accuracy (Mean ± SE)"
+    x = "Trial", y = "Rolling Accuracy — 5-trial window (Mean ± SE)"
   ) +
   ylim(0.4, 1.0)
 ```
@@ -1041,32 +1043,179 @@ rule_tracking_plot_data <- rule_tracking_data |>
   ungroup() |>
   mutate(rule_block = consecutive_id(rule_text))
 
-# Label only rules that persist ≥ 2 trials; place label at each block's peak weight
-rule_labels <- rule_tracking_plot_data |>
+# Vertical lines at every hypothesis switch
+rule_switches <- rule_tracking_plot_data |>
+  group_by(rule_block) |>
+  summarise(switch_trial = min(trial), .groups = "drop") |>
+  filter(switch_trial > 1)
+
+# Label only the top-4 highest-weight peaks (most informative moments)
+top_labels <- rule_tracking_plot_data |>
   group_by(rule_block, rule_text) |>
-  filter(n() >= 2) |>
   slice_max(weight, n = 1, with_ties = FALSE) |>
   ungroup() |>
-  mutate(rule_text = str_wrap(rule_text, width = 35))
+  slice_max(weight, n = 4) |>
+  mutate(rule_text = str_wrap(rule_text, width = 30))
 
-ggplot(rule_tracking_plot_data, aes(x = trial, y = weight)) +
+# Run particle filter on the same schedule to get trial-by-trial responses
+set.seed(1)
+track_filter <- rule_particle_filter(
+  n_particles   = N_PARTICLES_FIXED,
+  error_prob    = 0.1,
+  mutation_prob = plogis(LOGIT_MU_PRIOR_MEAN),
+  obs           = as.matrix(track_schedule[, c("height", "position")]),
+  cat_one       = track_schedule$category_feedback,
+  max_dims      = MAX_RULE_DIMS,
+  quiet         = TRUE
+)
+
+track_perf <- tibble(
+  trial   = seq_len(nrow(track_schedule)),
+  correct = as.integer(track_filter$sim_response == track_schedule$category_feedback)
+) |>
+  mutate(rolling_acc = slider::slide_dbl(correct, mean, .before = 4, .complete = TRUE))
+
+p_weights <- ggplot(rule_tracking_plot_data, aes(x = trial, y = weight)) +
+  geom_vline(
+    data = rule_switches, aes(xintercept = switch_trial - 0.5),
+    linetype = "dashed", color = "grey60", linewidth = 0.4
+  ) +
   geom_line(aes(group = 1), color = "#0072B2") +
   geom_point(color = "#0072B2", size = 1.5) +
-  geom_text(
-    data = rule_labels,
+  geom_text_repel(
+    data = top_labels,
     aes(label = rule_text),
-    hjust = 0, vjust = -0.3, size = 2.8, lineheight = 0.9
+    size = 2.8, lineheight = 0.9,
+    box.padding = 0.5, point.padding = 0.3,
+    max.overlaps = Inf, min.segment.length = 0
   ) +
-  scale_y_continuous(limits = c(0, NA), name = "Weight (Probability) of Top Rule") +
+  scale_y_continuous(limits = c(0, NA), name = "Weight of Top Rule") +
   scale_x_continuous(limits = c(0, total_trials + 5)) +
   labs(
     title    = "Evolution of the Top Rule Hypothesis Over Time (Model A)",
-    subtitle = "Line shows the probability assigned to the single best rule at each trial.",
-    x = "Trial"
+    subtitle = "Dashed lines mark hypothesis switches; labels show the four highest-weight rules.",
+    x = NULL
   )
+
+p_perf <- ggplot(track_perf, aes(x = trial, y = rolling_acc)) +
+  geom_vline(
+    data = rule_switches, aes(xintercept = switch_trial - 0.5),
+    linetype = "dashed", color = "grey60", linewidth = 0.4
+  ) +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey40") +
+  geom_line(color = "#0072B2") +
+  scale_x_continuous(limits = c(0, total_trials + 5)) +
+  scale_y_continuous(limits = c(0, 1), name = "Rolling Accuracy\n(5-trial window)") +
+  labs(x = "Trial")
+
+p_weights / p_perf + plot_layout(heights = c(2, 1))
 ```
 
-**Rule Evolution Interpretation**: This plot shows how the model's belief (weight) in its single best rule hypothesis changes over trials. Periods of high weight indicate the model has converged on a dominant rule; sharp drops followed by a new label indicate a hypothesis switch as the previous rule accumulated too many prediction errors. **Note that the converged rule is one specific rule** drawn from the grammar; the empirical fact of convergence is what makes the post-hoc selection of Model B's candidate rules tempting and dangerous.
+**Top panel — hypothesis weight.** The line tracks the probability assigned to whichever rule particle currently has the highest weight. Two features stand out. First, the weight never exceeds roughly 0.09: the filter never commits to a single rule, remaining diffuse across the full particle set throughout learning. Second, dashed vertical lines mark every moment the top-ranked rule changes identity — these switches are frequent, especially early on, as the filter resamples and mutates the particle population in response to prediction errors.
+
+**Bottom panel — rolling accuracy.** The 5-trial rolling accuracy of the agent's actual responses (drawn from the full weighted ensemble) is shown on the same time axis, with a dotted reference line at chance (0.5). A key observation is that performance does *not* dip at every hypothesis switch. This is because the agent's response is determined by the collective vote of all particles, not by the top rule alone: many particles may agree on the correct prediction even while the highest-weight particle changes identity. Accuracy falls noticeably only when the ensemble as a whole is confused — not merely when one particle loses its rank. This dissociation between hypothesis instability and behavioural stability is a defining feature of particle-filter cognition.
+
+How much of this stability is due to ensemble size? The comparison below repeats the same schedule with $N = 2$, $N = 7$, and the default $N = `r N_PARTICLES_FIXED`$ particles.
+
+```{r ch14_particle_count_comparison}
+np_compare <- c(2L, 7L, N_PARTICLES_FIXED)
+
+# Collect tracking and performance data for each particle count
+compare_tracking <- map_dfr(np_compare, function(np) {
+  set.seed(1)
+  track_rule_learning(
+    n_particles   = np,
+    error_prob    = 0.1,
+    mutation_prob = plogis(LOGIT_MU_PRIOR_MEAN),
+    obs           = as.matrix(track_schedule[, c("height", "position")]),
+    cat_one       = track_schedule$category_feedback,
+    max_dims      = MAX_RULE_DIMS,
+    top_k         = 1
+  ) |> mutate(n_particles = np)
+})
+
+compare_plot_data <- compare_tracking |>
+  filter(rank == 1) |>
+  rowwise() |>
+  mutate(rule_text = rule_to_text(cur_data())) |>
+  ungroup() |>
+  group_by(n_particles) |>
+  mutate(rule_block = consecutive_id(rule_text)) |>
+  ungroup()
+
+compare_switches <- compare_plot_data |>
+  group_by(n_particles, rule_block) |>
+  summarise(switch_trial = min(trial), .groups = "drop") |>
+  filter(switch_trial > 1)
+
+compare_top_labels <- compare_plot_data |>
+  group_by(n_particles, rule_block, rule_text) |>
+  slice_max(weight, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  group_by(n_particles) |>
+  slice_max(weight, n = 3) |>
+  ungroup() |>
+  mutate(rule_text = str_wrap(rule_text, width = 22))
+
+compare_perf <- map_dfr(np_compare, function(np) {
+  set.seed(1)
+  tf <- rule_particle_filter(
+    n_particles   = np,
+    error_prob    = 0.1,
+    mutation_prob = plogis(LOGIT_MU_PRIOR_MEAN),
+    obs           = as.matrix(track_schedule[, c("height", "position")]),
+    cat_one       = track_schedule$category_feedback,
+    max_dims      = MAX_RULE_DIMS,
+    quiet         = TRUE
+  )
+  tibble(
+    trial       = seq_len(nrow(track_schedule)),
+    correct     = as.integer(tf$sim_response == track_schedule$category_feedback),
+    n_particles = np
+  ) |>
+    mutate(rolling_acc = slider::slide_dbl(correct, mean, .before = 4, .complete = TRUE))
+})
+
+np_labeller <- as_labeller(function(x) paste0("N = ", x))
+
+p_compare_weights <- ggplot(compare_plot_data, aes(x = trial, y = weight)) +
+  geom_vline(
+    data = compare_switches, aes(xintercept = switch_trial - 0.5),
+    linetype = "dashed", color = "grey60", linewidth = 0.3
+  ) +
+  geom_line(aes(group = 1), color = "#0072B2") +
+  geom_point(color = "#0072B2", size = 1) +
+  geom_text_repel(
+    data = compare_top_labels, aes(label = rule_text),
+    size = 2.2, lineheight = 0.85,
+    box.padding = 0.4, point.padding = 0.2,
+    max.overlaps = Inf, min.segment.length = 0
+  ) +
+  facet_wrap(~n_particles, nrow = 1, labeller = np_labeller) +
+  scale_x_continuous(limits = c(0, total_trials + 5)) +
+  scale_y_continuous(name = "Weight of Top Rule") +
+  labs(
+    title    = "Effect of Particle Count on Hypothesis Evolution",
+    subtitle = "Same schedule and parameters; only N varies",
+    x = NULL
+  )
+
+p_compare_perf <- ggplot(compare_perf, aes(x = trial, y = rolling_acc)) +
+  geom_vline(
+    data = compare_switches, aes(xintercept = switch_trial - 0.5),
+    linetype = "dashed", color = "grey60", linewidth = 0.3
+  ) +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "grey40") +
+  geom_line(color = "#0072B2") +
+  facet_wrap(~n_particles, nrow = 1, labeller = np_labeller) +
+  scale_x_continuous(limits = c(0, total_trials + 5)) +
+  scale_y_continuous(limits = c(0, 1), name = "Rolling Accuracy\n(5-trial window)") +
+  labs(x = "Trial")
+
+p_compare_weights / p_compare_perf + plot_layout(heights = c(2, 1))
+```
+
+With $N = 2$ the filter holds only two competing rules at any moment: weights are near 0.5 each, one rule dominates for a stretch then abruptly gives way, and performance swings widely because a single bad particle can drag the ensemble vote. With $N = 7$ switching is still frequent but the top-rule weight is lower (probability is spread across more alternatives) and performance is somewhat smoother. With $N = `r N_PARTICLES_FIXED`$ the ensemble vote is stable enough that hypothesis instability in the top rule has little effect on accuracy. This illustrates why $N$ carries cognitive content: it controls the trade-off between the precision of hypothesis tracking and the robustness of behavioural output.
 
 ### Visualizing the Decision Boundary
 
@@ -2565,6 +2714,24 @@ A few practical choices matter here:
 
 The training data is generated in R and passed to Python as NumPy arrays. The `context_per_trial` matrix — height, position, and feedback per trial — is constant across simulations and is concatenated with each simulated response vector to form the full observation $x^{(i)}$.
 
+#### A note on cognitive plausibility of the priors
+
+The three-parameter prior deserves scrutiny before we commit it to 20,000 simulations.
+
+**$\varepsilon$ (error probability).** `logit(ε) ~ Normal(-2, 1)` places the prior median at $\varepsilon \approx 0.12$, with 95% mass between roughly 0.02 and 0.50. This is reasonable: occasional lapses are expected, but the model should not treat near-random responding as the default.
+
+**$N_\text{particles}$ (hypothesis set size).** `log(N) ~ Uniform(log(20), log(300))` covers 20 to 300 particles. As a *computational* choice this is defensible — below ~20 the particle filter degenerates (resampling collapses diversity faster than mutation can restore it, leaving all particles as copies of a single rule). But as a *cognitive* claim it is hard to justify: working memory capacity research consistently places the number of simultaneously active chunks at 3–5, with generous estimates reaching 7 (Cowan, 2001; Luck & Vogel, 1997). A range of 20–300 is an order of magnitude too large if each particle is meant to represent one hypothesis slot.
+
+The mismatch matters because $N$ and $\mu$ are not independent: a small hypothesis set needs a higher mutation rate to avoid getting stuck, while a large set can afford lower mutation because diversity is maintained by sheer number. The current prior draws them independently, which means the training data will include many $(N \approx 20, \mu \approx 0.05)$ combinations where the filter degenerates and many $(N \approx 300, \mu \approx 0.20)$ combinations where mutation is wastefully high. NPE will have to learn from a joint distribution full of pathological corners.
+
+**$\mu$ (mutation rate).** `logit(μ) ~ Normal(-3, 1.5)` places the prior median at $\mu \approx 0.047$. This is plausible for a large-$N$ filter (where degeneracy is rare), but too low for a small-$N$ filter operating as a genuine working-memory model. The prior mean should arguably scale with $1/N$: fewer hypothesis slots require more aggressive exploration.
+
+> **PLACEHOLDER:** Revisit the NPE priors with cognitively grounded values before finalising this chapter.
+>
+> * **$N_\text{particles}$**: replace `Uniform(log(20), log(300))` with a range anchored to the working-memory literature — e.g. `Uniform(log(2), log(10))` or a `Categorical({2, 3, 4, 5, 6, 7})`. This requires checking that the particle filter still produces meaningful behaviour at $N = 2$–$3$ (it will be noisy but that may be the point).
+> * **$\mu$**: increase the prior mean, particularly for small $N$. One option is a joint prior where `logit(μ) ~ Normal(-3 + k / log(N), 1)` for some small $k$, so that low-$N$ draws receive a compensating upward shift in mutation rate. Alternatively, a simpler two-step draw: first draw $N$, then draw $\mu | N$.
+> * After revising the priors, regenerate the training data and rerun the prior predictive check to confirm coverage is still reasonable.
+
 ```{r ch14_npe_training_data}
 n_train_sims   <- if (DEV_MODE) 10000L else 20000L  # DEV: 10k; production: 20k (50k for final)
 npe_cache_file <- here("simdata", "ch14_npe_training_data.rds")
@@ -2698,10 +2865,14 @@ if (python_available) {
   # MPS (Apple GPU) is used instead of multi-threading for parallelism on M1.
   torch$set_num_threads(1L)
 
-  sbi   <- import("sbi")
-  np    <- import("numpy")
-  utils <- import("sbi.utils")
-  infer <- import("sbi.inference")
+  sbi      <- import("sbi")
+  np       <- import("numpy")
+  utils    <- import("sbi.utils")
+  infer    <- import("sbi.inference")
+  warnings <- import("warnings")
+  # Suppress the constant-features warning: context_per_trial is intentionally
+  # identical across all simulations (fixed trial schedule for path-dependency).
+  warnings$filterwarnings("ignore", message = "Data has constant values")
 
   # ── M1 / Apple Silicon: use Metal Performance Shaders (MPS) backend ──────────
   # MPS exposes the M1 GPU to PyTorch and gives ~3–5x speedup over single-CPU
@@ -2761,9 +2932,10 @@ inference_obj <- infer$SNPE(prior = sbi_prior, density_estimator = "nsf")
 
 if (regenerate_simulations || !file.exists(npe_model_file)) {
   if (run_intensive_checks) {
-    # Convert to PyTorch tensors and move to the selected device (MPS or CPU).
-    # On M1 with MPS this is the main speedup: training runs on the GPU.
-    theta_tensor <- torch$tensor(train_thetas, dtype = torch$float32)$to(npe_device)
+    # Create tensors on CPU — sbi stores training data on CPU (data_device).
+    # The training loop moves batches to the training device (MPS) internally.
+    # Sending tensors to MPS before append_simulations() triggers a warning.
+    theta_tensor <- torch$tensor(train_thetas, dtype = torch$float32)
 
     # Build data tensor: concatenate [response_t, height_t, position_t, feedback_t]
     # Shape: (n_sims, n_trials * 4)
@@ -2772,7 +2944,7 @@ if (regenerate_simulations || !file.exists(npe_model_file)) {
       as.numeric(t(cbind(resp, context_per_trial)))
     })
     x_mat    <- do.call(rbind, x_list)
-    x_tensor <- torch$tensor(x_mat, dtype = torch$float32)$to(npe_device)
+    x_tensor <- torch$tensor(x_mat, dtype = torch$float32)
 
     inference_obj$append_simulations(theta_tensor, x_tensor)
 
@@ -2788,7 +2960,7 @@ if (regenerate_simulations || !file.exists(npe_model_file)) {
       density_estimator,
       sample_with = "mcmc",
       mcmc_method = "slice_np_vectorized",
-      mcmc_parameters = list(warmup_steps = 100L)
+      posterior_parameters = list(warmup_steps = 100L)
     )
     cat("NPE training complete.\n")
   
@@ -2809,7 +2981,7 @@ if (regenerate_simulations || !file.exists(npe_model_file)) {
     density_estimator,
     sample_with = "mcmc",
     mcmc_method = "slice_np_vectorized",
-    mcmc_parameters = list(warmup_steps = 100L)
+    posterior_parameters = list(warmup_steps = 100L)
   )
   cat("Loaded pre-trained NPE model.\n")
 }

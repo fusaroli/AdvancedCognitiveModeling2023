@@ -285,6 +285,35 @@ window.Quarto = {
  <span class="menu-text"><span class="chapter-number">15</span>&nbsp; <span class="chapter-title">Categorization Models: Prototypes</span></span></a>
   </div>
 </li>
+        <li class="sidebar-item sidebar-item-section">
+      <div class="sidebar-item-container"> 
+            <a class="sidebar-item-text sidebar-link text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true">
+ <span class="menu-text">Appendices</span></a>
+          <a class="sidebar-item-toggle text-start" data-bs-toggle="collapse" data-bs-target="#quarto-sidebar-section-1" role="navigation" aria-expanded="true" aria-label="Toggle section">
+            <i class="bi bi-chevron-right ms-2"></i>
+          </a> 
+      </div>
+      <ul id="quarto-sidebar-section-1" class="collapse list-unstyled sidebar-section depth1 show">  
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./AppA-BayesianSequentialExtensions.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">A</span>&nbsp; <span class="chapter-title">Sequential Extensions of the Bayesian Agent</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./AppB-StanOptimization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">B</span>&nbsp; <span class="chapter-title">Stan Optimization Cheatsheet</span></span></a>
+  </div>
+</li>
+          <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./AppC-Reparameterization.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text"><span class="chapter-number">C</span>&nbsp; <span class="chapter-title">Reparameterization Techniques</span></span></a>
+  </div>
+</li>
+      </ul>
+  </li>
     </ul>
     </div>
 </nav>
@@ -1408,7 +1437,7 @@ P(c_t = k) \propto \exp\!\left(\text{EU}_{t,k} / \beta\right).
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>The 0-ToM model maintains a Dirichlet count vector <span class="math inline">\(\alpha_t\)</span> that is updated on every trial. This state depends on <code>log_sigma</code> (through the forgetting rate <span class="math inline">\(\rho\)</span>), so it <strong>cannot</strong> live in <code>transformed data</code>. It must be unrolled in <code>transformed parameters</code> so that HMC’s autodiff can propagate gradients back through the entire sequence. See <span class="quarto-unresolved-ref">?sec-sequential-state</span> for the full explanation of this pattern.</p>
+<p>The 0-ToM model maintains a Dirichlet count vector <span class="math inline">\(\alpha_t\)</span> that is updated on every trial. This state depends on <code>log_sigma</code> (through the forgetting rate <span class="math inline">\(\rho\)</span>), so it <strong>cannot</strong> live in <code>transformed data</code>. It must be unrolled in <code>transformed parameters</code> so that HMC’s autodiff can propagate gradients back through the entire sequence. See <a href="AppB-StanOptimization.html#sec-sequential-state" class="quarto-xref"><span>Section B.13</span></a> for the full explanation of this pattern.</p>
 <p>The key choices in this implementation are:</p>
 <ol type="1">
 <li><p><strong>Keep the state variables local.</strong> <code>alpha</code> and <code>rho</code> are declared inside a <code>{}</code> block within <code>transformed parameters</code>. They are stack-allocated scratch variables that Stan discards after each gradient evaluation, keeping the saved-draw footprint minimal. Only the <code>EU</code> matrix — which the likelihood and <code>generated quantities</code> both need — is lifted to the saved parameter space.</p></li>
@@ -1802,8 +1831,8 @@ P(c_t = k) \propto \exp\!\left(\text{EU}_{t,k} / \beta\right).
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>The hierarchical WSLS model uses the non-centered parameterization (NCP) for all individual-level deviations. See <span class="quarto-unresolved-ref">?sec-ncp</span> for the full motivation; the short version is that centered parameterizations create funnel geometries in the posterior when <span class="math inline">\(\tau\)</span> is small (few trials per individual → weak likelihood → posterior concentrates near the prior → HMC gets stuck in the narrow neck of the funnel). The NCP avoids this by sampling the standardized deviation <span class="math inline">\(z_{i,o,k} \sim \mathcal{N}(0,1)\)</span> and computing <span class="math inline">\(\lambda_{i,o,k}\)</span> as a deterministic transformation in <code>transformed parameters</code>.</p>
-<p>The logit-stick parameterization is also per <span class="quarto-unresolved-ref">?sec-ncp</span> (K-simplex section): rather than placing a Dirichlet prior directly on the three-simplex, we use two free log-odds coordinates relative to the reference category (CCW) and recover the simplex via <code>softmax(append_row(lam, 0.0))</code>. This makes the geometry Euclidean at the individual level, keeps the NCP straightforward, and avoids the boundary artefacts that arise when Dirichlet-distributed parameters approach 0.</p>
+<p>The hierarchical WSLS model uses the non-centered parameterization (NCP) for all individual-level deviations. See <a href="AppB-StanOptimization.html#sec-ncp" class="quarto-xref"><span>Section B.8</span></a> for the full motivation; the short version is that centered parameterizations create funnel geometries in the posterior when <span class="math inline">\(\tau\)</span> is small (few trials per individual → weak likelihood → posterior concentrates near the prior → HMC gets stuck in the narrow neck of the funnel). The NCP avoids this by sampling the standardized deviation <span class="math inline">\(z_{i,o,k} \sim \mathcal{N}(0,1)\)</span> and computing <span class="math inline">\(\lambda_{i,o,k}\)</span> as a deterministic transformation in <code>transformed parameters</code>.</p>
+<p>The logit-stick parameterization is also per <a href="AppB-StanOptimization.html#sec-ncp" class="quarto-xref"><span>Section B.8</span></a> (K-simplex section): rather than placing a Dirichlet prior directly on the three-simplex, we use two free log-odds coordinates relative to the reference category (CCW) and recover the simplex via <code>softmax(append_row(lam, 0.0))</code>. This makes the geometry Euclidean at the individual level, keeps the NCP straightforward, and avoids the boundary artefacts that arise when Dirichlet-distributed parameters approach 0.</p>
 </div>
 </div>
 <div class="cell" data-layout-align="center">

@@ -177,11 +177,6 @@ Consider learning about common categories like "birds" or "chairs". While specif
 
 ## Core Ideas of Prototype Models
 
-* **Abstraction, Not Storage**: The primary representation is a summary (the prototype), not a collection of instances.
-* **Cognitive Economy**: Storing one prototype per category is potentially much more memory-efficient than storing numerous exemplars.
-* **Similarity to Prototype**: New items are categorized based on their similarity to the stored prototypes of different categories.
-* **Typicality**: Items closer to a category's prototype are judged as more "typical" members and are often categorized faster and more accurately. This contrasts with exemplar models, which emphasize detailed memory for specific instances.
-
 | Feature | Prototype Models | Exemplar Models (GCM) |
 |---|---|---|
 | Representation | Abstract summary (e.g., average) | Collection of individual examples |
@@ -193,7 +188,7 @@ Consider learning about common categories like "birds" or "chairs". While specif
 
 ### Historical Context: From Typicality Effects to Dynamic Prototypes
 
-The prototype approach to categorization did not emerge fully formed. It arose as the solution to a specific failure mode of the dominant view — and then itself had to be rescued from static simplicity by importing engineering mathematics.
+The prototype approach to categorization did not emerge fully formed. It arose as the solution to a specific failure mode of the dominant view (rules) and evolved in a debate with alternative approaches (exemplars).
 
 #### The Classical View and Its Discontents
 
@@ -217,7 +212,7 @@ Through the 1980s and early 1990s, the prototype-versus-exemplar debate generate
 
 We do not take a stance here on the prototype-versus-exemplar debate. The previous chapter implemented exemplar models in some detail; this chapter sticks with prototype representations precisely so we can understand them on their own terms: what changes when the summary representation is allowed to update incrementally, how its parameters are recovered, and how it behaves under different learning environments. 
 
-Within that scope, the focus shifts from *what is stored* to *how the stored summary is updated*. A static average treats all observed members the same regardless of when they were encountered, and provides no mechanism for tracking categories that drift over time: the clothing you learn is "fashionable" today may not be fashionable in five years. Several incremental prototype schemes have been proposed in response. The simplest is a **delta rule**: $\mu_{t} = \mu_{t-1} + \alpha\,(x_t - \mu_{t-1})$, with a fixed learning rate $\alpha$ that yields exponentially weighted recency [@gluck1988conditioning; @estes1994classification]. @anderson1991adaptive's rational model takes a fully Bayesian route, but over a Dirichlet-process partition rather than a parametric prototype. Each captures part of the picture: the delta rule is principled in form but its $\alpha$ is a free knob disconnected from the learner's uncertainty; Anderson's model is Bayesian but solves a different problem (discovering the partition) and is harder to fit at the trial level.
+Within that scope, the focus shifts from *what is stored* to *how the stored summary is updated*. A static average treats all observed members the same regardless of when they were encountered, and provides no mechanism for tracking categories that drift over time: the clothing you learn is "fashionable" today may not be fashionable in five years. Several incremental prototype schemes have been proposed in response. The simplest is a **delta rule**: $\mu_{t} = \mu_{t-1} + \alpha\,(x_t - \mu_{t-1})$, with a fixed learning rate $\alpha$ that yields exponentially weighted recency [@gluck1988conditioning; @estes1994classification]. You should recognize this rule from reinforcement learning :-) @anderson1991adaptive's rational model takes a fully Bayesian route, but over a Dirichlet-process partition rather than a parametric prototype. Each captures part of the picture: the delta rule is principled in form but its $\alpha$ is a free knob disconnected from the learner's uncertainty as it faces the stimuli; Anderson's model is Bayesian but solves a different problem (discovering the partition) and is harder to fit at the trial level.
 
 The Kalman filter [@kalman1960new], developed originally for aerospace navigation, sits [I think, nobody else has used it for this!] in a useful intermediate position for prototype modelling. It is the **minimum-variance unbiased estimator** for a linear-Gaussian dynamical system: at each step it computes exactly how much weight to place on the new observation versus the accumulated prior, using the relative magnitudes of measurement noise $R$ and process noise $Q$. The learning rate (the Kalman gain) is not a free parameter but is *derived* at each trial from current uncertainty — recovering a delta-rule-like update whose effective $\alpha$ shrinks as evidence accumulates and grows again when the world is assumed to drift. When $Q = 0$ the prototype is assumed static and the gain decays monotonically — recovering the classical static average as a special case. When $Q > 0$ the prototype can drift and the steady-state gain remains positive, allowing perpetual sensitivity to new observations.
 
@@ -447,7 +442,7 @@ The agent processes trials sequentially:
 
 ### R Implementation of the Prototype Agent
 
-The function now accepts `subject_seed` and calls `make_subject_schedule` internally — consistent with the path-dependence fix from Ch. 11. Each agent's learning trajectory depends on the order in which stimuli are encountered, and different randomizations produce genuinely different trajectories.
+Each agent's learning trajectory depends on the order in which stimuli are encountered, and different randomizations produce genuinely different trajectories.
 
 ```{r ch13_prototype_model}
 # Prototype model agent using Kalman filter with process noise for categorization.
@@ -829,11 +824,15 @@ The prior predictive envelope spans chance performance (uninformative $r$ draws)
 
 Simulations help us understand the model, but we want to fit it to experimental data to estimate its parameters. The primary free parameter is the observation noise variance `r_value`. We implement the Kalman filter prototype model in Stan to estimate `r_value` (on the log scale) from data.
 
-### Why the Kalman state lives in `transformed parameters`
+### Some implementation notes
+
+### Kalman filter in the transformed parameters
 
 The prototype model has two parameters — `log_r` and `log_q`. Given both and the observed data (stimuli and feedback), the *entire* Kalman filter state is deterministic: prototype means, prototype covariances, and the per-trial choice probability $p_i$ all follow algebraically from `log_r` and the trial sequence. Whenever a quantity depends on a parameter but is otherwise deterministic, it belongs in `transformed parameters` (evaluated once per leapfrog step) rather than `transformed data` (which is for parameter-free preprocessing) or `model{}` (which would force a recomputation in `generated quantities`). We follow that rule here, and `log_lik[i]` in `generated quantities` becomes a one-line lookup of `p[i]`.
 
-> **A note on architectural symmetry with the chapter on exemplars.** The previous chapter GCM's choice probabilities were deterministic given the parameters and the data, and therefore belonged in `transformed parameters`. The same is true for the kalman filter model: `prob_cat1[i]` is a transformed parameter, the model block reduces to a single vectorised `bernoulli_lpmf(y | prob_cat1)`, and `log_lik[i]` is a one-line lookup. 
+> **A note on architectural symmetry with the chapter on exemplars.** The previous chapter GCM's choice probabilities were deterministic given the parameters and the data, and therefore belonged in `transformed parameters`. The same is true for the kalman filter model: `prob_cat1[i]` is a transformed parameter, the model block reduces to a single vectorised `bernoulli_lpmf(y | prob_cat1)`, and `log_lik[i]` is a one-line lookup.
+
+#### Path dependence requires LFO-CV
 
 The same path-dependence concern of the previous chapter applies: trial $t$'s choice probability depends on all previous stimuli through the Kalman state, so standard PSIS-LOO is invalid. Unlike previous drafts, we no longer treat that as a caveat to repeat — the LFO-CV machinery from the previous chapter is generalised to the Kalman case in §"Leave-Future-Out Cross-Validation" below.
 
@@ -950,10 +949,12 @@ generated quantities {
 "
 
 stan_file_proto_single <- here("stan", "ch13_prototype_single.stan")
+
 write_stan_file(prototype_single_stan, dir = here("stan"),
                 basename = "ch13_prototype_single.stan")
+
 mod_prototype_single <- cmdstan_model(stan_file_proto_single)
-cat("Stan model compiled successfully.\n")
+
 ```
 
 **Key aspects of the Stan implementation:**
@@ -969,7 +970,7 @@ cat("Stan model compiled successfully.\n")
 
 ## Fitting the Model to Simulated Data
 
-We use Pathfinder initialization before HMC sampling. Theoretically, it should make the model better. I haven't tested that yet, shamefully, but it doesn't hurt to do it.
+We use Pathfinder initialization before HMC sampling. Theoretically, it should make the HMC faster to run. I haven't tested that yet for this model, shamefully, but it doesn't hurt to do it.
 
 ```{r ch13_fit_single_agent}
 # Select one simulated agent with r_value = 2.0, q_value = 0.1
@@ -4206,6 +4207,140 @@ fit_attn$draws(variables = c("r_value", "q_value", "w[1]", "w[2]"),
 A successful recovery plot shows each posterior histogram clearly enclosing its red dashed line. The attention weights $w[1]$ and $w[2]$ are the most demanding parameters to recover: because they live on the simplex, $w[2] = 1 - w[1]$ for two features, so all information about attention comes from a single degree of freedom. When one feature is strongly dominant ($w_k$ close to 0 or 1), recovery is typically sharp because the likelihood is highly sensitive to that ratio. When attention is more balanced, the posterior widens.
 
 > **What if the true agent had equal attention but was fit with the attention model?** The posterior on $\mathbf{w}$ should be broad and centred near $(0.5, 0.5)$, and $r$ should recover the same value as the base model. This is the correct Bayesian response: the model expresses uncertainty about a parameter it cannot identify from the data, rather than forcing a spurious extreme value.
+
+### Simulation-Based Calibration
+
+Single-agent parameter recovery confirms that Stan can reach the right neighbourhood, but SBC tells us whether the posteriors are correctly calibrated across the entire prior. The attention model has three free parameters (in the two-feature case): `log_r`, `log_q`, and `w[1]` (with `w[2] = 1 − w[1]`). The key question is whether the Dirichlet simplex representation creates any systematic miscalibration — for instance, boundary effects near $w = 0$ or $w = 1$ that could inflate or deflate posterior coverage.
+
+The generator draws $(\log r, \log q)$ from their Normal priors and $w_1 \sim \text{Uniform}(0, 1)$ (the marginal of $\text{Dirichlet}(1,1)$), simulates one agent's choices, and feeds the data to the attention Stan model.
+
+```{r ch13_sbc_attention}
+sbc_attn_filepath <- here("simdata", "ch13_sbc_attention_results.rds")
+
+if (regenerate_simulations || !file.exists(sbc_attn_filepath)) {
+  n_sbc_iterations_attn <- 500   # use >= 1000 for publication-quality SBC
+
+  attn_sbc_generator <- SBC_generator_function(
+    function() {
+      # Draw true parameters from their priors
+      log_r_true <- rnorm(1, LOG_R_PRIOR_MEAN, LOG_R_PRIOR_SD)
+      r_true     <- exp(log_r_true)
+      log_q_true <- rnorm(1, LOG_Q_PRIOR_MEAN, LOG_Q_PRIOR_SD)
+      q_true     <- exp(log_q_true)
+      # Dirichlet(1,1) marginal for w[1] is Uniform(0,1)
+      w1_true    <- runif(1, 0, 1)
+      w_true     <- c(w1_true, 1 - w1_true)
+
+      # Simulate one agent's choices
+      sbc_sched  <- make_subject_schedule(stimulus_info, n_blocks,
+                                          seed = sample.int(1e8, 1))
+      sim        <- prototype_kalman_attention(
+        w_values   = w_true,
+        r_value    = r_true,
+        q_value    = q_true,
+        obs        = as.matrix(sbc_sched[, c("height", "position")]),
+        cat_one    = sbc_sched$category_feedback
+      )
+
+      list(
+        variables = list(log_r = log_r_true, log_q = log_q_true,
+                         `w[1]` = w1_true,   `w[2]` = 1 - w1_true),
+        generated = list(
+          ntrials            = nrow(sbc_sched),
+          nfeatures          = 2L,
+          cat_one            = as.integer(sbc_sched$category_feedback),
+          y                  = as.integer(sim$sim_response),
+          obs                = as.matrix(sbc_sched[, c("height", "position")]),
+          initial_mu_cat0    = c(2.5, 2.5),
+          initial_mu_cat1    = c(2.5, 2.5),
+          initial_sigma_diag = 10.0,
+          prior_logr_mean    = LOG_R_PRIOR_MEAN,
+          prior_logr_sd      = LOG_R_PRIOR_SD,
+          prior_logq_mean    = LOG_Q_PRIOR_MEAN,
+          prior_logq_sd      = LOG_Q_PRIOR_SD,
+          alpha_w            = c(1.0, 1.0)
+        )
+      )
+    }
+  )
+
+  attn_sbc_backend <- SBC_backend_cmdstan_sample(
+    mod_prototype_attention,
+    iter_warmup   = 1000,
+    iter_sampling = 1000,
+    chains        = 2,
+    adapt_delta   = 0.9,
+    refresh       = 0
+  )
+
+  attn_sbc_datasets <- generate_datasets(
+    attn_sbc_generator,
+    n_sims = n_sbc_iterations_attn
+  )
+
+  sbc_results_attn <- compute_SBC(
+    attn_sbc_datasets,
+    attn_sbc_backend,
+    cache_mode     = "results",
+    cache_location = here("simdata", "ch13_sbc_attention_cache"),
+    keep_fits      = FALSE
+  )
+  saveRDS(sbc_results_attn, sbc_attn_filepath)
+  cat("SBC attention results computed and saved.\n")
+} else {
+  sbc_results_attn <- readRDS(sbc_attn_filepath)
+  cat("Loaded existing SBC attention results.\n")
+}
+
+plot_ecdf_diff(sbc_results_attn)
+plot_rank_hist(sbc_results_attn)
+```
+
+The ECDF-difference plot should show all four curves — `log_r`, `log_q`, `w[1]`, `w[2]` — within the simultaneous confidence bands. The attention-weight curves are the main test: a U-shaped rank histogram for `w[1]` would indicate the posterior is overconfident about attention allocation (placing too little probability near 0.5 when the true weight happens to fall there); an inverted-U would indicate underconfidence. If the noise parameters `log_r` and `log_q` show the same mild overestimation seen in the base model, that confirms the pattern is inherent to the paradigm rather than induced by adding attention.
+
+```{r ch13_sbc_attention_diagnostics}
+# Inspect sampler diagnostics across the SBC runs
+attn_backend_diags <- sbc_results_attn$backend_diagnostics
+attn_default_diags <- sbc_results_attn$default_diagnostics |>
+  dplyr::select(sim_id, max_rhat, min_ess_to_rank)
+
+attn_true_params <- sbc_results_attn$stats |>
+  dplyr::select(sim_id, variable, simulated_value) |>
+  tidyr::pivot_wider(names_from = variable, values_from = simulated_value)
+
+attn_diag_df <- attn_backend_diags |>
+  dplyr::left_join(attn_default_diags, by = "sim_id") |>
+  dplyr::left_join(attn_true_params,   by = "sim_id") |>
+  dplyr::mutate(has_issue = n_divergent > 0 | n_max_treedepth > 0 | max_rhat > 1.01)
+
+ggplot(attn_diag_df, aes(x = log_r, y = log_q, colour = has_issue)) +
+  geom_point(alpha = 0.7, size = 2) +
+  scale_colour_manual(values = c("FALSE" = "#0072B2", "TRUE" = "#D55E00")) +
+  labs(
+    title    = "Attention Model: Diagnostic Issues in Parameter Space",
+    subtitle = "Orange = divergence, max treedepth, or Rhat > 1.01",
+    x = "True log(r)", y = "True log(q)"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+```{r ch13_sbc_attention_recovery}
+# Parameter recovery scatter across SBC iterations
+attn_recovery_df <- sbc_results_attn$stats
+
+ggplot(attn_recovery_df, aes(x = simulated_value, y = mean)) +
+  geom_point(alpha = 0.4, colour = "#0072B2") +
+  geom_abline(intercept = 0, slope = 1, colour = "red", linetype = "dashed") +
+  facet_wrap(~variable, scales = "free") +
+  labs(
+    title    = "Attention Prototype: Parameter Recovery Across SBC Simulations",
+    subtitle = "Posterior mean vs. true generating value; red line = identity",
+    x = "True value", y = "Posterior mean"
+  ) +
+  theme_bw()
+```
+
+The recovery scatter is the clearest summary of where the model succeeds and where it struggles. `log_r` points should cluster tightly around the diagonal. `log_q` points will be more diffuse (the same weak identification seen in the base model). The `w[1]` scatter is the new information: extreme true values (near 0 or 1) are typically well-recovered because the likelihood strongly prefers one feature; mid-range values (near 0.5) produce wider posteriors and more scatter around the diagonal, reflecting genuine uncertainty rather than model failure.
 
 ### The Trade-Off: Interpretability vs. Identifiability
 

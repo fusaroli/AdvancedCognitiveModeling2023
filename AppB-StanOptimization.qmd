@@ -1,5 +1,27 @@
 # Stan Optimization Cheatsheet {#sec-stan-cheatsheet}
 
+```{r appb_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = 'center',
+  out.width  = "80%",
+  dpi        = 300
+)
+
+pacman::p_load(
+  tidyverse,
+  cmdstanr,
+  posterior,
+  bayesplot,
+  patchwork,
+  here
+)
+```
+
 This appendix collects every Stan programming technique introduced across Chapters 4–11,
 with minimal code examples, cost estimates, and guidance on when to apply each one.
 The techniques are ordered by first appearance in the book.
@@ -503,6 +525,10 @@ On simple, well-conditioned models the warm-up is already fast — the Pathfinde
 may outweigh the saving.
 
 **Pathfinder output is not a gold-standard posterior.** Always run full MCMC and check diagnostics.
+
+**Fallback strategy:** If Pathfinder fails (e.g., due to extreme initial gradients),
+provide an explicit `init` list containing the **jittered prior medians** for all parameters.
+This is almost always better than the default `Uniform(-2, 2)` start.
 :::
 
 ---
@@ -534,14 +560,32 @@ target += log_sum_exp(lps);
 ::: {.callout-warning}
 ## Never sample discrete indicators directly
 
+HMC requires a continuous, differentiable log-posterior surface to compute gradients.
+A discrete latent variable — such as a cluster assignment `z` — creates a staircase:
+no gradient exists at its steps, so HMC cannot traverse it.
+
 ```stan
-// WRONG — HMC cannot compute gradients of discrete parameters
+// WRONG — z is an integer; Stan cannot differentiate theta[z] with respect to z
 int z ~ categorical(pi);
 target += bernoulli_lpmf(y | theta[z]);
 ```
 
-This will compile but produce incorrect results or sampler errors at runtime.
-Always marginalise.
+This compiles but fails at runtime (sampler errors or silently wrong draws).
+
+**Fix: marginalise `z` out analytically.**
+Instead of sampling which component each observation came from, compute the
+log-probability of the observation summed across all components, weighted by
+the mixing proportions — exactly the `log_sum_exp` pattern above:
+
+```stan
+// CORRECT — z never appears; the sum is continuous and differentiable
+vector[K] lps;
+for (k in 1:K)
+  lps[k] = log(pi[k]) + bernoulli_lpmf(y | theta[k]);
+target += log_sum_exp(lps);
+```
+
+The gradient now flows cleanly through `pi` and `theta`, and HMC works as intended.
 :::
 
 ---
@@ -727,6 +771,22 @@ meaningful savings with no code changes.
 | `iter_sampling` | 1000 | Raise when posterior tails matter (e.g., rare-event predictions) or when $\hat{R}$ instability is numerical rather than geometric |
 | `chains` | 4 | Never run fewer than 4 — $\hat{R}$ requires between-chain comparison |
 | `parallel_chains` | 1 | Set to `chains` when fitting a single model; reduce when running many parallel fits |
+
+::: {.callout-important}
+## MCMC Diagnostic Standards
+
+Following the "Bayesian Workflow" standards, a model is only considered successfully
+sampled if it passes these three gates:
+
+1. **Zero Divergences:** Any divergence indicates the sampler missed part of the posterior.
+   Fix via NCP (@sec-ncp) or by raising `adapt_delta`.
+2. **$\hat{R} < 1.01$:** Large $\hat{R}$ means chains haven't converged to the same target.
+3. **Bulk and Tail ESS > 400:** (at least 100 per chain). Lower ESS means the error
+   in estimating the mean or the tails is too high for reliable inference.
+4. **No E-BFMI warnings:** Energy-Bayesian Fraction of Missing Information should be
+   $> 0.2$. Low E-BFMI indicates the sampler is struggling to explore the tails of the
+   posterior, often due to heavy-tailed priors or poor parameterization.
+:::
 
 ```r
 fit <- mod$sample(
