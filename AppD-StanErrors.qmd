@@ -1,0 +1,168 @@
+# Common Stan Errors {#sec-stan-errors}
+
+```{r appd_setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.width  = 8,
+  fig.height = 5,
+  fig.align  = 'center',
+  out.width  = "80%",
+  dpi        = 300
+)
+
+pacman::p_load(
+  tidyverse,
+  cmdstanr,
+  posterior,
+  bayesplot,
+  patchwork,
+  here
+)
+```
+
+Stan's error messages can be intimidating, but they are your primary guide during the 
+"Bayesian workflow." Errors generally fall into four chronological categories based 
+on when they occur in the modeling cycle.
+
+---
+
+## 1. Compilation Errors (The model won't build) {#sec-error-compilation}
+
+Compilation errors happen when you call `cmdstan_model()`. Stan checks your syntax 
+and translates it into C++. If this fails, no sampling can happen.
+
+### Syntax and Punctuation
+*   **Missing semicolons (`;`):** Every statement in Stan (except block declarations 
+    and `if/for` statements) must end in a semicolon.
+*   **Mismatched braces (`{ }`):** Ensure every opening brace has a corresponding closing one.
+*   **Reserved words:** Don't use Stan keywords (e.g., `target`, `real`, `parameters`) 
+    as variable names.
+
+### Type and Constraint Mismatches
+*   **Real vs. Integer:** Stan is strictly typed. You cannot pass a `real` value 
+    to a function expecting an `int` (e.g., the outcome `y` in `bernoulli_lpmf` 
+    must be an integer 0 or 1).
+*   **Vector vs. Array:** While they often look similar, `vector[N] x` and `array[N] real x` 
+    are different types. Vectors are for linear algebra; arrays are for general collections.
+*   **Bounds:** If you declare `real<lower=0> sigma;`, Stan will throw an error if you 
+    try to assign a negative value to it during computation.
+
+---
+
+## 2. Initialization Errors (The model builds, but won't start) {#sec-error-initialization}
+
+Once compiled, Stan tries to find a starting point for the chains. By default, it 
+draws initial values from a $\text{Uniform}(-2, 2)$ distribution on the 
+**unconstrained** scale.
+
+### `Rejecting initial value`
+This is the most common initialization error. It happens when the randomly chosen 
+starting values map to an "impossible" parameter value.
+
+*   **Example:** You have a probability parameter `theta` bounded by `<lower=0, upper=1>`. 
+    Stan might pick an initial value that, after transformation, results in `theta = 0` 
+    or `theta = 1`, which might make the likelihood $0$ (or log-likelihood $-\infty$).
+*   **Solution:** Provide explicit initial values (the `init` argument in `$sample()`). 
+    A good default is to use the jittered prior medians for all parameters.
+
+### `Gradient evaluated at the initial value is not finite`
+Stan needs to calculate the "slope" (gradient) of the posterior to know which way 
+to move. If it hits a mathematical "cliff," it fails.
+
+*   **Causes:**
+    *   `log(0)` or `log(-x)`.
+    *   Dividing by zero.
+    *   Extremely diffuse priors that allow parameters to wander into regions where 
+        the math becomes numerically unstable.
+*   **Solution:** Check your `transformed parameters` for potential divisions or 
+    log-transforms of small numbers. Use more informative priors to keep the sampler 
+    in a "safe" region.
+
+---
+
+## 3. Sampling Issues (The model runs, but complains) {#sec-error-sampling}
+
+These warnings appear *during* or *after* the sampling process. They indicate that 
+while the model is mathematically valid, the sampler is struggling to explore 
+the posterior.
+
+### Divergent Transitions
+A **divergence** means the Hamiltonian trajectory became unstable and flew off 
+to infinity. This usually happens in regions of high curvature.
+
+*   **The "Funnel" Problem:** In multilevel models (Chapters 6–7), if the 
+    group-level variance `sigma` is small, the individual-level parameters must 
+    cluster tightly around the mean. This creates a narrow "neck" (Neal's Funnel) 
+    that the sampler cannot enter.
+*   **Solution:** 
+    1.  **Reparameterize:** Use **Non-Centered Parameterization (NCP)** (see @sec-ncp). 
+        This is the single most effective fix for divergences in cognitive models.
+    2.  **Increase `adapt_delta`:** Setting `adapt_delta = 0.99` forces the sampler 
+        to take smaller, more careful steps, but it will be slower.
+
+### `max_treedepth` Exceeded
+This is an **efficiency** warning, not a validity warning. It means the sampler 
+reached the maximum number of steps allowed for a single transition without hitting 
+the "turnaround" point.
+
+*   **Cause:** The posterior is extremely "long" or "stretched" (often due to 
+    highly correlated parameters). This is common in complex models like the 
+    decay GCM (@sec-categorization-exemplars).
+*   **Solution:** 
+    1.  Check for parameter correlations (e.g., sensitivity $c$ and bias $w$).
+    2.  Increase `max_treedepth` to 12 or 15. This makes the model slower but 
+        ensures the sampler explores the full target distribution.
+
+---
+
+## 4. Convergence & Mixing (The model finishes, but results look weird) {#sec-error-convergence}
+
+Always check your diagnostics (@sec-sampler-options) before looking at the 
+parameter estimates.
+
+### High R-hat ($\hat{R} > 1.01$)
+$\hat{R}$ compares the variance between chains to the variance within chains. If 
+they don't agree, the chains haven't converged to the same posterior.
+
+*   **Cause:** 
+    *   **Not enough warm-up:** The chains haven't reached the high-probability region yet.
+    *   **Multi-modality:** The chains are stuck in different "peaks" of the posterior.
+    *   **Non-identifiability:** The data can't distinguish between two parameters 
+        (e.g., $A + B = 10$; infinite combinations of $A$ and $B$ work).
+*   **Solution:** Increase `iter_warmup`, use more informative priors, or check 
+    if your model has redundant parameters.
+
+### Low Effective Sample Size (ESS)
+ESS tells you how many "independent" pieces of information you have. Low ESS 
+means high autocorrelation—each sample is too similar to the previous one.
+
+*   **Cause:** Poor mixing, often due to the same geometric issues that cause 
+    treedepth warnings.
+*   **Solution:** Reparameterize (App C) or use intra-chain parallelism (`reduce_sum`) 
+    to get more samples in less time.
+
+---
+
+## 5. "Silent" Errors (Logic Bugs) {#sec-error-logic}
+
+The most dangerous errors are the ones Stan *doesn't* catch.
+
+*   **Wrong Likelihood:** Using `bernoulli` when you meant `binomial`, or 
+    forgetting to account for the trial structure.
+*   **Implicit Priors:** If you don't define a prior, Stan uses an implicit 
+    Uniform prior over the entire valid range. This can be much more informative 
+    (and dangerous) than you think.
+*   **Math-Code Mismatch:** Always double-check that your Stan code exactly 
+    implements the mathematical generative model you described.
+
+::: {.callout-tip}
+## Troubleshooting Strategy
+1.  **Simplify:** Start with a single subject and a minimal model.
+2.  **Simulate:** Run **Parameter Recovery** on synthetic data (Chapter 4). If 
+    you can't recover the truth from data you generated, the model is likely 
+    unidentifiable.
+3.  **Check Priors:** Use Prior Predictive Checks (Chapter 5) to ensure your 
+    priors don't force the model into impossible regions.
+:::

@@ -345,6 +345,14 @@ fig.savefig(RESULTS_DIR / "prior_predictive.png", dpi=150, bbox_inches="tight")
 plt.close(fig)
 print(f"Saved prior predictive -> {RESULTS_DIR / 'prior_predictive.png'}")
 
+# Export prior predictive quantiles as CSV so R can build a ggplot2 version.
+import pandas as pd
+pd.DataFrame({
+    "trial": np.arange(1, N_TRIALS + 1),
+    "q05": qs[0], "q25": qs[1], "q50": qs[2], "q75": qs[3], "q95": qs[4],
+}).to_csv(RESULTS_DIR / "prior_predictive_curves.csv", index=False)
+print(f"Saved prior_predictive_curves.csv -> {RESULTS_DIR / 'prior_predictive_curves.csv'}")
+
 # ---------------------------------------------------------------------------
 # 6. Train (offline)
 # ---------------------------------------------------------------------------
@@ -383,6 +391,96 @@ print("\nComputing diagnostics on held-out test set...")
 metrics = workflow.compute_default_diagnostics(test_data=test_data, as_data_frame=True)
 metrics.to_csv(RESULTS_DIR / "metrics.csv")
 print(metrics)
+
+# ---------------------------------------------------------------------------
+# 7a. Export raw calibration data as CSVs for R-side ggplot2 reconstruction.
+#     BayesFlow's plot_default_diagnostics() saves PNGs but not raw numbers.
+#     We compute the same quantities here and write them so the chapter can
+#     build styled ggplot2 panels consistent with Chapters 11 and 12.
+# ---------------------------------------------------------------------------
+print("\nExporting raw calibration data for R ggplot2 plots...")
+_N_CAL = N_TEST          # 300 held-out simulations
+_N_POST = 100            # posterior draws per test case (for recovery / contraction)
+_N_SBC  = 99             # posterior draws for SBC ranks (integers 0 .. 99)
+
+samples_cal = workflow.sample(conditions=test_data, num_samples=_N_POST)
+eps_post_cal = 1.0 / (1.0 + np.exp(-np.asarray(samples_cal["logit_eps"]).squeeze(-1)))    # (_N_CAL, _N_POST)
+n_post_cal   = np.exp(np.asarray(samples_cal["log_n_particles"]).squeeze(-1))
+mu_post_cal  = 1.0 / (1.0 + np.exp(-np.asarray(samples_cal["logit_mu"]).squeeze(-1)))
+
+eps_true_cal = 1.0 / (1.0 + np.exp(-test_data["logit_eps"].reshape(_N_CAL)))
+n_true_cal   = np.exp(test_data["log_n_particles"].reshape(_N_CAL))
+mu_true_cal  = 1.0 / (1.0 + np.exp(-test_data["logit_mu"].reshape(_N_CAL)))
+
+# -- Recovery scatter (posterior mean ± 90 % CI vs truth) -------------------
+recovery_rows = []
+for pname, post_s, true_v in [
+        ("eps",         eps_post_cal, eps_true_cal),
+        ("n_particles", n_post_cal,   n_true_cal),
+        ("mu",          mu_post_cal,  mu_true_cal)]:
+    pm  = post_s.mean(axis=1)
+    q05 = np.quantile(post_s, 0.05, axis=1)
+    q95 = np.quantile(post_s, 0.95, axis=1)
+    for i in range(_N_CAL):
+        recovery_rows.append({"parameter": pname, "true_val": float(true_v[i]),
+                               "post_mean": float(pm[i]),
+                               "post_q05":  float(q05[i]),
+                               "post_q95":  float(q95[i])})
+pd.DataFrame(recovery_rows).to_csv(RESULTS_DIR / "recovery_data.csv", index=False)
+
+# -- SBC ranks ---------------------------------------------------------------
+samples_sbc = workflow.sample(conditions=test_data, num_samples=_N_SBC)
+eps_sbc  = 1.0 / (1.0 + np.exp(-np.asarray(samples_sbc["logit_eps"]).squeeze(-1)))
+n_sbc_s  = np.exp(np.asarray(samples_sbc["log_n_particles"]).squeeze(-1))
+mu_sbc_s = 1.0 / (1.0 + np.exp(-np.asarray(samples_sbc["logit_mu"]).squeeze(-1)))
+
+sbc_rows = []
+for pname, post_s, true_v in [
+        ("eps",         eps_sbc,  eps_true_cal),
+        ("n_particles", n_sbc_s,  n_true_cal),
+        ("mu",          mu_sbc_s, mu_true_cal)]:
+    ranks = (post_s < true_v[:, None]).sum(axis=1)
+    for i in range(_N_CAL):
+        sbc_rows.append({"parameter": pname, "rank": int(ranks[i])})
+pd.DataFrame(sbc_rows).to_csv(RESULTS_DIR / "sbc_ranks.csv", index=False)
+
+# -- Expected coverage -------------------------------------------------------
+_alphas = np.linspace(0.05, 0.95, 19)
+cov_rows = []
+for pname, post_s, true_v in [
+        ("eps",         eps_post_cal, eps_true_cal),
+        ("n_particles", n_post_cal,   n_true_cal),
+        ("mu",          mu_post_cal,  mu_true_cal)]:
+    for alpha in _alphas:
+        lo  = np.quantile(post_s, (1 - alpha) / 2, axis=1)
+        hi  = np.quantile(post_s, 1 - (1 - alpha) / 2, axis=1)
+        emp = float(np.mean((true_v >= lo) & (true_v <= hi)))
+        cov_rows.append({"parameter": pname, "nominal": float(alpha), "empirical": emp})
+pd.DataFrame(cov_rows).to_csv(RESULTS_DIR / "coverage_data.csv", index=False)
+
+# -- Z-score / posterior contraction ----------------------------------------
+_rng_p = np.random.default_rng(0)
+prior_eps_s = 1.0 / (1.0 + np.exp(-_rng_p.normal(LOGIT_EPS_MEAN, LOGIT_EPS_SD, 20_000)))
+prior_n_s   = np.exp(_rng_p.uniform(LOG_N_LOW, LOG_N_HIGH, 20_000))
+prior_mu_s  = 1.0 / (1.0 + np.exp(-_rng_p.normal(LOGIT_MU_MEAN, LOGIT_MU_SD, 20_000)))
+
+cont_rows = []
+for pname, post_s, true_v, prior_s in [
+        ("eps",         eps_post_cal, eps_true_cal, prior_eps_s),
+        ("n_particles", n_post_cal,   n_true_cal,   prior_n_s),
+        ("mu",          mu_post_cal,  mu_true_cal,  prior_mu_s)]:
+    post_sd  = post_s.std(axis=1)
+    prior_sd = float(prior_s.std())
+    contraction = 1.0 - post_sd / prior_sd
+    zscore      = (post_s.mean(axis=1) - true_v) / np.maximum(post_sd, 1e-9)
+    for i in range(_N_CAL):
+        cont_rows.append({"parameter": pname,
+                          "contraction": float(contraction[i]),
+                          "zscore":      float(zscore[i])})
+pd.DataFrame(cont_rows).to_csv(RESULTS_DIR / "contraction_data.csv", index=False)
+
+print(f"Saved recovery_data.csv, sbc_ranks.csv, coverage_data.csv, "
+      f"contraction_data.csv -> {RESULTS_DIR}/")
 
 figures = workflow.plot_default_diagnostics(test_data=test_data)
 figure_names = {
@@ -437,12 +535,32 @@ true_eps = float(1 / (1 + np.exp(-np.asarray(test_data["logit_eps"][demo_idx]).r
 true_n   = float(np.exp(np.asarray(test_data["log_n_particles"][demo_idx]).ravel()[0]))
 true_mu  = float(1 / (1 + np.exp(-np.asarray(test_data["logit_mu"][demo_idx]).ravel()[0])))
 
+# Persist the demo subject's truth so the chapter's R-side chunks can plot a
+# reference line on the NPE-vs-Stan overlay. Header matches `posterior_demo.csv`.
+np.savetxt(
+    RESULTS_DIR / "demo_truth.csv",
+    np.array([[true_eps, true_n, true_mu]]),
+    header="eps,n_particles,mu", comments="", delimiter=",",
+)
+
+# Persist the demo subject's response sequence + per-trial features and feedback.
+# Columns: y (response), height, position, feedback. The chapter refits Model B
+# (HMC) on this exact sequence so the NPE-vs-Stan overlay is a like-for-like
+# comparison on the same observed data.
+demo_trial_series = np.asarray(test_data["trial_series"][demo_idx])  # (T, 4)
+np.savetxt(
+    RESULTS_DIR / "demo_responses.csv",
+    demo_trial_series,
+    header="y,height,position,feedback", comments="", delimiter=",",
+)
+
 print(f"  eps : true={true_eps:.3f}  post mean={eps_post.mean():.3f}  "
       f"95% CI=[{np.quantile(eps_post, 0.025):.3f}, {np.quantile(eps_post, 0.975):.3f}]")
 print(f"  N   : true={true_n:.1f}  post mean={n_post.mean():.1f}  "
       f"95% CI=[{np.quantile(n_post, 0.025):.1f}, {np.quantile(n_post, 0.975):.1f}]")
 print(f"  mu  : true={true_mu:.3f}  post mean={mu_post.mean():.3f}  "
       f"95% CI=[{np.quantile(mu_post, 0.025):.3f}, {np.quantile(mu_post, 0.975):.3f}]")
+print(f"Saved demo_truth.csv + demo_responses.csv -> {RESULTS_DIR}/")
 
 # ---------------------------------------------------------------------------
 # 9. Posterior predictive overlay
@@ -472,6 +590,15 @@ for j, i in enumerate(ppc_idx):
     ppc_curves[j] = np.cumsum(correct) / np.arange(1, N_TRIALS + 1)
 
 ppc_q = np.quantile(ppc_curves, [0.05, 0.25, 0.5, 0.75, 0.95], axis=0)
+
+# Export PPC overlay curves as CSV for R-side ggplot2 reconstruction.
+pd.DataFrame({
+    "trial":    np.arange(1, N_TRIALS + 1),
+    "q05":      ppc_q[0], "q25": ppc_q[1], "q50": ppc_q[2],
+    "q75":      ppc_q[3], "q95": ppc_q[4],
+    "observed": obs_cumacc,
+}).to_csv(RESULTS_DIR / "ppc_overlay_curves.csv", index=False)
+print(f"Saved ppc_overlay_curves.csv -> {RESULTS_DIR / 'ppc_overlay_curves.csv'}")
 
 fig, ax = plt.subplots(figsize=(7, 4))
 ax.fill_between(trials, ppc_q[0], ppc_q[4], alpha=0.2, color="#009E73", label="PPC 5–95%")
