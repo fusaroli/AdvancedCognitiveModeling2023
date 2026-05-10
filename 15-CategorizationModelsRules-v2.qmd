@@ -647,7 +647,7 @@ Model A is exactly such a model: $\theta = (\varepsilon, N_{\text{particles}}, \
 | Parameter | Cognitive meaning | Algebraic role | R / NPE parameterization |
 |---|---|---|---|
 | **ε** (error prob) | Probability that a learner misapplies an otherwise-correct rule; captures lapses, feature noise, and decision variability | Softens the weighted particle vote: $\hat{p}_t = \sum_n w_n [(1-\varepsilon)\,\mathbf{1}_{\{r_n=1\}} + \varepsilon\,\mathbf{1}_{\{r_n=0\}}]$ | `error_prob` in `rule_particle_filter()`; inferred on the logit scale: `logit(ε) ~ Normal(0, 1.5)` |
-| **μ** (mutation rate) | Per-trial probability that a learner discards the current hypothesis and draws a fresh one from the grammar; controls how readily rules are revised | Drives hypothesis diversity after resampling: each particle independently replaced by $r_n^{\text{new}} \sim p_\mathcal{R}$ with probability $\mu$ | `mutation_prob` in `rule_particle_filter()`; inferred on the logit scale: `logit(μ) ~ Normal(-3, 1.5)` |
+| **μ** (mutation rate) | Per-trial probability that a learner discards the current hypothesis and draws a fresh one from the grammar; controls how readily rules are revised | Drives hypothesis diversity after resampling: each particle independently replaced by $r_n^{\text{new}} \sim p_{\mathcal{R}}$ with probability $\mu$ | `mutation_prob` in `rule_particle_filter()`; inferred on the logit scale: `logit(μ) ~ Normal(-3, 1.5)` |
 | **N** (particles) | Working-memory capacity: number of rule hypotheses the learner maintains simultaneously | Controls approximation quality of the SMC filter; not a continuous parameter — a structural commitment | Fixed at `N_PARTICLES_FIXED = 100`; treated as a sensitivity variable in §"Sensitivity to Rule-Set Size" |
 
 **Trilogy comparison.** ε is the rule-model analogue of the GCM's sensitivity $c$ (sharpness of evidence accumulation) and the prototype model's $\sigma$ (response noise). μ is the analogue of the decay GCM's forgetting rate $\lambda$ and the Kalman prototype's process noise $q$ — the parameter that allows the model to track non-stationary categories.
@@ -660,7 +660,7 @@ Model A is a state-space generative model. Let $N$ denote the number of particle
 
 $$\text{logit}(\varepsilon) \sim \mathcal{N}(0,\ 1.5) \qquad \text{logit}(\mu) \sim \mathcal{N}(-3,\ 1.5)$$
 
-**Initialisation** ($t = 0$): draw $N$ rules i.i.d. from the grammar prior, $r_n^{(0)} \sim p_\mathcal{R}$; set weights $w_n^{(0)} = 1/N$.
+**Initialisation** ($t = 0$): draw $N$ rules i.i.d. from the grammar prior, $r_n^{(0)} \sim p_{\mathcal{R}}$; set weights $w_n^{(0)} = 1/N$.
 
 **Per-trial update** (for trial $t = 1, \ldots, T$, stimulus $\mathbf{x}_t$, label $y_t \in \{0,1\}$):
 
@@ -670,7 +670,7 @@ $$\text{logit}(\varepsilon) \sim \mathcal{N}(0,\ 1.5) \qquad \text{logit}(\mu) \
 
 3. **Resample** if $\text{ESS} = 1/\sum_n (\tilde{w}_n^{(t)})^2 < N/2$: draw indices with replacement proportional to $\tilde{w}_n^{(t)}$; reset weights to $1/N$.
 
-4. **Mutate:** each particle independently replaced by $r_n^{\text{new}} \sim p_\mathcal{R}$ with probability $\mu$.
+4. **Mutate:** each particle independently replaced by $r_n^{\text{new}} \sim p_{\mathcal{R}}$ with probability $\mu$.
 
 5. **Observe:** $y_t \mid \hat{p}_t \sim \text{Bernoulli}(\hat{p}_t)$.
 
