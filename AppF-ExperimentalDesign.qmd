@@ -221,8 +221,8 @@ information $\sum_t \mathcal{I}_t$ is singular whenever $x_t$ is constant
 across $t$: the second row is then a scalar multiple of the first. That
 is the design pathology of the constant opponent, written in one line.
 
-A reversal opponent — $p_{\text{opp}} = 0.2$ for the first half,
-$p_{\text{opp}} = 0.8$ for the second — gives two well-separated values
+A reversal opponent — $p_{\text{opp}} = 0.8$ for the first half,
+$p_{\text{opp}} = 0.2$ for the second (the Chapter 5 design) — gives two well-separated values
 of $x_t$ once the running mean has stabilised in each block. The matrix
 becomes well-conditioned, and bias and beta become jointly identified.
 
@@ -246,13 +246,13 @@ fim_two_block <- function(p_left, p_right, n_per_block,
 }
 
 designs <- tibble(
-  label   = c("constant (p=0.5)", "weak split (0.4/0.6)",
-              "reversal (0.2/0.8)"),
-  p_left  = c(0.5, 0.4, 0.2),
-  p_right = c(0.5, 0.6, 0.8)
+  label   = c("constant (p=0.5)", "weak split (0.6/0.4)",
+              "reversal (0.8/0.2)"),
+  p_left  = c(0.5, 0.6, 0.8),
+  p_right = c(0.5, 0.4, 0.2)
 ) |>
   mutate(
-    FIM       = map2(p_left, p_right, fim_two_block, n_per_block = 60),
+    FIM       = map2(p_left, p_right, fim_two_block, n_per_block = 120),
     det_FIM   = map_dbl(FIM, det),
     cond_FIM  = map_dbl(FIM, ~ kappa(.x))
   )
@@ -291,15 +291,16 @@ simulate_memory <- function(bias, beta, opponent_choices) {
          y = self_choices)
 }
 
-# Two designs, same ground truth.
+# Two designs, same ground truth. Matches Chapter 5's reversal design:
+# N = 240 (120 trials per phase), opponent flips 0.8 -> 0.2 at trial 121.
 set.seed(2026)
-n_per_block   <- 60
+n_per_block   <- 120
 opp_const     <- rbinom(2 * n_per_block, 1, 0.5)
-opp_reversal  <- c(rbinom(n_per_block, 1, 0.2),
-                   rbinom(n_per_block, 1, 0.8))
+opp_reversal  <- c(rbinom(n_per_block, 1, 0.8),
+                   rbinom(n_per_block, 1, 0.2))
 
-bias_true <- 0.3
-beta_true <- 1.5
+bias_true <- 0.0
+beta_true <- 0.9
 
 dat_const    <- simulate_memory(bias_true, beta_true, opp_const)
 dat_reversal <- simulate_memory(bias_true, beta_true, opp_reversal)
@@ -323,7 +324,7 @@ beta_grid <- seq(-1.0, 4.0, length.out = 80)
 surf_const    <- loglik_surface(dat_const,    bias_grid, beta_grid) |>
   mutate(design = "constant opponent (p = 0.5)")
 surf_reversal <- loglik_surface(dat_reversal, bias_grid, beta_grid) |>
-  mutate(design = "reversal opponent (0.2 -> 0.8)")
+  mutate(design = "reversal opponent (0.8 -> 0.2)")
 
 # Centre each surface on its own maximum for visual comparability.
 surf_all <- bind_rows(surf_const, surf_reversal) |>
@@ -344,14 +345,25 @@ ggplot(surf_all, aes(bias, beta, z = rel_ll)) +
   theme_minimal()
 ```
 
-The left panel shows the classic identifiability ridge — a long diagonal
-valley aligned with the constraint $\mathrm{bias} + \beta\, x^{*} =
-\mathrm{const}$. The right panel shows a contained, near-elliptical
-basin around the ground truth. The FIM determinants in §3.1 predicted
-this difference quantitatively *before* any data were simulated; the
-surface here confirms it empirically. Running HMC on these two datasets
-will reproduce the same picture — the constant-opponent posterior will
-inherit the ridge; the reversal posterior will not.
+The two panels look very different even though the model and the true
+parameters are identical. Under the constant opponent (left), the
+cumulative running rate sits near $0.5$ throughout, so
+$x = \operatorname{logit}(\text{memory}) \approx 0$ and the likelihood
+depends on $\beta$ almost not at all: $\beta$ is essentially
+unidentified, and the basin stretches vertically along the $\beta$ axis
+while pinning $\mathrm{bias}$ near zero. Under the reversal opponent
+(right), the running rate sweeps up toward $0.8$ in phase 1 and decays
+back toward $0.5$ in phase 2, so $x$ now varies substantially and $\beta$
+becomes identifiable. The basin is contained — bounded in both
+directions — but still tilted, because the Chapter 5 memory is a
+*cumulative* running rate and so $x$ is one-sided (mostly positive),
+which leaves a residual $\mathrm{bias}$–$\beta$ correlation. The FIM
+determinants in §3.1 predicted this ordering quantitatively *before* any
+data were simulated; the surface here confirms it empirically. Running
+HMC on these two datasets will reproduce the same picture — the
+constant-opponent posterior will inherit a $\beta$-direction ridge; the
+reversal posterior will produce a tilted but bounded cigar, which is
+exactly the geometry Chapter 5 shows collapsing as $N$ grows.
 
 ### 3.3 Optimal reversal timing
 
@@ -501,15 +513,16 @@ bind_rows(prof_static, prof_shift) |>
   theme_minimal()
 ```
 
-The static profile is broad and shifted away from the truth: stationary
-data identify $\lambda$ only weakly, through the variance structure of
-trial-by-trial fluctuations in $\hat{r}_t$, and that signal is easily
-biased by the particular finite-sample noise in the simulated series.
-The shift profile peaks much more tightly near $\lambda_{\text{true}}$.
-The post-shift trials — where high-$\lambda$ agents quickly track the
-new rate and low-$\lambda$ agents drag behind — carry the bulk of the
-information about $\lambda$, and they do so in a way that is robust to
-the within-block noise.
+Both profiles peak near (slightly above) $\lambda_{\text{true}} = 0.1$,
+but the *curvature* near the peak is what differs. The contingent-shift
+profile (left) drops off sharply on both sides — the post-shift trials,
+where high-$\lambda$ agents quickly track the new rate and low-$\lambda$
+agents drag behind, supply strong information about $\lambda$ that is
+robust to within-block noise. The static profile (right) is markedly
+flatter on top: stationary data identify $\lambda$ only weakly, through
+the variance structure of trial-by-trial fluctuations in $\hat{r}_t$,
+so the maximum is poorly localised and a wide range of $\lambda$ values
+fit the data nearly as well.
 
 In the full Ch. 13 GCM-with-$\lambda$ the gap between the two designs
 is even more dramatic. The GCM's response depends on the *ratio* of
@@ -852,7 +865,7 @@ pred_by_model <- candidates |>
   )
 ```
 
-```{r appf_cat_plot, fig.width=10, fig.height=4.2}
+```{r appf_cat_plot, fig.width=8.5, fig.height=8.5}
 plot_long <- pred_by_model |>
   pivot_longer(c(p_gcm, p_proto, p_rule),
                names_to = "model", values_to = "p_cat1") |>
@@ -865,26 +878,34 @@ p_models <- ggplot(plot_long, aes(position, height, fill = p_cat1)) +
   geom_tile() +
   geom_point(data = stimulus_info,
              aes(position, height, colour = factor(category_true)),
-             inherit.aes = FALSE, size = 3) +
+             inherit.aes = FALSE, size = 2) +
   scale_fill_viridis_c(option = "viridis", limits = c(0, 1),
                        name = "P(y = 1)") +
   scale_colour_manual(values = c("0" = "white", "1" = "black"),
                       name = "training cat") +
   facet_wrap(~ model) +
   coord_fixed() +
-  labs(title = "Marginal predictions of each model under its prior")
+  guides(colour = guide_legend(override.aes = list(size = 2))) +
+  labs(title = "Marginal predictions of each model under its prior") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 11))
 
 p_disagree <- ggplot(pred_by_model, aes(position, height, fill = disagreement)) +
   geom_tile() +
   geom_point(data = stimulus_info,
              aes(position, height), inherit.aes = FALSE,
-             colour = "red", size = 2) +
+             colour = "red", size = 1.8) +
   scale_fill_viridis_c(option = "magma", name = "between-\nmodel SD") +
   coord_fixed() +
   labs(title = "Diagnostic value of each candidate transfer location",
-       subtitle = "Red dots: Kruschke training stimuli. Bright = diagnostic.")
+       subtitle = "Red dots: Kruschke training stimuli. Bright = diagnostic.") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "right",
+        plot.title = element_text(size = 11),
+        plot.subtitle = element_text(size = 9))
 
-p_models / p_disagree
+p_models / p_disagree + plot_layout(heights = c(1, 1.2))
 ```
 
 ```{r appf_cat_diagnostic_set}
@@ -895,14 +916,19 @@ diagnostic_set <- pred_by_model |>
 diagnostic_set
 ```
 
-Two things to read off the plot. First, the *training* locations
-themselves are uniformly low-disagreement: the three models have been
-calibrated, implicitly through their priors, to agree on the training
-items, which is why mimicry is the default. Second, the diagnostic
-locations cluster at off-training-grid positions and especially near
-*intermediate* feature values — exactly the kind of transfer items
-prototype-vs-exemplar studies have historically used, but now selected
-by computation rather than intuition.
+Two things to read off the plot. First, the darkest band — the
+*lowest*-disagreement region — runs along the centre diagonal of the
+feature space, not through the training items. That is the implicit
+*decision boundary*: at locations roughly equidistant from category-0
+and category-1 exemplars, all three architectures predict close to
+$0.5$, so they trivially agree on "I don't know". A transfer stimulus
+placed there cannot discriminate the models. Second, the brightest
+regions — the *most* diagnostic locations — sit *off* the diagonal and
+*off* the training grid, at intermediate feature values where GCM,
+prototype, and rule are forced to extrapolate in genuinely different
+ways. This is exactly the kind of transfer geometry the
+prototype-vs-exemplar literature has historically reached for by
+intuition; here it is selected by computation.
 
 For a tighter objective, replace the between-model SD with an empirical
 estimate of $I(M; y \mid \xi)$: simulate binary responses under each
