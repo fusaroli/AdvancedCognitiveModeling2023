@@ -180,7 +180,7 @@ expensive: the outer expectation is over $p(y \mid \xi)$, which itself is
 a marginal over $\theta$. Naively, computing $\mathrm{EIG}(\xi)$ for one
 design needs nested Monte Carlo — simulate datasets, fit each, average the
 contractions. For a handful of candidate designs this is feasible; for a
-search over a continuous space it is not, which is why §7 introduces
+search over a continuous space it is not, which is why §8 introduces
 amortization.
 
 The four utilities form a ladder. In practice we run recovery for the
@@ -560,7 +560,245 @@ the contraction-based utility of §2.2.
 
 ---
 
-## 5. Model-discriminative design (Chapter 17)
+## 5. The response format is part of the design: identifying precision parameters from binary choices {#sec-appf-response-format}
+
+So far the design vector $\xi$ has collected stimulus-side choices — the
+opponent's sequence, the reversal location, the candidate transfer
+items. But $\xi$ also includes the *response format*: whether the
+participant gives a binary choice, a confidence rating, a magnitude
+estimate, a response time, or repeats the same trial many times. The
+response format determines what likelihood we get to write down, and
+some parameters in our cognitive models cannot be identified from a
+binary likelihood no matter how cleverly the stimuli are arranged.
+
+Chapter 11 already flags this in passing: the WBA precision parameter
+$\kappa$ is "harder to pin down from binary outcomes" and "not helped
+by more data — the problem is deeper". The same observation appears
+elsewhere — the softmax inverse temperature $\phi$ in Chapter 4 and the
+GCM specificity $c$ in Chapter 13 are all *scale* parameters that
+modulate the *variance* of the choice distribution while leaving its
+mean nearly unchanged. The pathology is the same one we have already
+diagnosed twice in this appendix, just on a different axis of the
+design space.
+
+### 5.1 Why binary data starve precision parameters
+
+For a Bernoulli observation $y \sim \text{Bern}(p(\theta, \xi))$, the
+Fisher information about a parameter $\theta_k$ is
+
+$$
+\mathcal{I}_{kk} = \frac{(\partial p / \partial \theta_k)^2}{p(1-p)}.
+$$
+
+A parameter only earns information through its effect on the *mean* $p$.
+If $\theta_k$ is a precision/concentration/inverse-temperature parameter
+that — by construction — leaves $p$ approximately invariant (because the
+mapping from the latent belief distribution to the choice probability
+collapses across $\theta_k$), then $\partial p / \partial \theta_k
+\approx 0$ and $\mathcal{I}_{kk} \approx 0$. This is exactly the WBA
+$\kappa$ situation: rescaling $w_d$ and $w_s$ proportionally leaves the
+Bayesian posterior mean $\hat{\theta}$ unchanged, so the binary choice
+probability $\sigma(\text{logit}(\hat{\theta}))$ is also unchanged. The
+information about $\kappa$ only leaks out through second-order effects
+near the boundaries, where the posterior mean becomes sensitive to the
+absolute weight scale.
+
+The mechanical consequence: binary data identify $\kappa$ only weakly
+and asymptotically; collecting *more* binary trials shrinks the
+posterior on $\kappa$ very slowly, and no stimulus design can fully
+undo this — the limitation is in the observation channel, not the
+covariates.
+
+```{r appf_kappa_binary_fim}
+# Minimal WBA-style identification demo on a single conflict trial.
+# Direct evidence "0.7 says blue", social evidence "0.7 says red";
+# the Bayesian posterior is a Beta combination scaled by (w_d, w_s).
+# Reparameterise as (rho, kappa).
+posterior_mean <- function(rho, kappa, p_d = 0.7, p_s = 0.3) {
+  w_d <- rho * kappa
+  w_s <- (1 - rho) * kappa
+  # Beta-style update with prior Beta(1,1) for simplicity:
+  alpha <- 1 + w_d * p_d + w_s * p_s
+  beta  <- 1 + w_d * (1 - p_d) + w_s * (1 - p_s)
+  alpha / (alpha + beta)
+}
+
+# Sensitivity of choice probability to kappa, holding rho fixed:
+rho_fix   <- 0.6
+kappa_grid <- exp(seq(log(0.2), log(20), length.out = 60))
+dp_dk <- numeric(length(kappa_grid))
+for (i in seq_along(kappa_grid)) {
+  eps <- 1e-3
+  dp_dk[i] <- (posterior_mean(rho_fix, kappa_grid[i] + eps) -
+               posterior_mean(rho_fix, kappa_grid[i] - eps)) / (2 * eps)
+}
+
+tibble(kappa = kappa_grid, dp_dkappa = dp_dk) |>
+  ggplot(aes(kappa, abs(dp_dkappa))) +
+  geom_line(linewidth = 0.8) +
+  scale_x_log10() +
+  labs(title = expression("Per-trial sensitivity of binary choice probability to " * kappa),
+       subtitle = "rho = 0.6, conflict trial (p_d = 0.7, p_s = 0.3). Small values = weak Fisher information.",
+       x = expression(kappa), y = expression(abs(partialdiff*p / partialdiff*kappa))) +
+  theme_minimal()
+```
+
+The slope $|\partial p / \partial \kappa|$ is small over the entire
+plausible $\kappa$ range and decays toward zero as $\kappa$ grows.
+Multiply by $1/(p(1-p))$ and sum across $N$ trials and you get the
+per-trial Fisher information about $\kappa$ — a small number times $N$.
+Doubling $N$ halves the posterior SD on $\kappa$, but you start from a
+posterior SD large enough that no realistic experiment closes the gap.
+
+### 5.2 What a richer response channel buys you
+
+The fix is to widen the observation channel. Three response formats give
+$\kappa$ a fighting chance, in increasing order of experimental effort:
+
+**(a) Repeated identical trials.** If the same evidence configuration
+$(p_d, p_s)$ is presented $R$ times, the empirical choice frequency on
+that cell carries information about $p$, and *across-cell variation in
+choice consistency* identifies $\kappa$. Mechanically: under
+$y_{r} \sim \text{Bern}(p)$, the variance of the empirical mean is
+$p(1-p)/R$, and the spread of cell-level consistencies across evidence
+strengths is what $\kappa$ controls. This is the cheapest fix — same
+binary response, just enforce within-cell replication.
+
+**(b) Continuous confidence ratings.** Suppose the participant reports a
+rating $r \in (0, 1)$ for "how confident are you that the next ball is
+blue", and we model the rating as
+
+$$
+r \mid p, \kappa \sim \text{Beta}\!\big(\kappa\, p,\; \kappa\, (1-p)\big),
+$$
+
+where $p$ is the same Bayesian posterior mean as before. Now $\kappa$
+appears directly in the rating likelihood as the concentration of the
+Beta distribution: a high-$\kappa$ agent gives sharp, confident ratings,
+a low-$\kappa$ agent gives noisy, near-uniform ratings. The Fisher
+information about $\kappa$ from a single rating is bounded *below* by a
+non-vanishing constant — independent of how far $p$ is from $0.5$.
+
+**(c) Response times.** RT distributions carry independent information
+about decision difficulty and noise. The drift-diffusion family
+(@ratcliff_diffusion_2008) links a precision-like drift parameter to
+both choice proportions *and* RT quantiles; fitting the joint
+likelihood $p(y, \mathrm{RT} \mid \theta)$ identifies the precision
+parameter from RT structure even when the binary choice is uninformative.
+This is the most powerful response channel and the most demanding
+modelling commitment — covering it properly is outside the scope of this
+appendix, but the design principle is the same: extra response dimensions
+unlock extra Fisher information.
+
+### 5.3 Demonstration: $\kappa$ identification under three response formats
+
+We simulate a small dataset from the WBA generative model and compute the
+log-likelihood profile in $\kappa$ under three observation models on the
+*same* trial sequence. The geometry is parallel to §3.2 (constant vs
+reversal opponent) and §4.2 (static vs contingent-shift environment):
+same model, same truth, different design — three very different
+likelihoods.
+
+```{r appf_kappa_profile, fig.width=9, fig.height=4}
+# --- Simulate a small dataset from the WBA generative process ----------
+set.seed(2026)
+n_trials  <- 80
+rho_true   <- 0.6
+kappa_true <- 4
+p_d <- runif(n_trials, 0.2, 0.8)
+p_s <- runif(n_trials, 0.2, 0.8)
+
+p_true <- mapply(posterior_mean, rho_true, kappa_true, p_d, p_s)
+
+# Three response channels:
+y_binary <- rbinom(n_trials, 1, p_true)
+y_rating <- rbeta(n_trials,
+                  shape1 = kappa_true * p_true,
+                  shape2 = kappa_true * (1 - p_true))
+
+# Replication: 8 evidence cells, 10 reps each.
+cells <- expand_grid(p_d_cell = c(0.3, 0.5, 0.7, 0.8),
+                     p_s_cell = c(0.3, 0.7))
+reps  <- 10
+p_cells <- mapply(posterior_mean, rho_true, kappa_true,
+                  cells$p_d_cell, cells$p_s_cell)
+y_rep <- rbinom(nrow(cells) * reps, 1,
+                rep(p_cells, each = reps))
+
+# --- Log-likelihood profiles in kappa, rho held at truth --------------
+kappa_grid <- exp(seq(log(0.5), log(40), length.out = 60))
+
+ll_binary <- map_dbl(kappa_grid, function(k) {
+  p_k <- mapply(posterior_mean, rho_true, k, p_d, p_s)
+  sum(dbinom(y_binary, 1, p_k, log = TRUE))
+})
+
+ll_rating <- map_dbl(kappa_grid, function(k) {
+  p_k <- mapply(posterior_mean, rho_true, k, p_d, p_s)
+  sum(dbeta(y_rating, k * p_k, k * (1 - p_k), log = TRUE))
+})
+
+ll_replicated <- map_dbl(kappa_grid, function(k) {
+  p_k <- mapply(posterior_mean, rho_true, k,
+                cells$p_d_cell, cells$p_s_cell)
+  sum(dbinom(y_rep, 1, rep(p_k, each = reps), log = TRUE))
+})
+
+profile_df <- bind_rows(
+  tibble(kappa = kappa_grid, ll = ll_binary,    channel = "1. binary only (N = 80)"),
+  tibble(kappa = kappa_grid, ll = ll_replicated,channel = "2. replicated binary (8 cells x 10 reps)"),
+  tibble(kappa = kappa_grid, ll = ll_rating,    channel = "3. binary + Beta rating (N = 80)")
+) |>
+  group_by(channel) |>
+  mutate(rel_ll = ll - max(ll)) |>
+  ungroup()
+
+ggplot(profile_df, aes(kappa, rel_ll)) +
+  geom_line(linewidth = 0.8) +
+  geom_vline(xintercept = kappa_true, linetype = "dashed", colour = "red") +
+  facet_wrap(~ channel, scales = "free_y") +
+  scale_x_log10() +
+  coord_cartesian(ylim = c(-30, 0)) +
+  labs(title = expression("Profile log-likelihood for the precision parameter " * kappa),
+       subtitle = "Dashed red line: true kappa. Sharper peak = better identification.",
+       x = expression(kappa ~ " (log scale)"), y = "rel log-lik") +
+  theme_minimal()
+```
+
+The binary-only profile (left) is essentially flat across the full
+$\kappa$ range: with $N=80$ Bernoulli trials, every $\kappa$ in
+$[0.5, 40]$ fits the data nearly as well as the truth. Replicating
+binary trials within fixed evidence cells (centre) helps only modestly
+at this sample size — within-cell choice variance does inform $\kappa$,
+but slowly. The binary+rating profile (right) is dramatically sharper:
+the Beta rating likelihood makes $\kappa$ a *mean-affecting* parameter
+in the rating distribution, so it contributes non-vanishing Fisher
+information on every trial and the profile collapses to a tight basin
+around the truth. The qualitative ordering — *response channel matters
+more than sample size* — is the practical headline.
+
+### 5.4 Design rule and pointers to the chapters
+
+Bring all of this together as a one-line rule:
+
+> **If a parameter in your generative model scales the *variance* of the
+> response distribution without moving its *mean*, binary outcomes will
+> identify it only at the boundaries and asymptotically. To pin it down,
+> either (a) replicate trials within fixed evidence cells, (b) collect a
+> continuous response channel (confidence, magnitude estimate, slider
+> probability) in which the parameter affects the mean of the response
+> likelihood, or (c) collect response times and fit a joint
+> choice-and-RT model.**
+
+Read the binary-only comments in Chapter 11's WBA discussion, the
+softmax-temperature observations in Chapter 4, and the GCM-specificity
+identifiability discussion in Chapter 13 as three instances of this
+same fact — and use this section as the place to plan around it before
+the next experiment is run.
+
+---
+
+## 6. Model-discriminative design (Chapter 17)
 
 Sometimes we don't care about $\theta$ — we care about which *model* the
 participant is. The GCM-vs-rule comparison in Chapter 17 is the canonical
@@ -600,7 +838,7 @@ each.
 
 ---
 
-## 6. Deep dive: discriminating GCM, prototype, and rule models {#sec-appf-cat}
+## 7. Deep dive: discriminating GCM, prototype, and rule models {#sec-appf-cat}
 
 Chapter 17 sets up a three-way comparison among an exemplar model (GCM, Ch
 13), a prototype model (Kalman filter, Ch 14), and a rule-based model
@@ -611,7 +849,7 @@ counterpart: **what experiment maximizes your ability to tell these three
 models apart in the first place?** And how is that different from running
 three separate parameter-estimation optimizations, one per model?
 
-### 6.1 The mimicry problem
+### 7.1 The mimicry problem
 
 Under a generic training-only design (a block of training items presented
 i.i.d. from each category, no transfer set), the three models predict
@@ -635,7 +873,7 @@ posterior weights over $M$ and an LOO difference within a few standard
 errors of zero. Not because none of the models is right — because the
 design did not put them in a position to disagree.
 
-### 6.2 Optimizing within a single model: three different designs
+### 7.2 Optimizing within a single model: three different designs
 
 Before tackling discriminability, note that even *intra-model* optima
 differ across the three:
@@ -666,7 +904,7 @@ the GCM's attention weights drift across blocks and you cannot pool
 them. **"Optimize for all three models" is not a well-posed objective —
 the three intra-model objectives conflict.**
 
-### 6.3 The discriminative objective
+### 7.3 The discriminative objective
 
 The cross-model objective is structurally different. Rather than maximize
 parameter EIG within any one model, we maximize the mutual information
@@ -692,7 +930,7 @@ make different predictions. A stimulus can be highly informative for
 estimating $c$ in the GCM while contributing nothing to discriminating
 the GCM from the prototype model — and vice versa.
 
-### 6.4 Where the three models disagree: design recipes
+### 7.4 Where the three models disagree: design recipes
 
 The diagnostic items are *transfer* items chosen so the three models'
 marginal predictions diverge. Four families recur in the categorization
@@ -743,7 +981,7 @@ smooth, monotone curves. The diagnostic is *not* a stimulus — it is the
 changes silently (no instruction) produces a step response under rule
 models and a slow drift under similarity models.
 
-### 6.5 Building the diagnostic set computationally
+### 7.5 Building the diagnostic set computationally
 
 You do not need analytic insight into which stimuli are diagnostic. The
 calculation is cheap because no fitting is involved — only forward
@@ -950,7 +1188,7 @@ simulators for the Ch. 13–15 originals — the computation is the same,
 only slower.
 :::
 
-### 6.6 The trade-off: model identifiability vs parameter identifiability
+### 7.6 The trade-off: model identifiability vs parameter identifiability
 
 There is a price. A design tuned to maximize $I(M; y \mid \xi)$ tends to
 *reduce* the within-model parameter EIG: diagnostic transfer items are
@@ -968,9 +1206,9 @@ The practical compromise is a **two-phase design**:
    Kruschke 1993 stimulus set) that gives each model's parameters a fair
    chance to be identified. This phase is roughly intra-model-optimal,
    accepting that no single training schedule is jointly optimal for all
-   three (§6.2).
+   three (§7.2).
 2. *Diagnostic phase.* A small set of transfer items chosen by the
-   computational recipe of §6.5, presented without feedback so the
+   computational recipe of §7.5, presented without feedback so the
    parameter posteriors from Phase 1 are not perturbed.
 
 Most published categorization studies use a version of this structure
@@ -979,7 +1217,7 @@ Phase 2 *computed* rather than *picked by hand* — and to make the
 trade-off between phases explicit (how many trials to allocate to each is
 a utility-allocation problem with the same EIG machinery on both sides).
 
-### 6.7 Summary: three optima, one design
+### 7.7 Summary: three optima, one design
 
 The categorization case makes the general lesson concrete:
 
@@ -998,7 +1236,7 @@ The categorization case makes the general lesson concrete:
 
 ---
 
-## 7. Adaptive design optimization
+## 8. Adaptive design optimization
 
 Everything so far has been *static*: pick $\xi$ once, run the experiment,
 analyze. The Bayesian generalization is *adaptive*: after trial $t$, pick
@@ -1033,7 +1271,7 @@ the gains are real but moderate, and the engineering cost is high.
 
 ---
 
-## 8. Amortized design with NPE (bridge to @sec-appE)
+## 9. Amortized design with NPE (bridge to @sec-appE)
 
 The EIG of §2.4 is, naively, doubly intractable: an outer expectation
 over $p(y \mid \xi)$ that itself marginalizes $\theta$, with inner
@@ -1064,13 +1302,13 @@ generation of large categorization studies it will not be.
 The amortized-BOED literature is moving fast and the engineering is not
 yet plug-and-play. The cost-benefit for student projects is poor today.
 Use the static and recovery-based diagnostics of §2–§4 for the
-experiments you are designing this term; treat §7 as a road sign for the
+experiments you are designing this term; treat §8 as a road sign for the
 direction the field is heading.
 :::
 
 ---
 
-## 9. Practical constraints and the design–theory loop
+## 10. Practical constraints and the design–theory loop
 
 A pure EIG-maximizer will hand you a design that maximizes information
 per unit experimenter time and ignores every constraint that actually
@@ -1109,7 +1347,7 @@ A non-exhaustive checklist for real experiments:
 
 ### The loop, in full
 
-Putting §1–§9 together, the workflow you should run before any new
+Putting §1–§10 together, the workflow you should run before any new
 experiment is:
 
 1. Specify $M$ and a candidate $\xi$.
